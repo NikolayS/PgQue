@@ -61,5 +61,8 @@
 \echo 'Running: test_api_dlq'
 \i tests/test_api_dlq.sql
 
+\echo 'Running: test_observability'
+\i tests/test_observability.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
