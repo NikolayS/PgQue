@@ -47,6 +47,13 @@ Follow the shared rules at https://gitlab.com/postgres-ai/rules/-/tree/main/rule
 - Use `xid8` for transaction ID columns, `pg_snapshot` for snapshot columns
 - Use modern PG14+ function names: `pg_current_xact_id()` not `txid_current()`
 
+### Binary Units
+
+- Always use binary units (KiB, MiB, GiB, TiB) for memory, storage, and data
+  sizes in prose, reports, and documentation
+- Exception: PostgreSQL config parameters use PG's native format
+  (`shared_buffers = '2GB'`, `work_mem = '64MB'`)
+
 ### Shell Style
 
 ```bash

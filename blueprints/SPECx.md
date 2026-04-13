@@ -274,7 +274,7 @@ ticker-driven latency (1-2 seconds, not sub-3ms).
 ### 2.9 Preliminary benchmark results
 
 A quick-and-dirty benchmark was run on a laptop (Apple Silicon, 10 cores,
-24 GB RAM, APFS SSD, PostgreSQL 18.3). **These numbers are preliminary and
+24 GiB RAM, APFS SSD, PostgreSQL 18.3). **These numbers are preliminary and
 will need to be repeated on proper server hardware with controlled
 conditions.** Full details, methodology, and raw data:
 [NikolayS/pgq#1](https://github.com/NikolayS/pgq/issues/1).
@@ -284,27 +284,27 @@ Key findings (PgQ v3.5.1, tuned config: `synchronous_commit=off`,
 
 | Scenario | Throughput | Per core |
 |---|---|---|
-| C mode, single insert/TX, ~100B, 16 clients | 117,924 ev/s | ~11.8k ev/s |
-| **PL/pgSQL mode, single insert/TX, ~100B, 16 clients** | **85,836 ev/s** | **~8.6k ev/s** |
-| C mode, batched 1000/TX, ~100B, 16 clients | 417,414 ev/s | ~41.7k ev/s |
-| C mode, batched 1000/TX, ~2KB, 16 clients | 257,179 ev/s (502 MB/s) | ~25.7k ev/s (~50 MB/s) |
-| C mode, batched 1000/TX, 30-min sustained, ~2KB (70 ckpts) | 163,940 ev/s (316 MB/s avg) | ~16.4k ev/s (~31.6 MB/s) |
+| C mode, single insert/TX, ~100 B, 16 clients | 117,924 ev/s | ~11.8k ev/s |
+| **PL/pgSQL mode, single insert/TX, ~100 B, 16 clients** | **85,836 ev/s** | **~8.6k ev/s** |
+| C mode, batched 1000/TX, ~100 B, 16 clients | 417,414 ev/s | ~41.7k ev/s |
+| C mode, batched 1000/TX, ~2 KiB, 16 clients | 257,179 ev/s (479 MiB/s) | ~25.7k ev/s (~47.9 MiB/s) |
+| C mode, batched 1000/TX, 30-min sustained, ~2 KiB (70 ckpts) | 163,940 ev/s (301 MiB/s avg) | ~16.4k ev/s (~30.1 MiB/s) |
 | **PL/pgSQL mode, batched 1000/TX** | **not yet measured** | **TODO** |
-| Consumer read rate, 100k batch, ~100B | ~2.4M ev/s | ~240k ev/s |
-| Consumer read rate, 100k batch, ~2KB | ~305k ev/s (596 MB/s) | ~30.5k ev/s (~59.6 MB/s) |
+| Consumer read rate, 100k batch, ~100 B | ~2.4M ev/s | ~240k ev/s |
+| Consumer read rate, 100k batch, ~2 KiB | ~305k ev/s (568 MiB/s) | ~30.5k ev/s (~56.8 MiB/s) |
 
 Per-core numbers assume all 10 cores are utilized (Apple Silicon, mixed
 P/E cores). Actual per-core throughput on server hardware with uniform cores
 may differ. These per-core figures enable direct comparison with systems
-like RedPanda (~100 Mbps = ~12.5 MB/s per core claimed). PgQ sustained:
-~31.6 MB/s per core (~253 Mbps) — roughly **2.5x RedPanda's per-core
+like RedPanda (~100 Mbps = ~11.9 MiB/s per core claimed). PgQ sustained:
+~30.1 MiB/s per core (~253 Mbps) — roughly **2.5x RedPanda's per-core
 claim**, with full ACID transactions.
 
-The PL/pgSQL row is the most relevant for pgque — it shows the throughput
-ceiling for the no-C-extension mode that pgque will use. At ~8.6k ev/s per
-core for single-insert-per-TX, PgQ's PL/pgSQL mode is competitive with
-C-based alternatives, especially considering that it produces zero dead
-tuples under sustained load.
+The PL/pgSQL rows are the most relevant for pgque — they show the
+throughput ceiling for the no-C-extension mode that pgque will use. At
+~8.6k ev/s per core for single-insert-per-TX, PgQ's PL/pgSQL mode is
+competitive with C-based alternatives, especially considering that it
+produces zero dead tuples under sustained load.
 
 Notable observations from the benchmark:
 
@@ -315,7 +315,7 @@ Notable observations from the benchmark:
 - **Consumer is never the bottleneck.** Reading events is 3-6x faster than
   writing them.
 - **Checkpoints cause dips but not collapse.** Sustained throughput over 70
-  checkpoints (30 min) averaged 316 MB/s with no degradation over time.
+  checkpoints (30 min) averaged 301 MiB/s with no degradation over time.
 - **Storage is the bottleneck.** pg_ash showed 57% of time spent on
   `IO:DataFileWrite` — on server-grade NVMe, throughput would scale higher.
 
