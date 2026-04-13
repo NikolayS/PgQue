@@ -18,6 +18,9 @@
 --   5. Verify: event in dead_letter, dlq_inspect shows it
 --   6. dlq_replay -> ticker -> receive (event is back)
 
+-- Temp table to pass batch_id between DO blocks
+create temporary table if not exists _us3_state (batch_id bigint);
+
 -- ==============================
 -- Setup: queue with max_retries=2
 -- ==============================
@@ -43,11 +46,13 @@ end $$;
 do $$
 declare
   v_msg pgque.message;
+  v_batch_id bigint;
   v_count int := 0;
 begin
   for v_msg in select * from pgque.receive('us3_jobs', 'worker', 10)
   loop
     v_count := v_count + 1;
+    v_batch_id := v_msg.batch_id;
     assert coalesce(v_msg.retry_count, 0) = 0,
       'initial retry_count should be 0 (or NULL), got ' || coalesce(v_msg.retry_count::text, 'NULL');
     assert v_msg.payload::jsonb = '{"task":"test"}'::jsonb,
@@ -58,6 +63,11 @@ begin
   end loop;
 
   assert v_count = 1, 'should receive exactly 1 message, got ' || v_count;
+
+  -- Save batch_id for ack in next DO block
+  delete from _us3_state;
+  insert into _us3_state values (v_batch_id);
+
   raise notice 'PASS: US-3 initial receive (retry_count=0)';
 end $$;
 
@@ -66,16 +76,9 @@ do $$
 declare
   v_batch_id bigint;
 begin
-  -- Get the current batch from subscription
-  select sub_batch into v_batch_id
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  where q.queue_name = 'us3_jobs'
-  and s.sub_batch is not null;
-
-  if v_batch_id is not null then
-    perform pgque.ack(v_batch_id);
-  end if;
+  select batch_id into v_batch_id from _us3_state;
+  assert v_batch_id is not null, 'batch_id should not be null';
+  perform pgque.ack(v_batch_id);
 end $$;
 
 -- ==============================
@@ -97,11 +100,13 @@ end $$;
 do $$
 declare
   v_msg pgque.message;
+  v_batch_id bigint;
   v_count int := 0;
 begin
   for v_msg in select * from pgque.receive('us3_jobs', 'worker', 10)
   loop
     v_count := v_count + 1;
+    v_batch_id := v_msg.batch_id;
     assert v_msg.retry_count = 1,
       'cycle 1: retry_count should be 1, got ' || coalesce(v_msg.retry_count::text, 'NULL');
 
@@ -110,6 +115,11 @@ begin
   end loop;
 
   assert v_count = 1, 'cycle 1: should receive 1 message, got ' || v_count;
+
+  -- Save batch_id for ack in next DO block
+  delete from _us3_state;
+  insert into _us3_state values (v_batch_id);
+
   raise notice 'PASS: US-3 cycle 1 (retry_count=1)';
 end $$;
 
@@ -118,15 +128,9 @@ do $$
 declare
   v_batch_id bigint;
 begin
-  select sub_batch into v_batch_id
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  where q.queue_name = 'us3_jobs'
-  and s.sub_batch is not null;
-
-  if v_batch_id is not null then
-    perform pgque.ack(v_batch_id);
-  end if;
+  select batch_id into v_batch_id from _us3_state;
+  assert v_batch_id is not null, 'batch_id should not be null';
+  perform pgque.ack(v_batch_id);
 end $$;
 
 -- ==============================
@@ -148,11 +152,13 @@ end $$;
 do $$
 declare
   v_msg pgque.message;
+  v_batch_id bigint;
   v_count int := 0;
 begin
   for v_msg in select * from pgque.receive('us3_jobs', 'worker', 10)
   loop
     v_count := v_count + 1;
+    v_batch_id := v_msg.batch_id;
     assert v_msg.retry_count = 2,
       'cycle 2: retry_count should be 2, got ' || coalesce(v_msg.retry_count::text, 'NULL');
 
@@ -161,6 +167,11 @@ begin
   end loop;
 
   assert v_count = 1, 'cycle 2: should receive 1 message, got ' || v_count;
+
+  -- Save batch_id for ack in next DO block
+  delete from _us3_state;
+  insert into _us3_state values (v_batch_id);
+
   raise notice 'PASS: US-3 cycle 2 (retry_count=2, nack routes to DLQ)';
 end $$;
 
@@ -169,15 +180,9 @@ do $$
 declare
   v_batch_id bigint;
 begin
-  select sub_batch into v_batch_id
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  where q.queue_name = 'us3_jobs'
-  and s.sub_batch is not null;
-
-  if v_batch_id is not null then
-    perform pgque.ack(v_batch_id);
-  end if;
+  select batch_id into v_batch_id from _us3_state;
+  assert v_batch_id is not null, 'batch_id should not be null';
+  perform pgque.ack(v_batch_id);
 end $$;
 
 -- ==============================
@@ -266,6 +271,8 @@ end $$;
 -- ==============================
 -- Teardown
 -- ==============================
+drop table if exists _us3_state;
+
 do $$ begin
   -- Clean up any remaining DLQ entries
   delete from pgque.dead_letter

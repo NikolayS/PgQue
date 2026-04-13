@@ -12,14 +12,14 @@ do $$ begin
   perform pgque.subscribe('us4_reminders', 'sender');
 end $$;
 
--- Action: schedule a message for 2 seconds in the future
+-- Action: schedule a message for 5 seconds in the future (per spec)
 do $$
 declare
   v_id bigint;
   v_de_count bigint;
 begin
   v_id := pgque.send_at('us4_reminders', 'remind', '{"remind":"call back"}'::jsonb,
-    now() + interval '2 seconds');
+    now() + interval '5 seconds');
 
   assert v_id is not null, 'send_at should return an id';
 
@@ -69,10 +69,9 @@ begin
   end if;
 end $$;
 
--- Wait for the delay to pass (2 seconds)
--- pg_sleep in a DO block to wait for the delayed event to become due
+-- Wait for the delay to pass (5 seconds per spec)
 do $$ begin
-  perform pg_sleep(3);
+  perform pg_sleep(5);
 end $$;
 
 -- Run maint (which calls maint_deliver_delayed) to move due events
