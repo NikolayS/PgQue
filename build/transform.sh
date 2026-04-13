@@ -627,6 +627,23 @@ for addition_file in config.sql queue_max_retries.sql roles.sql lifecycle.sql; d
   echo "" >> "${INSTALL_FILE}"
 done
 
+# Section 7: pgque-api (modern API layer)
+API_DIR="${SQL_DIR}/pgque-api"
+if [[ -d "${API_DIR}" ]]; then
+  echo "-- ======================================================================" >> "${INSTALL_FILE}"
+  echo "-- Section 7: pgque-api (modern API layer)" >> "${INSTALL_FILE}"
+  echo "-- ======================================================================" >> "${INSTALL_FILE}"
+  echo "" >> "${INSTALL_FILE}"
+
+  for api_file in "${API_DIR}"/*.sql; do
+    if [[ -f "${api_file}" ]]; then
+      echo "-- pgque-api/$(basename "${api_file}")" >> "${INSTALL_FILE}"
+      cat "${api_file}" >> "${INSTALL_FILE}"
+      echo "" >> "${INSTALL_FILE}"
+    fi
+  done
+fi
+
 install_lines=$(wc -l < "${INSTALL_FILE}")
 echo "Assembled ${INSTALL_FILE} (${install_lines} lines)"
 
@@ -702,12 +719,22 @@ else
   asm_errors=$((asm_errors + 1))
 fi
 
-# Verify pgque additions are at the end
-if tail -60 "${INSTALL_FILE}" | grep -q 'lifecycle.sql\|pgque.version\|pgque.start\|pgque.stop'; then
-  echo "PASS: pgque additions are at the end of the script"
+# Verify pgque additions and API layer are in the script
+if grep -q 'lifecycle.sql\|pgque.version\|pgque.start\|pgque.stop' "${INSTALL_FILE}"; then
+  echo "PASS: pgque additions present in install script"
 else
-  echo "FAIL: pgque additions not found at end of script"
+  echo "FAIL: pgque additions not found in install script"
   asm_errors=$((asm_errors + 1))
+fi
+
+# Verify pgque-api section is present (if api files exist)
+if [[ -d "${API_DIR}" ]] && ls "${API_DIR}"/*.sql >/dev/null 2>&1; then
+  if grep -q 'Section 7: pgque-api' "${INSTALL_FILE}"; then
+    echo "PASS: pgque-api section present in install script"
+  else
+    echo "FAIL: pgque-api section missing from install script"
+    asm_errors=$((asm_errors + 1))
+  fi
 fi
 
 echo ""

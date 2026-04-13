@@ -49,5 +49,8 @@
 \echo 'Running: test_notify'
 \i tests/test_notify.sql
 
+\echo 'Running: test_api_send'
+\i tests/test_api_send.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
