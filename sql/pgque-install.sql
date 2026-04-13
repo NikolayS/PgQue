@@ -4541,7 +4541,7 @@ returns table (
     consumer_name   text,
     lag             interval,
     pending_events  bigint,
-    last_seen       timestamptz,
+    last_batch_start timestamptz,
     batch_active    boolean,
     batch_id        bigint
 ) as $$
@@ -4588,20 +4588,21 @@ begin
     where not q.queue_ticker_paused
     group by q.queue_name;
 
-    -- Check: consumer lag
+    -- Consumer lag check: handle consumers that never processed (sub_last_tick is NULL)
     return query
     select q.queue_name,
         ('consumer_lag:' || c.co_name)::text,
         case
+            when t.tick_time is null then 'warning'  -- never consumed
             when now() - t.tick_time > q.queue_rotation_period then 'critical'
             when now() - t.tick_time > q.queue_rotation_period / 2 then 'warning'
             else 'ok'
         end,
-        c.co_name || ' lag: ' || (now() - t.tick_time)::text
+        c.co_name || ' lag: ' || coalesce((now() - t.tick_time)::text, 'never consumed')
     from pgque.subscription s
     join pgque.queue q on q.queue_id = s.sub_queue
     join pgque.consumer c on c.co_id = s.sub_consumer
-    join pgque.tick t on t.tick_queue = s.sub_queue and t.tick_id = s.sub_last_tick;
+    left join pgque.tick t on t.tick_queue = s.sub_queue and t.tick_id = s.sub_last_tick;
 
     -- Check: rotation overdue
     return query
