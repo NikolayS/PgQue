@@ -4035,3 +4035,50 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
+create or replace function pgque.status()
+returns table (
+    component text,
+    status text,
+    detail text
+) as $$
+begin
+    -- PostgreSQL version
+    return query select 'postgresql'::text, 'info'::text, pg_catalog.version()::text;
+
+    -- pgque version
+    return query select 'pgque'::text, 'info'::text, pgque.version();
+
+    -- pg_cron status
+    if exists (select 1 from pg_extension where extname = 'pg_cron') then
+        return query
+        select 'ticker'::text,
+            case when c.ticker_job_id is not null then 'running' else 'stopped' end,
+            case when c.ticker_job_id is not null
+                then 'job_id=' || c.ticker_job_id::text
+                else 'not scheduled'
+            end
+        from pgque.config c;
+
+        return query
+        select 'maintenance'::text,
+            case when c.maint_job_id is not null then 'running' else 'stopped' end,
+            case when c.maint_job_id is not null
+                then 'job_id=' || c.maint_job_id::text
+                else 'not scheduled'
+            end
+        from pgque.config c;
+    else
+        return query select 'pg_cron'::text, 'unavailable'::text,
+            'pg_cron not installed -- call pgque.ticker() and pgque.maint() manually'::text;
+    end if;
+
+    -- Queue count
+    return query select 'queues'::text, 'info'::text,
+        (select count(*)::text from pgque.queue) || ' queues configured';
+
+    -- Consumer count
+    return query select 'consumers'::text, 'info'::text,
+        (select count(*)::text from pgque.subscription) || ' active subscriptions';
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+

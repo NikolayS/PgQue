@@ -703,7 +703,7 @@ else
 fi
 
 # Verify pgque additions are at the end
-if tail -20 "${INSTALL_FILE}" | grep -q 'lifecycle.sql\|pgque.version\|pgque.start\|pgque.stop'; then
+if tail -60 "${INSTALL_FILE}" | grep -q 'lifecycle.sql\|pgque.version\|pgque.start\|pgque.stop'; then
   echo "PASS: pgque additions are at the end of the script"
 else
   echo "FAIL: pgque additions not found at end of script"
