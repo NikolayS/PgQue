@@ -103,3 +103,28 @@ begin
   perform pgque.unregister_consumer('test_delayed3', 'c1');
   perform pgque.drop_queue('test_delayed3');
 end $$;
+
+-- Test 4: pgque.maint() delivers delayed events end-to-end
+do $$
+declare
+  v_delivered int;
+begin
+  perform pgque.create_queue('test_maint_delayed');
+  perform pgque.register_consumer('test_maint_delayed', 'c1');
+
+  -- Insert already-due delayed event
+  insert into pgque.delayed_events (de_queue_name, de_deliver_at, de_type, de_data)
+  values ('test_maint_delayed', now() - interval '1 second', 'maint.test', '{"via_maint":true}');
+
+  -- Call maint() (the wrapper that pg_cron calls)
+  perform pgque.maint();
+
+  -- Verify delayed event was delivered
+  assert not exists (
+    select 1 from pgque.delayed_events where de_queue_name = 'test_maint_delayed'
+  ), 'delayed event should be gone after maint()';
+
+  perform pgque.unregister_consumer('test_maint_delayed', 'c1');
+  perform pgque.drop_queue('test_maint_delayed');
+  raise notice 'PASS: pgque.maint() delivers delayed events';
+end $$;
