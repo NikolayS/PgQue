@@ -1,6 +1,6 @@
 # PgQue -- PgQ Universal Edition
 
-- **Version:** 0.5.0-draft
+- **Version:** 0.6.0-draft
 - **Date:** 2026-04-12
 - **License:** Apache-2.0
 - **Status:** Implementation-ready (3 reviewers approved)
@@ -19,6 +19,7 @@
 | 0.3.0-draft | 2026-04-12 | First review round. Rename pgqx to pgque (PgQ Universal Edition). Explicit two-layer architecture (pgque-core vs pgque-api). Fix receive() batch ownership trap (rename i_batch_size to i_max_return, document that ack processes entire batch). Fix nack() to accept retry_count parameter (avoid re-querying batch). Fix send_batch() to resolve queue/table once. Fix OTel counter/gauge semantics. Fix queue_health() edge cases. Soften "Exactly-once capable" to "Exactly-once capable (transactional pattern)". Resolve priority contradiction. Add VACUUM for delayed_events and dead_letter to maint(). Defer full OTel export architecture and Node/Ruby SDKs to v2. Align Sprint 5 with risk mitigation (Python + Go only). Document receive() rotation-blocking behavior. |
 | 0.4.0-draft | 2026-04-12 | Second review round (3 reviewers). Add preliminary benchmark results (section 2.9, from NikolayS/pgq#1 -- quick-and-dirty laptop benchmark, needs repetition on server hardware). Update throughput claim from ~10-20k to ~86k ev/s (PL/pgSQL measured). Add PgQ code import strategy: git submodule + build/transform.sh (section 8.0). Fix `event_dead()` to accept event fields from caller instead of re-querying batch. Remove dead `qstate` lookup from `send_batch()`, leave TODO. Read `max_retries` from queue config instead of hardcoding 5 in `nack()`. Drop `peek()` from v1 scope. Fix `delayed_events` index (remove broken partial-index predicate with `now()`). Rename `send_at()` return type documentation to clarify it returns a scheduled-entry ID, not a queue event ID. Fix Node.js/Ruby class names (PgqxClient -> PgqueClient, Pgqx:: -> Pgque::). Fix CLI env var (PGQX_DSN -> PGQUE_DSN). Align Gantt with v1 scope (remove Node.js/Ruby from weeks 7-8). Add `queue_max_retries` column to `pgque.queue` table. Fix `queue_health()` to handle queues with no ticks. |
 | 0.5.0-draft | 2026-04-12 | Third review round (3 approvals). Fix section 2.7 throughput claim (was still ~10-20k, now reflects benchmarks with `synchronous_commit=off` caveat). Add `sync_commit=off` caveat to section 2.5 comparison table. Combine `nack()` two lookups into single join. Add `queue_max_retries` column to schema definition (section 3.4.6.1). Document `ev_txid` NULL in DLQ (pgque.message does not carry txid). Correct RedPanda comparison units (MiB/s not Mbps). |
+| 0.6.0-draft | 2026-04-12 | Add red/green TDD methodology (section 13.2). Add 10 user stories as acceptance tests (section 13.3): basic produce/consume, fan-out, retry+DLQ, delayed delivery, batch under load, rotation under lag, transactional exactly-once, managed PG install, observability, idempotent install. Tests serve both CI automation and manual/AI-agent verification. |
 
 ---
 
@@ -2357,7 +2358,243 @@ pgque.assert_dlq_empty(queue text)
     RETURNS boolean  -- raises exception if not empty
 ```
 
-### 13.2 Admin CLI
+### 13.2 Test Methodology: Red/Green TDD
+
+All new pgque code (pgque-api layer, observability, client libraries) must
+be developed using **red/green TDD** where it makes sense:
+
+1. **Red:** Write a failing test that defines the expected behavior
+2. **Green:** Write the minimum code to make the test pass
+3. **Refactor:** Clean up without changing behavior; tests stay green
+
+**Where TDD applies:**
+
+- All modern API functions (`send`, `receive`, `ack`, `nack`, DLQ, delayed)
+- Observability functions (`queue_stats`, `consumer_stats`, `queue_health`)
+- Client library producer/consumer classes
+- CLI commands
+- The `build/transform.sh` pipeline (test that output SQL is valid)
+
+**Where TDD does not apply:**
+
+- pgque-core repackaging (Sprint 1) — PgQ already has tests; we run them
+  after transformation and verify they pass. The tests exist before the code.
+- Exploratory benchmarks — these inform design, not verify correctness.
+
+**Test-first discipline in SQL:**
+
+```sql
+-- Red: test that nack() moves event to DLQ after max retries
+-- (write this BEFORE implementing nack)
+do $$
+declare
+    v_msg pgque.message;
+    v_dlq_count bigint;
+begin
+    -- Setup: queue with max_retries=2
+    perform pgque.create_queue('test_dlq');
+    perform pgque.set_queue_config('test_dlq', 'queue_max_retries', '2');
+    perform pgque.subscribe('test_dlq', 'c1');
+    perform pgque.send('test_dlq', '{"x":1}'::jsonb);
+    perform pgque.ticker();
+
+    -- Simulate 2 prior retries (retry_count=2 >= max_retries=2)
+    select * into v_msg from pgque.receive('test_dlq', 'c1', 1);
+    -- Forge retry_count to simulate prior retries
+    v_msg.retry_count := 2;
+    perform pgque.nack(v_msg.batch_id, v_msg, '1 second', 'test failure');
+    perform pgque.ack(v_msg.batch_id);
+
+    -- Assert: event is in DLQ
+    select count(*) into v_dlq_count from pgque.dead_letter
+    where dl_queue_id = (select queue_id from pgque.queue
+                         where queue_name = 'test_dlq');
+    assert v_dlq_count = 1, 'expected 1 DLQ entry, got ' || v_dlq_count;
+
+    -- Cleanup
+    perform pgque.unsubscribe('test_dlq', 'c1');
+    perform pgque.drop_queue('test_dlq');
+end;
+$$;
+```
+
+### 13.3 User Stories and Acceptance Tests
+
+These are end-to-end scenarios that verify pgque works as a complete system.
+They serve as both **CI acceptance tests** (automated) and **manual
+verification paths** for humans or AI agents testing a fresh deployment.
+
+Each story follows a consistent structure: setup, action, verify, teardown.
+
+#### US-1: Basic produce/consume cycle
+
+**As a** developer, **I want to** send a JSON message and receive it,
+**so that** I can use pgque as a simple queue.
+
+```
+Setup:   install pgque, create queue "orders", subscribe consumer "app"
+Action:  send('orders', '{"id":1}'), ticker(), receive('orders','app',10)
+Verify:  exactly 1 message returned, payload = '{"id":1}', type = 'default'
+         ack(batch_id) succeeds
+         subsequent receive() returns empty set
+Teardown: drop queue, uninstall
+```
+
+#### US-2: Multiple consumers (fan-out)
+
+**As a** platform team, **I want** multiple independent consumers on one
+queue, **so that** analytics, notifications, and audit each process the
+same events at their own pace.
+
+```
+Setup:   create queue "events", subscribe "analytics", "notifier", "audit"
+Action:  send 5 events, ticker()
+Verify:  each consumer receives all 5 events independently
+         acking one consumer does not affect the others
+         consumer_stats() shows correct per-consumer lag
+```
+
+#### US-3: Retry and DLQ flow
+
+**As a** developer, **I want** failed messages to retry automatically and
+land in a dead letter queue after max retries, **so that** transient
+failures are handled without manual intervention.
+
+```
+Setup:   create queue "jobs" with max_retries=2, subscribe "worker"
+Action:  send event, ticker(), receive
+         nack(msg) three times (with ticker + maint between each)
+Verify:  event appears in receive() after first two nacks (retried)
+         after third nack: event is in dead_letter table
+         dlq_inspect() shows the event with reason
+         dlq_replay() re-inserts it into the queue
+         receive() gets the replayed event
+```
+
+#### US-4: Delayed delivery
+
+**As a** developer, **I want to** schedule a message for future delivery,
+**so that** I can implement reminders and scheduled tasks.
+
+```
+Setup:   create queue "reminders", subscribe "sender"
+Action:  send_at('reminders', 'remind', payload, now() + '5 seconds')
+Verify:  receive() returns empty immediately
+         wait 5+ seconds, call maint() (which runs maint_deliver_delayed)
+         ticker()
+         receive() now returns the event
+```
+
+#### US-5: Batch processing under load
+
+**As an** ETL pipeline, **I want to** process thousands of events per
+batch efficiently, **so that** I can keep up with high-throughput
+producers.
+
+```
+Setup:   create queue "ingest", subscribe "etl"
+Action:  insert 10,000 events in a single transaction, ticker()
+         receive('ingest', 'etl', 10000)
+Verify:  all 10,000 events returned in one batch
+         ack completes successfully
+         queue_stats() shows depth=0
+         no dead tuples in event tables (check pg_stat_user_tables)
+```
+
+#### US-6: Graceful rotation under consumer lag
+
+**As an** operator, **I want** table rotation to work correctly even when
+a slow consumer is lagging, **so that** the system doesn't lose events.
+
+```
+Setup:   create queue "stream" with rotation_period='10 seconds'
+         subscribe "fast" and "slow"
+Action:  send events, ticker() repeatedly over 30+ seconds
+         "fast" consumer: receive+ack every 2 seconds
+         "slow" consumer: do not consume at all
+Verify:  queue_health() shows 'warning' or 'critical' for "slow"
+         rotation is blocked (cannot TRUNCATE tables "slow" reads from)
+         "fast" consumer continues to receive normally
+         once "slow" catches up and acks, rotation resumes
+```
+
+#### US-7: Transactional exactly-once processing
+
+**As a** developer, **I want** my application writes and ack to be in the
+same transaction, **so that** a crash leaves the system consistent.
+
+```
+Setup:   create queue "payments", subscribe "processor"
+         create table processed_payments (id int primary key)
+Action:  send event with payment_id=42, ticker()
+         BEGIN; receive(); INSERT INTO processed_payments; ack(); COMMIT;
+Verify:  processed_payments contains payment_id=42
+         receive() returns empty (batch finished)
+         -- Crash simulation:
+         send event with payment_id=43, ticker()
+         BEGIN; receive(); INSERT INTO processed_payments; -- NO COMMIT
+         disconnect (simulates crash)
+         reconnect, receive() returns payment_id=43 again (redelivered)
+```
+
+#### US-8: Install on managed PostgreSQL
+
+**As a** developer on RDS/Cloud SQL/Supabase, **I want to** install pgque
+with a single SQL file and start it with pg_cron, **so that** I don't
+need DBA access or custom extensions.
+
+```
+Setup:   fresh managed PG database with pg_cron enabled
+Action:  \i pgque-install.sql
+         select pgque.start()
+Verify:  pgque.status() shows ticker and maint running
+         create queue, send, ticker, receive, ack all work
+         pgque.queue_health() returns 'ok' for all checks
+         pgque.stop() removes pg_cron jobs
+         pgque.uninstall() removes all objects cleanly
+```
+
+#### US-9: Observability and health monitoring
+
+**As an** operator, **I want** to quickly diagnose queue health and
+consumer lag, **so that** I can set up alerting and respond to issues.
+
+```
+Setup:   create 3 queues with varying load patterns
+         one queue healthy, one with lagging consumer, one with DLQ entries
+Action:  query queue_stats(), consumer_stats(), queue_health()
+Verify:  queue_stats() shows correct depth, throughput, DLQ count
+         consumer_stats() shows correct lag per consumer
+         queue_health() returns 'ok', 'warning', 'critical' appropriately
+         otel_metrics() returns rows with correct metric names and types
+         stuck_consumers() identifies the lagging consumer
+```
+
+#### US-10: Idempotent install and upgrade
+
+**As an** operator, **I want to** safely re-run the install script,
+**so that** upgrades and accidental re-runs don't break anything.
+
+```
+Setup:   install pgque, create queues, insert events
+Action:  run \i pgque-install.sql again
+Verify:  no errors
+         existing queues and events are preserved
+         all functions work correctly after re-install
+```
+
+#### Running acceptance tests
+
+**Automated (CI):** Each user story maps to a SQL test file in
+`tests/acceptance/`. CI runs them on PG 14-18 matrix. Tests are
+self-contained: setup, action, verify, teardown in a single file.
+
+**Manual / AI agent verification:** The stories above are written so that
+a human or AI agent can execute them step-by-step against a live database
+using `psql`. The setup/action/verify/teardown structure makes each story
+independently executable and verifiable without special tooling.
+
+### 13.4 Admin CLI
 
 The `pgque` CLI is a thin wrapper around SQL calls, designed for operators
 and CI/CD pipelines. Written in Go (single binary, no dependencies).
