@@ -289,7 +289,8 @@ Key findings (PgQ v3.5.1, tuned config: `synchronous_commit=off`,
 | C mode, batched 1000/TX, ~100 B, 16 clients | 417,414 ev/s | ~41.7k ev/s |
 | C mode, batched 1000/TX, ~2 KiB, 16 clients | 257,179 ev/s (479 MiB/s) | ~25.7k ev/s (~47.9 MiB/s) |
 | C mode, batched 1000/TX, 30-min sustained, ~2 KiB (70 ckpts) | 163,940 ev/s (301 MiB/s avg) | ~16.4k ev/s (~30.1 MiB/s) |
-| **PL/pgSQL mode, batched 1000/TX** | **not yet measured** | **TODO** |
+| **PL/pgSQL mode, batched 100k/TX, ~100 B, 1 client** | **80,515 ev/s** | **~8.1k ev/s** |
+| **PL/pgSQL mode, batched 100k/TX, ~2 KiB, 1 client** | **48,899 ev/s (~91.5 MiB/s)** | **~4.9k ev/s (~9.2 MiB/s)** |
 | Consumer read rate, 100k batch, ~100 B | ~2.4M ev/s | ~240k ev/s |
 | Consumer read rate, 100k batch, ~2 KiB | ~305k ev/s (568 MiB/s) | ~30.5k ev/s (~56.8 MiB/s) |
 
