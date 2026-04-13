@@ -2,7 +2,7 @@
 
 **Zero-bloat PostgreSQL queue. No extensions. No daemons. One SQL file.**
 
-PgQue is a repackaging of [PgQ](https://github.com/pgtools/pgq) -- the
+PgQue is a repackaging of [PgQ](https://github.com/pgq/pgq) -- the
 battle-tested queue system that ran at Skype/Microsoft scale for 15+ years --
 into a modern, extension-free system that works on any managed PostgreSQL
 provider.

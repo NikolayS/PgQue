@@ -22,7 +22,7 @@
 
 ## 1. What pgque Is
 
-pgque is a repackaging of [PgQ](https://github.com/pgtools/pgq) (v3.5.1, ISC
+pgque is a repackaging of [PgQ](https://github.com/pgq/pgq) (v3.5.1, ISC
 license) into a modern, extension-free PostgreSQL queue system with a simplified
 API and built-in observability.
 
