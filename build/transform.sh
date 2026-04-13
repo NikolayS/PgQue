@@ -727,6 +727,14 @@ else
   asm_errors=$((asm_errors + 1))
 fi
 
+# Verify pgque-api delayed delivery is in the script
+if grep -q 'maint_deliver_delayed\|send_at\|delayed_events' "${INSTALL_FILE}"; then
+  echo "PASS: pgque-api delayed delivery present in install script"
+else
+  echo "FAIL: pgque-api delayed delivery not found in install script"
+  asm_errors=$((asm_errors + 1))
+fi
+
 # Verify pgque-api section is present (if api files exist)
 if [[ -d "${API_DIR}" ]] && ls "${API_DIR}"/*.sql >/dev/null 2>&1; then
   if grep -q 'Section 7: pgque-api' "${INSTALL_FILE}"; then
