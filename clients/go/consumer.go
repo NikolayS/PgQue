@@ -5,6 +5,7 @@ package pgque
 
 import (
 	"context"
+	"log"
 	"time"
 )
 
@@ -22,10 +23,52 @@ type Consumer struct {
 
 // Handle registers a handler for the given event type.
 func (c *Consumer) Handle(eventType string, fn HandlerFunc) {
-	panic("not implemented")
+	c.handlers[eventType] = fn
 }
 
 // Start begins the poll loop, blocking until ctx is cancelled.
 func (c *Consumer) Start(ctx context.Context) error {
-	panic("not implemented")
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		msgs, err := c.client.Receive(ctx, c.queue, c.name, 100)
+		if err != nil {
+			log.Printf("pgque: receive error: %v", err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(c.pollInterval):
+			}
+			continue
+		}
+
+		if len(msgs) == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(c.pollInterval):
+			}
+			continue
+		}
+
+		var batchID int64
+		for _, msg := range msgs {
+			batchID = msg.BatchID
+			if handler, ok := c.handlers[msg.Type]; ok {
+				if err := handler(ctx, msg); err != nil {
+					log.Printf("pgque: handler error for %s: %v", msg.Type, err)
+				}
+			}
+		}
+
+		if batchID != 0 {
+			if err := c.client.Ack(ctx, batchID); err != nil {
+				log.Printf("pgque: ack error: %v", err)
+			}
+		}
+	}
 }
