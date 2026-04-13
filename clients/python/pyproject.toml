@@ -1,0 +1,19 @@
+[project]
+name = "pgque"
+version = "0.1.0"
+description = "Python client for PgQue -- PgQ Universal Edition"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends._legacy:_Backend"
