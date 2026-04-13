@@ -1,0 +1,3 @@
+[submodule "vendor/pgq"]
+	path = vendor/pgq
+	url = https://github.com/pgq/pgq.git
