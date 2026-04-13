@@ -296,9 +296,13 @@ Key findings (PgQ v3.5.1, tuned config: `synchronous_commit=off`,
 Per-core numbers assume all 10 cores are utilized (Apple Silicon, mixed
 P/E cores). Actual per-core throughput on server hardware with uniform cores
 may differ. These per-core figures enable direct comparison with systems
-like RedPanda (~100 Mbps = ~11.9 MiB/s per core claimed). PgQ sustained:
-~30.1 MiB/s per core (~253 Mbps) — roughly **2.5x RedPanda's per-core
-claim**, with full ACID transactions.
+like RedPanda (~100 MiB/s per core claimed). PgQ sustained ~30.1 MiB/s per
+core — roughly **1/3 of RedPanda's per-core claim**, but with full ACID
+transactions, transactional batch isolation, and zero bloat under sustained
+load. The ~3x gap is far from the "1-2 orders of magnitude" sometimes
+claimed for PG-based queues vs. dedicated brokers. On server-grade NVMe
+(where I/O was 57% of wait time on this laptop SSD), the gap would narrow
+further.
 
 The PL/pgSQL rows are the most relevant for pgque — they show the
 throughput ceiling for the no-C-extension mode that pgque will use. At
