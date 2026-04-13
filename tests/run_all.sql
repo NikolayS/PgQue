@@ -40,5 +40,11 @@
 \echo 'Running: test_install_idempotency'
 \i tests/test_install_idempotency.sql
 
+\echo 'Running: test_status'
+\i tests/test_status.sql
+
+\echo 'Running: test_notify'
+\i tests/test_notify.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
