@@ -1,6 +1,6 @@
 # PgQue -- PgQ Universal Edition
 
-- **Version:** 1.0.0
+- **Version:** 1.0.1
 - **Date:** 2026-04-12
 - **License:** Apache-2.0
 - **Status:** Approved — implementation-ready
@@ -21,6 +21,7 @@
 | 0.5.0-draft | 2026-04-12 | Third review round (3 approvals). Fix section 2.7 throughput claim (was still ~10-20k, now reflects benchmarks with `synchronous_commit=off` caveat). Add `sync_commit=off` caveat to section 2.5 comparison table. Combine `nack()` two lookups into single join. Add `queue_max_retries` column to schema definition (section 3.4.6.1). Document `ev_txid` NULL in DLQ (pgque.message does not carry txid). Correct RedPanda comparison units (MiB/s not Mbps). |
 | 0.6.0-draft | 2026-04-12 | Add red/green TDD methodology (section 13.2). Add 10 user stories as acceptance tests (section 13.3): basic produce/consume, fan-out, retry+DLQ, delayed delivery, batch under load, rotation under lag, transactional exactly-once, managed PG install, observability, idempotent install. Tests serve both CI automation and manual/AI-agent verification. |
 | 1.0.0 | 2026-04-12 | Spec approved. Three independent review rounds, all reviewers approved. |
+| 1.0.1 | 2026-04-12 | Clarify US-3 retry cycle sequencing, unit vs integration test distinction in TDD section, US-10 idempotency implementation challenges. |
 
 ---
 
