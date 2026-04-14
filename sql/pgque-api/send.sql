@@ -2,16 +2,13 @@
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
--- Implements SPECx.md sections 4.1, 4.4, 4.7:
+-- Implements default v0.1 API surface:
 --   pgque.message type
 --   pgque.send(queue, payload)
 --   pgque.send(queue, type, payload)
 --   pgque.send_batch(queue, type, payloads[])
 --   pgque.subscribe(queue, consumer)
 --   pgque.unsubscribe(queue, consumer)
---   pgque.create_queue(queue, options) JSONB overload
---   pgque.pause_queue(queue)
---   pgque.resume_queue(queue)
 
 -- pgque.message type (idempotent creation)
 do $$ begin
@@ -78,58 +75,3 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.create_queue(queue, options) -- JSONB overload
--- Maps JSONB keys to set_queue_config calls and queue_max_retries column.
-create or replace function pgque.create_queue(i_queue text, i_options jsonb)
-returns integer as $$
-declare
-    v_ret integer;
-    v_key text;
-    v_val text;
-begin
-    -- Create the queue using the existing PgQ function
-    v_ret := pgque.create_queue(i_queue);
-
-    -- Apply options from JSONB
-    for v_key, v_val in select key, value #>> '{}' from jsonb_each(i_options)
-    loop
-        if v_key = 'max_retries' then
-            update pgque.queue
-            set queue_max_retries = v_val::int4
-            where queue_name = i_queue;
-        else
-            -- Map known option names to PgQ config params
-            perform pgque.set_queue_config(
-                i_queue,
-                case v_key
-                    when 'rotation_period' then 'rotation_period'
-                    when 'ticker_max_count' then 'ticker_max_count'
-                    when 'ticker_max_lag' then 'ticker_max_lag'
-                    when 'ticker_idle_period' then 'ticker_idle_period'
-                    when 'ticker_paused' then 'ticker_paused'
-                    else v_key
-                end,
-                v_val
-            );
-        end if;
-    end loop;
-
-    return v_ret;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.pause_queue(queue) -- convenience wrapper
-create or replace function pgque.pause_queue(i_queue text)
-returns void as $$
-begin
-    perform pgque.set_queue_config(i_queue, 'ticker_paused', 'true');
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.resume_queue(queue) -- convenience wrapper
-create or replace function pgque.resume_queue(i_queue text)
-returns void as $$
-begin
-    perform pgque.set_queue_config(i_queue, 'ticker_paused', 'false');
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;

@@ -93,6 +93,8 @@ PgQue is **early-stage** as a product and API layer.
 
 PgQ itself is **rock solid** — battle-tested in very large systems over many years. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
 
+The default install intentionally stays small in v0.1. Additional APIs live under `sql/experimental/` until they are worth promoting into the default install. See [blueprints/PHASES.md](blueprints/PHASES.md).
+
 ## Quick start
 
 ```sql
@@ -139,24 +141,16 @@ select pgque.send_batch('orders', 'order.created', array[
 ]);
 ```
 
-### Delayed delivery
+### Experimental SQL
 
-```sql
-select pgque.send_at('reminders', 'reminder.send',
-  '{"user_id": 7}'::jsonb,
-  now() + interval '24 hours');
-```
+The repo also contains additional SQL under `sql/experimental/` for features
+that are not part of the default v0.1 install yet:
 
-### Retry and dead letter queue
+- delayed delivery
+- dead letter queue tooling
+- observability helpers
 
-```sql
-select pgque.nack(batch_id, msg, '60 seconds'::interval, 'timeout from upstream');
-
-select * from pgque.dlq_inspect('orders');
-select pgque.dlq_replay(dead_letter_id);
-select pgque.dlq_replay_all('orders');
-select pgque.dlq_purge('orders', '30 days'::interval);
-```
+Those pieces are being kept out of the default install until the API surface settles.
 
 ### Fan-out with multiple consumers
 
@@ -187,27 +181,6 @@ commit;
 ```
 
 If the transaction rolls back, your writes roll back and the ack rolls back too.
-
-### Queue configuration
-
-```sql
-select pgque.create_queue('high_volume', '{
-  "rotation_period": "4 hours",
-  "ticker_max_count": 1000,
-  "ticker_max_lag": "5 seconds",
-  "max_retries": 10
-}'::jsonb);
-```
-
-### Observability
-
-```sql
-select * from pgque.queue_stats();
-select * from pgque.queue_health();
-select * from pgque.consumer_stats();
-select * from pgque.stuck_consumers('1 hour'::interval);
-select * from pgque.otel_metrics();
-```
 
 ### Recurring jobs with pg_cron
 
@@ -282,28 +255,15 @@ select pgque.ack(batch_id);
 |---|---|---|
 | `pgque.receive(queue, consumer, max_return)` | `setof pgque.message` | Receive up to N messages from the next batch |
 | `pgque.ack(batch_id)` | `integer` | Finish batch and advance consumer position |
-| `pgque.nack(batch_id, msg, retry_after, reason)` | `integer` | Retry or route to DLQ |
 | `pgque.subscribe(queue, consumer)` | `integer` | Register a consumer |
 | `pgque.unsubscribe(queue, consumer)` | `integer` | Unregister a consumer |
-
-### Dead letter queue
-
-| Function | Returns | Description |
-|---|---|---|
-| `pgque.dlq_inspect(queue, limit)` | `setof pgque.dead_letter` | Inspect DLQ entries |
-| `pgque.dlq_replay(dead_letter_id)` | `bigint` | Replay one DLQ event |
-| `pgque.dlq_replay_all(queue)` | `integer` | Replay all DLQ events for a queue |
-| `pgque.dlq_purge(queue, older_than)` | `integer` | Purge old DLQ entries |
 
 ### Queue management
 
 | Function | Returns | Description |
 |---|---|---|
 | `pgque.create_queue(queue)` | `integer` | Create a new queue |
-| `pgque.create_queue(queue, options)` | `integer` | Create queue with JSONB options |
 | `pgque.drop_queue(queue)` | `integer` | Drop a queue |
-| `pgque.pause_queue(queue)` | `void` | Pause ticker for a queue |
-| `pgque.resume_queue(queue)` | `void` | Resume ticker for a queue |
 
 ### Lifecycle
 
@@ -315,19 +275,6 @@ select pgque.ack(batch_id);
 | `pgque.ticker()` | `bigint` | Manual ticker for all queues |
 | `pgque.maint()` | `integer` | Manual maintenance runner |
 | `pgque.uninstall()` | `void` | Stop jobs and drop schema |
-
-### Observability
-
-| Function | Returns | Description |
-|---|---|---|
-| `pgque.queue_stats()` | `table` | Depth, consumers, throughput, DLQ count |
-| `pgque.consumer_stats()` | `table` | Consumer lag and pending events |
-| `pgque.queue_health()` | `table` | Operational diagnostics |
-| `pgque.otel_metrics()` | `table` | OTel-style metrics export |
-| `pgque.throughput(queue, period, bucket)` | `table` | Throughput over time |
-| `pgque.error_rate(queue, period, bucket)` | `table` | Retries and dead letters over time |
-| `pgque.in_flight(queue)` | `table` | Currently processing batches |
-| `pgque.stuck_consumers(threshold)` | `table` | Consumers that appear stuck |
 
 ### PgQ-native API
 

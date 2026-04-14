@@ -52,17 +52,8 @@
 \echo 'Running: test_api_send'
 \i tests/test_api_send.sql
 
-\echo 'Running: test_api_delayed'
-\i tests/test_api_delayed.sql
-
 \echo 'Running: test_api_receive'
 \i tests/test_api_receive.sql
-
-\echo 'Running: test_api_dlq'
-\i tests/test_api_dlq.sql
-
-\echo 'Running: test_observability'
-\i tests/test_observability.sql
 
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

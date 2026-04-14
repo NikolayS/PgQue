@@ -61,38 +61,6 @@ begin
   raise notice 'PASS: subscribe/unsubscribe';
 end $$;
 
--- Test 5: create_queue with JSONB options
-do $$
-declare
-  v_max_retries int;
-begin
-  perform pgque.create_queue('test_opts', '{"max_retries": 10}'::jsonb);
-
-  select queue_max_retries into v_max_retries
-  from pgque.queue where queue_name = 'test_opts';
-
-  assert v_max_retries = 10, 'max_retries should be 10, got ' || coalesce(v_max_retries::text, 'NULL');
-
-  perform pgque.drop_queue('test_opts');
-  raise notice 'PASS: create_queue with JSONB options';
-end $$;
-
--- Test 6: pause/resume
-do $$
-declare
-  v_paused bool;
-begin
-  perform pgque.pause_queue('test_send');
-  select queue_ticker_paused into v_paused from pgque.queue where queue_name = 'test_send';
-  assert v_paused = true, 'queue should be paused';
-
-  perform pgque.resume_queue('test_send');
-  select queue_ticker_paused into v_paused from pgque.queue where queue_name = 'test_send';
-  assert v_paused = false, 'queue should be resumed';
-
-  raise notice 'PASS: pause/resume';
-end $$;
-
 -- Cleanup
 do $$
 begin
