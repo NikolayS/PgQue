@@ -83,7 +83,6 @@ PgQue targets major managed Postgres platforms including:
 - [Comparison notes](docs/comparison.md)
 - [Observability](docs/observability.md)
 - [Benchmarks](docs/benchmarks.md)
-- [Roadmap notes](docs/roadmap.md)
 - [Full specification](blueprints/SPECx.md)
 
 ## Status
