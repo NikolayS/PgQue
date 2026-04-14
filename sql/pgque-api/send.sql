@@ -3,29 +3,11 @@
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
 -- Implements default v0.1 API surface:
---   pgque.message type
 --   pgque.send(queue, payload)
 --   pgque.send(queue, type, payload)
 --   pgque.send_batch(queue, type, payloads[])
 --   pgque.subscribe(queue, consumer)
 --   pgque.unsubscribe(queue, consumer)
-
--- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,       -- ev_id
-        batch_id    bigint,       -- batch containing this message
-        type        text,         -- ev_type
-        payload     text,         -- ev_data (caller casts to jsonb if needed)
-        retry_count int4,         -- ev_retry (NULL for first delivery)
-        created_at  timestamptz,  -- ev_time
-        extra1      text,         -- ev_extra1
-        extra2      text,         -- ev_extra2
-        extra3      text,         -- ev_extra3
-        extra4      text          -- ev_extra4
-    );
-exception when duplicate_object then null;
-end $$;
 
 -- pgque.send(queue, payload) -- send with default type
 create or replace function pgque.send(i_queue text, i_payload jsonb)
