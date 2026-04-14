@@ -1,16 +1,26 @@
-# PgQue -- PgQ Universal Edition
+# PgQue – PgQ, universal edition
 
-**Zero-bloat PostgreSQL queue on the hot event path. No extensions. No daemons. One SQL file.**
+**Zero-bloat Postgres queue for heavy load. No extensions. No daemons. One SQL file.**
 
-PgQue is a productization of [PgQ](https://github.com/pgq/pgq) for modern
-Postgres deployments.
+PgQue brings back one of the smartest queue architectures ever built for
+Postgres and makes it work on modern managed platforms.
+
+PgQ solved a hard problem unusually well: high-load queueing inside Postgres
+without the long-term decay caused by row-by-row churn. Its hot path is based
+on snapshot-bounded batches and TRUNCATE-based rotation, so it avoids the dead-
+tuple treadmill that makes many queue tables rot over time.
+
+What held PgQ back was not the architecture. It was packaging: custom C pieces,
+an external daemon, and poor fit for managed Postgres.
+
+PgQue fixes that completely and adds useful extras on top.
 
 It is built for teams that want:
 
 - managed Postgres compatibility
 - a language-agnostic SQL API
 - stable sustained-load behavior
-- a queue architecture that avoids the usual `skip locked` + delete treadmill
+- transactional queueing inside a truly ACID system
 
 It is **not** the right tool for:
 
@@ -20,11 +30,12 @@ It is **not** the right tool for:
 
 ## Why PgQue
 
-Most Postgres queues rely on row claiming plus row lifecycle churn.
+Most Postgres queues create churn as they work: rows are claimed, updated,
+deleted, vacuumed, and eventually degraded under sustained load.
 
-PgQue does not. It uses PgQ's proven snapshot-based batching and TRUNCATE-based
-rotation, which keeps the hot event path free of dead tuples from normal event
-consumption.
+PgQue takes a different path. It keeps the zero-bloat hot path of PgQ and the
+core benefits of Postgres itself: transactional enqueue, transactional
+consume-and-commit patterns, strong consistency, and durability.
 
 ## Quick start
 
