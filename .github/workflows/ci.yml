@@ -39,7 +39,7 @@ jobs:
       - name: Install pgque
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f sql/pgque-install.sql
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
 
       - name: Run regression tests
         run: |
@@ -55,7 +55,7 @@ jobs:
         run: |
           # Re-run install -- should produce no errors
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f sql/pgque-install.sql
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
           # Verify everything still works
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
@@ -63,7 +63,7 @@ jobs:
       - name: Test uninstall
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f sql/pgque-uninstall.sql
+            -v ON_ERROR_STOP=1 -f sql/pgque_uninstall.sql
           # Verify schema is gone
           result=$(PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -tAc "select count(*) from pg_namespace where nspname = 'pgque'")

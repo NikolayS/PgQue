@@ -50,6 +50,25 @@ PgQue avoids that whole class of problems. It uses **snapshot-based batching** a
 
 This is the key point: PgQue gives you queue semantics **inside** Postgres, with Postgres durability and transactional behavior, without paying the usual bloat tax most in-database queues eventually pay.
 
+## Latency trade-off
+
+PgQue is built around **snapshot-based batching**, not row-by-row claiming.
+
+That gives it the properties this project cares about most:
+- zero bloat in the hot path
+- stable behavior under sustained load
+- clean ACID semantics inside PostgreSQL
+
+The trade-off is latency. In the default configuration, delivery is typically measured in **seconds**, not milliseconds, because events become visible on ticks rather than immediately on insert.
+
+Ways to reduce latency:
+- tune tick frequency and queue thresholds
+- use `force_tick()` for tests, demos, or explicit immediate batching
+- use `LISTEN/NOTIFY` so consumers wake up as soon as a batch is created (with the usual caveats: notifications are hints, not durable delivery)
+- future versions may improve wake-up behavior further, including logical-decoding-based approaches
+
+So: if your top priority is ultra-low-latency dispatch in the single-digit millisecond range, PgQue is probably the wrong hammer. If your priority is **stability under load without bloat**, that's exactly where it gets interesting.
+
 ## Comparison
 
 | Feature | PgQue | PgQ | PGMQ | River | Que | pg-boss |
@@ -61,7 +80,7 @@ This is the key point: PgQue gives you queue semantics **inside** Postgres, with
 | Language-agnostic SQL API | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Multiple independent consumers (fan-out) | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
 | Built-in retry with backoff | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ |
-| Built-in dead letter queue | ✅ | ❌ | ⚠️ | ❌ | ❌ | ✅ |
+| Built-in dead letter queue | ✅ | ❌ | ⚠️ | ⚠️ | ❌ | ✅ |
 
 **Legend:** ✅ yes · ❌ no · ⚠️ partial / indirect
 
@@ -104,7 +123,7 @@ sustained load this causes documented, reproducible production failures:
 - [River issue #59](https://github.com/riverqueue/river/issues/59):
   autovacuum starvation documented at Heroku
 - Oban Pro shipped table partitioning specifically to mitigate bloat
-- PGMQ/Tembo ships aggressive autovacuum settings baked into their container
+- PGMQ ships aggressive autovacuum settings in some deployment setups
   image
 
 PgQue's TRUNCATE rotation creates zero dead tuples in event tables by
