@@ -1,4 +1,4 @@
--- pgque-uninstall.sql -- Remove pgque from database
+-- pgque-unpgque.sql -- Remove pgque from database
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 do $$ begin
@@ -9,6 +9,5 @@ end $$;
 
 drop schema if exists pgque cascade;
 
-drop role if exists pgque_reader;
-drop role if exists pgque_writer;
-drop role if exists pgque_admin;
+-- Roles are database-global and may be shared across databases.
+-- Do not drop them automatically here.
