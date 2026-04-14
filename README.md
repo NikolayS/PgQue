@@ -25,7 +25,7 @@
 
 PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the most proven PostgreSQL queue architectures ever built — in a form that fits modern Postgres.
 
-PgQ was originally designed at Skype, with architecture meant to serve **1B users**, and it was used in very large self-managed PostgreSQL installations for years. That knowledge is mostly forgotten ancient arto now — real database kung fu from the era when people solved brutal scale problems without cargo-culting another distributed system into the stack.
+PgQ was originally designed at Skype, with architecture meant to serve **1B users**, and it was used in very large self-managed PostgreSQL installations for years. That knowledge is mostly lost art now — real database kung fu from the era when people solved brutal scale problems without cargo-culting another distributed system into the stack.
 
 PgQue takes that battle-tested core and repackages it as an extension-free, managed-Postgres-friendly project.
 
