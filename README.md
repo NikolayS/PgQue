@@ -6,6 +6,7 @@
 [![PostgreSQL 14-18](https://img.shields.io/badge/PostgreSQL-14--18-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![pg_cron](https://img.shields.io/badge/pg__cron-optional-336791)](https://github.com/citusdata/pg_cron)
+[![Anti-Extension](https://img.shields.io/badge/anti--extension-%5Ci_and_go-orange)](https://github.com/NikolayS/pgque)
 
 ## Contents
 
@@ -27,6 +28,8 @@ PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the most proven P
 PgQ was originally designed at Skype, with architecture meant to serve **1B users**, and it was used in very large self-managed PostgreSQL installations for years. That knowledge is mostly forgotten ancient arto now — real database kung fu from the era when people solved brutal scale problems without cargo-culting another distributed system into the stack.
 
 PgQue takes that battle-tested core and repackages it as an extension-free, managed-Postgres-friendly project.
+
+**The anti-extension.** Pure SQL + PL/pgSQL that works on any Postgres 14+ — including RDS, Cloud SQL, AlloyDB, Supabase, Neon, and every other managed provider. No C extension, no `shared_preload_libraries`, no provider approval, no restart. Just `\i` and go.
 
 If you want the historical context, two decks are worth your time:
 
