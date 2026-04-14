@@ -36,30 +36,34 @@ This is the key point: PgQue gives you queue semantics **inside** Postgres, with
 
 | Feature | PgQue | PGMQ | River | graphile-worker | pg-boss | Oban |
 |---|---|---|---|---|---|---|
-| Lockless snapshot-based claim mechanism | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Snapshot-based batching (no row locks) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Zero bloat under sustained load | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| No C extension required | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Managed Postgres friendly | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| No external daemon or worker binary | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Pure SQL install, managed Postgres ready | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Language-agnostic SQL API | ✅ | ✅ | ❌ | ⚠️ | ❌ | ❌ |
-| Multiple independent consumers | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Multiple independent consumers (fan-out) | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | Built-in retry with backoff | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ |
 | Built-in dead letter queue | ✅ | ⚠️ | ❌ | ❌ | ✅ | ⚠️ |
 
 **Legend:** ✅ yes · ❌ no · ⚠️ partial / indirect
 
-**Notes:** PGMQ was rewritten to pure PL/pgSQL in mid-2024 and supports
-`\i pgmq.sql` install on managed Postgres. PGMQ retry is via visibility
-timeout re-delivery (`read_ct` tracking) — no configurable backoff or max
-attempts built in. graphile-worker has an `add_job()` SQL function for
-enqueuing from any language, but workers are Node.js-only. pg-boss supports
-fan-out via its `publish()`/`subscribe()` API (copy-per-queue, not a shared
-event log). River, graphile-worker, pg-boss, and Oban are primarily **job
-queue frameworks** with worker executors, priority queues, cron scheduling,
-and per-job lifecycle management — features PgQue does not provide. PgQue is
-an **event/message queue** optimized for high-throughput streaming with
-fan-out, where the key differentiators are snapshot-based batch isolation
-and TRUNCATE-based table rotation (zero dead tuples in event tables under
-sustained load).
+**Notes:** PgQue and PGMQ run entirely inside PostgreSQL — no external
+binary, container, or sidecar process needed for queue operations (PgQue
+uses pg_cron for ticker/maintenance; PGMQ uses visibility timeouts). River
+requires a Go binary, graphile-worker and pg-boss require Node.js, and Oban
+requires the Elixir/BEAM VM. All competitors use `FOR UPDATE SKIP LOCKED`
+(row-level locking + DELETE), which creates dead tuples requiring VACUUM.
+PgQue uses snapshot isolation + TRUNCATE rotation — zero dead tuples in
+event tables by construction. PGMQ retry is via visibility timeout
+re-delivery (`read_ct` tracking) — no configurable backoff or max attempts
+built in. graphile-worker has an `add_job()` SQL function for enqueuing from
+any language, but workers are Node.js-only. pg-boss supports fan-out via its
+`publish()`/`subscribe()` API (copy-per-queue, not a shared event log).
+River, graphile-worker, pg-boss, and Oban are primarily **job queue
+frameworks** with worker executors, priority queues, cron scheduling, and
+per-job lifecycle management — features PgQue does not provide. PgQue is an
+**event/message queue** optimized for high-throughput streaming with
+fan-out.
 
 ## Installation
 
