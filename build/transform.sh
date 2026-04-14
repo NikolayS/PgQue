@@ -618,13 +618,13 @@ echo "" >> "${INSTALL_FILE}"
 cat "${OUTPUT_DIR}/structure/grants.sql" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
-# Section 6: pgque additions
+# Section 6: pgque additions (except roles)
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "-- Section 6: pgque additions" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
-for addition_file in config.sql queue_max_retries.sql lifecycle.sql roles.sql; do
+for addition_file in config.sql queue_max_retries.sql lifecycle.sql; do
   echo "-- pgque-additions/${addition_file}" >> "${INSTALL_FILE}"
   cat "${ADDITIONS_DIR}/${addition_file}" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
@@ -656,6 +656,16 @@ if [[ -d "${API_DIR}" ]]; then
     fi
   done
 fi
+
+# Section 8: roles (after all public functions exist)
+echo "-- ======================================================================" >> "${INSTALL_FILE}"
+echo "-- Section 8: roles" >> "${INSTALL_FILE}"
+echo "-- ======================================================================" >> "${INSTALL_FILE}"
+echo "" >> "${INSTALL_FILE}"
+
+echo "-- pgque-additions/roles.sql" >> "${INSTALL_FILE}"
+cat "${ADDITIONS_DIR}/roles.sql" >> "${INSTALL_FILE}"
+echo "" >> "${INSTALL_FILE}"
 
 install_lines=$(wc -l < "${INSTALL_FILE}")
 echo "Assembled ${INSTALL_FILE} (${install_lines} lines)"
