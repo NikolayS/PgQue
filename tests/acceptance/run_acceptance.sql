@@ -14,12 +14,12 @@
 \i tests/acceptance/us7_exactly_once.sql
 \echo ''
 \echo 'Running: US-8 Install on managed PG'
-\i tests/acceptance/us8_managed_pgque.sql
+\i tests/acceptance/us8_managed_install.sql
 \echo ''
 \echo 'Running: US-10 Idempotent install'
-\i tests/acceptance/us10_idempotent_pgque.sql
+\i tests/acceptance/us10_idempotent_install.sql
 \echo ''
-\echo '=== ALL ACCEPTANCE TESTS PASSED ==='
-
 \echo 'Running: US-11 manual mode without pg_cron'
 \i tests/acceptance/us11_without_pgcron_manual_mode.sql
+\echo ''
+\echo '=== ALL ACCEPTANCE TESTS PASSED ==='
