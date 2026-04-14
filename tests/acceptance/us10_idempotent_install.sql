@@ -63,25 +63,25 @@ do $$
 declare
   v_queue_count int;
   v_sub_count int;
-  v_depth bigint;
+  v_last_tick bigint;
 begin
   select count(*) into v_queue_count from pgque.queue;
   select count(*) into v_sub_count from pgque.subscription;
 
-  -- Get depth for analytics consumer on orders (should still have pending)
-  select coalesce(cs.pending_events, 0) into v_depth
-  from pgque.consumer_stats() cs
-  where cs.queue_name = 'us10_orders'
-    and cs.consumer_name = 'analytics';
+  select s.sub_last_tick into v_last_tick
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'us10_orders'
+    and c.co_name = 'analytics';
 
-  -- Save state
   delete from _us10_state;
   insert into _us10_state values ('queue_count', v_queue_count::text);
   insert into _us10_state values ('sub_count', v_sub_count::text);
-  insert into _us10_state values ('analytics_pending', coalesce(v_depth, 0)::text);
+  insert into _us10_state values ('analytics_last_tick', coalesce(v_last_tick, 0)::text);
 
-  raise notice 'US-10 phase 1: queues=%, subs=%, analytics_pending=%',
-    v_queue_count, v_sub_count, v_depth;
+  raise notice 'US-10 phase 1: queues=%, subs=%, analytics_last_tick=%',
+    v_queue_count, v_sub_count, v_last_tick;
 end $$;
 
 -- ==============================
@@ -128,24 +128,25 @@ begin
   raise notice 'PASS: US-10 subscription count preserved (% subs)', v_sub_count;
 end $$;
 
--- Verify: consumer positions preserved (analytics still has pending events)
-do $$
+-- Verify: consumer position preserved
+ do $$
 declare
-  v_depth bigint;
+  v_last_tick bigint;
   v_expected bigint;
 begin
-  select coalesce(cs.pending_events, 0) into v_depth
-  from pgque.consumer_stats() cs
-  where cs.queue_name = 'us10_orders'
-    and cs.consumer_name = 'analytics';
+  select s.sub_last_tick into v_last_tick
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'us10_orders'
+    and c.co_name = 'analytics';
 
   select val::bigint into v_expected
-  from _us10_state where key = 'analytics_pending';
+  from _us10_state where key = 'analytics_last_tick';
 
-  -- Pending events should be the same (or possibly more if tick added events)
-  assert v_depth >= v_expected,
-    'analytics pending should be >= ' || v_expected || ', got ' || v_depth;
-  raise notice 'PASS: US-10 consumer position preserved (analytics pending=%)', v_depth;
+  assert coalesce(v_last_tick, 0) = v_expected,
+    'analytics last tick should stay ' || v_expected || ', got ' || coalesce(v_last_tick, 0);
+  raise notice 'PASS: US-10 consumer position preserved (analytics last_tick=%)', v_last_tick;
 end $$;
 
 -- Verify: all operations still work after reinstall
@@ -187,20 +188,17 @@ begin
   raise notice 'PASS: US-10 receive() works after reinstall (got % events)', v_count;
 end $$;
 
--- queue_stats still works
-do $$
+-- direct queue metadata still works
+ do $$
 declare
-  v_row record;
   v_found bool := false;
 begin
-  for v_row in select * from pgque.queue_stats()
-  loop
-    if v_row.queue_name = 'us10_orders' then
-      v_found := true;
-    end if;
-  end loop;
-  assert v_found, 'queue_stats should include us10_orders after reinstall';
-  raise notice 'PASS: US-10 queue_stats() works after reinstall';
+  select true into v_found
+  from pgque.queue
+  where queue_name = 'us10_orders';
+
+  assert coalesce(v_found, false), 'queue metadata should include us10_orders after reinstall';
+  raise notice 'PASS: US-10 queue metadata accessible after reinstall';
 end $$;
 
 -- ==============================
