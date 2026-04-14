@@ -6,23 +6,6 @@
 -- finish_batch, event_retry) into a simpler receive/ack/nack interface.
 -- See SPECx.md sections 4.2 and 4.3.
 
--- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,
-        batch_id    bigint,
-        type        text,
-        payload     text,
-        retry_count int4,
-        created_at  timestamptz,
-        extra1      text,
-        extra2      text,
-        extra3      text,
-        extra4      text
-    );
-exception when duplicate_object then null;
-end $$;
-
 -- pgque.receive() -- wraps next_batch + get_batch_events
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)

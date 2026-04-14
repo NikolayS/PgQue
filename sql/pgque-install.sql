@@ -1533,7 +1533,6 @@ begin
     delete from pgque.tick where tick_queue = q.queue_id;
 
     -- drop seqs
-    -- FIXME: any checks needed here?
     execute 'DROP SEQUENCE ' || pgque.quote_fqname(q.queue_tick_seq);
     execute 'DROP SEQUENCE ' || pgque.quote_fqname(q.queue_event_seq);
 
@@ -4153,6 +4152,15 @@ grant execute on function pgque.get_batch_info(bigint) to pgque_reader;
 -- version
 grant execute on function pgque.version() to pgque_reader;
 
+-- observability and diagnostics
+grant execute on function pgque.status() to pgque_reader;
+grant execute on function pgque.queue_stats() to pgque_reader;
+grant execute on function pgque.consumer_stats() to pgque_reader;
+grant execute on function pgque.queue_health() to pgque_reader;
+grant execute on function pgque.otel_metrics() to pgque_reader;
+grant execute on function pgque.stuck_consumers(interval) to pgque_reader;
+grant execute on function pgque.in_flight(text) to pgque_reader;
+
 -- ---------------------------------------------------------------------------
 -- Writer: can produce events and manage consumer lifecycle
 -- ---------------------------------------------------------------------------
@@ -4161,10 +4169,18 @@ grant execute on function pgque.version() to pgque_reader;
 grant execute on function pgque.insert_event(text, text, text) to pgque_writer;
 grant execute on function pgque.insert_event(text, text, text, text, text, text, text) to pgque_writer;
 
+-- modern send API
+grant execute on function pgque.send(text, jsonb) to pgque_writer;
+grant execute on function pgque.send(text, text, jsonb) to pgque_writer;
+grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
+grant execute on function pgque.send_at(text, text, jsonb, timestamptz) to pgque_writer;
+
 -- consumer registration
 grant execute on function pgque.register_consumer(text, text) to pgque_writer;
 grant execute on function pgque.register_consumer_at(text, text, bigint) to pgque_writer;
 grant execute on function pgque.unregister_consumer(text, text) to pgque_writer;
+grant execute on function pgque.subscribe(text, text) to pgque_writer;
+grant execute on function pgque.unsubscribe(text, text) to pgque_writer;
 
 -- batch processing
 grant execute on function pgque.next_batch(text, text) to pgque_writer;
@@ -4172,10 +4188,23 @@ grant execute on function pgque.next_batch_info(text, text) to pgque_writer;
 grant execute on function pgque.next_batch_custom(text, text, interval, int4, interval) to pgque_writer;
 grant execute on function pgque.get_batch_events(bigint) to pgque_writer;
 grant execute on function pgque.finish_batch(bigint) to pgque_writer;
+grant execute on function pgque.receive(text, text, integer) to pgque_writer;
+grant execute on function pgque.ack(bigint) to pgque_writer;
+grant execute on function pgque.nack(bigint, pgque.message, interval, text) to pgque_writer;
 
 -- event retry — timestamptz and integer overloads
 grant execute on function pgque.event_retry(bigint, bigint, timestamptz) to pgque_writer;
 grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_writer;
+
+-- queue management helpers
+grant execute on function pgque.create_queue(text, jsonb) to pgque_writer;
+grant execute on function pgque.pause_queue(text) to pgque_writer;
+grant execute on function pgque.resume_queue(text) to pgque_writer;
+
+grant execute on function pgque.dlq_inspect(text, integer) to pgque_writer;
+grant execute on function pgque.dlq_replay(bigint) to pgque_writer;
+grant execute on function pgque.dlq_replay_all(text) to pgque_writer;
+grant execute on function pgque.dlq_purge(text, interval) to pgque_writer;
 
 -- ---------------------------------------------------------------------------
 -- Admin: full access to everything in the pgque schema
@@ -4191,6 +4220,146 @@ revoke execute on function pgque.uninstall() from pgque_admin;
 -- ======================================================================
 -- Section 7: pgque-api (modern API layer)
 -- ======================================================================
+
+-- pgque-api/types.sql
+-- pgque-api/types.sql -- Shared public types
+-- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+
+-- pgque.message type (idempotent creation)
+do $$ begin
+    create type pgque.message as (
+        msg_id      bigint,
+        batch_id    bigint,
+        type        text,
+        payload     text,
+        retry_count int4,
+        created_at  timestamptz,
+        extra1      text,
+        extra2      text,
+        extra3      text,
+        extra4      text
+    );
+exception when duplicate_object then null;
+end $$;
+
+-- pgque-api/send.sql
+-- pgque-api/send.sql -- Modern send/subscribe API layer
+-- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+-- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
+--
+-- Implements SPECx.md sections 4.1, 4.4, 4.7:
+--   pgque.send(queue, payload)
+--   pgque.send(queue, type, payload)
+--   pgque.send_batch(queue, type, payloads[])
+--   pgque.subscribe(queue, consumer)
+--   pgque.unsubscribe(queue, consumer)
+--   pgque.create_queue(queue, options) JSONB overload
+--   pgque.pause_queue(queue)
+--   pgque.resume_queue(queue)
+
+-- pgque.send(queue, payload) -- send with default type
+create or replace function pgque.send(i_queue text, i_payload jsonb)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, 'default', i_payload::text);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send(queue, type, payload) -- send with explicit type
+create or replace function pgque.send(i_queue text, i_type text, i_payload jsonb)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, i_type, i_payload::text);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send_batch(queue, type, payloads[]) -- batch send
+create or replace function pgque.send_batch(
+    i_queue text, i_type text, i_payloads jsonb[])
+returns bigint[] as $$
+declare
+    ids bigint[];
+    p jsonb;
+begin
+    foreach p in array i_payloads loop
+        ids := array_append(ids,
+            pgque.insert_event(i_queue, i_type, p::text));
+    end loop;
+    return ids;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
+create or replace function pgque.subscribe(i_queue text, i_consumer text)
+returns integer as $$
+begin
+    return pgque.register_consumer(i_queue, i_consumer);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
+create or replace function pgque.unsubscribe(i_queue text, i_consumer text)
+returns integer as $$
+begin
+    return pgque.unregister_consumer(i_queue, i_consumer);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.create_queue(queue, options) -- JSONB overload
+-- Maps JSONB keys to set_queue_config calls and queue_max_retries column.
+create or replace function pgque.create_queue(i_queue text, i_options jsonb)
+returns integer as $$
+declare
+    v_ret integer;
+    v_key text;
+    v_val text;
+begin
+    -- Create the queue using the existing PgQ function
+    v_ret := pgque.create_queue(i_queue);
+
+    -- Apply options from JSONB
+    for v_key, v_val in select key, value #>> '{}' from jsonb_each(i_options)
+    loop
+        if v_key = 'max_retries' then
+            update pgque.queue
+            set queue_max_retries = v_val::int4
+            where queue_name = i_queue;
+        else
+            -- Map known option names to PgQ config params
+            perform pgque.set_queue_config(
+                i_queue,
+                case v_key
+                    when 'rotation_period' then 'rotation_period'
+                    when 'ticker_max_count' then 'ticker_max_count'
+                    when 'ticker_max_lag' then 'ticker_max_lag'
+                    when 'ticker_idle_period' then 'ticker_idle_period'
+                    when 'ticker_paused' then 'ticker_paused'
+                    else v_key
+                end,
+                v_val
+            );
+        end if;
+    end loop;
+
+    return v_ret;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.pause_queue(queue) -- convenience wrapper
+create or replace function pgque.pause_queue(i_queue text)
+returns void as $$
+begin
+    perform pgque.set_queue_config(i_queue, 'ticker_paused', 'true');
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.resume_queue(queue) -- convenience wrapper
+create or replace function pgque.resume_queue(i_queue text)
+returns void as $$
+begin
+    perform pgque.set_queue_config(i_queue, 'ticker_paused', 'false');
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque-api/delayed.sql
 -- pgque delayed delivery: send_at() and maint_deliver_delayed()
@@ -4449,6 +4618,92 @@ begin
       and dl_time < now() - i_older_than;
     get diagnostics v_cnt = row_count;
     return v_cnt;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque-api/receive.sql
+-- pgque.receive(), pgque.ack(), pgque.nack() -- modern consume API
+-- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+-- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
+--
+-- These functions wrap PgQ primitives (next_batch, get_batch_events,
+-- finish_batch, event_retry) into a simpler receive/ack/nack interface.
+-- See SPECx.md sections 4.2 and 4.3.
+
+-- pgque.receive() -- wraps next_batch + get_batch_events
+create or replace function pgque.receive(
+    i_queue text, i_consumer text, i_max_return int default 100)
+returns setof pgque.message as $$
+declare
+    v_batch_id bigint;
+    ev record;
+    cnt int := 0;
+begin
+    -- Get next batch (may return NULL if no events)
+    v_batch_id := pgque.next_batch(i_queue, i_consumer);
+    if v_batch_id is null then
+        return;
+    end if;
+
+    -- Yield messages from the batch
+    for ev in
+        select ev_id, ev_type, ev_data, ev_retry, ev_time,
+               ev_extra1, ev_extra2, ev_extra3, ev_extra4
+        from pgque.get_batch_events(v_batch_id)
+    loop
+        return next row(
+            ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,
+            ev.ev_retry, ev.ev_time,
+            ev.ev_extra1, ev.ev_extra2, ev.ev_extra3, ev.ev_extra4
+        )::pgque.message;
+        cnt := cnt + 1;
+        exit when cnt >= i_max_return;
+    end loop;
+    return;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.ack() -- finishes the batch, advances consumer position
+create or replace function pgque.ack(i_batch_id bigint)
+returns integer as $$
+begin
+    return pgque.finish_batch(i_batch_id);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
+create or replace function pgque.nack(
+    i_batch_id bigint,
+    i_msg pgque.message,
+    i_retry_after interval default '60 seconds',
+    i_reason text default null)
+returns integer as $$
+declare
+    v_max_retries int4;
+begin
+    -- Single lookup: subscription -> queue config
+    select coalesce(q.queue_max_retries, 5) into v_max_retries
+    from pgque.subscription s
+    join pgque.queue q on q.queue_id = s.sub_queue
+    where s.sub_batch = i_batch_id;
+
+    if not found then
+        raise exception 'batch not found: %', i_batch_id;
+    end if;
+
+    if coalesce(i_msg.retry_count, 0) >= v_max_retries then
+        -- Move to dead letter queue (pass event fields, no re-query)
+        perform pgque.event_dead(i_batch_id, i_msg.msg_id,
+            coalesce(i_reason, 'max retries exceeded'),
+            i_msg.created_at, null::xid8, i_msg.retry_count,
+            i_msg.type, i_msg.payload,
+            i_msg.extra1, i_msg.extra2, i_msg.extra3, i_msg.extra4);
+    else
+        -- Retry after delay
+        perform pgque.event_retry(i_batch_id, i_msg.msg_id,
+            extract(epoch from i_retry_after)::integer);
+    end if;
+    return 1;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -4864,246 +5119,6 @@ begin
         ), 0)::bigint as dead_letters
     from buckets b
     order by b.bucket;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque-api/receive.sql
--- pgque.receive(), pgque.ack(), pgque.nack() -- modern consume API
--- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
--- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
---
--- These functions wrap PgQ primitives (next_batch, get_batch_events,
--- finish_batch, event_retry) into a simpler receive/ack/nack interface.
--- See SPECx.md sections 4.2 and 4.3.
-
--- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,
-        batch_id    bigint,
-        type        text,
-        payload     text,
-        retry_count int4,
-        created_at  timestamptz,
-        extra1      text,
-        extra2      text,
-        extra3      text,
-        extra4      text
-    );
-exception when duplicate_object then null;
-end $$;
-
--- pgque.receive() -- wraps next_batch + get_batch_events
-create or replace function pgque.receive(
-    i_queue text, i_consumer text, i_max_return int default 100)
-returns setof pgque.message as $$
-declare
-    v_batch_id bigint;
-    ev record;
-    cnt int := 0;
-begin
-    -- Get next batch (may return NULL if no events)
-    v_batch_id := pgque.next_batch(i_queue, i_consumer);
-    if v_batch_id is null then
-        return;
-    end if;
-
-    -- Yield messages from the batch
-    for ev in
-        select ev_id, ev_type, ev_data, ev_retry, ev_time,
-               ev_extra1, ev_extra2, ev_extra3, ev_extra4
-        from pgque.get_batch_events(v_batch_id)
-    loop
-        return next row(
-            ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,
-            ev.ev_retry, ev.ev_time,
-            ev.ev_extra1, ev.ev_extra2, ev.ev_extra3, ev.ev_extra4
-        )::pgque.message;
-        cnt := cnt + 1;
-        exit when cnt >= i_max_return;
-    end loop;
-    return;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.ack() -- finishes the batch, advances consumer position
-create or replace function pgque.ack(i_batch_id bigint)
-returns integer as $$
-begin
-    return pgque.finish_batch(i_batch_id);
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
-create or replace function pgque.nack(
-    i_batch_id bigint,
-    i_msg pgque.message,
-    i_retry_after interval default '60 seconds',
-    i_reason text default null)
-returns integer as $$
-declare
-    v_max_retries int4;
-begin
-    -- Single lookup: subscription -> queue config
-    select coalesce(q.queue_max_retries, 5) into v_max_retries
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    where s.sub_batch = i_batch_id;
-
-    if not found then
-        raise exception 'batch not found: %', i_batch_id;
-    end if;
-
-    if coalesce(i_msg.retry_count, 0) >= v_max_retries then
-        -- Move to dead letter queue (pass event fields, no re-query)
-        perform pgque.event_dead(i_batch_id, i_msg.msg_id,
-            coalesce(i_reason, 'max retries exceeded'),
-            i_msg.created_at, null::xid8, i_msg.retry_count,
-            i_msg.type, i_msg.payload,
-            i_msg.extra1, i_msg.extra2, i_msg.extra3, i_msg.extra4);
-    else
-        -- Retry after delay
-        perform pgque.event_retry(i_batch_id, i_msg.msg_id,
-            extract(epoch from i_retry_after)::integer);
-    end if;
-    return 1;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque-api/send.sql
--- pgque-api/send.sql -- Modern send/subscribe API layer
--- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
--- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
---
--- Implements SPECx.md sections 4.1, 4.4, 4.7:
---   pgque.message type
---   pgque.send(queue, payload)
---   pgque.send(queue, type, payload)
---   pgque.send_batch(queue, type, payloads[])
---   pgque.subscribe(queue, consumer)
---   pgque.unsubscribe(queue, consumer)
---   pgque.create_queue(queue, options) JSONB overload
---   pgque.pause_queue(queue)
---   pgque.resume_queue(queue)
-
--- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,       -- ev_id
-        batch_id    bigint,       -- batch containing this message
-        type        text,         -- ev_type
-        payload     text,         -- ev_data (caller casts to jsonb if needed)
-        retry_count int4,         -- ev_retry (NULL for first delivery)
-        created_at  timestamptz,  -- ev_time
-        extra1      text,         -- ev_extra1
-        extra2      text,         -- ev_extra2
-        extra3      text,         -- ev_extra3
-        extra4      text          -- ev_extra4
-    );
-exception when duplicate_object then null;
-end $$;
-
--- pgque.send(queue, payload) -- send with default type
-create or replace function pgque.send(i_queue text, i_payload jsonb)
-returns bigint as $$
-begin
-    return pgque.insert_event(i_queue, 'default', i_payload::text);
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.send(queue, type, payload) -- send with explicit type
-create or replace function pgque.send(i_queue text, i_type text, i_payload jsonb)
-returns bigint as $$
-begin
-    return pgque.insert_event(i_queue, i_type, i_payload::text);
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.send_batch(queue, type, payloads[]) -- batch send
-create or replace function pgque.send_batch(
-    i_queue text, i_type text, i_payloads jsonb[])
-returns bigint[] as $$
-declare
-    ids bigint[];
-    p jsonb;
-begin
-    foreach p in array i_payloads loop
-        ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p::text));
-    end loop;
-    return ids;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
-create or replace function pgque.subscribe(i_queue text, i_consumer text)
-returns integer as $$
-begin
-    return pgque.register_consumer(i_queue, i_consumer);
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
-create or replace function pgque.unsubscribe(i_queue text, i_consumer text)
-returns integer as $$
-begin
-    return pgque.unregister_consumer(i_queue, i_consumer);
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.create_queue(queue, options) -- JSONB overload
--- Maps JSONB keys to set_queue_config calls and queue_max_retries column.
-create or replace function pgque.create_queue(i_queue text, i_options jsonb)
-returns integer as $$
-declare
-    v_ret integer;
-    v_key text;
-    v_val text;
-begin
-    -- Create the queue using the existing PgQ function
-    v_ret := pgque.create_queue(i_queue);
-
-    -- Apply options from JSONB
-    for v_key, v_val in select key, value #>> '{}' from jsonb_each(i_options)
-    loop
-        if v_key = 'max_retries' then
-            update pgque.queue
-            set queue_max_retries = v_val::int4
-            where queue_name = i_queue;
-        else
-            -- Map known option names to PgQ config params
-            perform pgque.set_queue_config(
-                i_queue,
-                case v_key
-                    when 'rotation_period' then 'rotation_period'
-                    when 'ticker_max_count' then 'ticker_max_count'
-                    when 'ticker_max_lag' then 'ticker_max_lag'
-                    when 'ticker_idle_period' then 'ticker_idle_period'
-                    when 'ticker_paused' then 'ticker_paused'
-                    else v_key
-                end,
-                v_val
-            );
-        end if;
-    end loop;
-
-    return v_ret;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.pause_queue(queue) -- convenience wrapper
-create or replace function pgque.pause_queue(i_queue text)
-returns void as $$
-begin
-    perform pgque.set_queue_config(i_queue, 'ticker_paused', 'true');
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.resume_queue(queue) -- convenience wrapper
-create or replace function pgque.resume_queue(i_queue text)
-returns void as $$
-begin
-    perform pgque.set_queue_config(i_queue, 'ticker_paused', 'false');
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 

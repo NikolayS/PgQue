@@ -39,6 +39,15 @@ grant execute on function pgque.get_batch_info(bigint) to pgque_reader;
 -- version
 grant execute on function pgque.version() to pgque_reader;
 
+-- observability and diagnostics
+grant execute on function pgque.status() to pgque_reader;
+grant execute on function pgque.queue_stats() to pgque_reader;
+grant execute on function pgque.consumer_stats() to pgque_reader;
+grant execute on function pgque.queue_health() to pgque_reader;
+grant execute on function pgque.otel_metrics() to pgque_reader;
+grant execute on function pgque.stuck_consumers(interval) to pgque_reader;
+grant execute on function pgque.in_flight(text) to pgque_reader;
+
 -- ---------------------------------------------------------------------------
 -- Writer: can produce events and manage consumer lifecycle
 -- ---------------------------------------------------------------------------
@@ -47,10 +56,18 @@ grant execute on function pgque.version() to pgque_reader;
 grant execute on function pgque.insert_event(text, text, text) to pgque_writer;
 grant execute on function pgque.insert_event(text, text, text, text, text, text, text) to pgque_writer;
 
+-- modern send API
+grant execute on function pgque.send(text, jsonb) to pgque_writer;
+grant execute on function pgque.send(text, text, jsonb) to pgque_writer;
+grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
+grant execute on function pgque.send_at(text, text, jsonb, timestamptz) to pgque_writer;
+
 -- consumer registration
 grant execute on function pgque.register_consumer(text, text) to pgque_writer;
 grant execute on function pgque.register_consumer_at(text, text, bigint) to pgque_writer;
 grant execute on function pgque.unregister_consumer(text, text) to pgque_writer;
+grant execute on function pgque.subscribe(text, text) to pgque_writer;
+grant execute on function pgque.unsubscribe(text, text) to pgque_writer;
 
 -- batch processing
 grant execute on function pgque.next_batch(text, text) to pgque_writer;
@@ -58,10 +75,23 @@ grant execute on function pgque.next_batch_info(text, text) to pgque_writer;
 grant execute on function pgque.next_batch_custom(text, text, interval, int4, interval) to pgque_writer;
 grant execute on function pgque.get_batch_events(bigint) to pgque_writer;
 grant execute on function pgque.finish_batch(bigint) to pgque_writer;
+grant execute on function pgque.receive(text, text, integer) to pgque_writer;
+grant execute on function pgque.ack(bigint) to pgque_writer;
+grant execute on function pgque.nack(bigint, pgque.message, interval, text) to pgque_writer;
 
 -- event retry — timestamptz and integer overloads
 grant execute on function pgque.event_retry(bigint, bigint, timestamptz) to pgque_writer;
 grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_writer;
+
+-- queue management helpers
+grant execute on function pgque.create_queue(text, jsonb) to pgque_writer;
+grant execute on function pgque.pause_queue(text) to pgque_writer;
+grant execute on function pgque.resume_queue(text) to pgque_writer;
+
+grant execute on function pgque.dlq_inspect(text, integer) to pgque_writer;
+grant execute on function pgque.dlq_replay(bigint) to pgque_writer;
+grant execute on function pgque.dlq_replay_all(text) to pgque_writer;
+grant execute on function pgque.dlq_purge(text, interval) to pgque_writer;
 
 -- ---------------------------------------------------------------------------
 -- Admin: full access to everything in the pgque schema

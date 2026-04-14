@@ -306,6 +306,9 @@ for src_file in "${SOURCE_FILES[@]}"; do
     functions/pgq.maint_operations.sql)
       content=$(remove_pgq_node_londiste_hooks "$content")
       ;;
+    functions/pgq.drop_queue.sql)
+      content=$(echo "$content" | sed '/FIXME: any checks needed here/d')
+      ;;
   esac
 
   printf '%s\n' "$content" > "${out_path}"
@@ -635,7 +638,17 @@ if [[ -d "${API_DIR}" ]]; then
   echo "-- ======================================================================" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
 
-  for api_file in "${API_DIR}"/*.sql; do
+  API_FILES=(
+    types.sql
+    send.sql
+    delayed.sql
+    dlq.sql
+    receive.sql
+    observability.sql
+  )
+
+  for api_name in "${API_FILES[@]}"; do
+    api_file="${API_DIR}/${api_name}"
     if [[ -f "${api_file}" ]]; then
       echo "-- pgque-api/$(basename "${api_file}")" >> "${INSTALL_FILE}"
       cat "${api_file}" >> "${INSTALL_FILE}"

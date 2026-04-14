@@ -61,6 +61,9 @@
 \echo 'Running: test_api_dlq'
 \i tests/test_api_dlq.sql
 
+\echo 'Running: test_api_nack_retry_cycle'
+\i tests/test_api_nack_retry_cycle.sql
+
 \echo 'Running: test_observability'
 \i tests/test_observability.sql
 

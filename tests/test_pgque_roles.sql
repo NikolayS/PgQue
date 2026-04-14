@@ -1,4 +1,4 @@
--- test_pgque_roles.sql -- Verify pgque roles exist
+-- test_pgque_roles.sql -- Verify pgque roles exist and modern API grants are present
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 do $$
@@ -9,6 +9,19 @@ begin
     'pgque_writer should exist';
   assert exists (select 1 from pg_roles where rolname = 'pgque_admin'),
     'pgque_admin should exist';
+
+  assert has_function_privilege('pgque_reader', 'pgque.queue_stats()', 'EXECUTE'),
+    'pgque_reader should have execute on queue_stats()';
+  assert has_function_privilege('pgque_reader', 'pgque.queue_health()', 'EXECUTE'),
+    'pgque_reader should have execute on queue_health()';
+  assert has_function_privilege('pgque_writer', 'pgque.send(text, jsonb)', 'EXECUTE'),
+    'pgque_writer should have execute on send(text, jsonb)';
+  assert has_function_privilege('pgque_writer', 'pgque.receive(text, text, integer)', 'EXECUTE'),
+    'pgque_writer should have execute on receive(text, text, integer)';
+  assert has_function_privilege('pgque_writer', 'pgque.ack(bigint)', 'EXECUTE'),
+    'pgque_writer should have execute on ack(bigint)';
+  assert has_function_privilege('pgque_writer', 'pgque.nack(bigint, pgque.message, interval, text)', 'EXECUTE'),
+    'pgque_writer should have execute on nack(bigint, pgque.message, interval, text)';
 
   raise notice 'PASS: pgque_roles';
 end $$;
