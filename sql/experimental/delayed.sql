@@ -70,8 +70,18 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- maint() -- top-level maintenance wrapper
 --
--- Calls PgQ's maint_operations() (rotation, vacuum, retry) and also
+-- Calls PgQ's maint_operations() (rotation, retry) and also
 -- runs maint_deliver_delayed() for delayed event delivery.
+--
+-- IMPORTANT: VACUUM is intentionally skipped here. Running VACUUM inside
+-- the same transaction as rotation is dangerous: if VACUUM hits the
+-- statement_timeout (25s from pg_cron), the entire transaction rolls back,
+-- including the rotation step1/step2 changes. This causes rotation to
+-- never complete, leading to unbounded event table growth.
+--
+-- Event tables have autovacuum_enabled=off (set by create_queue) because
+-- they use TRUNCATE-based rotation instead of DELETE. The pgque.tick and
+-- pgque.subscription tables are small and handled by autovacuum normally.
 create or replace function pgque.maint()
 returns integer as $$
 declare
@@ -80,13 +90,15 @@ declare
     r integer;
     total integer := 0;
 begin
-    -- Run PgQ maintenance operations (rotation, retry, vacuum)
+    -- Run PgQ maintenance operations (rotation, retry) — skip vacuum
     for f in select func_name, func_arg from pgque.maint_operations()
     loop
         if f.func_name = 'vacuum' then
-            sql := 'vacuum ' || f.func_arg;
-            execute sql;
-            total := total + 1;
+            -- Skip: vacuum inside the same TX as rotation causes timeout
+            -- rollback that prevents rotation from ever completing.
+            -- autovacuum handles the small metadata tables; event tables
+            -- use TRUNCATE rotation and don't need vacuum.
+            continue;
         elsif f.func_arg is not null then
             execute 'select ' || f.func_name || '(' || quote_literal(f.func_arg) || ')' into r;
             total := total + r;

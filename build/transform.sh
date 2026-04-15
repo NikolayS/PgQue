@@ -122,12 +122,15 @@ apply_txid_function_renames() {
   # Replace legacy txid_* functions with PG14+ equivalents.
   local content="$1"
 
+  # Rename txid_* functions to pg_* equivalents.
+  # pg_snapshot_xmin/xmax return xid8 (not bigint like the old txid_ versions).
+  # Wrap them with ::text::bigint to preserve PgQ's bigint arithmetic.
   content=$(echo "$content" | sed \
     -e 's/txid_current_snapshot()/pg_current_snapshot()/g' \
     -e 's/txid_current()/pg_current_xact_id()/g' \
-    -e 's/txid_snapshot_xmax(/pg_snapshot_xmax(/g' \
-    -e 's/txid_snapshot_xmin(/pg_snapshot_xmin(/g' \
-    -e 's/txid_snapshot_xip(/pg_snapshot_xip(/g' \
+    -e 's/txid_snapshot_xmax(\([^)]*\))/pg_snapshot_xmax(\1)::text::bigint/g' \
+    -e 's/txid_snapshot_xmin(\([^)]*\))/pg_snapshot_xmin(\1)::text::bigint/g' \
+    -e 's/txid_snapshot_xip(\([^)]*\))/pg_snapshot_xip(\1)/g' \
     -e 's/txid_visible_in_snapshot(/pg_visible_in_snapshot(/g')
 
   echo "$content"
@@ -141,21 +144,37 @@ apply_txid_snapshot_type_rename() {
 }
 
 apply_bigint_to_xid8() {
-  # Replace bigint -> xid8 ONLY for txid-related columns:
-  #   queue_switch_step1, queue_switch_step2, ev_txid
-  # These are the columns whose defaults reference txid_current()
-  # (now pg_current_xact_id() after the function rename).
+  # DISABLED: Keep columns as bigint (same as PgQ) instead of converting to xid8.
+  #
+  # Rationale: pg_current_xact_id() returns xid8, but xid8 lacks comparison
+  # and arithmetic operators that PgQ's rotation/batching code relies on:
+  #   - int8 <= xid8  (no operator — breaks maint_rotate_tables_step1)
+  #   - xid8 - integer (no operator — breaks batch_event_sql)
+  #   - xid8 -> int8   (no implicit cast — breaks variable assignment)
+  #
+  # Instead, we add ::text::bigint casts where pg_current_xact_id() is used
+  # as a column default. The pg_snapshot_xmin/xmax functions return xid8 but
+  # PL/pgSQL record fields auto-cast to the comparison type, and the batch
+  # SQL is built as text with ::text coercions.
+  #
+  # This preserves ALL PgQ's arithmetic and comparison logic unchanged.
   local content="$1"
 
-  # queue_switch_step1 and queue_switch_step2 column definitions
+  # Keep ev_txid as xid8 (required for pg_visible_in_snapshot).
   content=$(echo "$content" | sed -E \
-    's/(queue_switch_step1[[:space:]]+)bigint/\1xid8/g')
-  content=$(echo "$content" | sed -E \
-    's/(queue_switch_step2[[:space:]]+)bigint/\1xid8/g')
+    's/(ev_txid[[:space:]]+)bigint([[:space:]]+not null default)/\1xid8\2/g')
 
-  # ev_txid column definition in event_template
+  # Cast pg_current_xact_id() to ::text::bigint ONLY in switch_step columns
+  # and PL/pgSQL code (comparisons, assignments). ev_txid default stays as
+  # raw xid8 since the column is xid8.
+  # Strategy: cast ALL calls, then UN-cast the ev_txid default.
   content=$(echo "$content" | sed -E \
-    's/(ev_txid[[:space:]]+)bigint/\1xid8/g')
+    's/pg_current_xact_id\(\)([^:])/pg_current_xact_id()::text::bigint\1/g' \
+    | sed -E 's/pg_current_xact_id\(\)$/pg_current_xact_id()::text::bigint/g')
+
+  # Undo the cast for ev_txid default (needs raw xid8, not bigint):
+  content=$(echo "$content" | sed -E \
+    's/(ev_txid[[:space:]]+xid8[[:space:]]+not null default )pg_current_xact_id\(\)::text::bigint/\1pg_current_xact_id()/g')
 
   echo "$content"
 }
@@ -419,52 +438,60 @@ fi
 echo ""
 echo "=== Applying post-transform patches ==="
 
+# Cross-platform sed -i (macOS BSD sed requires '', GNU sed does not)
+sedi() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' "$@"  # BSD sed (macOS)
+  else
+    sed -i "$@"     # GNU sed (Linux)
+  fi
+}
+
 TICKER_FILE="${OUTPUT_DIR}/functions/pgque.ticker.sql"
 
-# Patch the 4-arg external ticker: inject pg_notify before "return i_tick_id;"
-sed -i '/^    return i_tick_id;$/i\
-\
-    -- pgque: notify listeners after tick\
-    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, i_tick_id::text);' \
-  "${TICKER_FILE}"
-
-# Patch the 1-arg internal ticker: inject pg_notify before "return currval(...)"
-sed -i '/^    return currval(q\.queue_tick_seq);$/i\
-\
-    -- pgque: notify listeners after tick\
-    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, currval(q.queue_tick_seq)::text);' \
-  "${TICKER_FILE}"
+# Patch the ticker: inject pg_notify before return statements (awk for portability)
+awk '
+/^    return i_tick_id;$/ {
+  print ""
+  print "    -- pgque: notify listeners after tick"
+  print "    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, i_tick_id::text);"
+}
+/^    return currval\(q\.queue_tick_seq\);$/ {
+  print ""
+  print "    -- pgque: notify listeners after tick"
+  print "    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, currval(q.queue_tick_seq)::text);"
+}
+{ print }
+' "${TICKER_FILE}" > "${TICKER_FILE}.tmp" && mv "${TICKER_FILE}.tmp" "${TICKER_FILE}"
 
 echo "PASS: pg_notify injected into ticker function"
 
 # Fix inherited PgQ copy-paste bug: sqltriga comment says logutriga
-sed -i 's/Function: pgque.logutriga()/Function: pgque.sqltriga()/' "${OUTPUT_DIR}/lowlevel_pl/sqltriga.sql"
+sedi 's/Function: pgque.logutriga()/Function: pgque.sqltriga()/' "${OUTPUT_DIR}/lowlevel_pl/sqltriga.sql"
 
 echo "PASS: sqltriga comment header fixed"
 
 # Remove debug comments from ticker
-sed -i 's/ -- unsure about access//' "${OUTPUT_DIR}/functions/pgque.ticker.sql"
+sedi 's/ -- unsure about access//' "${OUTPUT_DIR}/functions/pgque.ticker.sql"
 
 echo "PASS: debug comments removed from ticker"
 
-# Fix xid8 comparisons in batch_event_sql dynamic SQL.
-# After the bigint->xid8 transform, ev_txid is xid8 but the dynamic SQL
-# builds comparisons like "ev.ev_txid >= 12345" where 12345 is a plain
-# integer literal. PostgreSQL has no >= operator for (xid8, integer).
-# Fix: wrap values in single-quote text literals with ::xid8 cast,
-# e.g. ev.ev_txid >= '12345'::xid8
+# Fix ev_txid (xid8) comparisons in batch_event_sql dynamic SQL.
+# ev_txid is xid8, but the dynamic SQL builds "ev.ev_txid >= 855" where 855
+# is a plain integer. PostgreSQL has no xid8 >= integer operator.
+# Fix: wrap values in '...'::xid8 casts in the generated SQL.
 BATCH_SQL_FILE="${OUTPUT_DIR}/functions/pgque.batch_event_sql.sql"
-sed -i "s/|| ' and ev.ev_txid >= ' || batch.tx_start::text/|| ' and ev.ev_txid >= ''' || batch.tx_start::text || '''::xid8'/" \
+sedi "s/|| ' and ev.ev_txid >= ' || batch.tx_start::text/|| ' and ev.ev_txid >= ''' || batch.tx_start::text || '''::xid8'/" \
   "${BATCH_SQL_FILE}"
-sed -i "s/|| ' and ev.ev_txid <= ' || batch.tx_end::text/|| ' and ev.ev_txid <= ''' || batch.tx_end::text || '''::xid8'/" \
+sedi "s/|| ' and ev.ev_txid <= ' || batch.tx_end::text/|| ' and ev.ev_txid <= ''' || batch.tx_end::text || '''::xid8'/" \
   "${BATCH_SQL_FILE}"
-# Also fix the IN() list for older tx-es: each value needs ::xid8 cast.
-sed -i "s/arr := rec.id1::text;/arr := '''' || rec.id1::text || '''::xid8';/" \
+# Also fix the IN() list for older tx-es
+sedi "s/arr := rec.id1::text;/arr := '''' || rec.id1::text || '''::xid8';/" \
   "${BATCH_SQL_FILE}"
-sed -i "s/arr := arr || ',' || rec.id1::text;/arr := arr || ',''' || rec.id1::text || '''::xid8';/" \
+sedi "s/arr := arr || ',' || rec.id1::text;/arr := arr || ',''' || rec.id1::text || '''::xid8';/" \
   "${BATCH_SQL_FILE}"
 
-echo "PASS: xid8 casts added to batch_event_sql dynamic SQL"
+echo "PASS: xid8 casts added to batch_event_sql for ev_txid comparisons"
 
 # -- Assembly: build sql/pgque.sql ------------------------------------
 
@@ -521,7 +548,17 @@ echo "" >> "${INSTALL_FILE}"
 
 # Section 1: Tables
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
-echo "-- Section 1: Tables" >> "${INSTALL_FILE}"
+echo "-- Section 1: Tables (derived from PgQ)" >> "${INSTALL_FILE}"
+echo "-- Origin: pgq/structure/tables.sql" >> "${INSTALL_FILE}"
+echo "--" >> "${INSTALL_FILE}"
+echo "-- PgQue transformations applied:" >> "${INSTALL_FILE}"
+echo "--   1. Schema rename: pgq → pgque (all identifiers, grants, references)" >> "${INSTALL_FILE}"
+echo "--   2. txid_current() → pg_current_xact_id()::text::bigint (PG14+ API)" >> "${INSTALL_FILE}"
+echo "--   3. txid_snapshot → pg_snapshot (type rename)" >> "${INSTALL_FILE}"
+echo "--   4. ev_txid kept as xid8 (required by pg_visible_in_snapshot)" >> "${INSTALL_FILE}"
+echo "--   5. queue_per_tx_limit column removed (not supported without C)" >> "${INSTALL_FILE}"
+echo "--   6. set default_with_oids removed (deprecated since PG 12)" >> "${INSTALL_FILE}"
+echo "--   7. CREATE TABLE → CREATE TABLE IF NOT EXISTS (idempotent install)" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -538,7 +575,17 @@ echo "" >> "${INSTALL_FILE}"
 
 # Section 2: Internal functions (in correct order from SOURCE_FILES)
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
-echo "-- Section 2: Internal functions" >> "${INSTALL_FILE}"
+echo "-- Section 2: Internal functions (derived from PgQ)" >> "${INSTALL_FILE}"
+echo "-- Origin: pgq/functions/*.sql" >> "${INSTALL_FILE}"
+echo "--" >> "${INSTALL_FILE}"
+echo "-- PgQue transformations applied:" >> "${INSTALL_FILE}"
+echo "--   1. Schema rename: pgq → pgque" >> "${INSTALL_FILE}"
+echo "--   2. txid_* → pg_* function renames (PG14+ snapshot API)" >> "${INSTALL_FILE}"
+echo "--   3. pg_snapshot_xmin/xmax wrapped with ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
+echo "--   4. pg_current_xact_id() cast to ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
+echo "--   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog" >> "${INSTALL_FILE}"
+echo "--   6. pgq_node/Londiste hooks removed from maint_operations" >> "${INSTALL_FILE}"
+echo "--   7. pg_notify() injected into ticker for LISTEN/NOTIFY wakeup" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -588,7 +635,9 @@ done
 
 # Section 3: PL/pgSQL event insertion
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
-echo "-- Section 3: PL/pgSQL event insertion" >> "${INSTALL_FILE}"
+echo "-- Section 3: PL/pgSQL event insertion (derived from PgQ)" >> "${INSTALL_FILE}"
+echo "-- Origin: pgq/lowlevel_pl/insert_event.sql" >> "${INSTALL_FILE}"
+echo "-- PgQue transformations: schema rename, txid→pg_* renames, search_path" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -597,7 +646,9 @@ echo "" >> "${INSTALL_FILE}"
 
 # Section 4: Trigger functions
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
-echo "-- Section 4: Trigger functions" >> "${INSTALL_FILE}"
+echo "-- Section 4: Trigger functions (derived from PgQ)" >> "${INSTALL_FILE}"
+echo "-- Origin: pgq/lowlevel_pl/{jsontriga,logutriga,sqltriga}.sql" >> "${INSTALL_FILE}"
+echo "-- PgQue transformations: schema rename, search_path hardening" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -608,7 +659,9 @@ done
 
 # Section 5: Default grants (from PgQ)
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
-echo "-- Section 5: Default grants" >> "${INSTALL_FILE}"
+echo "-- Section 5: Default grants (derived from PgQ)" >> "${INSTALL_FILE}"
+echo "-- Origin: pgq/structure/grants.sql" >> "${INSTALL_FILE}"
+echo "-- PgQue transformations: pgq_reader/writer/admin → pgque_reader/writer/admin" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -617,7 +670,7 @@ echo "" >> "${INSTALL_FILE}"
 
 # Section 6: pgque additions
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
-echo "-- Section 6: pgque additions" >> "${INSTALL_FILE}"
+echo "-- Section 6: pgque additions (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -631,7 +684,7 @@ done
 API_DIR="${SQL_DIR}/pgque-api"
 if [[ -d "${API_DIR}" ]]; then
   echo "-- ======================================================================" >> "${INSTALL_FILE}"
-  echo "-- Section 7: pgque-api (default v0.1 API surface)" >> "${INSTALL_FILE}"
+  echo "-- Section 7: pgque-api (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
   echo "-- ======================================================================" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
 
@@ -650,6 +703,23 @@ if [[ -d "${API_DIR}" ]]; then
     fi
   done
 fi
+
+# -- Inline transformation comments -------------------------------------------
+# Add "PgQue transformation:" comments to specific lines in the output.
+# These annotate each mechanical change so reviewers can trace what was modified.
+
+# Column default transformations (appear once each in tables section)
+sedi '/queue_switch_step1.*default pg_current_xact_id/s/$/ -- PgQue transformation: txid_current()→pg_current_xact_id()::text::bigint (PG14+)/' "${INSTALL_FILE}"
+
+sedi '/ev_txid.*xid8.*default pg_current_xact_id/s/$/ -- PgQue transformation: bigint→xid8 (needed for pg_visible_in_snapshot)/' "${INSTALL_FILE}"
+
+# LISTEN/NOTIFY injection (appears twice in ticker)
+sedi '/perform pg_notify.*pgque_/s/$/ -- PgQue transformation: LISTEN\/NOTIFY wakeup (not in original PgQ)/' "${INSTALL_FILE}"
+
+# search_path pinning — annotate first occurrence only via awk
+awk '/set search_path = pgque, pg_catalog;/ && !sp_done {
+  sp_done=1; sub(/;/, "; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)")
+} {print}' "${INSTALL_FILE}" > "${INSTALL_FILE}.tmp" && mv "${INSTALL_FILE}.tmp" "${INSTALL_FILE}"
 
 install_lines=$(wc -l < "${INSTALL_FILE}")
 echo "Assembled ${INSTALL_FILE} (${install_lines} lines)"
