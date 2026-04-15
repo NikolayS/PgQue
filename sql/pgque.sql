@@ -4076,10 +4076,11 @@ begin
         end if;
 
         -- Unschedule rotate_step2 by name (job ID not stored in config)
-        -- Ignore error if job doesn't exist (first run or already removed)
+        -- Ignore if job doesn't exist (first run or already removed)
         begin
             perform cron.unschedule('pgque_rotate_step2');
-        exception when others then null;
+        exception when others then
+            raise notice 'pgque.stop: rotate_step2 job not found (OK on first install)';
         end;
     end if;
 
