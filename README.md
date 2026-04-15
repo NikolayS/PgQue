@@ -164,13 +164,13 @@ begin;
 commit;
 ```
 
-With `pg_cron` installed, start the built-in ticker and maintenance jobs:
+With `pg_cron` installed, `pgque.start()` creates the default ticker and maintenance jobs:
 
 ```sql
 select pgque.start();
 ```
 
-Without `pg_cron`, installation still works. You just drive ticking and maintenance from an external scheduler or your app:
+Without `pg_cron`, installation still works, but PgQue is not self-running. You must drive ticking and maintenance from an external scheduler or application process:
 
 ```bash
 # every 1-2 seconds
@@ -185,7 +185,7 @@ psql -c "select pgque.ticker()"
 psql -c "select pgque.maint()"
 ```
 
-**Important:** `pgque.ticker()` is required for message delivery. PgQue only makes events visible to consumers after ticks are created. If no ticker is running, producers can enqueue events, but consumers will not see new batches. `pgque.maint()` should also run regularly for retries, cleanup, and rotation.
+**Important:** PgQue does not deliver messages without a working ticker. By default, `pgque.start()` sets this up with `pg_cron`. If the cron job is absent, disabled, or broken, enqueueing still works, but consumers will see nothing new because ticks are not being created. If you do not use `pg_cron`, run `pgque.ticker()` yourself from an external scheduler or application process. Run `pgque.maint()` regularly as well for retries, cleanup, and rotation.
 
 For now, treat installation as initial setup. Upgrade/reinstall guarantees are still being tightened.
 
@@ -226,6 +226,7 @@ select pgque.ack(1);
 ```
 
 Important: send/tick/receive should be separate transactions. That's not a PgQue quirk so much as PgQ's snapshot-based design doing exactly what it is supposed to do.
+In normal operation, a scheduler or `pg_cron` job should be driving `pgque.ticker()`. `force_tick()` is mainly useful for demos, tests, and manual operation.
 
 ## Usage examples
 
