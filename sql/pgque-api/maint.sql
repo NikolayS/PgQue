@@ -4,6 +4,10 @@
 -- Runs PgQ maintenance operations (rotation, retry, vacuum).
 -- Experimental addons may override this function to extend maintenance.
 
+-- maint() runs rotation step1, retry, and vacuum.
+-- IMPORTANT: rotation step2 is NOT included here — it MUST run in a separate
+-- transaction from step1 (PgQ design requirement). pgque.start() schedules
+-- step2 as its own pg_cron job.
 create or replace function pgque.maint()
 returns integer as $$
 declare
@@ -14,7 +18,10 @@ declare
 begin
     for f in select func_name, func_arg from pgque.maint_operations()
     loop
-        if f.func_name = 'vacuum' then
+        -- Skip step2: it needs a separate transaction (scheduled by pgque.start)
+        if f.func_name = 'pgque.maint_rotate_tables_step2' then
+            continue;
+        elsif f.func_name = 'vacuum' then
             sql := 'vacuum ' || f.func_arg;
             execute sql;
             total := total + 1;

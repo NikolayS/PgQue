@@ -6,6 +6,7 @@ returns void as $$
 declare
     v_ticker_id bigint;
     v_maint_id bigint;
+    v_step2_id bigint;
     v_dbname text;
 begin
     -- pg_cron is optional; start() specifically requires it because it schedules jobs.
@@ -28,7 +29,7 @@ begin
         v_dbname
     ) into v_ticker_id;
 
-    -- Maintenance: every 30 seconds
+    -- Maintenance: every 30 seconds (rotation step1, retry, vacuum)
     select cron.schedule_in_database(
         'pgque_maint',
         '30 seconds',
@@ -36,12 +37,23 @@ begin
         v_dbname
     ) into v_maint_id;
 
+    -- Rotation step2: every 10 seconds, SEPARATE transaction from step1.
+    -- PgQ requires step1 and step2 in different transactions so that
+    -- step2's txid is guaranteed to be visible to all new transactions.
+    select cron.schedule_in_database(
+        'pgque_rotate_step2',
+        '10 seconds',
+        $sql$SELECT pgque.maint_rotate_tables_step2()$sql$,
+        v_dbname
+    ) into v_step2_id;
+
     -- Store job IDs in config
     update pgque.config
     set ticker_job_id = v_ticker_id,
         maint_job_id = v_maint_id;
 
-    raise notice 'pgque started: ticker job=%, maint job=%', v_ticker_id, v_maint_id;
+    raise notice 'pgque started: ticker job=%, maint job=%, rotate_step2 job=%',
+        v_ticker_id, v_maint_id, v_step2_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -61,14 +73,19 @@ begin
     select exists (select 1 from pg_extension where extname = 'pg_cron')
     into v_has_pgcron;
 
-    -- Unschedule ticker if it exists
-    if v_ticker_id is not null and v_has_pgcron then
-        perform cron.unschedule(v_ticker_id);
-    end if;
+    if v_has_pgcron then
+        -- Unschedule ticker if it exists
+        if v_ticker_id is not null then
+            perform cron.unschedule(v_ticker_id);
+        end if;
 
-    -- Unschedule maint if it exists
-    if v_maint_id is not null and v_has_pgcron then
-        perform cron.unschedule(v_maint_id);
+        -- Unschedule maint if it exists
+        if v_maint_id is not null then
+            perform cron.unschedule(v_maint_id);
+        end if;
+
+        -- Unschedule rotate_step2 by name (job ID not stored in config)
+        perform cron.unschedule('pgque_rotate_step2');
     end if;
 
     -- Clear job IDs regardless (even if pg_cron is gone)
