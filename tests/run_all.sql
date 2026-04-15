@@ -58,5 +58,6 @@
 \echo 'Running: test_api_receive'
 \i tests/test_api_receive.sql
 
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

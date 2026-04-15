@@ -185,6 +185,8 @@ psql -c "select pgque.ticker()"
 psql -c "select pgque.maint()"
 ```
 
+**Important:** `pgque.ticker()` is required for message delivery. PgQue only makes events visible to consumers after ticks are created. If no ticker is running, producers can enqueue events, but consumers will not see new batches. `pgque.maint()` should also run regularly for retries, cleanup, and rotation.
+
 For now, treat installation as initial setup. Upgrade/reinstall guarantees are still being tightened.
 
 To uninstall:
