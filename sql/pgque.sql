@@ -4391,17 +4391,25 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 --
 -- Implements default v0.1 API surface:
 --   pgque.message type
---   pgque.send(queue, payload)                -- jsonb + text overloads
---   pgque.send(queue, type, payload)          -- jsonb + text overloads
---   pgque.send_batch(queue, type, payloads[]) -- jsonb + text overloads
+--   pgque.send(queue, payload)                -- text + jsonb overloads
+--   pgque.send(queue, type, payload)          -- text + jsonb overloads
+--   pgque.send_batch(queue, type, payloads[]) -- text[] + jsonb[] overloads
 --   pgque.subscribe(queue, consumer)
 --   pgque.unsubscribe(queue, consumer)
 --
--- The jsonb overloads are the ergonomic default: PG validates JSON at parse
--- time and the caller gets a clear error for malformed payloads. The text
--- overloads skip the jsonb parse + canonical reserialization round-trip
--- (material for large payloads) and unlock non-JSON encodings: protobuf,
--- msgpack, Avro, XML. Storage (ev_data TEXT) is identical in both paths.
+-- Overload resolution note: PostgreSQL resolves untyped string literals
+-- (type `unknown`) to the `text` overload because `unknown -> text` needs
+-- no implicit cast, while `unknown -> jsonb` does. Consequently:
+--
+--   select pgque.send('orders', '{"k":1}');           -- picks send(text, text)
+--   select pgque.send('orders', '{"k":1}'::jsonb);    -- picks send(text, jsonb)
+--
+-- The `text` overloads are the default for untyped literals: bytes flow
+-- through verbatim (no parse, no canonicalization, key order preserved),
+-- and non-JSON encodings (protobuf, msgpack, Avro, XML) are supported.
+-- The `jsonb` overloads are opt-in via explicit `::jsonb` cast: PG
+-- validates JSON at parse time and stores the canonical form.
+-- Storage (ev_data TEXT) is identical in both paths.
 
 -- pgque.message type (idempotent creation)
 do $$ begin
@@ -4460,7 +4468,7 @@ create or replace function pgque.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
 declare
-    ids bigint[];
+    ids bigint[] := '{}';
     p jsonb;
 begin
     foreach p in array i_payloads loop
@@ -4476,7 +4484,7 @@ create or replace function pgque.send_batch(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
 declare
-    ids bigint[];
+    ids bigint[] := '{}';
     p text;
 begin
     foreach p in array i_payloads loop

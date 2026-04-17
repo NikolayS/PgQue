@@ -119,8 +119,14 @@ end $$;
 
 do $$
 begin
-  -- Intentionally unsorted keys + non-JSON payload. The jsonb overload
-  -- would canonicalize keys; the text overload must not.
+  -- Two non-JSON-shaped payloads covering the properties the text overload
+  -- must preserve vs. the jsonb overload:
+  --   json.raw  -- valid-looking JSON but with unsorted keys; jsonb would
+  --               canonicalize (sort) them, text must leave them untouched.
+  --   bin.raw   -- a literal backslash-escape string (text bytes, not
+  --               actual binary; PG text can't hold NULs). It's not valid
+  --               JSON, so the jsonb overload would reject it; the text
+  --               overload must store it verbatim.
   perform pgque.send('test_recv_text', 'json.raw', '{"b":2,"a":1}'::text);
   perform pgque.send('test_recv_text', 'bin.raw',  E'\\x01\\x02opaque'::text);
 end $$;
@@ -147,7 +153,7 @@ begin
       v_seen_json := true;
     elsif v_msg.type = 'bin.raw' then
       assert v_msg.payload = E'\\x01\\x02opaque',
-        format('send(text) must preserve non-JSON bytes; got %s', v_msg.payload);
+        format('send(text) must preserve non-JSON payload verbatim; got %s', v_msg.payload);
       v_seen_bin := true;
     end if;
   end loop;

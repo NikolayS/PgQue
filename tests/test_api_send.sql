@@ -79,6 +79,26 @@ begin
   raise notice 'PASS: send_batch(text[]) returns 3 ids';
 end $$;
 
+-- Test 3d: send_batch() on empty input returns empty array, not NULL
+do $$
+declare
+  v_ids bigint[];
+begin
+  v_ids := pgque.send_batch('test_send', 'batch.empty', array[]::jsonb[]);
+  assert v_ids is not null, 'send_batch(jsonb[]) on empty input must not return NULL';
+  assert cardinality(v_ids) = 0,
+    'send_batch(jsonb[]) on empty input must return empty array, got '
+    || cardinality(v_ids)::text;
+
+  v_ids := pgque.send_batch('test_send', 'batch.empty', array[]::text[]);
+  assert v_ids is not null, 'send_batch(text[]) on empty input must not return NULL';
+  assert cardinality(v_ids) = 0,
+    'send_batch(text[]) on empty input must return empty array, got '
+    || cardinality(v_ids)::text;
+
+  raise notice 'PASS: send_batch() on empty input returns empty array';
+end $$;
+
 -- Test 4: subscribe/unsubscribe
 do $$
 declare
