@@ -77,6 +77,60 @@ jobs:
         if: always()
         run: docker rm -f pgque-test
 
+  client-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Start PostgreSQL 18
+        run: |
+          docker run -d --name pgque-client-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            postgres:18
+
+          for i in $(seq 1 30); do
+            docker exec pgque-client-test pg_isready -U postgres && break
+            sleep 1
+          done || { echo "PG not ready after 30 seconds"; exit 1; }
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Install pgque
+        run: |
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -c "select pgque.create_queue('smoke_py'); select pgque.create_queue('smoke_go'); select pgque.create_queue('smoke_ts');"
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -c "select pgque.force_tick('smoke_py'); select pgque.force_tick('smoke_go'); select pgque.force_tick('smoke_ts'); select pgque.ticker();"
+
+      - name: Python smoke
+        run: |
+          python3 -m pip install -U pip
+          python3 -m pip install -e clients/python[dev]
+          pytest -q clients/python/tests/test_smoke.py
+
+      - name: Go smoke
+        run: |
+          cd clients/go
+          go test -run TestSmoke ./...
+
+      - name: TypeScript smoke
+        run: |
+          cd clients/typescript
+          npm install
+          npm run check
+          npx tsx src/smoke.ts
+
+      - name: Cleanup client smoke DB
+        if: always()
+        run: docker rm -f pgque-client-test
+
   verify:
     runs-on: ubuntu-latest
     steps:

@@ -1,0 +1,22 @@
+{
+  "name": "pgque-ts-example",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Example TypeScript client for PgQue",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "tsx": "^4.19.3",
+    "@types/node": "^22.15.3",
+    "@types/pg": "^8.15.2"
+  }
+}
