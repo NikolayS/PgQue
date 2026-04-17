@@ -623,32 +623,28 @@ send a JSON message, receive it, ack or nack it.
 ### 4.1 Publishing: `pgque.send()`
 
 ```sql
--- Simple send (jsonb: ergonomic default; PG validates JSON at parse time)
-SELECT pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
+-- Default path: untyped literal resolves to send(text, text) -- verbatim bytes
+select pgque.send('orders', '{"order_id": 42, "total": 99.95}');
 
--- Send with explicit type
-SELECT pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
+-- Opt-in validation: explicit ::jsonb cast resolves to send(text, jsonb)
+select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
 
--- Send batch (array of payloads)
-SELECT pgque.send_batch('orders', 'order.created', ARRAY[
-    '{"order_id": 42}'::jsonb,
-    '{"order_id": 43}'::jsonb,
-    '{"order_id": 44}'::jsonb
+-- Send with explicit type (both overloads available on the same rules)
+select pgque.send('orders', 'order.created', '{"order_id": 42}');
+select pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
+
+-- Send batch (text[] default; use ::jsonb[] cast to opt into validation)
+select pgque.send_batch('orders', 'order.created', array[
+    '{"order_id": 42}',
+    '{"order_id": 43}',
+    '{"order_id": 44}'
 ]);
 
--- Fast path: text overload. Skips the jsonb parse + canonical
--- reserialization round-trip and stores the payload byte-for-byte.
--- Use this for large payloads, non-JSON encodings (protobuf, msgpack,
--- Avro, XML), or when the caller has already validated the input.
-SELECT pgque.send('orders', '{"order_id": 42}'::text);
-SELECT pgque.send('orders', 'order.proto', E'\\x08\\x2a\\x10\\x63'::text);
-SELECT pgque.send_batch('orders', 'order.created', ARRAY[
-    '{"order_id": 42}',
-    '{"order_id": 43}'
-]::text[]);
+-- Non-JSON encodings go through the text overload directly
+select pgque.send('orders', 'order.proto', E'\\x08\\x2a\\x10\\x63');
 
 -- Delayed send (deliver after timestamp)
-SELECT pgque.send_at('orders', 'reminder.send',
+select pgque.send_at('orders', 'reminder.send',
     '{"user_id": 7}'::jsonb,
     now() + interval '24 hours');
 
@@ -666,10 +662,10 @@ implicit cast. So:
 
 ```sql
 -- Untyped literal → resolves to send(text, text), bytes verbatim
-SELECT pgque.send('orders', '{"order_id": 42}');
+select pgque.send('orders', '{"order_id": 42}');
 
 -- Explicit ::jsonb → resolves to send(text, jsonb), validated + canonicalized
-SELECT pgque.send('orders', '{"order_id": 42}'::jsonb);
+select pgque.send('orders', '{"order_id": 42}'::jsonb);
 ```
 
 The `text` overload is therefore the natural default for plain SQL callers
@@ -694,35 +690,35 @@ cannot polymorphically carry both `text` and `jsonb`).
 **Internal mapping:**
 
 ```sql
--- jsonb overloads (ergonomic default, validation + canonicalization)
-CREATE FUNCTION pgque.send(i_queue text, i_payload jsonb)
-RETURNS bigint AS $$
-BEGIN
-    RETURN pgque.insert_event(i_queue, 'default', i_payload::text);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+-- jsonb overloads (opt-in via ::jsonb cast; validation + canonicalization)
+create function pgque.send(i_queue text, i_payload jsonb)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, 'default', i_payload::text);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
-CREATE FUNCTION pgque.send(i_queue text, i_type text, i_payload jsonb)
-RETURNS bigint AS $$
-BEGIN
-    RETURN pgque.insert_event(i_queue, i_type, i_payload::text);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+create function pgque.send(i_queue text, i_type text, i_payload jsonb)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, i_type, i_payload::text);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- text overloads (fast path, opaque payload)
-CREATE FUNCTION pgque.send(i_queue text, i_payload text)
-RETURNS bigint AS $$
-BEGIN
-    RETURN pgque.insert_event(i_queue, 'default', i_payload);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+-- text overloads (default for untyped literals; fast path, opaque payload)
+create function pgque.send(i_queue text, i_payload text)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, 'default', i_payload);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
-CREATE FUNCTION pgque.send(i_queue text, i_type text, i_payload text)
-RETURNS bigint AS $$
-BEGIN
-    RETURN pgque.insert_event(i_queue, i_type, i_payload);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+create function pgque.send(i_queue text, i_type text, i_payload text)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, i_type, i_payload);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 create function pgque.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
