@@ -2483,7 +2483,7 @@ declare
 begin
     -- Setup: queue with max_retries=2
     perform pgque.create_queue('test_dlq');
-    perform pgque.set_queue_config('test_dlq', 'queue_max_retries', '2');
+    perform pgque.set_queue_config('test_dlq', 'max_retries', '2');
     perform pgque.subscribe('test_dlq', 'c1');
     perform pgque.send('test_dlq', '{"x":1}'::jsonb);
     perform pgque.ticker();

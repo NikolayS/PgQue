@@ -81,13 +81,23 @@ pgque/
   blueprints/          -- specs, design docs, brainstorms
     SPECx.md           -- pgque specification (the main spec)
     SPEC.md            -- PgQ internals reference (from pgq repo)
+    PHASES.md          -- what ships in v0.1 vs experimental
   sql/                 -- source SQL files
     pgque.sql  -- single-file install (built from sources)
     pgque-unpgque.sql
   tests/               -- regression tests (sql/ + expected/)
+  docs/                -- user-facing documentation (flat layout)
+    README.md          -- index of the docs directory
+    tutorial.md        -- hands-on walkthrough (start here for new users)
+    reference.md       -- per-function reference for the v0.1 install
+    examples.md        -- short patterns (fan-out, exactly-once, etc.)
+    benchmarks.md      -- throughput numbers + methodology
+    pgq-concepts.md    -- contributor glossary (batch, tick, rotation)
+    pgq-history.md     -- short timeline from Skype to PgQue
   clients/             -- client libraries
     python/            -- pgque-py
     go/                -- pgque-go
+    typescript/        -- pgque-ts
   cli/                 -- pgque CLI (Go)
 ```
 
