@@ -643,8 +643,10 @@ select pgque.send_batch('orders', 'order.created', array[
 -- Textual non-JSON payloads (XML, CSV, base64/hex-encoded binary) go
 -- through the text overload as-is. Raw binary with NUL bytes is rejected
 -- by PG text -- encode first (e.g. encode(raw_proto, 'base64')).
+-- Note PG bytea hex input is a single \x prefix followed by hex digits;
+-- per-byte separators are not allowed (use \x082a1063, not \x08\x2a\x10\x63).
 select pgque.send('orders', 'order.xml', '<order id="42"/>');
-select pgque.send('orders', 'order.proto_b64', encode('\x08\x2a\x10\x63'::bytea, 'base64'));
+select pgque.send('orders', 'order.proto_b64', encode('\x082a1063'::bytea, 'base64'));
 
 -- Delayed send (deliver after timestamp)
 select pgque.send_at('orders', 'reminder.send',
