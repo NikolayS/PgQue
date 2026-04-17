@@ -149,3 +149,28 @@ begin
     return v_cnt;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- ---------------------------------------------------------------------------
+-- Grants
+-- ---------------------------------------------------------------------------
+-- dlq.sql runs after roles.sql in transform.sh, so role names already exist
+-- and roles.sql's blanket "grant select on all tables / execute on all
+-- functions" passes have already run — the explicit grants below cover the
+-- DLQ table and functions created here.
+--
+-- dlq_inspect is read-only — available to pgque_reader and above.
+-- dlq_replay / dlq_replay_all re-insert events — writer-level.
+-- dlq_purge and event_dead stay on PUBLIC default; pgque_admin already has
+-- blanket execute via roles.sql.
+
+grant select on pgque.dead_letter                           to pgque_reader;
+grant all    on pgque.dead_letter                           to pgque_admin;
+grant all    on sequence pgque.dead_letter_dl_id_seq        to pgque_admin;
+
+grant execute on function pgque.dlq_inspect(text, int)      to pgque_reader;
+grant execute on function pgque.dlq_replay(bigint)          to pgque_writer;
+grant execute on function pgque.dlq_replay_all(text)        to pgque_writer;
+grant execute on function pgque.event_dead(
+    bigint, bigint, text, timestamptz, xid8, int4,
+    text, text, text, text, text, text)                     to pgque_admin;
+grant execute on function pgque.dlq_purge(text, interval)   to pgque_admin;

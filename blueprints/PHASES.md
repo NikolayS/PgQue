@@ -25,6 +25,13 @@ useful, and stable enough to promote into the default install.
 - `pgque.subscribe(queue, consumer)`
 - `pgque.receive(queue, consumer, max_return)`
 - `pgque.ack(batch_id)`
+- `pgque.nack(batch_id, msg, retry_after, reason)`
+
+### Dead letter queue
+- `pgque.dead_letter` table
+- `pgque.event_dead()` — called by `nack()` when `retry_count >= max_retries`
+- `pgque.dlq_inspect()`, `pgque.dlq_replay()`, `pgque.dlq_replay_all()`,
+  `pgque.dlq_purge()`
 
 ## Experimental SQL (`sql/experimental/`)
 
@@ -34,11 +41,6 @@ These files are not installed by default in v0.1.
 - delayed delivery table
 - `pgque.send_at()`
 - delayed-delivery maintenance hook
-
-### `sql/experimental/dlq.sql`
-- dead letter queue tables and helpers
-- replay / inspect / purge workflows
-- retry-to-DLQ API surface
 
 ### `sql/experimental/observability.sql`
 - queue / consumer stats
