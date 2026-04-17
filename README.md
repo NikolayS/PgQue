@@ -290,7 +290,6 @@ The repo also contains additional SQL under `sql/experimental/` for features
 that are not part of the default v0.1 install yet:
 
 - delayed delivery
-- dead letter queue tooling
 - observability helpers
 
 Those pieces are being kept out of the default install until the API surface settles.

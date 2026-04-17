@@ -681,7 +681,7 @@ echo "-- Section 6: pgque additions (NEW — not derived from PgQ)" >> "${INSTAL
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
-for addition_file in config.sql queue_max_retries.sql lifecycle.sql roles.sql; do
+for addition_file in config.sql queue_max_retries.sql lifecycle.sql roles.sql dlq.sql; do
   echo "-- pgque-additions/${addition_file}" >> "${INSTALL_FILE}"
   cat "${ADDITIONS_DIR}/${addition_file}" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
@@ -819,8 +819,10 @@ else
   asm_errors=$((asm_errors + 1))
 fi
 
-# Verify experimental APIs are NOT in the default install script
-if grep -q 'maint_deliver_delayed\|send_at\|delayed_events\|dlq_inspect\|otel_metrics\|queue_stats' "${INSTALL_FILE}"; then
+# Verify experimental APIs are NOT in the default install script.
+# DLQ (dlq_inspect / event_dead / pgque.dead_letter) was promoted to the default
+# install — nack() depends on event_dead, so the DLQ has to ship by default.
+if grep -q 'maint_deliver_delayed\|send_at\|delayed_events\|otel_metrics\|queue_stats' "${INSTALL_FILE}"; then
   echo "FAIL: experimental APIs leaked into default install script"
   asm_errors=$((asm_errors + 1))
 else
