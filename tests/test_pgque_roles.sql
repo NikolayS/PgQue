@@ -41,5 +41,15 @@ begin
   assert has_function_privilege('pgque_writer', 'pgque.nack(bigint, pgque.message, interval, text)', 'EXECUTE'),
     'pgque_writer should have execute on nack(bigint, pgque.message, interval, text)';
 
+  -- uninstall() must be superuser-only: execute is revoked from both
+  -- pgque_admin and PUBLIC. Any non-superuser role (including pgque_admin,
+  -- pgque_writer, pgque_reader) should NOT be able to execute it.
+  assert not has_function_privilege('pgque_admin',  'pgque.uninstall()', 'EXECUTE'),
+    'pgque_admin should NOT have execute on uninstall() (revoked in roles.sql)';
+  assert not has_function_privilege('pgque_writer', 'pgque.uninstall()', 'EXECUTE'),
+    'pgque_writer should NOT have execute on uninstall() (inherits PUBLIC revoke)';
+  assert not has_function_privilege('pgque_reader', 'pgque.uninstall()', 'EXECUTE'),
+    'pgque_reader should NOT have execute on uninstall() (inherits PUBLIC revoke)';
+
   raise notice 'PASS: pgque_roles';
 end $$;

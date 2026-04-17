@@ -77,5 +77,8 @@ grant all on all tables in schema pgque to pgque_admin;
 grant all on all sequences in schema pgque to pgque_admin;
 grant execute on all functions in schema pgque to pgque_admin;
 
--- uninstall() drops the entire schema — only superuser / schema owner should run it
+-- uninstall() drops the entire schema — only superuser / schema owner should run it.
+-- SECURITY DEFINER functions default to PUBLIC execute; revoke both PUBLIC and
+-- pgque_admin so the function really is superuser-only.
+revoke execute on function pgque.uninstall() from public;
 revoke execute on function pgque.uninstall() from pgque_admin;
