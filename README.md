@@ -353,9 +353,9 @@ select pgque.ack(batch_id);
 
 | Function | Returns | Description |
 |---|---|---|
-| `pgque.send(queue, payload)` | `bigint` | Send a message with default type |
-| `pgque.send(queue, type, payload)` | `bigint` | Send with explicit event type |
-| `pgque.send_batch(queue, type, payloads[])` | `bigint[]` | Batch send in a single transaction |
+| `pgque.send(queue, payload)` | `bigint` | Send with default type; `payload` may be `jsonb` (validated, canonicalized) or `text` (fast path, opaque bytes) |
+| `pgque.send(queue, type, payload)` | `bigint` | Send with explicit event type; `jsonb` and `text` overloads |
+| `pgque.send_batch(queue, type, payloads[])` | `bigint[]` | Batch send in a single transaction; `jsonb[]` and `text[]` overloads |
 | `pgque.send_at(queue, type, payload, deliver_at)` | `bigint` | Delayed/scheduled delivery |
 
 ### Consuming
