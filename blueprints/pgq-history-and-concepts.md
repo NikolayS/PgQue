@@ -202,7 +202,12 @@ CloudWatch alerts.
 
 ## Operational tuning knobs
 
-Per-queue parameters (names preserved from PgQ for familiarity):
+These are **per-queue DB-level settings**, stored as columns on
+`pgque.queue` (`queue_ticker_max_lag`, `queue_ticker_max_count`,
+`queue_rotation_period`, ...). They are consulted by whatever process calls
+`pgque.ticker()` -- in PgQue, that is `pg_cron`. They are *not* tied to the
+historical `pgqd` / `pgqadm.py` daemons (which we do not ship); those tools
+were just client-side front-ends that wrote the same DB columns.
 
 - `ticker_max_lag` -- max wall time between ticks.
 - `ticker_idle_period` -- tick interval when no events are arriving.
@@ -210,6 +215,9 @@ Per-queue parameters (names preserved from PgQ for familiarity):
   Effectively a batch-size cap.
 - `rotation_period` -- how often to rotate queue tables. Trades disk space
   against retained event history.
+
+Set via the `options` jsonb argument to `pgque.create_queue()` (see
+`SPECx.md`), or updated later via the equivalent config function.
 
 ## Source notes
 
