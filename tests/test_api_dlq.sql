@@ -100,11 +100,10 @@ begin
 end $$;
 
 -- Cleanup test 2
+-- (DLQ entries cascade-delete via the dl_queue_id / dl_consumer_id FKs when
+-- the queue is dropped or the consumer is unregistered — no manual purge.)
 do $$
 begin
-  -- Delete DLQ entries before unregistering consumer (FK constraint)
-  delete from pgque.dead_letter
-  where dl_queue_id = (select queue_id from pgque.queue where queue_name = 'test_dlq2');
   perform pgque.unregister_consumer('test_dlq2', 'c1');
   perform pgque.drop_queue('test_dlq2');
   raise notice 'PASS: nack routes to DLQ after max retries';

@@ -4250,10 +4250,23 @@ revoke execute on function pgque.uninstall() from pgque_admin;
 -- See SPECx.md section 4.5.
 
 -- pgque.dead_letter table
+--
+-- FK behavior: both dl_queue_id and dl_consumer_id use `on delete cascade`.
+-- Rationale:
+--   - `pgque.drop_queue()` deletes the pgque.queue row unconditionally. DLQ
+--     entries for a dropped queue are meaningless, so cascading them is
+--     correct (users who want to preserve the audit trail should call
+--     `pgque.dlq_purge` or copy the rows out before dropping the queue).
+--   - `pgque.unregister_consumer()` deletes the pgque.consumer row only when
+--     the consumer has no other subscriptions. That is an explicit,
+--     user-initiated action (not routine maintenance), so cascading the
+--     historical DLQ rows tied to that (now-removed) consumer id is the
+--     least-surprising default. Same escape hatch: purge/copy first if the
+--     audit trail matters.
 create table if not exists pgque.dead_letter (
     dl_id           bigserial primary key,
-    dl_queue_id     int4 not null references pgque.queue(queue_id),
-    dl_consumer_id  int4 not null references pgque.consumer(co_id),
+    dl_queue_id     int4 not null references pgque.queue(queue_id)    on delete cascade,
+    dl_consumer_id  int4 not null references pgque.consumer(co_id)    on delete cascade,
     dl_time         timestamptz not null default now(),
     dl_reason       text,
 
@@ -4398,15 +4411,20 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
--- dlq.sql runs after roles.sql in transform.sh, so role names already exist
--- and roles.sql's blanket "grant select on all tables / execute on all
--- functions" passes have already run — the explicit grants below cover the
--- DLQ table and functions created here.
+-- dlq.sql runs after roles.sql in transform.sh, so role names already exist.
+-- However, roles.sql's blanket "grant select on all tables / execute on all
+-- functions" passes ran *before* dlq.sql created these objects, so they do
+-- NOT cover the DLQ table and functions. The explicit grants below are
+-- therefore required (not redundant) for every role mentioned, including
+-- pgque_admin.
 --
 -- dlq_inspect is read-only — available to pgque_reader and above.
 -- dlq_replay / dlq_replay_all re-insert events — writer-level.
--- dlq_purge and event_dead stay on PUBLIC default; pgque_admin already has
--- blanket execute via roles.sql.
+-- dlq_purge / event_dead: admin-level operations (purge = data loss,
+-- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
+-- explicitly for the reason above. Left on PUBLIC default EXECUTE for now;
+-- consider revoke-from-public if the codebase adopts that convention more
+-- broadly.
 
 grant select on pgque.dead_letter                           to pgque_reader;
 grant all    on pgque.dead_letter                           to pgque_admin;
