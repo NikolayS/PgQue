@@ -52,4 +52,12 @@ export class PgqueClient {
   async ack(batchId: number): Promise<void> {
     await this.client.query('select pgque.ack($1)', [batchId]);
   }
+
+  async forceTick(queue: string): Promise<void> {
+    await this.client.query('select pgque.force_tick($1)', [queue]);
+  }
+
+  async ticker(): Promise<void> {
+    await this.client.query('select pgque.ticker()');
+  }
 }

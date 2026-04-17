@@ -4,8 +4,10 @@ async function main(): Promise<void> {
   const client = new PgqueClient('postgresql://postgres:pgque_test@localhost:5432/pgque_test');
   await client.connect();
 
-  await client.send('smoke_ts', { hello: 'world' }, 'smoke.test');
   await client.subscribe('smoke_ts', 'ts-smoke');
+  await client.send('smoke_ts', { hello: 'world' }, 'smoke.test');
+  await client.forceTick('smoke_ts');
+  await client.ticker();
 
   const messages = await client.receive('smoke_ts', 'ts-smoke', 10);
   if (messages.length === 0) {

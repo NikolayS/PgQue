@@ -84,13 +84,13 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 17
+      - name: Start PostgreSQL 18
         run: |
           docker run -d --name pgque-client-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:17
+            postgres:18
 
           for i in $(seq 1 30); do
             docker exec pgque-client-test pg_isready -U postgres && break

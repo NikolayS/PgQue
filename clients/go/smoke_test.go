@@ -11,13 +11,23 @@ func TestSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer client.Close(ctx)
+	defer client.Close()
 
-	if err := client.Send(ctx, "smoke_go", "smoke.test", map[string]any{"hello": "world"}); err != nil {
+	pool := client.Pool()
+	if _, err := pool.Exec(ctx, "select pgque.subscribe('smoke_go', 'go-smoke')"); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	ev := Event{Type: "smoke.test", Payload: map[string]any{"hello": "world"}}
+	if _, err := client.Send(ctx, "smoke_go", ev); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if err := client.Subscribe(ctx, "smoke_go", "go-smoke"); err != nil {
-		t.Fatalf("subscribe: %v", err)
+
+	if _, err := pool.Exec(ctx, "select pgque.force_tick('smoke_go')"); err != nil {
+		t.Fatalf("force_tick: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "select pgque.ticker()"); err != nil {
+		t.Fatalf("ticker: %v", err)
 	}
 
 	msgs, err := client.Receive(ctx, "smoke_go", "go-smoke", 10)
