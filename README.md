@@ -124,7 +124,6 @@ sustained load this causes documented, reproducible production failures:
   autovacuum starvation documented at Heroku
 - Oban Pro shipped table partitioning specifically to mitigate bloat
 - PGMQ ships aggressive autovacuum settings in some deployment setups
-  image
 
 PgQue's TRUNCATE rotation creates zero dead tuples in event tables by
 construction. No tuning required, immune to xmin horizon pinning. This
@@ -195,6 +194,40 @@ To uninstall:
 \i sql/pgque_uninstall.sql
 ```
 
+## Roles and grants
+
+The install creates three roles with explicit grants for the operational
+API. Application users do not need superuser; grant them whichever role
+matches their access pattern.
+
+| Role | Purpose | Granted access |
+|---|---|---|
+| `pgque_reader` | Dashboards, metrics, debugging | `get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, plus `select` on all tables |
+| `pgque_writer` | Producers and consumers (most apps) | inherits `pgque_reader` + the modern API (`send`, `send_batch`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) and the underlying PgQ primitives (`insert_event`, `next_batch`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer`, `unregister_consumer`) |
+| `pgque_admin`  | Operators, migrations | inherits `pgque_writer` + full schema/table/sequence access. Excludes `uninstall()` (superuser-only on purpose: it drops the schema). |
+
+Typical app setup:
+
+```sql
+-- once, as superuser or schema owner
+\i sql/pgque.sql
+select pgque.start();           -- optional: pg_cron ticker + maint
+
+-- for the application connection
+create user app_orders with password '...';
+grant pgque_writer to app_orders;
+
+-- for a read-only metrics user
+create user metrics with password '...';
+grant pgque_reader to metrics;
+```
+
+DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`,
+`maint`, `ticker`, `force_tick`) are not granted to `pgque_writer` and
+should be performed by an admin / migration role. They run on PUBLIC
+default for now; revoking from PUBLIC and granting only to
+`pgque_admin` is on the roadmap.
+
 ## Project status
 
 PgQue is **early-stage** as a product and API layer.
@@ -219,10 +252,11 @@ select pgque.force_tick('orders');
 select pgque.ticker();
 
 -- transaction 4: receive and process messages
+-- (capture batch_id from any returned row -- it's the same for the whole batch)
 select * from pgque.receive('orders', 'processor', 100);
 
 -- transaction 5: acknowledge the batch
-select pgque.ack(1);
+select pgque.ack(:batch_id);  -- substitute the batch_id you saw above
 ```
 
 Important: send/tick/receive should be separate transactions. That's not a PgQue quirk so much as PgQ's snapshot-based design doing exactly what it is supposed to do.
@@ -353,26 +387,38 @@ select pgque.ack(batch_id);
 
 | Function | Returns | Description |
 |---|---|---|
-| `pgque.send(queue, payload)` | `bigint` | Send a message with default type |
-| `pgque.send(queue, type, payload)` | `bigint` | Send with explicit event type |
-| `pgque.send_batch(queue, type, payloads[])` | `bigint[]` | Batch send in a single transaction |
-| `pgque.send_at(queue, type, payload, deliver_at)` | `bigint` | Delayed/scheduled delivery |
+| `pgque.send(queue, payload)` | `bigint` | Send with default type. Untyped literals resolve to the `text` overload (fast path, bytes verbatim — text only, no NUL bytes); use `::jsonb` cast to opt into validation + canonicalization. See [SPECx.md §4.1](blueprints/SPECx.md) for the NUL-byte caveat and binary-payload encoding guidance |
+| `pgque.send(queue, type, payload)` | `bigint` | Send with explicit event type. Same `text` / `jsonb` overload rules as above |
+| `pgque.send_batch(queue, type, payloads[])` | `bigint[]` | Batch send in a single transaction. `text[]` by default, `jsonb[]` opt-in via cast |
+| `pgque.send_at(queue, type, payload, deliver_at)` | `bigint` | Delayed/scheduled delivery (experimental) |
 
 ### Consuming
 
 | Function | Returns | Description |
 |---|---|---|
 | `pgque.receive(queue, consumer, max_return)` | `setof pgque.message` | Receive up to N messages from the next batch |
-| `pgque.ack(batch_id)` | `integer` | Finish batch and advance consumer position |
-| `pgque.subscribe(queue, consumer)` | `integer` | Register a consumer |
+| `pgque.ack(batch_id)` | `integer` | Finish batch and advance consumer position (modern alias for `finish_batch`) |
+| `pgque.nack(batch_id, msg, retry_after, reason)` | `integer` | Retry the message after `retry_after` (default 60s), or move to dead letter once the queue's `max_retries` is reached |
+| `pgque.subscribe(queue, consumer)` | `integer` | Register a consumer (modern alias for `register_consumer`) |
 | `pgque.unsubscribe(queue, consumer)` | `integer` | Unregister a consumer |
 
 ### Queue management
 
 | Function | Returns | Description |
 |---|---|---|
-| `pgque.create_queue(queue)` | `integer` | Create a new queue |
-| `pgque.drop_queue(queue)` | `integer` | Drop a queue |
+| `pgque.create_queue(queue)` | `integer` | Create a new queue (admin / migration role) |
+| `pgque.drop_queue(queue)` | `integer` | Drop a queue (admin / migration role) |
+
+### Observability
+
+Granted to `pgque_reader`, so dashboards and metrics services don't need write access.
+
+| Function | Returns | Description |
+|---|---|---|
+| `pgque.get_queue_info()` / `pgque.get_queue_info(queue)` | `setof record` | Per-queue stats: tick count, last tick time, event count, table sizes |
+| `pgque.get_consumer_info()` / `(queue)` / `(queue, consumer)` | `setof record` | Per-consumer lag, last seen tick, pending batches |
+| `pgque.get_batch_info(batch_id)` | `record` | Inspect a specific batch (consumer, queue, range) |
+| `pgque.version()` | `text` | Installed PgQue version |
 
 ### Lifecycle
 
@@ -380,10 +426,11 @@ select pgque.ack(batch_id);
 |---|---|---|
 | `pgque.start()` | `void` | Create pg_cron ticker + maintenance jobs when pg_cron is available |
 | `pgque.stop()` | `void` | Remove pg_cron jobs |
-| `pgque.status()` | `table` | Diagnostic dashboard |
-| `pgque.ticker()` | `bigint` | Manual ticker for all queues |
-| `pgque.maint()` | `integer` | Manual maintenance runner |
-| `pgque.uninstall()` | `void` | Stop jobs and drop schema |
+| `pgque.status()` | `setof record` | Diagnostic dashboard (cron jobs, ticker health, queue lag) |
+| `pgque.ticker()` | `bigint` | Manual ticker for all queues — call from your scheduler if you do not use pg_cron |
+| `pgque.force_tick(queue)` | `bigint` | Bypass tick thresholds for one queue and create a tick now. Useful in demos and tests; not for production hot paths |
+| `pgque.maint()` | `integer` | Manual maintenance runner — table rotation, retry processing, cleanup |
+| `pgque.uninstall()` | `void` | Stop jobs and drop schema (superuser only) |
 
 ### PgQ-native API
 

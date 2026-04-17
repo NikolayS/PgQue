@@ -10,8 +10,29 @@ begin
   assert exists (select 1 from pg_roles where rolname = 'pgque_admin'),
     'pgque_admin should exist';
 
+  -- send() overloads: jsonb + text at both arities
   assert has_function_privilege('pgque_writer', 'pgque.send(text, jsonb)', 'EXECUTE'),
     'pgque_writer should have execute on send(text, jsonb)';
+  assert has_function_privilege('pgque_writer', 'pgque.send(text, text)', 'EXECUTE'),
+    'pgque_writer should have execute on send(text, text)';
+  assert has_function_privilege('pgque_writer', 'pgque.send(text, text, jsonb)', 'EXECUTE'),
+    'pgque_writer should have execute on send(text, text, jsonb)';
+  assert has_function_privilege('pgque_writer', 'pgque.send(text, text, text)', 'EXECUTE'),
+    'pgque_writer should have execute on send(text, text, text)';
+
+  -- send_batch() overloads: jsonb[] + text[]
+  assert has_function_privilege('pgque_writer', 'pgque.send_batch(text, text, jsonb[])', 'EXECUTE'),
+    'pgque_writer should have execute on send_batch(text, text, jsonb[])';
+  assert has_function_privilege('pgque_writer', 'pgque.send_batch(text, text, text[])', 'EXECUTE'),
+    'pgque_writer should have execute on send_batch(text, text, text[])';
+
+  -- subscribe/unsubscribe wrappers
+  assert has_function_privilege('pgque_writer', 'pgque.subscribe(text, text)', 'EXECUTE'),
+    'pgque_writer should have execute on subscribe(text, text)';
+  assert has_function_privilege('pgque_writer', 'pgque.unsubscribe(text, text)', 'EXECUTE'),
+    'pgque_writer should have execute on unsubscribe(text, text)';
+
+  -- receive/ack/nack (grants still inherited via PUBLIC; tracked separately)
   assert has_function_privilege('pgque_writer', 'pgque.receive(text, text, integer)', 'EXECUTE'),
     'pgque_writer should have execute on receive(text, text, integer)';
   assert has_function_privilege('pgque_writer', 'pgque.ack(bigint)', 'EXECUTE'),

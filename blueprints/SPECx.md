@@ -623,21 +623,33 @@ send a JSON message, receive it, ack or nack it.
 ### 4.1 Publishing: `pgque.send()`
 
 ```sql
--- Simple send
-SELECT pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
+-- Default path: untyped literal resolves to send(text, text) -- verbatim bytes
+select pgque.send('orders', '{"order_id": 42, "total": 99.95}');
 
--- Send with explicit type
-SELECT pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
+-- Opt-in validation: explicit ::jsonb cast resolves to send(text, jsonb)
+select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
 
--- Send batch (array of payloads)
-SELECT pgque.send_batch('orders', 'order.created', ARRAY[
-    '{"order_id": 42}'::jsonb,
-    '{"order_id": 43}'::jsonb,
-    '{"order_id": 44}'::jsonb
+-- Send with explicit type (both overloads available on the same rules)
+select pgque.send('orders', 'order.created', '{"order_id": 42}');
+select pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
+
+-- Send batch (text[] default; use ::jsonb[] cast to opt into validation)
+select pgque.send_batch('orders', 'order.created', array[
+    '{"order_id": 42}',
+    '{"order_id": 43}',
+    '{"order_id": 44}'
 ]);
 
+-- Textual non-JSON payloads (XML, CSV, base64/hex-encoded binary) go
+-- through the text overload as-is. Raw binary with NUL bytes is rejected
+-- by PG text -- encode first (e.g. encode(raw_proto, 'base64')).
+-- Note PG bytea hex input is a single \x prefix followed by hex digits;
+-- per-byte separators are not allowed (use \x082a1063, not \x08\x2a\x10\x63).
+select pgque.send('orders', 'order.xml', '<order id="42"/>');
+select pgque.send('orders', 'order.proto_b64', encode('\x082a1063'::bytea, 'base64'));
+
 -- Delayed send (deliver after timestamp)
-SELECT pgque.send_at('orders', 'reminder.send',
+select pgque.send_at('orders', 'reminder.send',
     '{"user_id": 7}'::jsonb,
     now() + interval '24 hours');
 
@@ -645,28 +657,89 @@ SELECT pgque.send_at('orders', 'reminder.send',
 -- client-side sorting within a batch (see section 7.6)
 ```
 
+**Payload type choice.** Storage is always `ev_data TEXT`; the two overloads
+differ only in the client-side validation/reserialization contract.
+
+**Overload resolution.** PostgreSQL picks the overload that needs fewest
+implicit casts. An untyped SQL string literal has type `unknown`, and
+`unknown → text` is a direct match while `unknown → jsonb` needs an
+implicit cast. So:
+
+```sql
+-- Untyped literal → resolves to send(text, text), bytes verbatim
+select pgque.send('orders', '{"order_id": 42}');
+
+-- Explicit ::jsonb → resolves to send(text, jsonb), validated + canonicalized
+select pgque.send('orders', '{"order_id": 42}'::jsonb);
+```
+
+The `text` overload is therefore the natural default for plain SQL callers
+and for drivers that pass parameters as text (most of them). The `jsonb`
+overload is opt-in via an explicit `::jsonb` cast.
+
+- `text` overload (default for untyped literals): fast path. Bytes flow
+  straight through to `insert_event`. No parse, no reserialization, key
+  order preserved. Required for non-JSON *textual* payloads (XML, CSV,
+  base64/hex-encoded binary). Caller is responsible for validating the
+  payload.
+- `jsonb` overload (opt-in): PG rejects malformed JSON at parse time and
+  the payload is stored in canonical form (keys sorted, whitespace
+  normalized). Useful when you want PG to be the last line of defense
+  against malformed JSON.
+
+**NUL bytes.** `ev_data` is `text`, and PostgreSQL `text` does not accept
+NUL (`\x00`). Raw binary wire formats (protobuf, msgpack, Avro, packed
+bytea dumps) routinely contain NULs and will be rejected with `invalid
+byte sequence` at insert time. Callers that want to ship binary payloads
+must encode them first -- `encode(bytes, 'base64')`, `encode(bytes, 'hex')`,
+or a custom escape -- and decode on the consumer side. A future `bytea`
+overload could bypass this at the cost of changing `ev_data`'s storage
+type; deferred pending demand.
+
+Both overloads return `bigint` (event ID). `receive()` returns payload as
+`text`, so the `text`-both-sides path is symmetric (no implicit canonicalization
+anywhere). The `jsonb`-in / `text`-out path leaves client-side JSON parsing
+to the consumer, which is where it has to live anyway (a PG composite type
+cannot polymorphically carry both `text` and `jsonb`).
+
 **Internal mapping:**
 
 ```sql
-CREATE FUNCTION pgque.send(i_queue text, i_payload jsonb)
-RETURNS bigint AS $$
-BEGIN
-    RETURN pgque.insert_event(i_queue, 'default', i_payload::text);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+-- jsonb overloads (opt-in via ::jsonb cast; validation + canonicalization)
+create function pgque.send(i_queue text, i_payload jsonb)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, 'default', i_payload::text);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
-CREATE FUNCTION pgque.send(i_queue text, i_type text, i_payload jsonb)
-RETURNS bigint AS $$
-BEGIN
-    RETURN pgque.insert_event(i_queue, i_type, i_payload::text);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+create function pgque.send(i_queue text, i_type text, i_payload jsonb)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, i_type, i_payload::text);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- text overloads (default for untyped literals; fast path, opaque payload)
+create function pgque.send(i_queue text, i_payload text)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, 'default', i_payload);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+create function pgque.send(i_queue text, i_type text, i_payload text)
+returns bigint as $$
+begin
+    return pgque.insert_event(i_queue, i_type, i_payload);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 create function pgque.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
 declare
-    ids bigint[];
+    ids bigint[] := '{}';
     p jsonb;
 begin
     -- TODO: optimize to resolve queue/table once and bypass insert_event_raw
@@ -675,6 +748,21 @@ begin
     foreach p in array i_payloads loop
         ids := array_append(ids,
             pgque.insert_event(i_queue, i_type, p::text));
+    end loop;
+    return ids;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+create function pgque.send_batch(
+    i_queue text, i_type text, i_payloads text[])
+returns bigint[] as $$
+declare
+    ids bigint[] := '{}';
+    p text;
+begin
+    foreach p in array i_payloads loop
+        ids := array_append(ids,
+            pgque.insert_event(i_queue, i_type, p));
     end loop;
     return ids;
 end;
@@ -1074,8 +1162,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
 
 | Modern API | PgQ primitive underneath | Notes |
 |---|---|---|
-| `pgque.send(queue, payload)` | `pgque.insert_event(queue, type, data)` | JSONB convenience |
-| `pgque.send_batch(queue, type, payloads[])` | Loop of `insert_event()` calls | Single TX |
+| `pgque.send(queue, payload)` | `pgque.insert_event(queue, type, data)` | TEXT overload is default for untyped literals (fast path, opaque bytes); JSONB overload is opt-in via `::jsonb` cast (validation + canonicalization) |
+| `pgque.send_batch(queue, type, payloads[])` | Loop of `insert_event()` calls | Single TX; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
 | `pgque.send_at(queue, type, payload, time)` | `delayed_events` table + `maint_deliver_delayed()` | New |
 | `pgque.receive(queue, consumer, n)` | `next_batch()` + `get_batch_events()` | Combined |
 | `pgque.ack(batch_id)` | `finish_batch(batch_id)` | Rename |
