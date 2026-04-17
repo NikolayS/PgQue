@@ -302,6 +302,12 @@ select cron.schedule('daily_report',
 
 ## Client libraries
 
+PgQue currently includes example client libraries for **Go**, **Python**, and **TypeScript**.
+
+These are **examples for now** — **unpublished**, still evolving, and meant to demonstrate integration patterns rather than promise stable SDKs yet.
+
+**Help improving them is very much appreciated.**
+
 PgQue is SQL-first, so any PostgreSQL driver works. On top of that, dedicated client libraries already exist or are being built around the API.
 
 ### Python (`pgque-py`)
@@ -335,6 +341,23 @@ consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) er
     return processOrder(msg)
 })
 consumer.Start(ctx)
+```
+
+### TypeScript (`pgque-ts`)
+
+Built on node-postgres (`pg`). Typical usage:
+
+```ts
+const client = new PgqueClient('postgresql://localhost/mydb');
+await client.connect();
+
+await client.send('orders', { order_id: 42 }, 'order.created');
+await client.subscribe('orders', 'processor');
+
+const messages = await client.receive('orders', 'processor', 100);
+if (messages.length > 0) {
+  await client.ack(messages[0].batch_id);
+}
 ```
 
 ### Any language
