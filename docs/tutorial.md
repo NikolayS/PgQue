@@ -4,11 +4,14 @@ This is a hands-on walkthrough. If you have psql access to a Postgres 14+ instan
 
 By the end, you will have a working `orders` queue with a `processor` consumer, a retry flow, a dead letter queue, and a way to check that the whole thing is healthy.
 
-Prerequisites: Postgres 14 or newer, and a database you are willing to install into. `pg_cron` is recommended for production but not required here — this tutorial drives the ticker manually so it works anywhere.
+Prerequisites: Postgres 14 or newer, a database you are willing to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker manually so it works anywhere.
 
-How to read this tutorial: each step shows the exact SQL and the expected output. When transaction boundaries matter (and they do — PgQue is snapshot-based), the text calls that out. You can run every snippet in `psql` with `--no-psqlrc` and `PAGER=cat` if you want reproducible output:
+How to read this tutorial: each step shows the exact SQL and the expected output. The sample `msg_id` / `ev_id` numbers will not match what you see — every `pgque.force_tick` call skips the event sequence forward by about 1000, so the specific ids depend on when you call it. Treat those numbers as illustrative. When transaction boundaries matter (and they do — PgQue is snapshot-based), the text calls that out.
+
+You can run every snippet in `psql` with `--no-psqlrc` and `PAGER=cat` if you want reproducible output. From the cloned repo, so `\i sql/pgque.sql` resolves:
 
 ```bash
+cd /path/to/pgque
 PAGER=cat psql --no-psqlrc -d mydb
 ```
 
@@ -110,13 +113,14 @@ select pgque.ticker();
 ```
  force_tick
 ------------
+          1
 
  ticker
 --------
       1
 ```
 
-`force_tick` returns the last known tick id (null here because no tick has ever been produced for this queue). `ticker()` returns the number of queues it processed.
+`force_tick` returns the current tick id (the queue was seeded with tick `1` by `create_queue`). `ticker()` returns the number of queues it processed.
 
 Now try receiving again:
 
@@ -196,7 +200,9 @@ select * from pgque.receive('orders', 'processor', 100);
 (1 row)
 ```
 
-Now pretend the handler failed. `nack` takes the full `pgque.message` row, so the natural pattern is a `do` block that receives and nacks in one place. Both calls are needed — `nack` schedules the retry, and `ack` finalizes the batch so the consumer cursor advances:
+Now pretend the handler failed. `nack` takes the full `pgque.message` row, so the natural pattern is a `do` block that receives and nacks in one place.
+
+**Both `nack` and `ack` are needed on the same batch.** They are not alternatives: `nack` per-event schedules a retry (or routes to the DLQ if `retry_count >= max_retries`); `ack` per-batch finalizes the batch and advances the consumer cursor. Without the `ack`, the consumer never moves past the batch and the same events are redelivered forever.
 
 ```sql
 do $$
@@ -209,14 +215,16 @@ begin
 end $$;
 ```
 
-The event is now in PgQ's retry queue. `maint()` moves it back into the main event stream, and the next tick makes it visible again:
+The event is now in PgQ's retry queue. Moving it back into the main event stream is a separate maintenance step — `pgque.maint_retry_events()` does exactly that, and then the next tick makes it visible again:
 
 ```sql
-select pgque.maint();
+select pgque.maint_retry_events();
 select pgque.force_tick('orders');
 select pgque.ticker();
 select * from pgque.receive('orders', 'processor', 100);
 ```
+
+In production, `pgque.start()` schedules `maint_retry_events` on its own cadence — you never call it by hand. See the reference for [`maint_retry_events`](reference.md) and the related `maint` helpers.
 
 ```
  msg_id | batch_id | type    | payload                            | retry_count | ...
@@ -229,7 +237,9 @@ Same `msg_id = 2`, new `batch_id = 3`, and `retry_count = 1`. That is the redeli
 
 ## Step 8: Drive the message to the dead letter queue
 
-Keep nacking. With `max_retries = 2`, once `retry_count` reaches `2` the next `nack` routes the event to the DLQ instead of the retry queue. Repeat the nack-then-maint-then-tick sequence:
+Keep nacking. We set `max_retries = 2` in step 7, and the message was just redelivered with `retry_count = 1`. On the next `nack` it becomes `retry_count = 2`; one more `nack` after that and `nack` sees `retry_count >= max_retries` and routes the message to `pgque.dead_letter` instead of the retry queue.
+
+That is two more nack cycles. Run the following block — `nack` `do` block followed by `maint_retry_events` + tick — twice:
 
 ```sql
 do $$
@@ -241,12 +251,12 @@ begin
     perform pgque.ack(v_msg.batch_id);
 end $$;
 
-select pgque.maint();
+select pgque.maint_retry_events();
 select pgque.force_tick('orders');
 select pgque.ticker();
 ```
 
-Run that block once more. On the final nack, `retry_count = 2` equals `max_retries = 2`, and `nack` routes the message into `pgque.dead_letter`.
+The second iteration sees `retry_count = 2` and routes to the DLQ instead of to the retry queue. After it runs, no events come back out of `receive` — the event has moved to `pgque.dead_letter`.
 
 Inspect the DLQ:
 

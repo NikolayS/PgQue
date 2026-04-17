@@ -30,14 +30,22 @@ select pgque.send_batch('orders', 'order.created', array[
 
 Three subscribers on the same queue, each tracking its own cursor. Unlike `skip locked` queues, every consumer sees every event.
 
+Subscribe **before** producing — a new consumer starts from the latest tick and will not see events that were sent before its `subscribe` call. Produce, tick, and then receive:
+
 ```sql
 select pgque.subscribe('orders', 'audit_logger');
 select pgque.subscribe('orders', 'notification_sender');
 select pgque.subscribe('orders', 'analytics_pipeline');
 
+select pgque.send('orders', 'order.created', '{"order_id": 1}'::jsonb);
+select pgque.force_tick('orders');
+select pgque.ticker();
+
 select * from pgque.receive('orders', 'audit_logger', 100);
 select * from pgque.receive('orders', 'notification_sender', 100);
 ```
+
+Each `receive` returns the same event to its own consumer — no duplication on the producer side, independent cursors on the consumer side.
 
 ## Exactly-once processing (transactional pattern)
 

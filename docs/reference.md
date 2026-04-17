@@ -127,7 +127,7 @@ select pgque.set_queue_config('orders', 'max_retries', '10');
 
 ## Lifecycle
 
-Most functions in this section are left on PUBLIC by default — tighten with `revoke execute … from public` if your policy demands it. `uninstall()` is explicitly revoked from `pgque_admin` (superuser only).
+Most functions in this section are left on PUBLIC by default — tighten with `revoke execute … from public` if your policy demands it. `uninstall()` is explicitly revoked from `pgque_admin`, but PUBLIC execute is not revoked by default (see its entry below).
 
 #### `pgque.start() → void`
 
@@ -178,7 +178,7 @@ Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 #### `pgque.uninstall() → void`
 
 Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired.
-Grant: superuser only — `execute` is explicitly revoked from `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
+Grant: `execute` is explicitly revoked from `pgque_admin`, but PUBLIC execute is **not** revoked by default. If you need to prevent non-superuser roles from calling `uninstall()`, add `revoke execute on function pgque.uninstall() from public;` after install. A follow-up hardening change is tracked to do this by default. Source: `sql/pgque-additions/lifecycle.sql`.
 
 ## Observability
 
@@ -420,7 +420,7 @@ Three roles, with inheritance `pgque_admin > pgque_writer > pgque_reader`. Sourc
 | `pgque_writer` | everything `pgque_reader` has, plus `insert_event` (3, 7), `register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` (int, timestamptz), all `send*`, `send_batch*`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`, `dlq_replay`, `dlq_replay_all` |
 | `pgque_admin`  | everything `pgque_writer` has, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` which is explicitly revoked                                                            |
 
-`pgque.uninstall()` can only be executed by the schema owner / superuser. All other functions not in the table above are on PUBLIC `execute` by default (notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`) — revoke and re-grant explicitly if stricter control is required.
+`pgque.uninstall()` is revoked from `pgque_admin`, but not from PUBLIC — any role that can connect can still call it and drop the schema. Tighten with `revoke execute on function pgque.uninstall() from public;` if stricter control is required. All other functions not in the table above are on PUBLIC `execute` by default (notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`) — revoke and re-grant explicitly if your policy demands it.
 
 ## Experimental (not in default install)
 

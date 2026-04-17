@@ -2,7 +2,7 @@
 
 **Zero-bloat Postgres queue. No extensions. No daemon. One SQL file.**
 
-<!-- hero: benchmark image pending, see https://github.com/NikolayS/pgque/issues for status -->
+<p align="center"><img src="docs/images/death_spiral.gif" alt="Death spiral of a SKIP LOCKED queue under sustained load — the failure mode PgQue avoids by construction" width="720"></p>
 
 [![CI](https://github.com/NikolayS/pgque/actions/workflows/ci.yml/badge.svg)](https://github.com/NikolayS/pgque/actions/workflows/ci.yml)
 [![PostgreSQL 14-18](https://img.shields.io/badge/PostgreSQL-14--18-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -130,7 +130,7 @@ The install creates three roles. Application users do not need superuser — gra
 |---|---|---|
 | `pgque_reader` | Dashboards, metrics, debugging | `get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, plus `select` on all tables |
 | `pgque_writer` | Producers and consumers (most apps) | inherits `pgque_reader` + the modern API (`send`, `send_batch`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) and the underlying PgQ primitives (`insert_event`, `next_batch`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer`, `unregister_consumer`) |
-| `pgque_admin`  | Operators, migrations | inherits `pgque_writer` + full schema/table/sequence access. Excludes `uninstall()` (superuser-only: it drops the schema). |
+| `pgque_admin`  | Operators, migrations | inherits `pgque_writer` + full schema/table/sequence access. `uninstall()` is explicitly revoked from `pgque_admin`, but PUBLIC execute is not revoked by default — see [`docs/reference.md`](docs/reference.md) to tighten. |
 
 Typical app setup:
 
@@ -138,10 +138,10 @@ Typical app setup:
 \i sql/pgque.sql
 select pgque.start();                     -- optional pg_cron ticker + maint
 
-create user app_orders with password '...';
+create user app_orders with password '...';          -- replace with a real password
 grant pgque_writer to app_orders;
 
-create user metrics with password '...';
+create user metrics with password '...';              -- replace with a real password
 grant pgque_reader to metrics;
 ```
 

@@ -1,6 +1,6 @@
 # PgQue docs
 
-Four short docs for users, plus two contributor primers.
+Five short docs for users, plus one contributor primer.
 
 ## For users
 
@@ -12,11 +12,12 @@ Four short docs for users, plus two contributor primers.
   batch send, recurring jobs, DLQ inspection.
 - **[Benchmarks](benchmarks.md)** — current throughput numbers and
   methodology.
+- **[PgQ concepts](pgq-concepts.md)** — glossary of the core vocabulary
+  (event, batch, tick, rotation, ticker contract). Useful alongside the
+  tutorial.
 
 ## For contributors
 
-- **[PgQ concepts](pgq-concepts.md)** — the glossary inherited from the 2009
-  PgCon talk: event, batch, tick, rotation, ticker contract.
 - **[PgQ history](pgq-history.md)** — short timeline from Skype to PgQue.
 
 For the full specification and implementation plan, see
