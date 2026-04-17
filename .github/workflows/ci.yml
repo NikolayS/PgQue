@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: ['14', '15', '16', '17', '18']
+        pg_version: ['18', '17', '16', '15', '14']
 
     steps:
       - uses: actions/checkout@v4
