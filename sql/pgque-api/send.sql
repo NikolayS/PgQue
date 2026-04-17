@@ -18,8 +18,12 @@
 --   select pgque.send('orders', '{"k":1}'::jsonb);    -- picks send(text, jsonb)
 --
 -- The `text` overloads are the default for untyped literals: bytes flow
--- through verbatim (no parse, no canonicalization, key order preserved),
--- and non-JSON encodings (protobuf, msgpack, Avro, XML) are supported.
+-- through verbatim (no parse, no canonicalization, key order preserved)
+-- for *textual* payloads -- JSON, XML, CSV, or binary that has already
+-- been base64/hex-encoded. PostgreSQL `text` cannot store NUL (\x00),
+-- so true binary payloads (raw protobuf, msgpack, Avro, bytea dumps)
+-- must be caller-encoded before `send()` -- otherwise PG rejects the
+-- insert with `invalid byte sequence`.
 -- The `jsonb` overloads are opt-in via explicit `::jsonb` cast: PG
 -- validates JSON at parse time and stores the canonical form.
 -- Storage (ev_data TEXT) is identical in both paths.
@@ -49,10 +53,12 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.send(queue, payload text) -- fast path, opaque payload
+-- pgque.send(queue, payload text) -- fast path, opaque textual payload
 -- Skips the jsonb parse + canonical reserialize round-trip. Use this when
--- the payload is not JSON (protobuf, msgpack, Avro, XML) or when the caller
--- has already validated the payload and wants to avoid the extra CPU.
+-- the payload is text (JSON, XML, CSV, base64/hex-encoded binary) or when
+-- the caller has already validated the payload. Raw binary with NUL bytes
+-- (protobuf, msgpack, Avro wire format) is not accepted by PG `text` --
+-- encode first.
 create or replace function pgque.send(i_queue text, i_payload text)
 returns bigint as $$
 begin
@@ -123,4 +129,17 @@ begin
     return pgque.unregister_consumer(i_queue, i_consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- Explicit writer grants for the send* + subscribe/unsubscribe family.
+-- Colocated here (not in pgque-additions/roles.sql) because roles.sql
+-- runs before the pgque-api section during build, so API-layer grants
+-- must live alongside the function definitions they apply to.
+grant execute on function pgque.send(text, jsonb)               to pgque_writer;
+grant execute on function pgque.send(text, text)                to pgque_writer;
+grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
+grant execute on function pgque.send(text, text, text)          to pgque_writer;
+grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
+grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
+grant execute on function pgque.subscribe(text, text)           to pgque_writer;
+grant execute on function pgque.unsubscribe(text, text)         to pgque_writer;
 

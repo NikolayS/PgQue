@@ -640,8 +640,11 @@ select pgque.send_batch('orders', 'order.created', array[
     '{"order_id": 44}'
 ]);
 
--- Non-JSON encodings go through the text overload directly
-select pgque.send('orders', 'order.proto', E'\\x08\\x2a\\x10\\x63');
+-- Textual non-JSON payloads (XML, CSV, base64/hex-encoded binary) go
+-- through the text overload as-is. Raw binary with NUL bytes is rejected
+-- by PG text -- encode first (e.g. encode(raw_proto, 'base64')).
+select pgque.send('orders', 'order.xml', '<order id="42"/>');
+select pgque.send('orders', 'order.proto_b64', encode('\x08\x2a\x10\x63'::bytea, 'base64'));
 
 -- Delayed send (deliver after timestamp)
 select pgque.send_at('orders', 'reminder.send',
@@ -674,12 +677,22 @@ overload is opt-in via an explicit `::jsonb` cast.
 
 - `text` overload (default for untyped literals): fast path. Bytes flow
   straight through to `insert_event`. No parse, no reserialization, key
-  order preserved. Required for non-JSON payloads (protobuf, msgpack, Avro,
-  XML). Caller is responsible for validating the payload.
+  order preserved. Required for non-JSON *textual* payloads (XML, CSV,
+  base64/hex-encoded binary). Caller is responsible for validating the
+  payload.
 - `jsonb` overload (opt-in): PG rejects malformed JSON at parse time and
   the payload is stored in canonical form (keys sorted, whitespace
   normalized). Useful when you want PG to be the last line of defense
   against malformed JSON.
+
+**NUL bytes.** `ev_data` is `text`, and PostgreSQL `text` does not accept
+NUL (`\x00`). Raw binary wire formats (protobuf, msgpack, Avro, packed
+bytea dumps) routinely contain NULs and will be rejected with `invalid
+byte sequence` at insert time. Callers that want to ship binary payloads
+must encode them first -- `encode(bytes, 'base64')`, `encode(bytes, 'hex')`,
+or a custom escape -- and decode on the consumer side. A future `bytea`
+overload could bypass this at the cost of changing `ev_data`'s storage
+type; deferred pending demand.
 
 Both overloads return `bigint` (event ID). `receive()` returns payload as
 `text`, so the `text`-both-sides path is symmetric (no implicit canonicalization
