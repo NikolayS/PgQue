@@ -32,7 +32,8 @@ begin
   assert has_function_privilege('pgque_writer', 'pgque.unsubscribe(text, text)', 'EXECUTE'),
     'pgque_writer should have execute on unsubscribe(text, text)';
 
-  -- receive/ack/nack (grants still inherited via PUBLIC; tracked separately)
+  -- receive/ack/nack — explicit grants colocated with the function
+  -- definitions in sql/pgque-api/receive.sql (same convention as send.sql).
   assert has_function_privilege('pgque_writer', 'pgque.receive(text, text, integer)', 'EXECUTE'),
     'pgque_writer should have execute on receive(text, text, integer)';
   assert has_function_privilege('pgque_writer', 'pgque.ack(bigint)', 'EXECUTE'),

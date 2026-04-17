@@ -4225,6 +4225,12 @@ grant execute on function pgque.finish_batch(bigint) to pgque_writer;
 grant execute on function pgque.event_retry(bigint, bigint, timestamptz) to pgque_writer;
 grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_writer;
 
+-- Note: grants for the modern API wrappers (send*, subscribe, unsubscribe,
+-- receive, ack, nack) live colocated with their definitions in
+-- sql/pgque-api/*.sql. transform.sh appends pgque-additions/ before
+-- pgque-api/, so API-layer grants cannot reference their functions from
+-- this file.
+
 -- ---------------------------------------------------------------------------
 -- Admin: full access to everything in the pgque schema
 -- ---------------------------------------------------------------------------
@@ -4383,6 +4389,17 @@ begin
     return 1;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- ---------------------------------------------------------------------------
+-- Grants
+-- ---------------------------------------------------------------------------
+-- Colocated here (not in pgque-additions/roles.sql) because roles.sql is
+-- assembled before pgque-api/, so these functions do not yet exist when
+-- roles.sql runs. Same convention as sql/pgque-api/send.sql.
+
+grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
+grant execute on function pgque.ack(bigint)                                   to pgque_writer;
+grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;
 
 -- pgque-api/send.sql
 -- pgque-api/send.sql -- Modern send/subscribe API layer

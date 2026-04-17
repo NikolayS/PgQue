@@ -99,3 +99,14 @@ begin
     return 1;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- ---------------------------------------------------------------------------
+-- Grants
+-- ---------------------------------------------------------------------------
+-- Colocated here (not in pgque-additions/roles.sql) because roles.sql is
+-- assembled before pgque-api/, so these functions do not yet exist when
+-- roles.sql runs. Same convention as sql/pgque-api/send.sql.
+
+grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
+grant execute on function pgque.ack(bigint)                                   to pgque_writer;
+grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;
