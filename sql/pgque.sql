@@ -382,8 +382,8 @@ begin
     loop
         -- try to avoid big IN expression, so try to include nearby
         -- tx'es into range
-        if batch.tx_start - 100 <= rec.id1 then
-            batch.tx_start := rec.id1;
+        if batch.tx_start - 100 <= rec.id1::text::bigint then
+            batch.tx_start := rec.id1::text::bigint;
         else
             if arr = '' then
                 arr := '''' || rec.id1::text || '''::xid8';

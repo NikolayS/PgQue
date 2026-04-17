@@ -491,6 +491,13 @@ sedi "s/arr := rec.id1::text;/arr := '''' || rec.id1::text || '''::xid8';/" \
 sedi "s/arr := arr || ',' || rec.id1::text;/arr := arr || ',''' || rec.id1::text || '''::xid8';/" \
   "${BATCH_SQL_FILE}"
 
+# Fix the arithmetic compare: bigint - 100 <= xid8 has no operator in PG18.
+# rec.id1 comes from pg_snapshot_xip() (SETOF xid8); cast through text to bigint.
+sedi "s|if batch.tx_start - 100 <= rec.id1 then|if batch.tx_start - 100 <= rec.id1::text::bigint then|" \
+  "${BATCH_SQL_FILE}"
+sedi "s|batch.tx_start := rec.id1;|batch.tx_start := rec.id1::text::bigint;|" \
+  "${BATCH_SQL_FILE}"
+
 echo "PASS: xid8 casts added to batch_event_sql for ev_txid comparisons"
 
 # -- Assembly: build sql/pgque.sql ------------------------------------
