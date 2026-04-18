@@ -112,10 +112,18 @@ PgQue is an **event/message queue**; River, graphile-worker, pg-boss, and Oban a
 
 **Requirements:** Postgres 14+. `pg_cron` is optional and recommended.
 
+Inside a psql session:
+
 ```sql
 begin;
 \i sql/pgque.sql
 commit;
+```
+
+Or from the shell, same single-transaction guarantee via `psql --single-transaction`:
+
+```bash
+PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f sql/pgque.sql
 ```
 
 With `pg_cron` installed, `pgque.start()` creates the default ticker and maintenance jobs:
