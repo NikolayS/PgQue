@@ -1,10 +1,10 @@
 # Examples
 
-A few common PgQue patterns. For a guided first-run, see [the tutorial](tutorial.md). For every function signature, see [the reference](reference.md).
+Common PgQue patterns. For a guided first-run, see [the tutorial](tutorial.md). For every function signature, see [the reference](reference.md).
 
 ## Send with event type
 
-The event type is an arbitrary string tag — consumers can filter on it.
+The event type is a string tag consumers can filter on.
 
 ```sql
 select pgque.send('orders', 'order.created',
@@ -16,7 +16,7 @@ select pgque.send('orders', 'order.shipped',
 
 ## Batch send
 
-Both `jsonb[]` and `text[]` overloads ship — see [the reference](reference.md) for when to pick which.
+Both `jsonb[]` and `text[]` overloads exist — the [reference](reference.md) explains the trade-off.
 
 ```sql
 select pgque.send_batch('orders', 'order.created', array[
@@ -28,9 +28,9 @@ select pgque.send_batch('orders', 'order.created', array[
 
 ## Fan-out with multiple consumers
 
-Three subscribers on the same queue, each tracking its own cursor. Unlike `skip locked` queues, every consumer sees every event.
+Three subscribers on the same queue, each tracking its own cursor. Unlike SKIP LOCKED queues, every consumer sees every event.
 
-Subscribe **before** producing — a new consumer starts from the latest tick and will not see events that were sent before its `subscribe` call. Produce, tick, and then receive:
+Subscribe **before** producing — a new consumer starts from the latest tick and will not see events that were sent before its `subscribe` call.
 
 ```sql
 select pgque.subscribe('orders', 'audit_logger');
@@ -45,11 +45,11 @@ select * from pgque.receive('orders', 'audit_logger', 100);
 select * from pgque.receive('orders', 'notification_sender', 100);
 ```
 
-Each `receive` returns the same event to its own consumer — no duplication on the producer side, independent cursors on the consumer side.
+Each consumer sees the same event through its own cursor — no producer-side duplication, independent cursors on the consumer side.
 
 ## Exactly-once processing (transactional pattern)
 
-Wrap the receive, your writes, and the ack in one transaction. If it rolls back, everything rolls back together.
+Wrap the receive, your writes, and the ack in one transaction — either all commit or none do.
 
 ```sql
 begin;
@@ -64,7 +64,7 @@ begin;
 commit;
 ```
 
-Every row in `msgs` shares the same `batch_id`, so `select distinct batch_id from msgs limit 1` is safe. If you prefer extracting it directly, a PL/pgSQL block with `select batch_id into v_batch_id from msgs limit 1` reads the same.
+Every row in `msgs` shares the same `batch_id`, so `select distinct batch_id from msgs limit 1` is safe. A PL/pgSQL block with `select batch_id into v_batch_id from msgs limit 1` is equivalent.
 
 ## Recurring jobs with pg_cron
 
@@ -77,7 +77,7 @@ select cron.schedule('daily_report',
 
 ## Dead letter queue inspection
 
-`pgque.dlq_inspect()` lists entries for a queue; from there, replay a single row by its `dl_id` or purge anything older than a given interval.
+`pgque.dlq_inspect()` lists entries for a queue. Replay a single row by its `dl_id`, or purge rows older than a given interval.
 
 ```sql
 select dl_id, dl_reason, ev_type, ev_data
@@ -94,7 +94,7 @@ See [the tutorial](tutorial.md) for the full DLQ flow including retry budgets an
 
 ## Monitoring: queue + consumer health
 
-Two functions inherited from PgQ give a one-shot read of the system. Use `\x` in psql for the readable per-column layout.
+Two functions inherited from PgQ read out queue and consumer health. Use `\x` in psql for the per-column layout below.
 
 A healthy snapshot:
 
@@ -145,7 +145,7 @@ next_tick      | 1389
 pending_events | 847
 ```
 
-The ticker is still running (`ticker_lag` in `get_queue_info` stays low), but the worker stopped draining — `lag` and `last_seen` climbed to hours and `pending_events` filled up.
+The ticker is still running — `ticker_lag` stays low. But the worker stopped draining: `lag` and `last_seen` climbed to hours, and `pending_events` filled up.
 
 Red flags to alert on:
 

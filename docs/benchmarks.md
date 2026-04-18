@@ -1,7 +1,7 @@
 # Benchmarks
 
 Preliminary results on a laptop (Apple Silicon, 10 cores, 24 GiB RAM,
-PostgreSQL 18.3, `synchronous_commit=off` per-session). Full methodology:
+PostgreSQL 18.3, `synchronous_commit=off`). Full methodology:
 [NikolayS/pgq#1](https://github.com/NikolayS/pgq/issues/1).
 
 | Scenario | Throughput | Per core |
@@ -14,7 +14,7 @@ PostgreSQL 18.3, `synchronous_commit=off` per-session). Full methodology:
 
 Key takeaways:
 
-- **Zero bloat under load** — a 30-minute sustained test showed zero
+- **Zero bloat under load** — a 30-minute sustained test: zero
   dead-tuple growth in event tables.
 - **Batching matters** — throughput jumps sharply when you stop doing one
   tiny transaction per event.
@@ -25,5 +25,4 @@ Key takeaways:
 > `synchronous_commit=off` can be set per session or per transaction for
 > queue-heavy workloads if that trade-off makes sense for your system.
 
-These numbers are from a single laptop and are preliminary; server-class
-results will be posted as they become available.
+These numbers are preliminary, from a single laptop. Server-class numbers to follow.

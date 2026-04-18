@@ -1,15 +1,15 @@
 # Function reference
 
-This reference documents the complete function surface shipped by the v0.1 default install (`\i sql/pgque.sql`). Every entry lists the exact signature, return type, the role it is granted to, and the source file. A short code example appears where the call shape is not obvious from the signature alone.
+Every function shipped in the v0.1 default install (`\i sql/pgque.sql`). Each entry lists the signature, return type, the role it is granted to, and the source file. A short code example appears where the signature alone leaves the call ambiguous.
 
-If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the end-to-end `send` / `receive` / `ack` loop. This document is the lookup table you reach for afterwards.
+If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the end-to-end `send` / `receive` / `ack` loop. Use this as the lookup table.
 
-Each function is documented in the following form.
+Each entry takes this form:
 
 ```
 #### `pgque.<name>(arg text, …) → returntype`
 
-One-line description. Optional second line with a caveat worth knowing.
+One-line description. Optional second line with a caveat.
 Grant: `role_name` or `PUBLIC (default)`. Source: `sql/<path>`.
 ```
 
@@ -30,7 +30,7 @@ select pgque.send('orders', '{"order_id": 42}'::jsonb);
 
 #### `pgque.send(queue text, payload text) → bigint`
 
-Fast-path send: the payload bytes are stored verbatim with no JSON parse. Untyped string literals (`'…'`) resolve to this overload. Returns the event id.
+Fast-path send: stores the payload bytes verbatim, no JSON parse. Untyped string literals (`'…'`) resolve to this overload. Returns the event id.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.send(queue text, type text, payload jsonb) → bigint`
@@ -82,7 +82,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
 
 #### `pgque.nack(batch_id bigint, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
 
-Negative-acknowledges one message. If `msg.retry_count` is below the queue's `max_retries`, re-queues after `retry_after`. Otherwise routes the event to `pgque.dead_letter` via `pgque.event_dead`. Returns `1`.
+Negative-acknowledges one message. If `msg.retry_count` is below the queue's `max_retries`, re-queues after `retry_after`; otherwise routes the event to `pgque.dead_letter` via `pgque.event_dead`. Returns `1`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql

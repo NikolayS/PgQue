@@ -39,7 +39,7 @@ commit
 
 `ev_id`, `ev_time`, `ev_txid` (`xid8`), `ev_retry`, `ev_type`, `ev_data`,
 `ev_extra1..4`. `ev_extra1` is table name by convention (triggers).
-Payload format is producer/consumer contract; PgQue does not interpret it.
+Payload format is a producer/consumer contract — PgQue does not interpret it.
 
 ## Health signals
 

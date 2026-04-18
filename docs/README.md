@@ -1,6 +1,6 @@
 # PgQue docs
 
-Five short docs for users, plus one contributor primer.
+Short docs for users, plus a contributor primer.
 
 ## For users
 
@@ -13,7 +13,7 @@ Five short docs for users, plus one contributor primer.
 - **[Benchmarks](benchmarks.md)** — current throughput numbers and
   methodology.
 - **[PgQ concepts](pgq-concepts.md)** — glossary of the core vocabulary
-  (event, batch, tick, rotation, ticker contract). Useful alongside the
+  (event, batch, tick, rotation, ticker rule). Useful alongside the
   tutorial.
 
 ## For contributors

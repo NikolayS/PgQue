@@ -28,7 +28,7 @@
 - [Contributing](#contributing)
 - [License](#license)
 
-PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the longest-running Postgres queue architectures in production — in a form that fits modern Postgres.
+PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the longest-running Postgres queue architectures in production — in a form that runs on any Postgres platform, managed providers included.
 
 PgQ was designed at Skype to run messaging for hundreds of millions of users, and it ran on large self-managed Postgres deployments for over a decade. Standard PgQ depends on a C extension (`pgq`) and an external daemon (`pgqd`), neither of which run on most managed Postgres providers.
 
@@ -172,7 +172,7 @@ DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `t
 
 ## Project status
 
-PgQue is **early-stage** as a product and API layer. PgQ itself is **rock solid** — battle-tested at Skype scale for over a decade. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
+PgQue is **early-stage** as a product and API layer. PgQ itself has run at Skype scale for over a decade. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
 
 The default install stays small in v0.1; additional APIs live under `sql/experimental/` until they are worth promoting. See [blueprints/PHASES.md](blueprints/PHASES.md).
 
@@ -213,7 +213,7 @@ Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, e
 
 ## Client libraries
 
-PgQue is SQL-first, so any Postgres driver works. On top of that, example client libraries exist for **Python**, **Go**, and **TypeScript** — unpublished, still evolving, meant to demonstrate integration patterns rather than promise stable SDKs yet. **Help improving them is very much appreciated.**
+PgQue is SQL-first, so any Postgres driver works. Example client libraries exist for **Python**, **Go**, and **TypeScript** — unpublished, still evolving, demonstrating integration patterns rather than stable SDKs. **Contributions welcome.**
 
 ### Python (`pgque-py`) — psycopg 3
 

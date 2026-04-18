@@ -1,12 +1,12 @@
 # PgQue tutorial
 
-This is a hands-on walkthrough. If you have psql access to a Postgres 14+ instance and ten minutes, you can follow every step end to end. You will type SQL, see what comes back, and build an intuition for how PgQue moves messages.
+A hands-on walkthrough. With psql access to a Postgres 14+ instance and ten minutes, you can follow every step end to end. You will type SQL, see what comes back, and build an intuition for how PgQue moves messages.
 
-By the end, you will have a working `orders` queue with a `processor` consumer, a retry flow, a dead letter queue, and a way to check that the whole thing is healthy.
+By the end, you will have a working `orders` queue with a `processor` consumer, a retry flow, a dead letter queue, and health checks.
 
-Prerequisites: Postgres 14 or newer, a database you are willing to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker manually so it works anywhere.
+Prerequisites: Postgres 14 or newer, a database to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker manually so it works anywhere.
 
-How to read this tutorial: each step shows the exact SQL and the expected output. The sample `msg_id` / `ev_id` numbers will not match what you see — every `pgque.force_tick` call skips the event sequence forward by about 1000, so the specific ids depend on when you call it. Treat those numbers as illustrative. When transaction boundaries matter (and they do — PgQue is snapshot-based), the text calls that out.
+Each step shows the exact SQL and the expected output. Your `msg_id` / `ev_id` / `pending_events` / `ev_new` numbers will differ from the examples — every `pgque.force_tick` call skips the event sequence forward by about 1000, so exact numeric output depends on when you call it. Treat those numbers as illustrative. When transaction boundaries matter (and they matter — PgQue is snapshot-based), the text calls that out.
 
 You can run every snippet in `psql` with `--no-psqlrc` and `PAGER=cat` if you want reproducible output. From the cloned repo, so `\i sql/pgque.sql` resolves:
 
@@ -59,7 +59,7 @@ select pgque.subscribe('orders', 'processor');
          1
 ```
 
-`create_queue` returns `1` when it actually created the queue (and `0` if it already existed — the call is idempotent). `subscribe` is the modern alias for `register_consumer`.
+`create_queue` returns `1` when it created the queue (and `0` if it already existed — the call is idempotent). `subscribe` is the modern alias for `register_consumer`.
 
 ## Step 3: Send an order
 
@@ -75,9 +75,9 @@ select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
     1
 ```
 
-The returned number is the event id (`ev_id`). It is unique within the queue and monotonically increasing within a rotation window.
+That is the event id (`ev_id`) — unique within the queue, monotonically increasing within a rotation window.
 
-A brief callout on overloads: `pgque.send` also accepts a raw `text` payload — useful for protobuf, msgpack, or XML that you encode yourself. Untyped string literals like `'{"x":1}'` without the `::jsonb` cast resolve to the `text` overload. This tutorial stays on `jsonb` for clarity; see the [reference](reference.md) for the full overload rules and the NUL-byte caveat for binary payloads.
+`pgque.send` also accepts a raw `text` payload — useful for protobuf, msgpack, or XML that you encode yourself. Untyped string literals like `'{"x":1}'` without the `::jsonb` cast resolve to the `text` overload. This tutorial stays on `jsonb` for clarity; see the [reference](reference.md) for the full overload rules and the NUL-byte caveat for binary payloads.
 
 ## Step 4: Try to receive — and get nothing
 
@@ -93,9 +93,9 @@ select * from pgque.receive('orders', 'processor', 100);
 (0 rows)
 ```
 
-Zero rows. This surprises every first-time user, so it is worth being explicit about why.
+Zero rows. This surprises every first-time user. Here is why.
 
-PgQue is **tick-based**, not row-claiming. Producers append events to the queue, but consumers do not see individual rows — they see **batches**. A batch is the set of events between two ticks. Until a tick happens, there is no batch boundary, so `pgque.receive` has nothing to return.
+PgQue is **tick-based**, not row-claiming. Producers append events to the queue, but consumers do not see rows directly — they see **batches**. A batch is the set of events between two ticks. Until a tick happens, there is no batch boundary, so `pgque.receive` has nothing to return.
 
 In normal operation, a scheduler (`pg_cron` or an external loop) calls `pgque.ticker()` every second and ticks happen continuously. In this tutorial you have not started a scheduler, so no tick has run yet.
 
@@ -103,7 +103,7 @@ See the [concepts glossary](pgq-concepts.md) for the full definitions of event, 
 
 ## Step 5: Force a tick, then receive
 
-For demos and tests, PgQue provides `pgque.force_tick` to bump the event-count threshold for one queue. It does **not** create the tick by itself — you still have to call `pgque.ticker()` afterwards to actually produce the tick:
+For demos and tests, PgQue provides `pgque.force_tick` to bypass the tick thresholds for one queue. It does **not** create the tick by itself — you still have to call `pgque.ticker()` afterwards to produce the tick:
 
 ```sql
 select pgque.force_tick('orders');
@@ -135,7 +135,7 @@ select * from pgque.receive('orders', 'processor', 100);
 (1 row)
 ```
 
-The event is back. Note `retry_count` is null — this is the first delivery attempt. The `batch_id` is the important value for the next step.
+The event is back. `retry_count` is null because this is the first delivery attempt. The `batch_id` is the important value for the next step.
 
 In production, `pg_cron` (or a small worker loop) calls `pgque.ticker()` every second. `force_tick` exists for the situation here: advancing the queue without waiting on the ticker's lag threshold.
 
@@ -190,7 +190,7 @@ Every row `pgque.receive` returns is a `pgque.message` composite: `msg_id` (PgQ'
 
 ## Step 7: Send, nack, retry
 
-Real consumers sometimes fail. `nack` handles that: the message is scheduled for redelivery after a delay you choose. Before demoing it, lower the retry ceiling so you can drive a message to the DLQ in step 8:
+Consumers sometimes fail. `nack` handles that: the message is scheduled for redelivery after a delay you choose. Before demoing it, lower the retry ceiling so you can drive a message to the DLQ in step 8:
 
 ```sql
 select pgque.set_queue_config('orders', 'max_retries', '2');
@@ -229,7 +229,7 @@ begin
 end $$;
 ```
 
-The event is now in PgQ's retry queue. Moving it back into the main event stream is a separate maintenance step — `pgque.maint_retry_events()` does exactly that, and then the next tick makes it visible again:
+The event is now in PgQ's retry queue. Moving it back into the main event stream is a separate maintenance step: `pgque.maint_retry_events()`. After that, the next tick makes it visible again:
 
 ```sql
 select pgque.maint_retry_events();
@@ -247,13 +247,13 @@ In production, `pgque.start()` schedules `maint_retry_events` on its own cadence
 (1 row)
 ```
 
-Same `msg_id = 2`, new `batch_id = 3`, and `retry_count = 1`. That is the redelivery.
+Same `msg_id = 2`, new `batch_id = 3`, `retry_count = 1` — that's the redelivery.
 
 ## Step 8: Drive the message to the dead letter queue
 
 Keep nacking. You set `max_retries = 2` in step 7, and the message was just redelivered with `retry_count = 1`. On the next `nack` it becomes `retry_count = 2`; one more `nack` after that, and `nack` sees `retry_count >= max_retries` and routes the message to `pgque.dead_letter` instead of the retry queue.
 
-That is two more nack cycles. Run the following block twice — the `nack` `do` block followed by `maint_retry_events` + tick:
+Two more nack cycles. Run the following block twice — the `nack` `do` block followed by `maint_retry_events` + tick:
 
 ```sql
 do $$
@@ -270,7 +270,7 @@ select pgque.force_tick('orders');
 select pgque.ticker();
 ```
 
-The second iteration sees `retry_count = 2` and routes to the DLQ instead of to the retry queue. After it runs, no events come back out of `receive` — the event has moved to `pgque.dead_letter`.
+The second iteration sees `retry_count = 2` and routes to the DLQ instead of the retry queue. After it runs, `receive` returns nothing — the event has moved to `pgque.dead_letter`.
 
 Inspect the DLQ:
 
@@ -286,7 +286,7 @@ from pgque.dlq_inspect('orders');
 (1 row)
 ```
 
-Two useful moves from here. After you have fixed the upstream bug, put the event back on the queue:
+From here, two moves. After you have fixed the upstream bug, put the event back on the queue:
 
 ```sql
 select pgque.dlq_replay(1);
@@ -302,7 +302,7 @@ select pgque.dlq_purge('orders', '0 seconds'::interval);
 
 ## Step 9: Look at queue and consumer health
 
-Three functions give you a quick read on the system.
+Three functions read out queue and consumer health.
 
 ```sql
 select queue_name, ticker_lag, ev_per_sec, ev_new, last_tick_id
@@ -358,11 +358,11 @@ With `pg_cron` available in the same database as PgQue:
 select pgque.start();
 ```
 
-That one call schedules three cron jobs: `pgque_ticker` every second, `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
+That one call schedules four cron jobs: `pgque_ticker` every second, `pgque_retry_events` every thirty seconds (moves `nack`'d events back into the main stream), `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 
-**pg_cron log hygiene.** `pg_cron` logs every job execution to `cron.job_run_details`. At the two-second ticker cadence, that table grows by roughly 2,000 rows per hour from PgQue alone, with no built-in purge.
+**pg_cron log hygiene.** `pg_cron` logs every job execution to `cron.job_run_details`. At the one-second ticker cadence, that table grows by roughly 3,600 rows per hour from PgQue alone, with no built-in purge.
 
 Recommended: disable successful-run logging globally.
 
@@ -391,4 +391,4 @@ Without `pg_cron` at all, call `pgque.ticker()` and `pgque.maint()` from your ap
 - [reference](reference.md) — every function with signatures, return types, and role grants.
 - [examples](examples.md) — patterns: fan-out, exactly-once consumption, batch loading, recurring jobs.
 - [concepts](pgq-concepts.md) — glossary of batch, tick, rotation, and the consumer loop.
-- [history](pgq-history.md) — how this engine came from PgQ and why it is worth trusting.
+- [history](pgq-history.md) — how this engine came from PgQ.
