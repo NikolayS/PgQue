@@ -1,12 +1,14 @@
 # PgQue – PgQ, universal edition
 
-**Zero-bloat Postgres queue. No extensions. No daemon. One SQL file.**
+<p align="center"><strong>Zero-bloat Postgres queue. No extensions. No daemon. One SQL file.</strong></p>
 
-[![CI](https://github.com/NikolayS/pgque/actions/workflows/ci.yml/badge.svg)](https://github.com/NikolayS/pgque/actions/workflows/ci.yml)
-[![PostgreSQL 14-18](https://img.shields.io/badge/PostgreSQL-14--18-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![pg_cron](https://img.shields.io/badge/pg__cron-optional-336791)](https://github.com/citusdata/pg_cron)
-[![Anti-Extension](https://img.shields.io/badge/anti--extension-%5Ci_and_go-orange)](https://github.com/NikolayS/pgque)
+<p align="center">
+  <a href="https://github.com/NikolayS/pgque/actions/workflows/ci.yml"><img src="https://github.com/NikolayS/pgque/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-14--18-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 14-18"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/citusdata/pg_cron"><img src="https://img.shields.io/badge/pg__cron-optional-336791" alt="pg_cron"></a>
+  <a href="https://github.com/NikolayS/pgque"><img src="https://img.shields.io/badge/anti--extension-%5Ci_and_go-orange" alt="Anti-Extension"></a>
+</p>
 
 <p align="center"><img src="docs/images/death_spiral.gif" alt="Death spiral of a SKIP LOCKED queue under sustained load — the failure mode PgQue avoids by construction" width="720"></p>
 
