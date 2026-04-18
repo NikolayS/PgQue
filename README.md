@@ -30,7 +30,9 @@
 
 PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the most proven Postgres queue architectures ever built — in a form that fits modern Postgres.
 
-PgQ was designed at Skype with architecture meant to serve **1B users**, and it was used in very large self-managed Postgres installations for years. That knowledge is mostly lost art now — real database kung fu from the era when people solved brutal scale problems without cargo-culting another distributed system into the stack. PgQue takes that battle-tested core and repackages it as an extension-free, managed-Postgres-friendly project.
+PgQ was designed at Skype to run messaging at 1-billion-user scale, and it lived in very large self-managed Postgres installations for years. Standard PgQ ships as a C extension (`pgq`) plus an external daemon (`pgqd`) — unavailable on most managed Postgres providers.
+
+PgQue rebuilds that same battle-tested engine in pure PL/pgSQL, so the zero-bloat queue pattern works anywhere you can run SQL — without adding another distributed system to your stack.
 
 **The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and every other managed provider. No C extension, no `shared_preload_libraries`, no provider approval, no restart. `\i` and go.
 
