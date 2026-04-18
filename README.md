@@ -110,7 +110,7 @@ PgQue is an **event/message queue**; River, graphile-worker, pg-boss, and Oban a
 
 ## Installation
 
-**Requirements:** Postgres 14+, plus `pg_cron` for the default ticker setup. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). On self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
+**Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically (every 1–2 seconds). `pg_cron` is the recommended default — pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
 Inside a psql session:
 
