@@ -49,7 +49,7 @@ Each `receive` returns the same event to its own consumer — no duplication on 
 
 ## Exactly-once processing (transactional pattern)
 
-Wrap the receive, your writes, and the ack in one transaction. If it rolls back, the writes roll back and the ack rolls back together.
+Wrap the receive, your writes, and the ack in one transaction. If it rolls back, everything rolls back together.
 
 ```sql
 begin;

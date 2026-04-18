@@ -28,32 +28,32 @@
 - [Contributing](#contributing)
 - [License](#license)
 
-PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the most proven Postgres queue architectures ever built — in a form that fits modern Postgres.
+PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the longest-running Postgres queue architectures in production — in a form that fits modern Postgres.
 
-PgQ was designed at Skype to run messaging at 1-billion-user scale, and it lived in very large self-managed Postgres installations for years. Standard PgQ ships as a C extension (`pgq`) plus an external daemon (`pgqd`) — unavailable on most managed Postgres providers.
+PgQ was designed at Skype to run messaging for hundreds of millions of users, and it ran in large self-managed Postgres installations for over a decade. Standard PgQ ships as a C extension (`pgq`) plus an external daemon (`pgqd`) — unavailable on most managed Postgres providers.
 
-PgQue rebuilds that same battle-tested engine in pure PL/pgSQL, so the zero-bloat queue pattern works anywhere you can run SQL — without adding another distributed system to your stack.
+PgQue rebuilds that battle-tested engine in pure PL/pgSQL, so the zero-bloat queue pattern works anywhere you can run SQL — without adding another distributed system to your stack.
 
-**The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and every other managed provider. No C extension, no `shared_preload_libraries`, no provider approval, no restart. `\i` and go.
+**The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and most other managed providers. No C extension, no `shared_preload_libraries`, no provider approval, no restart.
 
-Historical context, two decks worth your time:
+Historical context, two decks:
 
 - [Marko Kreen (Skype), PGCon 2009 — PgQ](https://www.pgcon.org/2009/schedule/attachments/91_pgq.pdf)
 - [Alexander Kukushkin (Microsoft), 2026 — Rediscovering PgQ](https://speakerdeck.com/cyberdemn/rediscovering-pgq)
 
 ## Why PgQue
 
-Most Postgres queues rely on `SKIP LOCKED` plus `DELETE` and/or `UPDATE`. That works nicely in toy examples and then quietly turns into dead tuples, VACUUM pressure, index bloat, and performance drift under sustained load.
+Most Postgres queues rely on `SKIP LOCKED` plus `DELETE` and/or `UPDATE`. That works nicely in toy examples and then turns into dead tuples, VACUUM pressure, index bloat, and performance drift under sustained load.
 
-PgQue avoids that whole class of problems. It uses **snapshot-based batching** and **TRUNCATE-based table rotation** instead of per-row deletion. The hot path stays predictable over time:
+PgQue avoids that whole class of problems. It uses **snapshot-based batching** and **TRUNCATE-based table rotation** instead of per-row deletion. The hot path stays predictable:
 
 - **Zero bloat by design** — no dead tuples in the main queue path
 - **No performance decay** — it does not get slower because it has been running for months
-- **Built for heavy-loaded systems** — the abuse the original PgQ architecture was made for
+- **Built for heavy-loaded systems** — the sustained-load regime the original PgQ architecture was designed for
 - **Real Postgres guarantees** — ACID transactions, transactional enqueue/consume, WAL, backups, replication, SQL visibility
 - **Works on managed Postgres** — no custom build, no C extension, no separate daemon
 
-PgQue gives you queue semantics **inside** Postgres, with Postgres durability and transactional behavior, without paying the usual bloat tax most in-database queues eventually pay.
+PgQue gives you queue semantics **inside** Postgres, with Postgres durability and transactional behavior, without the bloat tax most in-database queues eventually hit.
 
 ## Latency trade-off
 
@@ -63,7 +63,7 @@ The trade-off is **end-to-end delivery latency** — the gap between `send` and 
 
 Ways to reduce delivery latency: tune tick frequency and queue thresholds; use `force_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-second delivery without cutting the tick interval.
 
-If your top priority is single-digit-millisecond dispatch, PgQue is probably the wrong hammer. If your priority is **stability under load without bloat**, that's exactly where it gets interesting.
+If your top priority is single-digit-millisecond dispatch, PgQue is the wrong tool. If your priority is **stability under load without bloat**, that is where PgQue fits.
 
 ## Comparison
 
@@ -89,17 +89,17 @@ If your top priority is single-digit-millisecond dispatch, PgQue is probably the
 - **pg-boss fan-out** is copy-per-queue `publish()`/`subscribe()`, not a shared event log with independent cursors.
 - **Category:** River, Que, and pg-boss (and Oban, graphile-worker, solid_queue, good_job) are **job queue frameworks**. PgQue is an **event/message queue** optimized for high-throughput streaming with fan-out.
 
-### What genuinely differentiates PgQue
+### What differentiates PgQue
 
-**1. Zero event-table bloat, structurally.** SKIP LOCKED queues (PGMQ, River, pg-boss, Oban, graphile-worker) UPDATE + DELETE rows, creating dead tuples that require VACUUM. Under sustained load this causes documented failures:
+**1. Zero event-table bloat, by design.** SKIP LOCKED queues (PGMQ, River, pg-boss, Oban, graphile-worker) UPDATE + DELETE rows, creating dead tuples that require VACUUM. Under sustained load this causes documented failures:
 
 - [Brandur/Heroku (2015)](https://brandur.org/postgres-queues) — 60k backlog in one hour.
 - [PlanetScale (2026)](https://planetscale.com/blog/keeping-a-postgres-queue-healthy) — death spiral at 800 jobs/sec with OLAP on the side.
 - [River issue #59](https://github.com/riverqueue/river/issues/59) — autovacuum starvation.
 
-Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autovacuum settings. PgQue's TRUNCATE rotation creates zero dead tuples by construction — no tuning, immune to xmin horizon pinning.
+Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autovacuum settings. PgQue's TRUNCATE rotation creates zero dead tuples by construction. No tuning. Immune to xmin horizon pinning.
 
-**2. Native fan-out.** Each registered consumer maintains its own cursor on a shared event log and independently receives all events. That's fundamentally different from competing-consumers (SKIP LOCKED) where each job goes to one worker. pg-boss has fan-out but it is copy-per-queue (one INSERT per subscriber per event). PgQue's model is position-in-shared-log — no data duplication, atomic batch boundaries, late subscribers catch up. Closer to Kafka topics than to a job queue.
+**2. Native fan-out.** Each registered consumer maintains its own cursor on a shared event log and independently receives all events. That is different from competing-consumers (SKIP LOCKED) where each job goes to one worker. pg-boss has fan-out but it is copy-per-queue (one INSERT per subscriber per event). PgQue's model is position-in-shared-log — no data duplication, atomic batch boundaries, late subscribers catch up. Closer to Kafka topics than to a job queue.
 
 ### When to use PgQue vs. a job queue
 
@@ -174,9 +174,9 @@ DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `t
 
 ## Project status
 
-PgQue is **early-stage** as a product and API layer. PgQ itself is **rock solid** — battle-tested in very large systems over many years. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
+PgQue is **early-stage** as a product and API layer. PgQ itself is **rock solid** — battle-tested at Skype scale for over a decade. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
 
-The default install intentionally stays small in v0.1; additional APIs live under `sql/experimental/` until they are worth promoting. See [blueprints/PHASES.md](blueprints/PHASES.md).
+The default install stays small in v0.1; additional APIs live under `sql/experimental/` until they are worth promoting. See [blueprints/PHASES.md](blueprints/PHASES.md).
 
 ## Docs
 

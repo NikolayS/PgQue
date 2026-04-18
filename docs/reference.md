@@ -103,7 +103,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.create_queue(queue text) → integer`
 
-Creates a queue with default settings (4 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists.
+Creates a queue with default settings (3 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists.
 Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 
 #### `pgque.drop_queue(queue text) → integer`

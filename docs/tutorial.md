@@ -176,7 +176,7 @@ select * from pgque.receive('orders', 'processor', 100);
 
 ## Step 7: Send, nack, retry
 
-Real consumers sometimes fail. `nack` handles that: the message is scheduled for redelivery after a delay you choose. Before we demo it, lower the retry ceiling so we can drive a message to the DLQ in step 8:
+Real consumers sometimes fail. `nack` handles that: the message is scheduled for redelivery after a delay you choose. Before demoing it, lower the retry ceiling so you can drive a message to the DLQ in step 8:
 
 ```sql
 select pgque.set_queue_config('orders', 'max_retries', '2');
@@ -237,9 +237,9 @@ Same `msg_id = 2`, new `batch_id = 3`, and `retry_count = 1`. That is the redeli
 
 ## Step 8: Drive the message to the dead letter queue
 
-Keep nacking. We set `max_retries = 2` in step 7, and the message was just redelivered with `retry_count = 1`. On the next `nack` it becomes `retry_count = 2`; one more `nack` after that and `nack` sees `retry_count >= max_retries` and routes the message to `pgque.dead_letter` instead of the retry queue.
+Keep nacking. You set `max_retries = 2` in step 7, and the message was just redelivered with `retry_count = 1`. On the next `nack` it becomes `retry_count = 2`; one more `nack` after that, and `nack` sees `retry_count >= max_retries` and routes the message to `pgque.dead_letter` instead of the retry queue.
 
-That is two more nack cycles. Run the following block — `nack` `do` block followed by `maint_retry_events` + tick — twice:
+That is two more nack cycles. Run the following block twice — the `nack` `do` block followed by `maint_retry_events` + tick:
 
 ```sql
 do $$
