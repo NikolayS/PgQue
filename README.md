@@ -110,7 +110,7 @@ PgQue is an **event/message queue**; River, graphile-worker, pg-boss, and Oban a
 
 ## Installation
 
-**Requirements:** Postgres 14+. `pg_cron` is optional and recommended.
+**Requirements:** Postgres 14+, plus `pg_cron` for the default ticker setup. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). On self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
 
 Inside a psql session:
 
@@ -126,13 +126,15 @@ Or from the shell, same single-transaction guarantee via `psql --single-transact
 PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f sql/pgque.sql
 ```
 
-With `pg_cron` installed, `pgque.start()` creates the default ticker and maintenance jobs:
+With `pg_cron` available in the same database as PgQue, `pgque.start()` creates the default ticker and maintenance jobs:
 
 ```sql
 select pgque.start();
 ```
 
-Without `pg_cron`, the install still works, but PgQue is not self-running. Drive ticking and maintenance from an external scheduler:
+**pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
+
+Without `pg_cron`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
 
 ```bash
 PAGER=cat psql --no-psqlrc -c "select pgque.ticker()"   # every 1-2 seconds
