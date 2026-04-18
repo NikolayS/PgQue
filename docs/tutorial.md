@@ -336,7 +336,9 @@ select * from pgque.status();
 
 ### Production cadence: use pg_cron
 
-You have been driving the ticker by hand. In production, you want a scheduler running it every one to two seconds. If the database has `pg_cron` installed:
+You have been driving the ticker by hand. In production you want a scheduler calling it every one to two seconds. The recommended default is `pg_cron` — pre-installed or one-command available on every major managed Postgres provider (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). For self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
+
+With `pg_cron` available in the same database as PgQue:
 
 ```sql
 select pgque.start();
@@ -344,7 +346,9 @@ select pgque.start();
 
 That one call schedules three cron jobs: `pgque_ticker` every two seconds, `pgque_maint` every thirty seconds (retries, cleanup), and `pgque_rotate_step2` every ten seconds (table rotation). You can check them with `select * from pgque.status();` or `select * from cron.job;`.
 
-Without `pg_cron`, call `pgque.ticker()` and `pgque.maint()` from your application or an external scheduler on the same cadence. The install is still useful — you provide the heartbeat yourself.
+**pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
+
+Without `pg_cron` at all, call `pgque.ticker()` and `pgque.maint()` from your application or an external scheduler (system `cron`, systemd, a worker loop) on the same cadence. The install is still useful — you provide the heartbeat yourself.
 
 ### Where to go from here
 
