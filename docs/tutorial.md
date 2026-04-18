@@ -344,9 +344,31 @@ With `pg_cron` available in the same database as PgQue:
 select pgque.start();
 ```
 
-That one call schedules three cron jobs: `pgque_ticker` every two seconds, `pgque_maint` every thirty seconds (retries, cleanup), and `pgque_rotate_step2` every ten seconds (table rotation). You can check them with `select * from pgque.status();` or `select * from cron.job;`.
+That one call schedules three cron jobs: `pgque_ticker` every two seconds, `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
+
+**pg_cron log hygiene.** `pg_cron` logs every job execution to `cron.job_run_details`. At the two-second ticker cadence, that table grows by roughly 2,000 rows per hour from PgQue alone, with no built-in purge.
+
+Recommended: disable successful-run logging globally.
+
+```sql
+alter system set cron.log_run = off;
+-- requires a Postgres restart; errors from failed jobs still land in
+-- the Postgres server log via cron.log_min_messages (default WARNING)
+```
+
+If other pg_cron jobs on the instance need run history (pg_cron has no per-job logging toggle as of 1.6), schedule a periodic purge instead:
+
+```sql
+select cron.schedule(
+  'pgque_purge_cron_log',
+  '0 * * * *',
+  $$delete from cron.job_run_details where end_time < now() - interval '1 day'$$
+);
+```
+
+*Todo: a future `pgque.start()` will warn about this overhead and offer to schedule the purge job.*
 
 Without `pg_cron` at all, call `pgque.ticker()` and `pgque.maint()` from your application or an external scheduler (system `cron`, systemd, a worker loop) on the same cadence. The install is still useful — you provide the heartbeat yourself.
 

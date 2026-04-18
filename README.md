@@ -134,6 +134,8 @@ select pgque.start();
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 
+**pg_cron log hygiene.** The ticker runs every two seconds, so `cron.job_run_details` grows fast. Set `alter system set cron.log_run = off;` globally, or schedule a periodic purge — see [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes.
+
 Without `pg_cron`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
 
 ```bash
