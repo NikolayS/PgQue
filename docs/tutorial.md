@@ -34,9 +34,9 @@ select pgque.version();
 ```
 
 ```
- version
------------
- 1.0.0-dev
+    version
+----------------
+ [[your version]]
 ```
 
 The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. See the [reference](reference.md) for the full surface.
@@ -324,7 +324,7 @@ select * from pgque.status();
  component  | status      | detail
 ------------+-------------+----------------------------------
  postgresql | info        | PostgreSQL 17.2 on ...
- pgque      | info        | 1.0.0-dev
+ pgque      | info        | [[your version]]
  pg_cron    | unavailable | pg_cron not installed -- call ...
  queues     | info        | 1 queues configured
  consumers  | info        | 1 active subscriptions

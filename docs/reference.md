@@ -150,7 +150,7 @@ select * from pgque.status();
 
 #### `pgque.version() → text`
 
-Returns the installed PgQue version string (currently `'1.0.0-dev'`).
+Returns the installed PgQue version string (set by `build/transform.sh` at assembly time; varies per build).
 Grant: `pgque_reader`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.maint() → integer`
