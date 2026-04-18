@@ -59,9 +59,9 @@ PgQue gives you queue semantics **inside** Postgres, with Postgres durability an
 
 PgQue is built around **snapshot-based batching**, not row-by-row claiming. That's what gives it zero bloat in the hot path, stable behavior under sustained load, and clean ACID semantics inside Postgres.
 
-The trade-off is latency. In the default configuration, delivery is typically measured in **seconds**, not milliseconds, because events become visible on ticks rather than immediately on insert.
+The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. In the default configuration, end-to-end delivery is typically measured in **seconds**, not milliseconds, because events become visible on ticks rather than immediately on insert. Per-call latency (`send`, `receive`, `ack` themselves) stays in the microsecond range — see [benchmarks](docs/benchmarks.md).
 
-Ways to reduce latency: tune tick frequency and queue thresholds; use `force_tick()` for tests/demos or explicit immediate batching; wake consumers with `LISTEN/NOTIFY` as batches are created (notifications are hints, not durable delivery). Future versions may improve wake-up further, including logical-decoding-based approaches.
+Ways to reduce delivery latency: tune tick frequency and queue thresholds; use `force_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-second delivery without cutting the tick interval.
 
 If your top priority is single-digit-millisecond dispatch, PgQue is probably the wrong hammer. If your priority is **stability under load without bloat**, that's exactly where it gets interesting.
 
