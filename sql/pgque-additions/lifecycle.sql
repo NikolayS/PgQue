@@ -5,6 +5,7 @@ create or replace function pgque.start()
 returns void as $$
 declare
     v_ticker_id bigint;
+    v_retry_id bigint;
     v_maint_id bigint;
     v_step2_id bigint;
     v_dbname text;
@@ -29,7 +30,18 @@ begin
         v_dbname
     ) into v_ticker_id;
 
-    -- Maintenance: every 30 seconds (rotation step1, retry, vacuum)
+    -- Retry events: every 30 seconds (move nack'd events from the retry
+    -- queue back into the main event stream for the next tick).
+    -- pgque.maint() / maint_operations() does NOT include retry handling,
+    -- so this has to be scheduled separately — matches pgqd cadence.
+    select cron.schedule_in_database(
+        'pgque_retry_events',
+        '30 seconds',
+        $sql$SET statement_timeout = '25s'; SELECT pgque.maint_retry_events()$sql$,
+        v_dbname
+    ) into v_retry_id;
+
+    -- Maintenance: every 30 seconds (rotation step 1 and vacuum).
     select cron.schedule_in_database(
         'pgque_maint',
         '30 seconds',
@@ -47,13 +59,13 @@ begin
         v_dbname
     ) into v_step2_id;
 
-    -- Store job IDs in config
+    -- Store job IDs in config (retry + rotate_step2 unscheduled by name)
     update pgque.config
     set ticker_job_id = v_ticker_id,
         maint_job_id = v_maint_id;
 
-    raise notice 'pgque started: ticker job=%, maint job=%, rotate_step2 job=%',
-        v_ticker_id, v_maint_id, v_step2_id;
+    raise notice 'pgque started: ticker=%, retry_events=%, maint=%, rotate_step2=%',
+        v_ticker_id, v_retry_id, v_maint_id, v_step2_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -83,6 +95,14 @@ begin
         if v_maint_id is not null then
             perform cron.unschedule(v_maint_id);
         end if;
+
+        -- Unschedule retry_events by name (job ID not stored in config).
+        -- Ignore if job doesn't exist (first run or already removed).
+        begin
+            perform cron.unschedule('pgque_retry_events');
+        exception when others then
+            raise notice 'pgque.stop: retry_events job not found (OK on first install)';
+        end;
 
         -- Unschedule rotate_step2 by name (job ID not stored in config)
         -- Ignore if job doesn't exist (first run or already removed)

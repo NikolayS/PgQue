@@ -4,11 +4,12 @@
 -- These tests exercise the pg_cron lifecycle integration.
 -- Tests auto-skip when pg_cron is not available.
 
--- Test 1: start() sets job IDs in config
+-- Test 1: start() sets job IDs in config and schedules all four jobs
 do $$
 declare
   v_ticker_id bigint;
   v_maint_id bigint;
+  v_job_count int;
 begin
   if not exists (select 1 from pg_extension where extname = 'pg_cron') then
     raise notice 'SKIP: pg_cron not installed';
@@ -23,10 +24,39 @@ begin
   assert v_ticker_id is not null, 'ticker_job_id should be set after start()';
   assert v_maint_id is not null, 'maint_job_id should be set after start()';
 
+  -- All four named jobs should exist in cron.job after start().
+  select count(*) into v_job_count
+  from cron.job
+  where jobname in ('pgque_ticker', 'pgque_retry_events', 'pgque_maint', 'pgque_rotate_step2');
+  assert v_job_count = 4,
+    'expected 4 pgque_* jobs in cron.job, found ' || v_job_count;
+
   -- Clean up
   perform pgque.stop();
 
-  raise notice 'PASS: start() sets job IDs (ticker=%, maint=%)', v_ticker_id, v_maint_id;
+  raise notice 'PASS: start() schedules four jobs (ticker, retry_events, maint, rotate_step2)';
+end $$;
+
+-- Test 1b: stop() unschedules every pgque_* job (ticker, retry_events, maint, rotate_step2)
+do $$
+declare
+  v_job_count int;
+begin
+  if not exists (select 1 from pg_extension where extname = 'pg_cron') then
+    raise notice 'SKIP: pg_cron not installed';
+    return;
+  end if;
+
+  perform pgque.start();
+  perform pgque.stop();
+
+  select count(*) into v_job_count
+  from cron.job
+  where jobname in ('pgque_ticker', 'pgque_retry_events', 'pgque_maint', 'pgque_rotate_step2');
+  assert v_job_count = 0,
+    'expected 0 pgque_* jobs in cron.job after stop(), found ' || v_job_count;
+
+  raise notice 'PASS: stop() unschedules all four pgque_* jobs';
 end $$;
 
 -- Test 2: start() is idempotent
