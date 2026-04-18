@@ -13,8 +13,7 @@
 PgQ (Skype, ISC) → Skytools 2/3 → `github.com/pgq/pgq` → **PgQue**
 (Apache-2.0, PG14+).
 
-Skype ran hundreds of queues on PgQ in production. PgQue inherits that
-engine; it does not reinvent it.
+Skype ran hundreds of queues on PgQ in production; PgQue inherits that engine rather than reinventing it.
 
 ## Attribution
 
