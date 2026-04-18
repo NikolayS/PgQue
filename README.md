@@ -1,4 +1,4 @@
-# PgQue – PgQ, universal edition
+<h1 align="center">PgQue – PgQ, universal edition</h1>
 
 <p align="center"><strong>Zero-bloat Postgres queue. <code>\i</code> to install, <code>pg_cron</code> to tick.</strong></p>
 
