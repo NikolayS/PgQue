@@ -30,7 +30,7 @@
 
 PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the longest-running Postgres queue architectures in production — in a form that fits modern Postgres.
 
-PgQ was designed at Skype to run messaging for hundreds of millions of users, and it ran in large self-managed Postgres installations for over a decade. Standard PgQ ships as a C extension (`pgq`) plus an external daemon (`pgqd`) — unavailable on most managed Postgres providers.
+PgQ was designed at Skype to run messaging for hundreds of millions of users, and it ran on large self-managed Postgres deployments for over a decade. Standard PgQ depends on a C extension (`pgq`) and an external daemon (`pgqd`), neither of which run on most managed Postgres providers.
 
 PgQue rebuilds that battle-tested engine in pure PL/pgSQL, so the zero-bloat queue pattern works anywhere you can run SQL — without adding another distributed system to your stack.
 
@@ -43,7 +43,7 @@ Historical context, two decks:
 
 ## Why PgQue
 
-Most Postgres queues rely on `SKIP LOCKED` plus `DELETE` and/or `UPDATE`. That works nicely in toy examples and then turns into dead tuples, VACUUM pressure, index bloat, and performance drift under sustained load.
+Most Postgres queues rely on `SKIP LOCKED` plus `DELETE` and/or `UPDATE`. That holds up in toy examples and then turns into dead tuples, VACUUM pressure, index bloat, and performance drift under sustained load.
 
 PgQue avoids that whole class of problems. It uses **snapshot-based batching** and **TRUNCATE-based table rotation** instead of per-row deletion. The hot path stays predictable:
 
@@ -59,7 +59,7 @@ PgQue gives you queue semantics **inside** Postgres, with Postgres durability an
 
 PgQue is built around **snapshot-based batching**, not row-by-row claiming. That's what gives it zero bloat in the hot path, stable behavior under sustained load, and clean ACID semantics inside Postgres.
 
-The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. In the default configuration, end-to-end delivery is typically measured in **seconds**, not milliseconds, because events become visible on ticks rather than immediately on insert. Per-call latency (`send`, `receive`, `ack` themselves) stays in the microsecond range — see [benchmarks](docs/benchmarks.md).
+The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. In the default configuration, end-to-end delivery typically lands within ~1–2 seconds: up to 1 s for the next tick, plus the consumer's poll interval. Per-call latency (the `send` / `receive` / `ack` functions themselves) stays in the microsecond range.
 
 Ways to reduce delivery latency: tune tick frequency and queue thresholds; use `force_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-second delivery without cutting the tick interval.
 
@@ -99,18 +99,16 @@ If your top priority is single-digit-millisecond dispatch, PgQue is the wrong to
 
 Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autovacuum settings. PgQue's TRUNCATE rotation creates zero dead tuples by construction. No tuning. Immune to xmin horizon pinning.
 
-**2. Native fan-out.** Each registered consumer maintains its own cursor on a shared event log and independently receives all events. That is different from competing-consumers (SKIP LOCKED) where each job goes to one worker. pg-boss has fan-out but it is copy-per-queue (one INSERT per subscriber per event). PgQue's model is position-in-shared-log — no data duplication, atomic batch boundaries, late subscribers catch up. Closer to Kafka topics than to a job queue.
+**2. Native fan-out.** Each registered consumer maintains its own cursor on a shared event log and independently receives all events. That is different from competing-consumers (SKIP LOCKED) where each job goes to one worker. pg-boss has fan-out but it is copy-per-queue (one INSERT per subscriber per event). PgQue's model is a position on a shared log — no data duplication, atomic batch boundaries, late subscribers catch up. Closer to Kafka topics than to a job queue.
 
 ### When to use PgQue vs. a job queue
 
-PgQue is an **event/message queue**; River, graphile-worker, pg-boss, and Oban are **job queue frameworks** — different categories.
-
-- **Choose PgQue** when you want event-driven fan-out, zero-maintenance bloat behavior, and a language-agnostic SQL API, and you do not need per-job priorities or a worker framework.
+- **Choose PgQue** when you want event-driven fan-out, no bloat to tune around, and a language-agnostic SQL API, and you do not need per-job priorities or a worker framework.
 - **Choose a job queue** when you need per-job lifecycle, sub-3ms latency, priority queues, cron scheduling, unique jobs, or deep ecosystem integration (Elixir/Go/Node.js/Ruby).
 
 ## Installation
 
-**Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically (every 1–2 seconds). `pg_cron` is the recommended default — pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
+**Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically (every 1 second by default). `pg_cron` is the recommended default — pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
 Inside a psql session:
 
@@ -134,18 +132,18 @@ select pgque.start();
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 
-**pg_cron log hygiene.** The ticker runs every two seconds, so `cron.job_run_details` grows fast. Set `alter system set cron.log_run = off;` globally, or schedule a periodic purge — see [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes.
+**pg_cron log hygiene.** The ticker runs every second, adding ~3,600 rows per hour to `cron.job_run_details` with no built-in purge. Set `alter system set cron.log_run = off;` globally, or schedule a periodic purge — see [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes.
 
 Without `pg_cron`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
 
 ```bash
-PAGER=cat psql --no-psqlrc -c "select pgque.ticker()"   # every 1-2 seconds
+PAGER=cat psql --no-psqlrc -c "select pgque.ticker()"   # every 1 second
 PAGER=cat psql --no-psqlrc -c "select pgque.maint()"    # every 30 seconds
 ```
 
 **Important:** PgQue does not deliver messages without a working ticker. Enqueueing still works, but consumers will see nothing new because no ticks are created. If you do not use `pg_cron`, run `pgque.ticker()` and `pgque.maint()` yourself.
 
-Treat installation as initial setup for now — upgrade/reinstall guarantees are still being tightened. To uninstall: `\i sql/pgque_uninstall.sql`.
+Treat installation as one-way for now — upgrade and reinstall paths are still being tightened. To uninstall: `\i sql/pgque_uninstall.sql`.
 
 ## Roles and grants
 
@@ -155,7 +153,7 @@ The install creates three roles. Application users do not need superuser — gra
 |---|---|---|
 | `pgque_reader` | Dashboards, metrics, debugging | `get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, plus `select` on all tables |
 | `pgque_writer` | Producers and consumers (most apps) | inherits `pgque_reader` + the modern API (`send`, `send_batch`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) and the underlying PgQ primitives (`insert_event`, `next_batch`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer`, `unregister_consumer`) |
-| `pgque_admin`  | Operators, migrations | inherits `pgque_writer` + full schema/table/sequence access. `uninstall()` is explicitly revoked from `pgque_admin`, but PUBLIC execute is not revoked by default — see [`docs/reference.md`](docs/reference.md) to tighten. |
+| `pgque_admin`  | Operators, migrations | inherits `pgque_writer` + full schema/table/sequence access. `uninstall()` is revoked from both `pgque_admin` and PUBLIC (superuser-only — it drops the schema). |
 
 Typical app setup:
 

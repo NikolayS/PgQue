@@ -131,7 +131,7 @@ Most functions in this section are left on PUBLIC by default — tighten with `r
 
 #### `pgque.start() → void`
 
-Schedules three pg_cron jobs in the current database: `pgque_ticker` (every 2 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — raises if missing. Idempotent: calls `stop()` first.
+Schedules three pg_cron jobs in the current database: `pgque_ticker` (every 1 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — errors if missing. Idempotent: calls `stop()` first.
 Grant: PUBLIC (default). Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.stop() → void`
@@ -160,7 +160,7 @@ Grant: PUBLIC (default). Source: `sql/pgque-api/maint.sql`.
 
 #### `pgque.ticker() → bigint`
 
-Issues ticks for all unpaused, non-external queues. Returns the number of queues ticked. Call this from your scheduler (every ~1–5 s) when not using pg_cron.
+Issues ticks for all unpaused, non-external queues. Returns the number of queues ticked. Call this from your scheduler (every 1 s by default) when not using pg_cron.
 Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 
 #### `pgque.ticker(queue text) → bigint`
@@ -178,7 +178,7 @@ Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 #### `pgque.uninstall() → void`
 
 Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired.
-Grant: `execute` is explicitly revoked from `pgque_admin`, but PUBLIC execute is **not** revoked by default. If you need to prevent non-superuser roles from calling `uninstall()`, add `revoke execute on function pgque.uninstall() from public;` after install. A follow-up hardening change is tracked to do this by default. Source: `sql/pgque-additions/lifecycle.sql`.
+Grant: `execute` is revoked from both `pgque_admin` and `PUBLIC` — superuser / schema owner only. Source: `sql/pgque-additions/lifecycle.sql`.
 
 ## Observability
 

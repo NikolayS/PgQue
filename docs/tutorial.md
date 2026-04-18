@@ -43,7 +43,7 @@ The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writ
 
 ## Step 2: Create the queue and the consumer
 
-A queue is a named, shared event log. A consumer is a named cursor into that log — multiple consumers on the same queue each see every event exactly once, independently. This is fan-out by default.
+A queue is a named, shared event log. A consumer is a named cursor into that log. Any number of producers can write to the same queue concurrently, and any number of consumers can subscribe — each sees every event through its own cursor, independently (fan-out by default). You can create as many queues as you want in the same database; this tutorial uses one.
 
 ```sql
 select pgque.create_queue('orders');
@@ -97,7 +97,7 @@ Zero rows. This surprises every first-time user, so it is worth being explicit a
 
 PgQue is **tick-based**, not row-claiming. Producers append events to the queue, but consumers do not see individual rows — they see **batches**. A batch is the set of events between two ticks. Until a tick happens, there is no batch boundary, so `pgque.receive` has nothing to return.
 
-In normal operation, a scheduler (`pg_cron` or an external loop) calls `pgque.ticker()` every second or two and ticks happen continuously. In this tutorial we have not started a scheduler, so no tick has run yet.
+In normal operation, a scheduler (`pg_cron` or an external loop) calls `pgque.ticker()` every second and ticks happen continuously. In this tutorial you have not started a scheduler, so no tick has run yet.
 
 See the [concepts glossary](pgq-concepts.md) for the full definitions of event, batch, tick, and consumer.
 
@@ -137,7 +137,7 @@ select * from pgque.receive('orders', 'processor', 100);
 
 The event is back. Note `retry_count` is null — this is the first delivery attempt. The `batch_id` is the important value for the next step.
 
-In production, `pg_cron` (or a small worker loop) calls `pgque.ticker()` every one to two seconds, and you never touch `force_tick`. It exists for exactly the situation you are in right now: you want to advance the queue without waiting for the ticker's lag threshold.
+In production, `pg_cron` (or a small worker loop) calls `pgque.ticker()` every second. `force_tick` exists for the situation here: advancing the queue without waiting on the ticker's lag threshold.
 
 ## Step 6: Ack the batch
 
@@ -173,6 +173,20 @@ select * from pgque.receive('orders', 'processor', 100);
 ```
 (0 rows)
 ```
+
+**What you just did, in PgQ terms.** The modern `receive`/`ack` pair wraps PgQ's canonical consumer loop:
+
+```
+batch_id = next_batch(queue, consumer)   -- NULL → sleep and retry
+events   = get_batch_events(batch_id)
+process(events)                           -- event_retry per event on failure
+finish_batch(batch_id)
+commit
+```
+
+`pgque.receive` = `next_batch` + `get_batch_events`. `pgque.ack` = `finish_batch`. `pgque.nack` = `event_retry` (with DLQ routing when `retry_count >= max_retries`). Both surfaces ship; the primitives are available for advanced use. See the [reference](reference.md) or the [concepts glossary](pgq-concepts.md).
+
+Every row `pgque.receive` returns is a `pgque.message` composite: `msg_id` (PgQ's `ev_id`), `batch_id`, `type`, `payload` (text — cast to `jsonb` for JSON access), `retry_count` (NULL on first delivery), `created_at`, and four free-form `extra1..4` text columns.
 
 ## Step 7: Send, nack, retry
 
@@ -224,7 +238,7 @@ select pgque.ticker();
 select * from pgque.receive('orders', 'processor', 100);
 ```
 
-In production, `pgque.start()` schedules `maint_retry_events` on its own cadence — you never call it by hand. See the reference for [`maint_retry_events`](reference.md) and the related `maint` helpers.
+In production, `pgque.start()` schedules `maint_retry_events` on its own cadence — you never call it by hand. See [`pgque.maint()`](reference.md#pgquemaint--integer) and the surrounding Lifecycle entries in the reference.
 
 ```
  msg_id | batch_id | type    | payload                            | retry_count | ...
@@ -314,7 +328,7 @@ from pgque.get_consumer_info('orders', 'processor');
  orders     | processor     | 00:00:02.11  | 00:00:01.50  |              0
 ```
 
-`lag` is how far behind the consumer is — the age of its last finished batch. `last_seen` is how long ago the consumer last picked up a batch. `pending_events` is the count waiting in the current table for the next tick. For a healthy system, `lag` and `last_seen` both stay low and `ticker_lag` stays under a few seconds.
+`lag` is the age of the consumer's last finished batch — high means the consumer is falling behind. `last_seen` is the elapsed time since the consumer last processed a batch — high means the consumer has stopped calling `receive`. `pending_events` is the count waiting in the current table for the next tick. For a healthy system, `lag` and `last_seen` both stay low and `ticker_lag` stays under a few seconds.
 
 ```sql
 select * from pgque.status();
@@ -336,7 +350,7 @@ select * from pgque.status();
 
 ### Production cadence: use pg_cron
 
-You have been driving the ticker by hand. In production you want a scheduler calling it every one to two seconds. The recommended default is `pg_cron` — pre-installed or one-command available on every major managed Postgres provider (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). For self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
+You have been driving the ticker by hand. In production you want a scheduler calling it every second. The recommended default is `pg_cron` — pre-installed or one-command available on every major managed Postgres provider (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). For self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
 
 With `pg_cron` available in the same database as PgQue:
 
@@ -344,7 +358,7 @@ With `pg_cron` available in the same database as PgQue:
 select pgque.start();
 ```
 
-That one call schedules three cron jobs: `pgque_ticker` every two seconds, `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
+That one call schedules three cron jobs: `pgque_ticker` every second, `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 

@@ -8,8 +8,12 @@ Vocabulary adapted from the 2009 PgCon talk by Kreen & Pihlak
 - **Event** — one row in a queue table. Delivered **at-least-once**.
 - **Batch** — events between two ticks, served to a consumer together.
 - **Queue** — named event stream; 3 rotating tables, purged by `TRUNCATE`.
-- **Producer** — anything that calls `insert_event` / `pgque.send`.
+  Any number of queues can coexist in one database.
+- **Producer** — anything that calls `insert_event` / `pgque.send`. Any
+  number of producers can write to the same queue concurrently.
 - **Consumer** — subscribes, reads batches, calls `ack` (or `finish_batch`).
+  Any number of consumers can subscribe to the same queue; each has its
+  own cursor and independently sees every event (fan-out by default).
 - **Ticker** — creates ticks, vacuums, rotates, reschedules retries.
   In PgQue: `pg_cron` calling `pgque.ticker()`.
 - **Tick** — position marker in the event stream; delimits batches.
