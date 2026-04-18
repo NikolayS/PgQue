@@ -32,13 +32,16 @@ PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the most proven P
 
 PgQ was designed at Skype with architecture meant to serve **1B users**, and it was used in very large self-managed Postgres installations for years. That knowledge is mostly lost art now — real database kung fu from the era when people solved brutal scale problems without cargo-culting another distributed system into the stack. PgQue takes that battle-tested core and repackages it as an extension-free, managed-Postgres-friendly project.
 
-**The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Cloud SQL, AlloyDB, Supabase, Neon, and every other managed provider. No C extension, no `shared_preload_libraries`, no provider approval, no restart. `\i` and go.
+**The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and every other managed provider. No C extension, no `shared_preload_libraries`, no provider approval, no restart. `\i` and go.
 
-Historical context, two decks worth your time: [Marko Kreen (Skype), PGCon 2009 — PgQ](https://www.pgcon.org/2009/schedule/attachments/91_pgq.pdf) and [Alexander Kukushkin (Microsoft), 2026 — Rediscovering PgQ](https://speakerdeck.com/cyberdemn/rediscovering-pgq).
+Historical context, two decks worth your time:
+
+- [Marko Kreen (Skype), PGCon 2009 — PgQ](https://www.pgcon.org/2009/schedule/attachments/91_pgq.pdf)
+- [Alexander Kukushkin (Microsoft), 2026 — Rediscovering PgQ](https://speakerdeck.com/cyberdemn/rediscovering-pgq)
 
 ## Why PgQue
 
-Most Postgres queues rely on `SKIP LOCKED` plus `DELETE` or `UPDATE`. That works nicely in toy examples and then quietly turns into dead tuples, VACUUM pressure, index bloat, and performance drift under sustained load.
+Most Postgres queues rely on `SKIP LOCKED` plus `DELETE` and/or `UPDATE`. That works nicely in toy examples and then quietly turns into dead tuples, VACUUM pressure, index bloat, and performance drift under sustained load.
 
 PgQue avoids that whole class of problems. It uses **snapshot-based batching** and **TRUNCATE-based table rotation** instead of per-row deletion. The hot path stays predictable over time:
 
