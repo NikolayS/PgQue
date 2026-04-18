@@ -14,12 +14,12 @@ PostgreSQL 18.3, `synchronous_commit=off` per-session). Full methodology:
 
 Key takeaways:
 
-- **Zero bloat under sustained load** — a 30-minute sustained test showed
-  zero dead tuple growth in event tables.
-- **Batching matters** — throughput jumps hard when you stop doing one tiny
-  transaction per event.
+- **Zero bloat under load** — a 30-minute sustained test showed zero
+  dead-tuple growth in event tables.
+- **Batching matters** — throughput jumps sharply when you stop doing one
+  tiny transaction per event.
 - **Consumer side is not the bottleneck** — reads are much faster than writes.
-- **You keep Postgres guarantees** — transactional semantics, WAL durability
+- **Full Postgres guarantees** — transactional semantics, WAL durability
   options, backups, replication, SQL introspection.
 
 > `synchronous_commit=off` can be set per session or per transaction for
