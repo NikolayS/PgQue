@@ -4028,7 +4028,7 @@ begin
     select cron.schedule_in_database(
         'pgque_retry_events',
         '30 seconds',
-        $sql$SET statement_timeout = '25s'; SELECT pgque.maint_retry_events()$sql$,
+        $sql$set statement_timeout = '25s'; select pgque.maint_retry_events()$sql$,
         v_dbname
     ) into v_retry_id;
 

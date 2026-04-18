@@ -42,7 +42,7 @@ do $$
 declare
   v_job_count int;
 begin
-  if not exists (select 1 from pg_extension where extname = 'pg_cron') then
+  if not exists (select from pg_extension where extname = 'pg_cron') then
     raise notice 'SKIP: pg_cron not installed';
     return;
   end if;
