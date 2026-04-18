@@ -91,7 +91,13 @@ If your top priority is single-digit-millisecond dispatch, PgQue is probably the
 
 ### What genuinely differentiates PgQue
 
-**1. Zero event-table bloat, structurally.** SKIP LOCKED queues (PGMQ, River, pg-boss, Oban, graphile-worker) UPDATE + DELETE rows, creating dead tuples that require VACUUM. Under sustained load this causes documented failures: [Brandur/Heroku (2015)](https://brandur.org/postgres-queues) (60k backlog in one hour), [PlanetScale (2026)](https://planetscale.com/blog/keeping-a-postgres-queue-healthy) (death spiral at 800 jobs/sec with OLAP on the side), [River issue #59](https://github.com/riverqueue/river/issues/59) (autovacuum starvation). Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autovacuum settings. PgQue's TRUNCATE rotation creates zero dead tuples by construction — no tuning, immune to xmin horizon pinning.
+**1. Zero event-table bloat, structurally.** SKIP LOCKED queues (PGMQ, River, pg-boss, Oban, graphile-worker) UPDATE + DELETE rows, creating dead tuples that require VACUUM. Under sustained load this causes documented failures:
+
+- [Brandur/Heroku (2015)](https://brandur.org/postgres-queues) — 60k backlog in one hour.
+- [PlanetScale (2026)](https://planetscale.com/blog/keeping-a-postgres-queue-healthy) — death spiral at 800 jobs/sec with OLAP on the side.
+- [River issue #59](https://github.com/riverqueue/river/issues/59) — autovacuum starvation.
+
+Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autovacuum settings. PgQue's TRUNCATE rotation creates zero dead tuples by construction — no tuning, immune to xmin horizon pinning.
 
 **2. Native fan-out.** Each registered consumer maintains its own cursor on a shared event log and independently receives all events. That's fundamentally different from competing-consumers (SKIP LOCKED) where each job goes to one worker. pg-boss has fan-out but it is copy-per-queue (one INSERT per subscriber per event). PgQue's model is position-in-shared-log — no data duplication, atomic batch boundaries, late subscribers catch up. Closer to Kafka topics than to a job queue.
 
