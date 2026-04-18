@@ -21,6 +21,7 @@ Discussion on [Hacker News](https://news.ycombinator.com/item?id=47817349).
 
 - [Why PgQue](#why-pgque)
 - [Latency trade-off](#latency-trade-off)
+- [Three latencies](#three-latencies)
 - [Comparison](#comparison)
 - [Installation](#installation)
 - [Roles and grants](#roles-and-grants)
@@ -69,6 +70,14 @@ The trade-off is **end-to-end delivery latency** — the gap between `send` and 
 Ways to reduce delivery latency: tune tick frequency and queue thresholds; use `force_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-second delivery without cutting the tick interval.
 
 If your top priority is single-digit-millisecond dispatch, PgQue is the wrong tool. If your priority is **stability under load without bloat**, that is where PgQue fits.
+
+## Three latencies
+
+"Queue latency" is three numbers, not one. PgQue makes #1 and #2 sub-ms and bounds #3 by whatever tick cadence you configure:
+
+1. **Producer latency** — `send` / `insert_event`. Sub-ms.
+2. **Subscriber latency** — `next_batch` + `get_batch_events`. Sub-ms.
+3. **End-to-end delivery** — `send` → consumer visibility. ≈ tick period. **Tunable, not floored.** Default `pg_cron` at 1 s → ~500 ms average; sub-ms e2e is achievable with aggressive ticking (staggered `pg_cron` jobs, in-tick `pg_sleep` loop — see [concept doc](docs/pgq-concepts.md#three-latencies)). Trade-off: more ticks mean more `tick`/`subscription` metadata churn, which at very high rates warrants rotating those metadata tables as well. Under sustained load the ticker keeps firing at its configured rate — batch size absorbs the load, e2e does not inflate.
 
 ## Comparison
 
