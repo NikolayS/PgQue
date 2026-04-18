@@ -91,3 +91,67 @@ select pgque.dlq_purge('orders', interval '7 days');
 ```
 
 See [the tutorial](tutorial.md) for the full DLQ flow including retry budgets and nack.
+
+## Monitoring: queue + consumer health
+
+Two functions inherited from PgQ give a one-shot read of the system. Use `\x` in psql for the readable per-column layout.
+
+A healthy snapshot:
+
+```
+\x
+
+select * from pgque.get_queue_info('orders');
+-[ RECORD 1 ]------------+------------------------
+queue_name               | orders
+queue_ntables            | 3
+queue_cur_table          | 2
+queue_rotation_period    | 02:00:00
+queue_switch_time        | 2026-04-17 08:03:11+00
+queue_external_ticker    | f
+queue_ticker_paused      | f
+queue_ticker_max_count   | 500
+queue_ticker_max_lag     | 00:00:03
+queue_ticker_idle_period | 00:01:00
+ticker_lag               | 00:00:01.842
+ev_per_sec               | 3.40
+ev_new                   | 12
+last_tick_id             | 1247
+
+select * from pgque.get_consumer_info('orders', 'processor');
+-[ RECORD 1 ]--+--------------
+queue_name     | orders
+consumer_name  | processor
+lag            | 00:00:00.520
+last_seen      | 00:00:00.201
+last_tick      | 1247
+current_batch  |
+next_tick      |
+pending_events | 0
+```
+
+A stuck consumer, same queue, a couple of hours later:
+
+```
+select * from pgque.get_consumer_info('orders', 'processor');
+-[ RECORD 1 ]--+----------------
+queue_name     | orders
+consumer_name  | processor
+lag            | 02:15:33.204
+last_seen      | 02:14:59.817
+last_tick      | 1247
+current_batch  |
+next_tick      | 1389
+pending_events | 847
+```
+
+The ticker is still running (`ticker_lag` in `get_queue_info` stays low), but the worker stopped draining — `lag` and `last_seen` climbed to hours and `pending_events` filled up.
+
+Red flags to alert on:
+
+- **`ticker_lag`** climbing past `queue_ticker_max_lag` (default 3 s) — the ticker is not running. Check `pg_cron` (or your external scheduler).
+- **`lag`** climbing into minutes or longer — the consumer is not finishing batches. Check the worker.
+- **`last_seen`** climbing into minutes or longer — the consumer has stopped calling `receive` at all. Check the worker process is alive.
+- **`pending_events`** growing without bound while `lag` is high — a stuck consumer also blocks table rotation; event tables will grow.
+
+`pgque.status()` rolls up cron-job state, version, queue count, and consumer count into a single diagnostic view — run it first when something looks off.
