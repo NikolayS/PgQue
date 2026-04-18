@@ -21,11 +21,12 @@ begin
 
     v_dbname := current_database();
 
-    -- Ticker: every 2 seconds (pg_cron >= 1.5 for sub-minute scheduling)
+    -- Ticker: every 1 second (matches pgqd cadence; requires pg_cron >= 1.5
+    -- for sub-minute scheduling)
     select cron.schedule_in_database(
         'pgque_ticker',
-        '2 seconds',
-        $sql$SET statement_timeout = '1500ms'; SELECT pgque.ticker()$sql$,
+        '1 second',
+        $sql$SET statement_timeout = '950ms'; SELECT pgque.ticker()$sql$,
         v_dbname
     ) into v_ticker_id;
 
