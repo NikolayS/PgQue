@@ -1,6 +1,6 @@
 # PgQue – PgQ, universal edition
 
-<p align="center"><strong>Zero-bloat Postgres queue. No extensions. No daemon. One SQL file.</strong></p>
+<p align="center"><strong>Zero-bloat Postgres queue. <code>\i</code> to install, <code>pg_cron</code> to tick.</strong></p>
 
 <p align="center">
   <a href="https://github.com/NikolayS/pgque/actions/workflows/ci.yml"><img src="https://github.com/NikolayS/pgque/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
