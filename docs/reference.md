@@ -6,12 +6,13 @@ If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the 
 
 Each entry takes this form:
 
-```
+
 #### `pgque.<name>(arg text, …) → returntype`
 
 One-line description. Optional second line with a caveat.
 Grant: `role_name` or `PUBLIC (default)`. Source: `sql/<path>`.
-```
+
+
 
 Functions shipped outside the default install are in the [Experimental](#experimental-not-in-default-install) section.
 
