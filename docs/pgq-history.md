@@ -6,16 +6,16 @@
   Marko Kreen & Martin Pihlak
   ([slides](https://www.pgcon.org/2009/schedule/attachments/91_pgq.pdf),
   [event](https://www.pgcon.org/2009/schedule/events/138.en.html)).
-- **2026** — PgQue: PG14+ single-file repackage for managed databases.
+- **2026** — pg_current: PG14+ single-file repackage for managed databases.
 
 ## Lineage
 
-PgQ (Skype, ISC) → Skytools 2/3 → `github.com/pgq/pgq` → **PgQue**
+PgQ (Skype, ISC) → Skytools 2/3 → `github.com/pgq/pgq` → **pg_current**
 (Apache-2.0, PG14+).
 
-Skype ran hundreds of queues on PgQ in production; PgQue inherits that engine rather than reinventing it.
+Skype ran hundreds of queues on PgQ in production; pg_current inherits that engine rather than reinventing it.
 
 ## Attribution
 
 PgQ: ISC, © Marko Kreen / Skype Technologies OU.
-PgQue: Apache-2.0, © 2026 Nikolay Samokhvalov. See `NOTICE`.
+pg_current: Apache-2.0, © 2026 Nikolay Samokhvalov. See `NOTICE`.

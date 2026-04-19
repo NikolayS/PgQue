@@ -12,14 +12,14 @@ begin
     select prosrc
     from pg_proc p
     join pg_namespace n on p.pronamespace = n.oid
-    where n.nspname = 'pgque' and p.proname = 'ticker'
+    where n.nspname = 'pg_current' and p.proname = 'ticker'
   loop
-    if v_src like '%pg_notify%' and v_src like '%pgque_%' then
+    if v_src like '%pg_notify%' and v_src like '%pg_current_%' then
       v_found := true;
     end if;
   end loop;
 
-  assert v_found, 'at least one ticker overload should contain pg_notify on pgque_ channel';
+  assert v_found, 'at least one ticker overload should contain pg_notify on pg_current_ channel';
 
   raise notice 'PASS: ticker contains pg_notify for LISTEN/NOTIFY';
 end $$;

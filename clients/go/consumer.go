@@ -1,7 +1,7 @@
-// pgque-go -- Go client for PgQue
+// pg_current-go -- Go client for pg_current
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-package pgque
+package pg_current
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 
 		msgs, err := c.client.Receive(ctx, c.queue, c.name, 100)
 		if err != nil {
-			log.Printf("pgque: receive error: %v", err)
+			log.Printf("pg_current: receive error: %v", err)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -61,7 +61,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 			batchID = msg.BatchID
 			if handler, ok := c.handlers[msg.Type]; ok {
 				if err := handler(ctx, msg); err != nil {
-					log.Printf("pgque: handler error for %s: %v", msg.Type, err)
+					log.Printf("pg_current: handler error for %s: %v", msg.Type, err)
 					hasError = true
 					// Don't ack — batch will be redelivered
 				}
@@ -70,7 +70,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 
 		if batchID != 0 && !hasError {
 			if err := c.client.Ack(ctx, batchID); err != nil {
-				log.Printf("pgque: ack error: %v", err)
+				log.Printf("pg_current: ack error: %v", err)
 			}
 		}
 	}

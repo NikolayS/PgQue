@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 
 -- US-11: Manual mode without pg_cron
--- On a fresh database without pg_cron, PgQue should install and basic
+-- On a fresh database without pg_cron, pg_current should install and basic
 -- manual operation should work: create queue, send, ticker(), maint(), receive.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
@@ -18,10 +18,10 @@ end $$;
 do $$
 begin
   begin
-    perform pgque.start();
-    assert false, 'pgque.start() should fail without pg_cron';
+    perform pg_current.start();
+    assert false, 'pg_current.start() should fail without pg_cron';
   exception when raise_exception then
-    assert sqlerrm like '%PgQue itself works without pg_cron%',
+    assert sqlerrm like '%pg_current itself works without pg_cron%',
       'unexpected error: ' || sqlerrm;
   end;
   raise notice 'PASS: start() explains manual mode without pg_cron';
@@ -31,29 +31,29 @@ end $$;
 -- Separate transactions matter here because PgQ batching depends on snapshots.
 do $$
 begin
-  perform pgque.create_queue('us11_manual');
-  perform pgque.subscribe('us11_manual', 'worker');
+  perform pg_current.create_queue('us11_manual');
+  perform pg_current.subscribe('us11_manual', 'worker');
 end $$;
 
 do $$
 begin
-  perform pgque.send('us11_manual', 'demo.event', '{"ok":true}'::jsonb);
+  perform pg_current.send('us11_manual', 'demo.event', '{"ok":true}'::jsonb);
 end $$;
 
 do $$
 begin
-  perform pgque.force_tick('us11_manual');
-  perform pgque.ticker();
-  perform pgque.maint();
+  perform pg_current.force_tick('us11_manual');
+  perform pg_current.ticker();
+  perform pg_current.maint();
 end $$;
 
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us11_manual', 'worker', 10)
+  for v_msg in select * from pg_current.receive('us11_manual', 'worker', 10)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -64,7 +64,7 @@ begin
   end loop;
 
   assert v_count = 1, 'expected 1 message, got ' || v_count;
-  perform pgque.ack(v_batch_id);
+  perform pg_current.ack(v_batch_id);
   raise notice 'PASS: manual send/ticker/maint/receive/ack works without pg_cron';
 end $$;
 
@@ -74,10 +74,10 @@ declare
   v_found bool := false;
 begin
   select true into v_found
-  from pgque.status()
+  from pg_current.status()
   where component = 'pg_cron'
     and status = 'unavailable'
-    and detail like '%pgque.ticker()%pgque.maint()%';
+    and detail like '%pg_current.ticker()%pg_current.maint()%';
 
   assert coalesce(v_found, false), 'status() should describe manual scheduler mode';
   raise notice 'PASS: status() documents manual scheduler mode';
@@ -86,8 +86,8 @@ end $$;
 -- Teardown.
 do $$
 begin
-  perform pgque.unsubscribe('us11_manual', 'worker');
-  perform pgque.drop_queue('us11_manual');
+  perform pg_current.unsubscribe('us11_manual', 'worker');
+  perform pg_current.drop_queue('us11_manual');
 end $$;
 
 \echo 'US-11: PASSED'

@@ -7,29 +7,29 @@
 
 -- Setup
 do $$ begin
-  perform pgque.create_queue('us1_orders');
-  perform pgque.subscribe('us1_orders', 'app');
+  perform pg_current.create_queue('us1_orders');
+  perform pg_current.subscribe('us1_orders', 'app');
 end $$;
 
 -- Action: send a message using the modern API
 do $$ begin
-  perform pgque.send('us1_orders', '{"id":1}'::jsonb);
+  perform pg_current.send('us1_orders', '{"id":1}'::jsonb);
 end $$;
 
 -- Tick (force_tick bypasses throttle; separate transaction for snapshot visibility)
 do $$ begin
-  perform pgque.force_tick('us1_orders');
-  perform pgque.ticker();
+  perform pg_current.force_tick('us1_orders');
+  perform pg_current.ticker();
 end $$;
 
 -- Verify: receive returns exactly 1 message with correct fields
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us1_orders', 'app', 10)
+  for v_msg in select * from pg_current.receive('us1_orders', 'app', 10)
   loop
     v_count := v_count + 1;
     assert v_msg.payload::jsonb = '{"id":1}'::jsonb, 'payload should match, got ' || coalesce(v_msg.payload, 'NULL');
@@ -43,7 +43,7 @@ begin
   assert v_count = 1, 'should receive exactly 1 message, got ' || v_count;
 
   -- Ack the batch
-  perform pgque.ack(v_batch_id);
+  perform pg_current.ack(v_batch_id);
 
   raise notice 'PASS: US-1 send + receive + ack';
 end $$;
@@ -52,9 +52,9 @@ end $$;
 do $$
 declare
   v_count int := 0;
-  v_msg pgque.message;
+  v_msg pg_current.message;
 begin
-  for v_msg in select * from pgque.receive('us1_orders', 'app', 10)
+  for v_msg in select * from pg_current.receive('us1_orders', 'app', 10)
   loop
     v_count := v_count + 1;
   end loop;
@@ -64,8 +64,8 @@ end $$;
 
 -- Teardown
 do $$ begin
-  perform pgque.unsubscribe('us1_orders', 'app');
-  perform pgque.drop_queue('us1_orders');
+  perform pg_current.unsubscribe('us1_orders', 'app');
+  perform pg_current.drop_queue('us1_orders');
 end $$;
 
 \echo 'US-1: PASSED'

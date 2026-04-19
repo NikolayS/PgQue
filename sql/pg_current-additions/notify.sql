@@ -1,0 +1,11 @@
+-- LISTEN/NOTIFY integration for pg_current ticker
+-- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+--
+-- The ticker function (pg_current.ticker) will emit:
+--   perform pg_notify('pg_current_' || queue_name, tick_id::text);
+-- after each tick.
+--
+-- This is applied as a post-transform patch to the ticker function
+-- in build/transform.sh or during install script assembly.
+--
+-- Consumers can: LISTEN pg_current_<queue_name>;

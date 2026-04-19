@@ -1,4 +1,4 @@
--- test_pgcron_lifecycle.sql -- Verify pgque.start() and pgque.stop() with pg_cron
+-- test_pgcron_lifecycle.sql -- Verify pg_current.start() and pg_current.stop() with pg_cron
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- These tests exercise the pg_cron lifecycle integration.
@@ -16,10 +16,10 @@ begin
     return;
   end if;
 
-  perform pgque.start();
+  perform pg_current.start();
 
   select ticker_job_id, maint_job_id into v_ticker_id, v_maint_id
-  from pgque.config;
+  from pg_current.config;
 
   assert v_ticker_id is not null, 'ticker_job_id should be set after start()';
   assert v_maint_id is not null, 'maint_job_id should be set after start()';
@@ -27,17 +27,17 @@ begin
   -- All four named jobs should exist in cron.job after start().
   select count(*) into v_job_count
   from cron.job
-  where jobname in ('pgque_ticker', 'pgque_retry_events', 'pgque_maint', 'pgque_rotate_step2');
+  where jobname in ('pg_current_ticker', 'pg_current_retry_events', 'pg_current_maint', 'pg_current_rotate_step2');
   assert v_job_count = 4,
-    'expected 4 pgque_* jobs in cron.job, found ' || v_job_count;
+    'expected 4 pg_current_* jobs in cron.job, found ' || v_job_count;
 
   -- Clean up
-  perform pgque.stop();
+  perform pg_current.stop();
 
   raise notice 'PASS: start() schedules four jobs (ticker, retry_events, maint, rotate_step2)';
 end $$;
 
--- Test 1b: stop() unschedules every pgque_* job (ticker, retry_events, maint, rotate_step2)
+-- Test 1b: stop() unschedules every pg_current_* job (ticker, retry_events, maint, rotate_step2)
 do $$
 declare
   v_job_count int;
@@ -47,16 +47,16 @@ begin
     return;
   end if;
 
-  perform pgque.start();
-  perform pgque.stop();
+  perform pg_current.start();
+  perform pg_current.stop();
 
   select count(*) into v_job_count
   from cron.job
-  where jobname in ('pgque_ticker', 'pgque_retry_events', 'pgque_maint', 'pgque_rotate_step2');
+  where jobname in ('pg_current_ticker', 'pg_current_retry_events', 'pg_current_maint', 'pg_current_rotate_step2');
   assert v_job_count = 0,
-    'expected 0 pgque_* jobs in cron.job after stop(), found ' || v_job_count;
+    'expected 0 pg_current_* jobs in cron.job after stop(), found ' || v_job_count;
 
-  raise notice 'PASS: stop() unschedules all four pgque_* jobs';
+  raise notice 'PASS: stop() unschedules all four pg_current_* jobs';
 end $$;
 
 -- Test 2: start() is idempotent
@@ -70,16 +70,16 @@ begin
     return;
   end if;
 
-  perform pgque.start();
-  select ticker_job_id into v_ticker_id1 from pgque.config;
+  perform pg_current.start();
+  select ticker_job_id into v_ticker_id1 from pg_current.config;
 
-  perform pgque.start();
-  select ticker_job_id into v_ticker_id2 from pgque.config;
+  perform pg_current.start();
+  select ticker_job_id into v_ticker_id2 from pg_current.config;
 
   assert v_ticker_id2 is not null, 'should still have ticker job after second start()';
 
   -- Clean up
-  perform pgque.stop();
+  perform pg_current.stop();
 
   raise notice 'PASS: start() is idempotent';
 end $$;
@@ -92,12 +92,12 @@ begin
     return;
   end if;
 
-  perform pgque.start();
-  perform pgque.stop();
+  perform pg_current.start();
+  perform pg_current.stop();
 
-  assert (select ticker_job_id from pgque.config) is null,
+  assert (select ticker_job_id from pg_current.config) is null,
     'ticker_job_id should be NULL after stop()';
-  assert (select maint_job_id from pgque.config) is null,
+  assert (select maint_job_id from pg_current.config) is null,
     'maint_job_id should be NULL after stop()';
 
   raise notice 'PASS: stop() clears job IDs';
@@ -111,9 +111,9 @@ begin
     return;
   end if;
 
-  perform pgque.start();
-  perform pgque.stop();
-  perform pgque.stop();
+  perform pg_current.start();
+  perform pg_current.stop();
+  perform pg_current.stop();
 
   raise notice 'PASS: stop() is idempotent';
 end $$;
@@ -127,7 +127,7 @@ begin
   end if;
 
   begin
-    perform pgque.start();
+    perform pg_current.start();
     assert false, 'start() should raise error without pg_cron';
   exception when raise_exception then
     assert sqlerrm like '%pg_cron%',
@@ -145,11 +145,11 @@ begin
   end if;
 
   -- Should not raise: just clears any stale job IDs
-  perform pgque.stop();
+  perform pg_current.stop();
 
-  assert (select ticker_job_id from pgque.config) is null,
+  assert (select ticker_job_id from pg_current.config) is null,
     'ticker_job_id should be NULL after stop() without pg_cron';
-  assert (select maint_job_id from pgque.config) is null,
+  assert (select maint_job_id from pg_current.config) is null,
     'maint_job_id should be NULL after stop() without pg_cron';
 
   raise notice 'PASS: stop() is graceful no-op without pg_cron';

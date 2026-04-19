@@ -9,40 +9,40 @@
 
 -- Setup: create queue with short rotation_period, subscribe two consumers
 do $$ begin
-  perform pgque.create_queue('us6_stream',
+  perform pg_current.create_queue('us6_stream',
     '{"rotation_period": "30 seconds"}'::jsonb);
-  perform pgque.subscribe('us6_stream', 'fast');
-  perform pgque.subscribe('us6_stream', 'slow');
+  perform pg_current.subscribe('us6_stream', 'fast');
+  perform pg_current.subscribe('us6_stream', 'slow');
 end $$;
 
 -- Send events (batch 1)
 do $$ begin
-  perform pgque.send('us6_stream', 'event.type', '{"batch":1,"seq":1}'::jsonb);
-  perform pgque.send('us6_stream', 'event.type', '{"batch":1,"seq":2}'::jsonb);
-  perform pgque.send('us6_stream', 'event.type', '{"batch":1,"seq":3}'::jsonb);
+  perform pg_current.send('us6_stream', 'event.type', '{"batch":1,"seq":1}'::jsonb);
+  perform pg_current.send('us6_stream', 'event.type', '{"batch":1,"seq":2}'::jsonb);
+  perform pg_current.send('us6_stream', 'event.type', '{"batch":1,"seq":3}'::jsonb);
 end $$;
 
 -- Tick
 do $$ begin
-  perform pgque.force_tick('us6_stream');
-  perform pgque.ticker();
+  perform pg_current.force_tick('us6_stream');
+  perform pg_current.ticker();
 end $$;
 
 -- "fast" consumer: receive and ack
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us6_stream', 'fast', 100)
+  for v_msg in select * from pg_current.receive('us6_stream', 'fast', 100)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
   end loop;
 
   assert v_count = 3, 'fast should receive 3 events, got ' || v_count;
-  perform pgque.ack(v_batch_id);
+  perform pg_current.ack(v_batch_id);
   raise notice 'PASS: US-6 fast consumer received and acked batch 1';
 end $$;
 
@@ -50,14 +50,14 @@ end $$;
 
 -- Send more events (batch 2)
 do $$ begin
-  perform pgque.send('us6_stream', 'event.type', '{"batch":2,"seq":1}'::jsonb);
-  perform pgque.send('us6_stream', 'event.type', '{"batch":2,"seq":2}'::jsonb);
+  perform pg_current.send('us6_stream', 'event.type', '{"batch":2,"seq":1}'::jsonb);
+  perform pg_current.send('us6_stream', 'event.type', '{"batch":2,"seq":2}'::jsonb);
 end $$;
 
 -- Tick again
 do $$ begin
-  perform pgque.force_tick('us6_stream');
-  perform pgque.ticker();
+  perform pg_current.force_tick('us6_stream');
+  perform pg_current.ticker();
 end $$;
 
 -- Verify: stuck_consumers() identifies the slow consumer as lagging
@@ -67,7 +67,7 @@ declare
   v_row record;
   v_found_slow bool := false;
 begin
-  for v_row in select * from pgque.stuck_consumers('0 seconds'::interval)
+  for v_row in select * from pg_current.stuck_consumers('0 seconds'::interval)
   loop
     if v_row.queue_name = 'us6_stream' and v_row.consumer_name = 'slow' then
       v_found_slow := true;
@@ -84,7 +84,7 @@ declare
   v_row record;
   v_found_slow bool := false;
 begin
-  for v_row in select * from pgque.queue_health()
+  for v_row in select * from pg_current.queue_health()
   loop
     if v_row.queue_name = 'us6_stream'
        and v_row.check_name = 'consumer_lag:slow' then
@@ -101,29 +101,29 @@ end $$;
 -- Verify: fast consumer can still receive new events (batch 2)
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us6_stream', 'fast', 100)
+  for v_msg in select * from pg_current.receive('us6_stream', 'fast', 100)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
   end loop;
 
   assert v_count = 2, 'fast should receive 2 new events, got ' || v_count;
-  perform pgque.ack(v_batch_id);
+  perform pg_current.ack(v_batch_id);
   raise notice 'PASS: US-6 fast consumer continues receiving despite slow lag';
 end $$;
 
 -- Now slow consumer catches up: receive all pending events
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us6_stream', 'slow', 100)
+  for v_msg in select * from pg_current.receive('us6_stream', 'slow', 100)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -132,24 +132,24 @@ begin
   -- slow should get batch 1 events (3 events)
   assert v_count = 3,
     'slow should receive first batch of 3 events, got ' || v_count;
-  perform pgque.ack(v_batch_id);
+  perform pg_current.ack(v_batch_id);
   raise notice 'PASS: US-6 slow consumer received batch 1 (% events)', v_count;
 end $$;
 
 -- Tick to advance after slow ack
 do $$ begin
-  perform pgque.force_tick('us6_stream');
-  perform pgque.ticker();
+  perform pg_current.force_tick('us6_stream');
+  perform pg_current.ticker();
 end $$;
 
 -- Slow consumer gets batch 2
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us6_stream', 'slow', 100)
+  for v_msg in select * from pg_current.receive('us6_stream', 'slow', 100)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -157,23 +157,23 @@ begin
 
   assert v_count = 2,
     'slow should receive batch 2 (2 events), got ' || v_count;
-  perform pgque.ack(v_batch_id);
+  perform pg_current.ack(v_batch_id);
   raise notice 'PASS: US-6 slow consumer caught up with batch 2';
 end $$;
 
 -- Verify: system recovered -- both consumers caught up, no more messages
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
 begin
-  for v_msg in select * from pgque.receive('us6_stream', 'fast', 100)
+  for v_msg in select * from pg_current.receive('us6_stream', 'fast', 100)
   loop
     v_count := v_count + 1;
   end loop;
   assert v_count = 0, 'fast should have no more messages';
 
-  for v_msg in select * from pgque.receive('us6_stream', 'slow', 100)
+  for v_msg in select * from pg_current.receive('us6_stream', 'slow', 100)
   loop
     v_count := v_count + 1;
   end loop;
@@ -184,9 +184,9 @@ end $$;
 
 -- Teardown
 do $$ begin
-  perform pgque.unsubscribe('us6_stream', 'fast');
-  perform pgque.unsubscribe('us6_stream', 'slow');
-  perform pgque.drop_queue('us6_stream');
+  perform pg_current.unsubscribe('us6_stream', 'fast');
+  perform pg_current.unsubscribe('us6_stream', 'slow');
+  perform pg_current.drop_queue('us6_stream');
 end $$;
 
 \echo 'US-6: PASSED'

@@ -1,4 +1,4 @@
-# PgQue docs
+# pg_current docs
 
 Short docs for users, plus a contributor primer.
 
@@ -18,7 +18,7 @@ Short docs for users, plus a contributor primer.
 
 ## For contributors
 
-- **[PgQ history](pgq-history.md)** — short timeline from Skype to PgQue.
+- **[PgQ history](pgq-history.md)** — short timeline from Skype to pg_current.
 
 For the full specification and implementation plan, see
 [`blueprints/SPECx.md`](../blueprints/SPECx.md). For what ships in v0.1 vs

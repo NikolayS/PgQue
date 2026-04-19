@@ -1,4 +1,4 @@
-# BETTER_DOCS.md — design doc for PgQue documentation
+# BETTER_DOCS.md — design doc for pg_current documentation
 
 > **Status (2026-04-17): superseded for v0.1 by #59.** The v0.1 docs
 > shipped a **flat `docs/` layout** — `tutorial.md`, `reference.md`,
@@ -13,10 +13,10 @@
 
 ## Purpose
 
-Define what PgQue documentation should look like end-to-end: what stays in
+Define what pg_current documentation should look like end-to-end: what stays in
 `README.md`, what moves into a new `docs/` tree, how the tree is organized, and
 what each file is for. The goal is that a new user can land on the README,
-understand whether PgQue fits their problem within two minutes, and then follow
+understand whether pg_current fits their problem within two minutes, and then follow
 clear paths into deeper material — without the README itself trying to be a
 tutorial, a reference, and an explainer all at once.
 
@@ -29,8 +29,8 @@ The plan below is grounded in:
 
 - **PgQ** ([github.com/pgq/pgq](https://github.com/pgq/pgq)) — source code,
   inline comments, regression tests, README, and the full commit history
-  (~80 commits, 2016–2025). PgQ is the engine PgQue inherits.
-- **PgQue** — current `README.md`, `sql/pgque.sql`, experimental SQL,
+  (~80 commits, 2016–2025). PgQ is the engine pg_current inherits.
+- **pg_current** — current `README.md`, `sql/pg_current.sql`, experimental SQL,
   `tests/`, `blueprints/SPECx.md`, `blueprints/PHASES.md`, and the project's
   commit history (including the recent `xid8` fix and the ticker-requirement
   clarification in `02f649d`).
@@ -48,7 +48,7 @@ the *content priorities*, independent of which file a given piece ends up in.
 
 ### Tier 1 — users will fail without this
 
-1. **The mental model.** PgQue is a snapshot-based shared event log with
+1. **The mental model.** pg_current is a snapshot-based shared event log with
    per-consumer position tracking. It is not `SKIP LOCKED`, not row-claiming,
    not pgmq-style. Events become visible in batches between ticks, not
    individually. Latency is seconds by design. Fan-out is native — multiple
@@ -58,7 +58,7 @@ the *content priorities*, independent of which file a given piece ends up in.
    This is the single largest source of "it is not working" reports for any
    PgQ-derived system. The README already calls this out (added in
    `02f649d`); the broader docs need to keep reinforcing it. Two ticking
-   modes: `pgque.start()` with `pg_cron`, or manual `pgque.ticker()` from an
+   modes: `pg_current.start()` with `pg_cron`, or manual `pg_current.ticker()` from an
    external scheduler. Tuning knobs: `ticker_max_lag` (3s),
    `ticker_max_count` (500), `ticker_idle_period` (1m).
 3. **The consumer loop.** `receive` returns the current batch. If `ack` is
@@ -75,13 +75,13 @@ the *content priorities*, independent of which file a given piece ends up in.
    ticker (~2s), `maint` (~30s), rotate-step-2 (~10s). Step 1 and step 2 of
    rotation must run in separate transactions — combining them defeats the
    global-visibility safety mechanism and event tables grow without bound.
-   `pgque.start()` configures all three when `pg_cron` is available;
+   `pg_current.start()` configures all three when `pg_cron` is available;
    otherwise the user runs them.
 6. **Retry mechanics.** `nack(batch_id, msg, '60 seconds')` schedules retry.
    `retry_count` increments per attempt. After `max_retries` (default 5),
    the message routes to the dead letter queue. Retries depend on `maint`
    running.
-7. **Message shape.** Fields users see on `pgque.message`: `msg_id`,
+7. **Message shape.** Fields users see on `pg_current.message`: `msg_id`,
    `batch_id`, `type`, `payload`, `retry_count` (NULL on first delivery),
    `created_at`, and four `extra` text columns.
 8. **Three-table rotation — why bloat is zero.** Each queue has three
@@ -97,11 +97,11 @@ the *content priorities*, independent of which file a given piece ends up in.
 10. **Configuration reference.** Per-queue: `ticker_max_count`,
     `ticker_max_lag`, `ticker_idle_period`, `rotation_period`, `max_retries`,
     `ticker_paused`, `external_ticker`. Set via
-    `pgque.set_queue_config(queue, key, value)`.
-11. **Monitoring.** `pgque.status()`, `pgque.get_queue_info()`,
-    `pgque.get_consumer_info()`. What each column means. What to alert on:
+    `pg_current.set_queue_config(queue, key, value)`.
+11. **Monitoring.** `pg_current.status()`, `pg_current.get_queue_info()`,
+    `pg_current.get_consumer_info()`. What each column means. What to alert on:
     ticker lag, consumer lag, stuck consumers, DLQ depth.
-12. **Roles.** `pgque_reader`, `pgque_writer`, `pgque_admin`. What each can
+12. **Roles.** `pg_current_reader`, `pg_current_writer`, `pg_current_admin`. What each can
     do. Uninstall requires superuser by design.
 13. **Dead letter queue.** `dlq_inspect`, `dlq_replay`, `dlq_replay_all`,
     `dlq_purge`. Currently in `sql/experimental/`; document the surface that
@@ -123,17 +123,17 @@ the *content priorities*, independent of which file a given piece ends up in.
     not reappearing, queue growing unbounded, `force_tick` apparently
     no-op).
 
-### Hard-won lessons from PgQ + PgQue commit history
+### Hard-won lessons from PgQ + pg_current commit history
 
 These are not a tier — they are facts that should land in whichever doc
 covers the relevant area. They are easy to miss without reading the history.
 
 - **Origin and intent.** PgQ was built at Skype (~2007) by Marko Kreen.
-  The PL/pgSQL-only fallback that PgQue is built on was added explicitly
+  The PL/pgSQL-only fallback that pg_current is built on was added explicitly
   because users asked for a way to run PgQ in restricted/hosted environments
-  where C extensions are not allowed. That is PgQue's entire reason to exist.
+  where C extensions are not allowed. That is pg_current's entire reason to exist.
 - **`xid8` matters.** PG14+ uses `xid8` for transaction IDs. Mismatches
-  silently break batch event SQL and rotation. PgQue handles this; users
+  silently break batch event SQL and rotation. pg_current handles this; users
   extending the schema with custom SQL must be aware.
 - **Rotation is two transactions on purpose.** Step 1 advances the table
   pointer; step 2 records a `txid` proving the switch is globally visible.
@@ -154,7 +154,7 @@ covers the relevant area. They are easy to miss without reading the history.
 
 ## 3. Writing rules
 
-PgQue inherits the postgres-ai writing rules through `CLAUDE.md`. The ones
+pg_current inherits the postgres-ai writing rules through `CLAUDE.md`. The ones
 most likely to be violated when writing user-facing docs:
 
 - **"Postgres" not "PostgreSQL"**, except when technical accuracy demands it
@@ -178,7 +178,7 @@ most likely to be violated when writing user-facing docs:
 - **SQL examples** must use lowercase keywords, `snake_case` identifiers,
   and the formatting from `db-sql-style-guide.mdc` (root keywords on their
   own line, multi-arg calls with one arg per line). This already matches
-  the style in `sql/pgque.sql`.
+  the style in `sql/pg_current.sql`.
 
 It is worth adding a short writing-rules section to `CLAUDE.md` listing the
 above bullets. The full URL is already there; an inline checklist makes
@@ -194,12 +194,12 @@ Everything else moves into `docs/`.
 ### Stays in README
 
 - Title, tagline, badges.
-- One-paragraph framing (PgQ heritage, what PgQue repackages).
-- **Why PgQue** — five bullets, current content is good.
+- One-paragraph framing (PgQ heritage, what pg_current repackages).
+- **Why pg_current** — five bullets, current content is good.
 - **Latency trade-off** — short, currently good.
 - **Comparison table** — keep. It is a useful decision aid in the landing
   page itself, and rewriting it as a how-to removes the at-a-glance value.
-- **Installation** — slim to: `\i sql/pgque.sql`, `select pgque.start()`,
+- **Installation** — slim to: `\i sql/pg_current.sql`, `select pg_current.start()`,
   one-line note that without `pg_cron` you call `ticker()` and `maint()`
   yourself. Detailed install guidance moves to `docs/howto/install.md`.
 - **Project status** — keep, currently short.
@@ -270,13 +270,13 @@ docs/
 
 ### 5.1 Tutorial — `docs/tutorial.md`
 
-A single guided walkthrough for a newcomer who has never used PgQue. It
+A single guided walkthrough for a newcomer who has never used pg_current. It
 teaches the mental model by making the user *experience* it, not by
 describing it.
 
 Concrete scenario: an order-processing queue. Steps:
 
-1. Install (`\i sql/pgque.sql`).
+1. Install (`\i sql/pg_current.sql`).
 2. `create_queue('orders')`, `subscribe('orders', 'worker')`.
 3. `send` an order. Try `receive` immediately — get nothing. This is the
    teaching moment for the ticker.
@@ -284,8 +284,8 @@ Concrete scenario: an order-processing queue. Steps:
    `ack`.
 5. Send a "bad" order. `nack` it with a 5-second delay. Watch it reappear.
 6. Drive nack-loop to exhaustion. See it land in the DLQ.
-7. `pgque.status()` and `pgque.get_consumer_info()`.
-8. `pgque.start()` to switch to `pg_cron`-driven operation.
+7. `pg_current.status()` and `pg_current.get_consumer_info()`.
+8. `pg_current.start()` to switch to `pg_cron`-driven operation.
 9. Tear down.
 
 Every step shows expected output. No detours. No reference tables.
@@ -305,9 +305,9 @@ ends with the result.
 | `delayed-delivery.md` | How do I schedule events for future delivery? |
 | `batch-loading.md` | How do I load events efficiently in bulk? |
 | `monitoring.md` | How do I set up alerts on ticker lag, consumer lag, DLQ depth? |
-| `manual-maintenance.md` | How do I run PgQue without `pg_cron`? |
+| `manual-maintenance.md` | How do I run pg_current without `pg_cron`? |
 | `tuning-latency.md` | How do I reduce batch latency? |
-| `uninstall.md` | How do I remove PgQue cleanly? |
+| `uninstall.md` | How do I remove pg_current cleanly? |
 
 ### 5.3 Reference — `docs/reference/`
 
@@ -318,12 +318,12 @@ seconds.
 | File | Content |
 |---|---|
 | `api.md` | Every public function: signature, parameters, return type, one-line example. Two sections: modern API (`send`, `receive`, `ack`, `nack`, `subscribe`, `unsubscribe`, `start`, `stop`, `status`); PgQ primitives (`insert_event`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry`). |
-| `configuration.md` | Every `set_queue_config` key: name, type, default, valid range, what it controls. Plus the `pgque.config` singleton. |
+| `configuration.md` | Every `set_queue_config` key: name, type, default, valid range, what it controls. Plus the `pg_current.config` singleton. |
 | `schema.md` | Every table and column: `queue`, `consumer`, `subscription`, `tick`, event template, `retry_queue`, `dead_letter`, delayed events, `config`. |
 | `roles.md` | Role hierarchy, exact grants per role, how to assign. |
-| `message-format.md` | The `pgque.message` composite type, every field, when each is NULL, how `retry_count` evolves. |
+| `message-format.md` | The `pg_current.message` composite type, every field, when each is NULL, how `retry_count` evolves. |
 | `maintenance.md` | What ticker, `maint`, `rotate_step_1`, `rotate_step_2` do; cadences; statement timeouts; `pg_cron` job names. |
-| `status-output.md` | Column-by-column meaning of `pgque.status()`, `get_queue_info()`, `get_consumer_info()`, `get_batch_info()`. |
+| `status-output.md` | Column-by-column meaning of `pg_current.status()`, `get_queue_info()`, `get_consumer_info()`, `get_batch_info()`. |
 
 ### 5.4 Explanation — `docs/explanation/`
 
@@ -335,8 +335,8 @@ These are essays.
 | `architecture.md` | Snapshot-based batching vs row claiming. Three-table rotation. Why `TRUNCATE` not `DELETE`. Why `INHERITS` not native partitioning. Tick/snapshot/batch relationship. How `batch_event_sql` uses transaction visibility. Why latency is seconds. |
 | `exactly-once-semantics.md` | Why wrapping `receive` + business writes + `ack` in one transaction yields exactly-once. The at-least-once default outside of that wrapping. Why external brokers cannot offer this property. |
 | `bloat-free-design.md` | The dead-tuple problem in `SKIP LOCKED` queues (with the Brandur Leach analysis already linked from the README). How rotation solves it. Why a stopped consumer blocks rotation and causes growth. |
-| `pgq-heritage.md` | PgQ's history (Skype, ~2007, Marko Kreen). What PgQue changes (schema rename, PG14+ APIs, `xid8`, `pg_cron`, `LISTEN`/`NOTIFY`, DLQ, roles). What it preserves unchanged (the entire batch/tick/rotation/consumer engine). The PL/pgSQL-only path that made PgQue possible. |
-| `tradeoffs.md` | When to choose PgQue vs `pgmq` vs `SKIP LOCKED` vs Redis vs Kafka. Honest about limitations: second-level latency, no priorities, no worker lifecycle. Where PgQue wins: durability, zero bloat, fan-out, exactly-once, managed-Postgres compatibility. Platform-neutral framing throughout. |
+| `pgq-heritage.md` | PgQ's history (Skype, ~2007, Marko Kreen). What pg_current changes (schema rename, PG14+ APIs, `xid8`, `pg_cron`, `LISTEN`/`NOTIFY`, DLQ, roles). What it preserves unchanged (the entire batch/tick/rotation/consumer engine). The PL/pgSQL-only path that made pg_current possible. |
+| `tradeoffs.md` | When to choose pg_current vs `pgmq` vs `SKIP LOCKED` vs Redis vs Kafka. Honest about limitations: second-level latency, no priorities, no worker lifecycle. Where pg_current wins: durability, zero bloat, fan-out, exactly-once, managed-Postgres compatibility. Platform-neutral framing throughout. |
 | `performance.md` | The full benchmark methodology, results table, interpretation. Owns this material so the README can stay short. |
 
 ## 6. Cross-cutting principles
@@ -345,7 +345,7 @@ These are essays.
   explanation. Reference is not narrative. Each kind serves a different
   reader in a different mode.
 - **Every SQL example follows the SQL style guide** in `CLAUDE.md` and the
-  postgres-ai rules. This already matches `sql/pgque.sql`.
+  postgres-ai rules. This already matches `sql/pg_current.sql`.
 - **Every shell example uses** `set -Eeuo pipefail` and double-quoted
   expansions.
 - **Every psql example uses** `--no-psqlrc` and `PAGER=cat`.
@@ -403,9 +403,9 @@ Prioritized so each PR is reviewable on its own and unblocks the next one.
 
 ## 9. Out of scope for this design doc
 
-- Client library docs (`pgque-py`, `pgque-go`, CLI). Each gets its own
+- Client library docs (`pg_current-py`, `pg_current-go`, CLI). Each gets its own
   `docs/` tree under its own subdirectory or repo when those projects
-  mature. The PgQue core docs link out, they do not host.
+  mature. The pg_current core docs link out, they do not host.
 - Internal contributor docs. `SPECx.md`, `PHASES.md`, and this file already
   cover that audience.
 - Marketing site or hosted docs. This plan covers in-repo Markdown only.
@@ -424,6 +424,6 @@ Prioritized so each PR is reviewable on its own and unblocks the next one.
   in the README quick-start area as a teaser, full pattern moves to
   `docs/howto/` as a small file or as a section in `manual-maintenance.md`.
 - How much of `sql/experimental/` to document. Recommendation: document
-  the surface that ships in `sql/pgque.sql` first, add experimental
+  the surface that ships in `sql/pg_current.sql` first, add experimental
   surfaces only when they are promoted into the default install per
   `PHASES.md`.

@@ -1,7 +1,7 @@
-// pgque-go -- Go client for PgQue
+// pg_current-go -- Go client for pg_current
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-package pgque
+package pg_current
 
 import "time"
 

@@ -1,5 +1,5 @@
 \set ON_ERROR_STOP on
-\echo '=== pgque experimental acceptance tests ==='
+\echo '=== pg_current experimental acceptance tests ==='
 \echo ''
 \echo 'Running: US-3 Retry and DLQ flow'
 \i tests/acceptance/us3_retry_dlq.sql

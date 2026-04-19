@@ -1,4 +1,4 @@
-# PgQue -- PgQ Universal Edition
+# pg_current -- PgQ Universal Edition
 
 - **Version:** 1.1
 - **Date:** 2026-04-12
@@ -6,9 +6,9 @@
 - **Status:** Approved — implementation-ready
 - **Companion:** SPEC.md (v0.7.0-draft) contains the deep architectural analysis of PgQ internals -- rotation mechanics, snapshot isolation, batch_event_sql algorithm, dual-filter optimization, INHERITS justification, rotation state machine, subtransaction caveats, tick cleanup invariants. This document references SPEC.md for those topics rather than duplicating them.
 
-**Two-layer architecture:** pgque is explicitly structured as two layers:
-- **pgque-core:** Productization of PgQ (rename, modernize, pg_cron, security hardening, single-file install, health/metrics views). Low risk -- mechanical transformation of proven code.
-- **pgque-api:** Modern convenience layer (send/receive/ack/nack, DLQ, delayed delivery, client SDKs). Higher risk -- new semantic surface area that must reduce cleanly to PgQ primitives.
+**Two-layer architecture:** pg_current is explicitly structured as two layers:
+- **pg_current-core:** Productization of PgQ (rename, modernize, pg_cron, security hardening, single-file install, health/metrics views). Low risk -- mechanical transformation of proven code.
+- **pg_current-api:** Modern convenience layer (send/receive/ack/nack, DLQ, delayed delivery, client SDKs). Higher risk -- new semantic surface area that must reduce cleanly to PgQ primitives.
 
 ## Changelog
 
@@ -16,22 +16,22 @@
 |---------|------|-------------|
 | 0.1.0-draft | 2026-04-12 | Initial draft: repackaging thesis, what changes from PgQ, modern API layer, observability, client libraries, advanced patterns, implementation phases, source file inventory. |
 | 0.2.0-draft | 2026-04-12 | Landscape comparison (28 systems across PG-native, external brokers, workflow engines, Python task queues; architectural comparison table; positioning rationale). Team/staffing with week-by-week Gantt. Risk table (11 risks). Best practices. Sprint-level implementation plan with deliverables and test plans. |
-| 0.3.0-draft | 2026-04-12 | First review round. Rename pgqx to pgque (PgQ Universal Edition). Explicit two-layer architecture (pgque-core vs pgque-api). Fix receive() batch ownership trap (rename i_batch_size to i_max_return, document that ack processes entire batch). Fix nack() to accept retry_count parameter (avoid re-querying batch). Fix send_batch() to resolve queue/table once. Fix OTel counter/gauge semantics. Fix queue_health() edge cases. Soften "Exactly-once capable" to "Exactly-once capable (transactional pattern)". Resolve priority contradiction. Add VACUUM for delayed_events and dead_letter to maint(). Defer full OTel export architecture and Node/Ruby SDKs to v2. Align Sprint 5 with risk mitigation (Python + Go only). Document receive() rotation-blocking behavior. |
-| 0.4.0-draft | 2026-04-12 | Second review round (3 reviewers). Add preliminary benchmark results (section 2.9, from NikolayS/pgq#1 -- quick-and-dirty laptop benchmark, needs repetition on server hardware). Update throughput claim from ~10-20k to ~86k ev/s (PL/pgSQL measured). Add PgQ code import strategy: git submodule + build/transform.sh (section 8.0). Fix `event_dead()` to accept event fields from caller instead of re-querying batch. Remove dead `qstate` lookup from `send_batch()`, leave TODO. Read `max_retries` from queue config instead of hardcoding 5 in `nack()`. Drop `peek()` from v1 scope. Fix `delayed_events` index (remove broken partial-index predicate with `now()`). Rename `send_at()` return type documentation to clarify it returns a scheduled-entry ID, not a queue event ID. Fix Node.js/Ruby class names (PgqxClient -> PgqueClient, Pgqx:: -> Pgque::). Fix CLI env var (PGQX_DSN -> PGQUE_DSN). Align Gantt with v1 scope (remove Node.js/Ruby from weeks 7-8). Add `queue_max_retries` column to `pgque.queue` table. Fix `queue_health()` to handle queues with no ticks. |
-| 0.5.0-draft | 2026-04-12 | Third review round (3 approvals). Fix section 2.7 throughput claim (was still ~10-20k, now reflects benchmarks with `synchronous_commit=off` caveat). Add `sync_commit=off` caveat to section 2.5 comparison table. Combine `nack()` two lookups into single join. Add `queue_max_retries` column to schema definition (section 3.4.6.1). Document `ev_txid` NULL in DLQ (pgque.message does not carry txid). Correct RedPanda comparison units (MiB/s not Mbps). |
+| 0.3.0-draft | 2026-04-12 | First review round. Rename pgqx to pg_current (PgQ Universal Edition). Explicit two-layer architecture (pg_current-core vs pg_current-api). Fix receive() batch ownership trap (rename i_batch_size to i_max_return, document that ack processes entire batch). Fix nack() to accept retry_count parameter (avoid re-querying batch). Fix send_batch() to resolve queue/table once. Fix OTel counter/gauge semantics. Fix queue_health() edge cases. Soften "Exactly-once capable" to "Exactly-once capable (transactional pattern)". Resolve priority contradiction. Add VACUUM for delayed_events and dead_letter to maint(). Defer full OTel export architecture and Node/Ruby SDKs to v2. Align Sprint 5 with risk mitigation (Python + Go only). Document receive() rotation-blocking behavior. |
+| 0.4.0-draft | 2026-04-12 | Second review round (3 reviewers). Add preliminary benchmark results (section 2.9, from NikolayS/pgq#1 -- quick-and-dirty laptop benchmark, needs repetition on server hardware). Update throughput claim from ~10-20k to ~86k ev/s (PL/pgSQL measured). Add PgQ code import strategy: git submodule + build/transform.sh (section 8.0). Fix `event_dead()` to accept event fields from caller instead of re-querying batch. Remove dead `qstate` lookup from `send_batch()`, leave TODO. Read `max_retries` from queue config instead of hardcoding 5 in `nack()`. Drop `peek()` from v1 scope. Fix `delayed_events` index (remove broken partial-index predicate with `now()`). Rename `send_at()` return type documentation to clarify it returns a scheduled-entry ID, not a queue event ID. Fix Node.js/Ruby class names (PgqxClient -> PgqueClient, Pgqx:: -> Pgque::). Fix CLI env var (PGQX_DSN -> PGQUE_DSN). Align Gantt with v1 scope (remove Node.js/Ruby from weeks 7-8). Add `queue_max_retries` column to `pg_current.queue` table. Fix `queue_health()` to handle queues with no ticks. |
+| 0.5.0-draft | 2026-04-12 | Third review round (3 approvals). Fix section 2.7 throughput claim (was still ~10-20k, now reflects benchmarks with `synchronous_commit=off` caveat). Add `sync_commit=off` caveat to section 2.5 comparison table. Combine `nack()` two lookups into single join. Add `queue_max_retries` column to schema definition (section 3.4.6.1). Document `ev_txid` NULL in DLQ (pg_current.message does not carry txid). Correct RedPanda comparison units (MiB/s not Mbps). |
 | 0.6.0-draft | 2026-04-12 | Add red/green TDD methodology (section 13.2). Add 10 user stories as acceptance tests (section 13.3): basic produce/consume, fan-out, retry+DLQ, delayed delivery, batch under load, rotation under lag, transactional exactly-once, managed PG install, observability, idempotent install. Tests serve both CI automation and manual/AI-agent verification. |
 | 1.0.0 | 2026-04-12 | Spec approved. Three independent review rounds, all reviewers approved. |
 | 1.1 | 2026-04-12 | Clarify US-3 retry cycle sequencing, unit vs integration test distinction in TDD section, US-10 idempotency implementation challenges. |
 
 ---
 
-## 1. What pgque Is
+## 1. What pg_current Is
 
-pgque is a repackaging of [PgQ](https://github.com/pgq/pgq) (v3.5.1, ISC
+pg_current is a repackaging of [PgQ](https://github.com/pgq/pgq) (v3.5.1, ISC
 license) into a modern, extension-free PostgreSQL queue system with a simplified
 API and built-in observability.
 
-**pgque is NOT a reimplementation.** PgQ already ships complete PL/pgSQL
+**pg_current is NOT a reimplementation.** PgQ already ships complete PL/pgSQL
 replacements for all its C code in `lowlevel_pl/`. The Makefile has a
 `make plonly` target that produces `pgq_pl_only.sql` -- a single concatenated
 file. There is a test (`sql/switch_plonly.sql`) that hot-swaps C for PL/pgSQL
@@ -58,10 +58,10 @@ expanding to ~1,300 lines of function bodies), public functions (70 include
 lines expanding to ~1,600 lines), grants (13 lines) -- is IDENTICAL between
 C and PL-only installs. Total PL-only source: ~4,028 lines across 40 files.
 
-**pgque IS a productization.** It takes this proven, tested code and:
+**pg_current IS a productization.** It takes this proven, tested code and:
 
 1. Repackages it as a single-file install (no `make`, no `CREATE EXTENSION`)
-2. Renames to `pgque` schema (coexists with original PgQ)
+2. Renames to `pg_current` schema (coexists with original PgQ)
 3. Modernizes for PG14+ (`pg_snapshot` functions, `xid8` type)
 4. Replaces `pgqd` daemon with `pg_cron` jobs
 5. Adds a modern API layer (`send`/`receive`/`ack`/`nack`, DLQ, delayed delivery)
@@ -71,33 +71,33 @@ C and PL-only installs. Total PL-only source: ~4,028 lines across 40 files.
 The positioning: "PgQ already works in pure SQL -- we packaged it so you can
 use it on managed databases, and added modern conveniences."
 
-Installation: `\i pgque.sql` followed by `SELECT pgque.start()`.
+Installation: `\i pg_current.sql` followed by `SELECT pg_current.start()`.
 
 ### License
 
 PgQ is ISC-licensed (copyright Marko Kreen, Skype Technologies OU). ISC is
-a permissive license functionally equivalent to MIT/BSD-2-Clause. pgque is
+a permissive license functionally equivalent to MIT/BSD-2-Clause. pg_current is
 licensed under **Apache-2.0**. The ISC license requires preserving the
-copyright notice and permission notice in all copies — pgque includes PgQ's
+copyright notice and permission notice in all copies — pg_current includes PgQ's
 original copyright notice in its source headers.
 
 ---
 
 ## 2. Landscape Comparison
 
-This section surveys the queue, job, and durable-execution ecosystem that pgque
+This section surveys the queue, job, and durable-execution ecosystem that pg_current
 enters. The goal is not to declare winners but to make the architectural
 trade-offs visible so that a reviewer (or a prospective user) can judge where
-pgque fits and where it does not.
+pg_current fits and where it does not.
 
 ### 2.1 PostgreSQL-native queue systems
 
 These systems run entirely inside PostgreSQL (or require only a PG extension).
-They are the most direct competitors to pgque.
+They are the most direct competitors to pg_current.
 
 | System | Stars | Language | Architecture | Key trait |
 |---|---|---|---|---|
-| **PgQ** (pgtools) | ~300 | PL/pgSQL + C | Snapshot-based batch isolation, TRUNCATE rotation, 3-table INHERITS | pgque's foundation — battle-tested at Skype scale for 15+ years |
+| **PgQ** (pgtools) | ~300 | PL/pgSQL + C | Snapshot-based batch isolation, TRUNCATE rotation, 3-table INHERITS | pg_current's foundation — battle-tested at Skype scale for 15+ years |
 | **PGMQ** (Tembo) | ~4.8k | Rust ext + SQL | SKIP LOCKED + DELETE, visibility timeout, per-message ack. Also has SQL-only install. | SQS-like API. Dead tuple bloat under sustained load. |
 | **River** | ~5k | Go | SKIP LOCKED, transactional enqueue, LISTEN/NOTIFY, unique jobs, COPY FROM for bulk | Go-native, excellent DX, ~46k jobs/sec. Go-only. |
 | **graphile-worker** | ~2.2k | Node.js | SKIP LOCKED, LISTEN/NOTIFY, sub-3ms latency, batch jobs, cron | Fastest PG queue (~184k jobs/sec with batching). Node.js only. |
@@ -135,14 +135,14 @@ stateful, long-running processes with durable execution guarantees. They appear
 in queue comparisons because teams sometimes conflate "I need a queue" with
 "I need a workflow engine."
 
-| System | Stars | Architecture | Why it is different | When to use pgque instead |
+| System | Stars | Architecture | Why it is different | When to use pg_current instead |
 |---|---|---|---|---|
-| **Temporal.io** | ~19.5k | Go server cluster, event sourcing, deterministic replay, SDKs in 6+ languages | Full workflow orchestration. Requires Temporal server + DB (Cassandra/MySQL/PG). Python SDK alone is ~170k lines. A team reported Temporal became a "barrier to adoption by Enterprise customers" due to operational burden (Nango migrated to a simple PG queue). | When you need a queue, not a workflow engine. pgque is one SQL file; Temporal is a distributed system. |
+| **Temporal.io** | ~19.5k | Go server cluster, event sourcing, deterministic replay, SDKs in 6+ languages | Full workflow orchestration. Requires Temporal server + DB (Cassandra/MySQL/PG). Python SDK alone is ~170k lines. A team reported Temporal became a "barrier to adoption by Enterprise customers" due to operational burden (Nango migrated to a simple PG queue). | When you need a queue, not a workflow engine. pg_current is one SQL file; Temporal is a distributed system. |
 | **Restate.dev** | ~3.7k | Rust server, virtual objects, durable execution, custom replicated log | State machines with durable execution. Requires Restate server. More like "durable functions" than a queue. Lower ops burden than Temporal but still an external service. | When your workload is queue-shaped (produce event, consume event), not workflow-shaped (multi-step stateful processes). |
 | **Inngest** | ~5.2k | Go server, event-driven step functions, serverless-compatible (Vercel, Netlify) | Event-triggered durable workflows. Can run serverless or self-hosted. Event-centric model (triggers, not just queues). | When you need simple event streaming, not step-function orchestration. |
-| **Hatchet** | ~6.8k | Go server on PostgreSQL, DAG workflows, multi-tenant queue fairness, YC W24 | PG-native workflow engine with queue semantics. Bridges simple queues and full workflow engines. Dashboard, CLI, alerting built in. | When you need a queue primitive, not a workflow platform. Hatchet is closer to pgque's PG-native philosophy but adds significant complexity. |
+| **Hatchet** | ~6.8k | Go server on PostgreSQL, DAG workflows, multi-tenant queue fairness, YC W24 | PG-native workflow engine with queue semantics. Bridges simple queues and full workflow engines. Dashboard, CLI, alerting built in. | When you need a queue primitive, not a workflow platform. Hatchet is closer to pg_current's PG-native philosophy but adds significant complexity. |
 | **Rivet.gg** | ~5.4k | Rust platform, actors + workflows, FoundationDB + V8 isolates | Platform for durable applications, actors, matchmaking. Gaming/real-time focus. Durable Objects model. | When you just need a PG queue, not an actor platform. |
-| **Absurd** | ~1.6k | Pure PG (PL/pgSQL stored procedures), no extensions, pull-based scheduling | "Temporal but just Postgres." By Armin Ronacher (Flask, Rye). Single SQL file, tiny SDKs (~1.4k-1.9k LOC). Checkpointed step execution with resume on failure. Architecturally closest to pgque's PG-native philosophy in the workflow space. | If you need simple produce/consume, pgque. If you need step-by-step workflows with per-step checkpointing, consider Absurd. Both prove that PG-native, no-extension approaches work. |
+| **Absurd** | ~1.6k | Pure PG (PL/pgSQL stored procedures), no extensions, pull-based scheduling | "Temporal but just Postgres." By Armin Ronacher (Flask, Rye). Single SQL file, tiny SDKs (~1.4k-1.9k LOC). Checkpointed step execution with resume on failure. Architecturally closest to pg_current's PG-native philosophy in the workflow space. | If you need simple produce/consume, pg_current. If you need step-by-step workflows with per-step checkpointing, consider Absurd. Both prove that PG-native, no-extension approaches work. |
 
 ### 2.4 Python-specific task systems
 
@@ -159,15 +159,15 @@ eliminate Redis entirely.
 | **SAQ** | ~0.5k | Redis | ARQ-inspired, Redis Streams, sub-5ms latency. |
 | **TaskTiger** | ~1.3k | Redis | Unique tasks, scheduled tasks, reliable locking. |
 
-pgque with `pgque-py` (section 6.2) gives Python teams a PG-native alternative
+pg_current with `pg_current-py` (section 6.2) gives Python teams a PG-native alternative
 that requires no Redis, supports transactional enqueue, and avoids MVCC bloat.
 
 ### 2.5 Key architectural comparison
 
-This table compares pgque against the most-adopted PostgreSQL-native queue
+This table compares pg_current against the most-adopted PostgreSQL-native queue
 systems across the features that matter for production operations.
 
-| Feature | pgque | PGMQ | River | graphile-worker | pg-boss | Oban | solid_queue |
+| Feature | pg_current | PGMQ | River | graphile-worker | pg-boss | Oban | solid_queue |
 |---|---|---|---|---|---|---|---|
 | Claim mechanism | Snapshot isolation (lockless) | SKIP LOCKED | SKIP LOCKED | SKIP LOCKED | SKIP LOCKED | SKIP LOCKED | FOR UPDATE + SKIP LOCKED |
 | Table bloat under sustained load | None (TRUNCATE rotation) | Yes (DELETE + VACUUM) | Yes (UPDATE/DELETE) | Yes (UPDATE/DELETE) | Mitigated (partitioned archival) | Yes (UPDATE/DELETE) | Yes (DELETE) |
@@ -186,27 +186,27 @@ systems across the features that matter for production operations.
 
 **Reading the throughput column:** These numbers come from different benchmarks
 on different hardware and are not directly comparable. They indicate order of
-magnitude. pgque's lower raw throughput is offset by zero maintenance overhead
+magnitude. pg_current's lower raw throughput is offset by zero maintenance overhead
 under sustained load — the systems that benchmark higher in bursts degrade as
 dead tuples accumulate (see the Brandur/PlanetScale MVCC analysis in
 SPEC.md section 10.2).
 
-### 2.6 Why pgque
+### 2.6 Why pg_current
 
-Given the landscape, pgque's value proposition rests on six pillars:
+Given the landscape, pg_current's value proposition rests on six pillars:
 
-1. **Zero bloat under sustained load.** pgque is the only PostgreSQL queue
+1. **Zero bloat under sustained load.** pg_current is the only PostgreSQL queue
    system that uses TRUNCATE rotation instead of DELETE for event lifecycle.
    Every SKIP LOCKED queue eventually hits the Brandur/PlanetScale dead tuple
    wall — where a single long-running transaction pins the MVCC horizon and
    causes index scan degradation, job backlog growth, and a positive feedback
-   loop that only manual VACUUM or downtime resolves. pgque is structurally
+   loop that only manual VACUUM or downtime resolves. pg_current is structurally
    immune. Events are never individually DELETEd. Entire tables are cleared
    via TRUNCATE (DDL, not DML — no dead tuples, no MVCC visibility checks).
 
-2. **Language-agnostic.** pgque's API is pure SQL. Any language that can
-   execute `SELECT pgque.send(...)` can produce events. Any language that can
-   execute `SELECT * FROM pgque.receive(...)` can consume them. Client
+2. **Language-agnostic.** pg_current's API is pure SQL. Any language that can
+   execute `SELECT pg_current.send(...)` can produce events. Any language that can
+   execute `SELECT * FROM pg_current.receive(...)` can consume them. Client
    libraries (Python, Go, Node.js, Ruby) are convenience wrappers, not
    requirements. This is unique among modern PG queues — River is Go-only,
    graphile-worker is Node.js-only, Oban is Elixir-only, solid_queue is
@@ -214,11 +214,11 @@ Given the landscape, pgque's value proposition rests on six pillars:
 
 3. **No extra infrastructure.** One SQL file. No Redis, no separate server
    process, no C extension to compile, no `shared_preload_libraries`, no
-   server restart. `\i pgque.sql` and you have a production queue.
+   server restart. `\i pg_current.sql` and you have a production queue.
    pg_cron (pre-installed on every major managed provider) handles the ticker.
 
 4. **Battle-tested core.** PgQ has run at Skype/Microsoft scale for 15+ years,
-   processing billions of events. pgque is not a prototype or a weekend project
+   processing billions of events. pg_current is not a prototype or a weekend project
    — it is a repackaging of proven code with modern conveniences added on top.
 
 5. **Managed PG compatible.** Runs on RDS, Aurora, AlloyDB, Cloud SQL,
@@ -230,12 +230,12 @@ Given the landscape, pgque's value proposition rests on six pillars:
    processing them one at a time. Tick-bounded batches give consumers a
    consistent, snapshot-isolated set of events to work with.
 
-### 2.7 When NOT to use pgque
+### 2.7 When NOT to use pg_current
 
-pgque is not the right choice for every queue workload. Be honest about the
+pg_current is not the right choice for every queue workload. Be honest about the
 trade-offs:
 
-- **Sub-10ms latency requirements.** pgque's tick-based architecture means
+- **Sub-10ms latency requirements.** pg_current's tick-based architecture means
   typical latency is 1-2 seconds (reducible to ~100ms with LISTEN/NOTIFY
   wakeup). If you need sub-10ms job dispatch, graphile-worker or direct
   LISTEN/NOTIFY is a better fit.
@@ -255,7 +255,7 @@ trade-offs:
 
 - **You are already all-in on one ecosystem.** If your team is pure Go, River
   gives you better DX. Pure Elixir, Oban is the standard. Rails 8, solid_queue
-  is built in. pgque's value is strongest when you have a polyglot stack or
+  is built in. pg_current's value is strongest when you have a polyglot stack or
   when you need the zero-bloat guarantee.
 
 ### 2.8 Architectural trade-off summary
@@ -274,7 +274,7 @@ are held in memory, no row UPDATE needed to claim a job. But advisory lock
 tables have their own contention limits at extreme concurrency, and CTE-based
 lock acquisition degrades above ~1M queued jobs.
 
-**Snapshot-based batch isolation + TRUNCATE rotation** (PgQ, pgque): Zero bloat
+**Snapshot-based batch isolation + TRUNCATE rotation** (PgQ, pg_current): Zero bloat
 by design. No per-job locking, no dead tuples, no VACUUM pressure on event
 tables. The trade-off is batch-oriented consumption (not per-job) and
 ticker-driven latency (1-2 seconds, not sub-3ms).
@@ -314,8 +314,8 @@ claimed for PG-based queues vs. dedicated brokers. On server-grade NVMe
 (where I/O was 57% of wait time on this laptop SSD), the gap would narrow
 further.
 
-The PL/pgSQL rows are the most relevant for pgque — they show the
-throughput ceiling for the no-C-extension mode that pgque will use. At
+The PL/pgSQL rows are the most relevant for pg_current — they show the
+throughput ceiling for the no-C-extension mode that pg_current will use. At
 ~8.6k ev/s per core for single-insert-per-TX, PgQ's PL/pgSQL mode is
 competitive with C-based alternatives, especially considering that it
 produces zero dead tuples under sustained load.
@@ -372,8 +372,8 @@ of the modern ecosystem.
 | Self-hosted | Yes | Must install separately |
 
 Where pg_cron is unavailable or unsuitable (e.g., serverless scale-to-zero),
-pgque works with any external scheduler calling `pgque.ticker()` and
-`pgque.maint()` via `psql` or a database connection.
+pg_current works with any external scheduler calling `pg_current.ticker()` and
+`pg_current.maint()` via `psql` or a database connection.
 
 ### 3.2 The daemon problem
 
@@ -405,13 +405,13 @@ PgQ already ships complete PL/pgSQL replacements for all C code in
 This means:
 1. PgQ's authors already validated PL/pgSQL as a correct replacement for C
 2. The PL/pgSQL code has been in the PgQ repo since v3.2 (2012)
-3. pgque does not invent new queue logic — it repackages proven code
+3. pg_current does not invent new queue logic — it repackages proven code
 
-### 3.4 What changes from PgQ to pgque
+### 3.4 What changes from PgQ to pg_current
 
-#### 3.4.1 Rename `pgq` to `pgque`
+#### 3.4.1 Rename `pgq` to `pg_current`
 
-All schema objects move from the `pgq` schema to `pgque`. This is a mechanical
+All schema objects move from the `pgq` schema to `pg_current`. This is a mechanical
 search-and-replace across ~40 source files with no behavioral change.
 
 #### 3.4.2 Replace `txid_*` with `pg_*` snapshot functions
@@ -419,7 +419,7 @@ search-and-replace across ~40 source files with no behavioral change.
 PostgreSQL 13+ introduced `pg_snapshot` functions that replace the older
 `txid_*` family:
 
-| PgQ (deprecated) | pgque (modern) | Notes |
+| PgQ (deprecated) | pg_current (modern) | Notes |
 |---|---|---|
 | `txid_current()` | `pg_current_xact_id()` | Returns `xid8` not `bigint` |
 | `txid_current_snapshot()` | `pg_current_snapshot()` | Returns `pg_snapshot` |
@@ -438,7 +438,7 @@ queue_switch_step2   bigint default txid_current(),
 tick_snapshot         txid_snapshot not null default txid_current_snapshot(),
 ev_txid              bigint not null default txid_current(),
 
--- pgque:
+-- pg_current:
 queue_switch_step1   xid8 not null default pg_current_xact_id(),
 queue_switch_step2   xid8 default pg_current_xact_id(),
 tick_snapshot         pg_snapshot not null default pg_current_snapshot(),
@@ -449,31 +449,31 @@ The `xid8` type avoids the `bigint` -> `xid8` cast overhead on the hot insert
 path. `pg_visible_in_snapshot()` accepts `xid8` natively.
 
 Functions affected (each has `txid_*` calls that become `pg_*`):
-- `pgque.ticker()` -- `txid_snapshot_xmax()`, `txid_current()`
-- `pgque.batch_event_sql()` -- `txid_snapshot_xmax()`, `txid_visible_in_snapshot()`, `txid_snapshot_xip()`
-- `pgque.maint_rotate_tables_step1()` -- `txid_current()`, `txid_snapshot_xmin()`
-- `pgque.maint_rotate_tables_step2()` -- `txid_current()`
-- `pgque.insert_event_raw()` -- implicit via `ev_txid` default
+- `pg_current.ticker()` -- `txid_snapshot_xmax()`, `txid_current()`
+- `pg_current.batch_event_sql()` -- `txid_snapshot_xmax()`, `txid_visible_in_snapshot()`, `txid_snapshot_xip()`
+- `pg_current.maint_rotate_tables_step1()` -- `txid_current()`, `txid_snapshot_xmin()`
+- `pg_current.maint_rotate_tables_step2()` -- `txid_current()`
+- `pg_current.insert_event_raw()` -- implicit via `ev_txid` default
 
 #### 3.4.3 Replace `pgqd` with `pg_cron`
 
-PgQ requires `pgqd`, an external C daemon. pgque replaces it with two `pg_cron`
-jobs created by `pgque.start()`:
+PgQ requires `pgqd`, an external C daemon. pg_current replaces it with two `pg_cron`
+jobs created by `pg_current.start()`:
 
 ```sql
 -- Ticker: every 2 seconds (pg_cron >= 1.5 required for sub-minute scheduling)
 SELECT cron.schedule_in_database(
-    'pgque_ticker',
+    'pg_current_ticker',
     '2 seconds',
-    $$SET statement_timeout = '1500ms'; SELECT pgque.ticker()$$,
+    $$SET statement_timeout = '1500ms'; SELECT pg_current.ticker()$$,
     current_database()
 );
 
 -- Maintenance: every 30 seconds
 SELECT cron.schedule_in_database(
-    'pgque_maint',
+    'pg_current_maint',
     '30 seconds',
-    $$SET statement_timeout = '25s'; SELECT pgque.maint()$$,
+    $$SET statement_timeout = '25s'; SELECT pg_current.maint()$$,
     current_database()
 );
 ```
@@ -484,11 +484,11 @@ without pg_cron.
 
 #### 3.4.4 Remove `CREATE EXTENSION` dependency
 
-PgQ installs via `CREATE EXTENSION pgq`. pgque installs via a single SQL file:
+PgQ installs via `CREATE EXTENSION pgq`. pg_current installs via a single SQL file:
 
 ```
-\i pgque.sql
-SELECT pgque.start();  -- optional: creates pg_cron jobs
+\i pg_current.sql
+SELECT pg_current.start();  -- optional: creates pg_cron jobs
 ```
 
 No `.control` file, no PGXS, no `pg_dump` extension handling.
@@ -497,13 +497,13 @@ The install script is idempotent -- safe to re-run.
 Uninstall:
 
 ```
-SELECT pgque.uninstall();  -- stops pg_cron jobs + DROP SCHEMA pgque CASCADE
+SELECT pg_current.uninstall();  -- stops pg_cron jobs + DROP SCHEMA pg_current CASCADE
 ```
 
 #### 3.4.5 SECURITY DEFINER hardening
 
 PgQ's functions use `SECURITY DEFINER` but lack `search_path` pinning.
-pgque adds `SET search_path = pgque, pg_catalog` to every `SECURITY DEFINER`
+pg_current adds `SET search_path = pg_current, pg_catalog` to every `SECURITY DEFINER`
 function. See SPEC.md section 3.2.7 for the full hardening rules.
 
 PgQ example (vulnerable):
@@ -511,28 +511,28 @@ PgQ example (vulnerable):
 create function pgq.insert_event(...) ... language plpgsql security definer;
 ```
 
-pgque (hardened):
+pg_current (hardened):
 ```sql
-create function pgque.insert_event(...) ...
-language plpgsql security definer set search_path = pgque, pg_catalog;
+create function pg_current.insert_event(...) ...
+language plpgsql security definer set search_path = pg_current, pg_catalog;
 ```
 
-Every function in pgque must follow this pattern. No exceptions.
+Every function in pg_current must follow this pattern. No exceptions.
 
 #### 3.4.6 Drop `queue_per_tx_limit`
 
 PgQ's `queue_per_tx_limit` uses C-level per-transaction state tracking via
 `GetTopTransactionId()`. This cannot be replicated cleanly in PL/pgSQL.
-The feature is rarely used. pgque drops it.
+The feature is rarely used. pg_current drops it.
 
-The `queue_per_tx_limit` column is removed from `pgque.queue`.
+The `queue_per_tx_limit` column is removed from `pg_current.queue`.
 
 #### 3.4.6.1 Add `queue_max_retries` column
 
-pgque adds a `queue_max_retries` column to `pgque.queue`:
+pg_current adds a `queue_max_retries` column to `pg_current.queue`:
 
 ```sql
-alter table pgque.queue add column queue_max_retries int4;
+alter table pg_current.queue add column queue_max_retries int4;
 -- NULL means use default (5). Set via create_queue() JSONB options
 -- or set_queue_config().
 ```
@@ -544,27 +544,27 @@ The `create_queue()` JSONB overload maps `"max_retries"` to this column.
 #### 3.4.7 Drop `set default_with_oids = 'off'`
 
 PgQ's `structure/tables.sql` sets `default_with_oids = 'off'` (removed in
-PG12). pgque drops this line.
+PG12). pg_current drops this line.
 
 #### 3.4.8 Clean up maintenance operations
 
 PgQ's `maint_operations()` includes hardcoded references to `pgq_node` and
-`londiste` (checking for their procedures by name). pgque removes these --
+`londiste` (checking for their procedures by name). pg_current removes these --
 Londiste and pgq_node are out of scope. The `queue_extra_maint` column is
 preserved but CHECK-constrained to NULL in v1 (see SPEC.md section 4.4.2).
 
-#### 3.4.9 Add `pgque.config` singleton table
+#### 3.4.9 Add `pg_current.config` singleton table
 
-pgque adds a config table for pg_cron job tracking:
+pg_current adds a config table for pg_cron job tracking:
 
 ```sql
-CREATE TABLE pgque.config (
+CREATE TABLE pg_current.config (
     singleton       bool PRIMARY KEY DEFAULT true CHECK (singleton),
     ticker_job_id   bigint,
     maint_job_id    bigint,
     installed_at    timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-INSERT INTO pgque.config (singleton) VALUES (true);
+INSERT INTO pg_current.config (singleton) VALUES (true);
 ```
 
 #### 3.4.10 Add lifecycle functions
@@ -573,31 +573,31 @@ Functions not present in PgQ:
 
 | Function | Purpose |
 |---|---|
-| `pgque.start()` | Create pg_cron jobs, store job IDs |
-| `pgque.stop()` | Remove pg_cron jobs |
-| `pgque.uninstall()` | Stop + DROP SCHEMA pgque CASCADE |
-| `pgque.status()` | Diagnostic dashboard (TABLE return type) |
+| `pg_current.start()` | Create pg_cron jobs, store job IDs |
+| `pg_current.stop()` | Remove pg_cron jobs |
+| `pg_current.uninstall()` | Stop + DROP SCHEMA pg_current CASCADE |
+| `pg_current.status()` | Diagnostic dashboard (TABLE return type) |
 
 #### 3.4.11 LISTEN/NOTIFY in ticker
 
-PgQ's ticker does not emit notifications. pgque's ticker adds:
+PgQ's ticker does not emit notifications. pg_current's ticker adds:
 
 ```sql
-PERFORM pg_notify('pgque_' || queue_name, tick_id::text);
+PERFORM pg_notify('pg_current_' || queue_name, tick_id::text);
 ```
 
 after each tick, enabling low-latency consumer wakeup.
 
 #### 3.4.12 Summary of changes
 
-| Area | PgQ v3.5.1 | pgque | Type of change |
+| Area | PgQ v3.5.1 | pg_current | Type of change |
 |---|---|---|---|
-| Schema | `pgq` | `pgque` | Rename |
+| Schema | `pgq` | `pg_current` | Rename |
 | Snapshot functions | `txid_*` | `pg_*` | Rename |
 | Transaction ID type | `bigint` | `xid8` | Type change |
 | Snapshot type | `txid_snapshot` | `pg_snapshot` | Type change |
 | Daemon | `pgqd` (external C) | `pg_cron` jobs | Architecture |
-| Installation | `CREATE EXTENSION` | `\i pgque.sql` | Packaging |
+| Installation | `CREATE EXTENSION` | `\i pg_current.sql` | Packaging |
 | `search_path` pinning | Missing | On all SECURITY DEFINER functions | Security |
 | `queue_per_tx_limit` | Supported (C) | Removed | Scope reduction |
 | `default_with_oids` | Set to 'off' | Removed (PG12+) | Cleanup |
@@ -616,25 +616,25 @@ PgQ's native API is powerful but low-ceremony-hostile. A consumer must:
 -> `event_retry` for failures -> `finish_batch`. This is fine for infrastructure
 engineers; it is not what a product engineer expects from a queue.
 
-pgque adds a simplified API layer that wraps PgQ's internals. The PgQ API remains
+pg_current adds a simplified API layer that wraps PgQ's internals. The PgQ API remains
 available for advanced use cases. The modern API targets the 80% use case:
 send a JSON message, receive it, ack or nack it.
 
-### 4.1 Publishing: `pgque.send()`
+### 4.1 Publishing: `pg_current.send()`
 
 ```sql
 -- Default path: untyped literal resolves to send(text, text) -- verbatim bytes
-select pgque.send('orders', '{"order_id": 42, "total": 99.95}');
+select pg_current.send('orders', '{"order_id": 42, "total": 99.95}');
 
 -- Opt-in validation: explicit ::jsonb cast resolves to send(text, jsonb)
-select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
+select pg_current.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
 
 -- Send with explicit type (both overloads available on the same rules)
-select pgque.send('orders', 'order.created', '{"order_id": 42}');
-select pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
+select pg_current.send('orders', 'order.created', '{"order_id": 42}');
+select pg_current.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
 
 -- Send batch (text[] default; use ::jsonb[] cast to opt into validation)
-select pgque.send_batch('orders', 'order.created', array[
+select pg_current.send_batch('orders', 'order.created', array[
     '{"order_id": 42}',
     '{"order_id": 43}',
     '{"order_id": 44}'
@@ -645,11 +645,11 @@ select pgque.send_batch('orders', 'order.created', array[
 -- by PG text -- encode first (e.g. encode(raw_proto, 'base64')).
 -- Note PG bytea hex input is a single \x prefix followed by hex digits;
 -- per-byte separators are not allowed (use \x082a1063, not \x08\x2a\x10\x63).
-select pgque.send('orders', 'order.xml', '<order id="42"/>');
-select pgque.send('orders', 'order.proto_b64', encode('\x082a1063'::bytea, 'base64'));
+select pg_current.send('orders', 'order.xml', '<order id="42"/>');
+select pg_current.send('orders', 'order.proto_b64', encode('\x082a1063'::bytea, 'base64'));
 
 -- Delayed send (deliver after timestamp)
-select pgque.send_at('orders', 'reminder.send',
+select pg_current.send_at('orders', 'reminder.send',
     '{"user_id": 7}'::jsonb,
     now() + interval '24 hours');
 
@@ -667,10 +667,10 @@ implicit cast. So:
 
 ```sql
 -- Untyped literal → resolves to send(text, text), bytes verbatim
-select pgque.send('orders', '{"order_id": 42}');
+select pg_current.send('orders', '{"order_id": 42}');
 
 -- Explicit ::jsonb → resolves to send(text, jsonb), validated + canonicalized
-select pgque.send('orders', '{"order_id": 42}'::jsonb);
+select pg_current.send('orders', '{"order_id": 42}'::jsonb);
 ```
 
 The `text` overload is therefore the natural default for plain SQL callers
@@ -706,36 +706,36 @@ cannot polymorphically carry both `text` and `jsonb`).
 
 ```sql
 -- jsonb overloads (opt-in via ::jsonb cast; validation + canonicalization)
-create function pgque.send(i_queue text, i_payload jsonb)
+create function pg_current.send(i_queue text, i_payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload::text);
+    return pg_current.insert_event(i_queue, 'default', i_payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 
-create function pgque.send(i_queue text, i_type text, i_payload jsonb)
+create function pg_current.send(i_queue text, i_type text, i_payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload::text);
+    return pg_current.insert_event(i_queue, i_type, i_payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 
 -- text overloads (default for untyped literals; fast path, opaque payload)
-create function pgque.send(i_queue text, i_payload text)
+create function pg_current.send(i_queue text, i_payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload);
+    return pg_current.insert_event(i_queue, 'default', i_payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 
-create function pgque.send(i_queue text, i_type text, i_payload text)
+create function pg_current.send(i_queue text, i_type text, i_payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload);
+    return pg_current.insert_event(i_queue, i_type, i_payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 
-create function pgque.send_batch(
+create function pg_current.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
 declare
@@ -747,13 +747,13 @@ begin
     -- resolves the queue independently. Deferred to implementation.
     foreach p in array i_payloads loop
         ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p::text));
+            pg_current.insert_event(i_queue, i_type, p::text));
     end loop;
     return ids;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 
-create function pgque.send_batch(
+create function pg_current.send_batch(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
 declare
@@ -762,28 +762,28 @@ declare
 begin
     foreach p in array i_payloads loop
         ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p));
+            pg_current.insert_event(i_queue, i_type, p));
     end loop;
     return ids;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 ```
 
-### 4.2 Consuming: `pgque.receive()`
+### 4.2 Consuming: `pg_current.receive()`
 
 `receive()` wraps `next_batch` + `get_batch_events` into a single call that
 returns messages directly.
 
 ```sql
 -- Receive messages (returns up to 100 from the current batch)
-select * from pgque.receive('orders', 'order_processor', 100);
+select * from pg_current.receive('orders', 'order_processor', 100);
 -- Returns: msg_id, batch_id, type, payload, retry_count, created_at
 ```
 
 **Return type:**
 
 ```sql
-CREATE TYPE pgque.message AS (
+CREATE TYPE pg_current.message AS (
     msg_id      bigint,       -- ev_id
     batch_id    bigint,       -- batch containing this message
     type        text,         -- ev_type
@@ -800,16 +800,16 @@ CREATE TYPE pgque.message AS (
 **Implementation:**
 
 ```sql
-CREATE FUNCTION pgque.receive(
+CREATE FUNCTION pg_current.receive(
     i_queue text, i_consumer text, i_max_return int DEFAULT 100)
-RETURNS SETOF pgque.message AS $$
+RETURNS SETOF pg_current.message AS $$
 DECLARE
     v_batch_id bigint;
     ev record;
     cnt int := 0;
 BEGIN
     -- Get next batch (may return NULL if no events)
-    v_batch_id := pgque.next_batch(i_queue, i_consumer);
+    v_batch_id := pg_current.next_batch(i_queue, i_consumer);
     IF v_batch_id IS NULL THEN
         RETURN;
     END IF;
@@ -818,19 +818,19 @@ BEGIN
     FOR ev IN
         SELECT ev_id, ev_type, ev_data, ev_retry, ev_time,
                ev_extra1, ev_extra2, ev_extra3, ev_extra4
-        FROM pgque.get_batch_events(v_batch_id)
+        FROM pg_current.get_batch_events(v_batch_id)
     LOOP
         RETURN NEXT ROW(
             ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,
             ev.ev_retry, ev.ev_time,
             ev.ev_extra1, ev.ev_extra2, ev.ev_extra3, ev.ev_extra4
-        )::pgque.message;
+        )::pg_current.message;
         cnt := cnt + 1;
         EXIT WHEN cnt >= i_max_return;
     END LOOP;
     RETURN;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
 **Batch ownership semantics (critical — read carefully):**
@@ -846,7 +846,7 @@ matches PgQ's design where `finish_batch()` advances the consumer past the
 entire tick range.
 
 **Users coming from per-message queues (SQS, PGMQ, Redis):** this is the
-single biggest conceptual difference. pgque is batch-oriented. The recommended
+single biggest conceptual difference. pg_current is batch-oriented. The recommended
 consumer pattern is:
 
 1. Call `receive()` — get a batch of messages
@@ -870,33 +870,33 @@ If the caller takes minutes to process, rotation cannot TRUNCATE the tables
 the batch reads from. Client libraries should enforce a maximum batch
 processing timeout and ack/nack on timeout.
 
-### 4.3 Acknowledging: `pgque.ack()` and `pgque.nack()`
+### 4.3 Acknowledging: `pg_current.ack()` and `pg_current.nack()`
 
 ```sql
 -- Ack: finish the batch, advance consumer position
-select pgque.ack(batch_id);
+select pg_current.ack(batch_id);
 
 -- Nack a single message: retry after 60 seconds
 -- Pass the full message record (avoids re-querying the batch)
-select pgque.nack(batch_id, msg, '60 seconds'::interval);
+select pg_current.nack(batch_id, msg, '60 seconds'::interval);
 
 -- Nack with reason (goes to DLQ after max retries, read from queue config)
-select pgque.nack(batch_id, msg, '60 seconds'::interval, 'upstream timeout');
+select pg_current.nack(batch_id, msg, '60 seconds'::interval, 'upstream timeout');
 ```
 
 **Internal mapping:**
 
 ```sql
-create function pgque.ack(i_batch_id bigint)
+create function pg_current.ack(i_batch_id bigint)
 returns integer as $$
 begin
-    return pgque.finish_batch(i_batch_id);
+    return pg_current.finish_batch(i_batch_id);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 
-create function pgque.nack(
+create function pg_current.nack(
     i_batch_id bigint,
-    i_msg pgque.message,
+    i_msg pg_current.message,
     i_retry_after interval default '60 seconds',
     i_reason text default null)
 returns integer as $$
@@ -905,74 +905,74 @@ declare
 begin
     -- Single lookup: subscription -> queue config
     select coalesce(q.queue_max_retries, 5) into v_max_retries
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
+    from pg_current.subscription s
+    join pg_current.queue q on q.queue_id = s.sub_queue
     where s.sub_batch = i_batch_id;
 
     if coalesce(i_msg.retry_count, 0) >= v_max_retries then
         -- Move to dead letter queue (pass event fields, no re-query)
-        perform pgque.event_dead(i_batch_id, i_msg.msg_id,
+        perform pg_current.event_dead(i_batch_id, i_msg.msg_id,
             coalesce(i_reason, 'max retries exceeded'),
             i_msg.created_at, null::xid8, i_msg.retry_count,
             i_msg.type, i_msg.payload,
             i_msg.extra1, i_msg.extra2, i_msg.extra3, i_msg.extra4);
     else
         -- Retry after delay
-        perform pgque.event_retry(i_batch_id, i_msg.msg_id,
+        perform pg_current.event_retry(i_batch_id, i_msg.msg_id,
             extract(epoch from i_retry_after)::integer);
     end if;
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 ```
 
 ### 4.4 Subscriptions: fan-out
 
-PgQ already supports multiple consumers per queue. pgque wraps this:
+PgQ already supports multiple consumers per queue. pg_current wraps this:
 
 ```sql
 -- Subscribe a consumer (starts receiving from current position)
-SELECT pgque.subscribe('orders', 'analytics_pipeline');
-SELECT pgque.subscribe('orders', 'notification_sender');
-SELECT pgque.subscribe('orders', 'audit_logger');
+SELECT pg_current.subscribe('orders', 'analytics_pipeline');
+SELECT pg_current.subscribe('orders', 'notification_sender');
+SELECT pg_current.subscribe('orders', 'audit_logger');
 
 -- Each consumer receives independently
-SELECT * FROM pgque.receive('orders', 'analytics_pipeline', 100);
-SELECT * FROM pgque.receive('orders', 'notification_sender', 100);
+SELECT * FROM pg_current.receive('orders', 'analytics_pipeline', 100);
+SELECT * FROM pg_current.receive('orders', 'notification_sender', 100);
 
 -- Unsubscribe
-SELECT pgque.unsubscribe('orders', 'analytics_pipeline');
+SELECT pg_current.unsubscribe('orders', 'analytics_pipeline');
 ```
 
 **Internal mapping:**
 
 ```sql
-CREATE FUNCTION pgque.subscribe(i_queue text, i_consumer text)
+CREATE FUNCTION pg_current.subscribe(i_queue text, i_consumer text)
 RETURNS integer AS $$
 BEGIN
-    RETURN pgque.register_consumer(i_queue, i_consumer);
+    RETURN pg_current.register_consumer(i_queue, i_consumer);
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
 ### 4.5 Dead Letter Queue
 
-PgQ has a retry queue but no dead letter queue. pgque adds one.
+PgQ has a retry queue but no dead letter queue. pg_current adds one.
 
 **Table:**
 
 ```sql
-CREATE TABLE pgque.dead_letter (
+CREATE TABLE pg_current.dead_letter (
     dl_id           bigserial PRIMARY KEY,
-    dl_queue_id     int4 NOT NULL REFERENCES pgque.queue(queue_id),
-    dl_consumer_id  int4 NOT NULL REFERENCES pgque.consumer(co_id),
+    dl_queue_id     int4 NOT NULL REFERENCES pg_current.queue(queue_id),
+    dl_consumer_id  int4 NOT NULL REFERENCES pg_current.consumer(co_id),
     dl_time         timestamptz NOT NULL DEFAULT now(),
     dl_reason       text,
 
     -- Original event fields (copied from event at time of death)
     ev_id           bigint NOT NULL,
     ev_time         timestamptz NOT NULL,
-    ev_txid         xid8,       -- NULL: pgque.message does not carry txid
+    ev_txid         xid8,       -- NULL: pg_current.message does not carry txid
                                 -- (internal detail, meaningless after batch closes)
     ev_retry        int4,
     ev_type         text,
@@ -983,30 +983,30 @@ CREATE TABLE pgque.dead_letter (
     ev_extra4       text
 );
 
-CREATE INDEX dl_queue_time_idx ON pgque.dead_letter (dl_queue_id, dl_time);
+CREATE INDEX dl_queue_time_idx ON pg_current.dead_letter (dl_queue_id, dl_time);
 ```
 
 **Functions:**
 
 ```sql
 -- Move event to DLQ (called by nack() when max retries exceeded)
-pgque.event_dead(batch_id bigint, event_id bigint, reason text)
+pg_current.event_dead(batch_id bigint, event_id bigint, reason text)
     RETURNS integer
 
 -- Inspect DLQ
-pgque.dlq_inspect(queue_name text, limit_count int DEFAULT 100)
-    RETURNS SETOF pgque.dead_letter
+pg_current.dlq_inspect(queue_name text, limit_count int DEFAULT 100)
+    RETURNS SETOF pg_current.dead_letter
 
 -- Replay a dead letter event back into the queue
-pgque.dlq_replay(dead_letter_id bigint)
+pg_current.dlq_replay(dead_letter_id bigint)
     RETURNS bigint  -- new event ID
 
 -- Replay all DLQ events for a queue
-pgque.dlq_replay_all(queue_name text)
+pg_current.dlq_replay_all(queue_name text)
     RETURNS integer  -- count of replayed events
 
 -- Purge old DLQ entries
-pgque.dlq_purge(queue_name text, older_than interval DEFAULT '30 days')
+pg_current.dlq_purge(queue_name text, older_than interval DEFAULT '30 days')
     RETURNS integer  -- count of purged entries
 ```
 
@@ -1019,7 +1019,7 @@ directly. See the `nack()` implementation below — it calls
 `event_dead()` with the event fields passed through from the caller.
 
 ```sql
-create function pgque.event_dead(
+create function pg_current.event_dead(
     i_batch_id bigint,
     i_event_id bigint,
     i_reason text,
@@ -1038,13 +1038,13 @@ declare
 begin
     -- Look up subscription from batch
     select sub_queue, sub_consumer into v_sub
-    from pgque.subscription where sub_batch = i_batch_id;
+    from pg_current.subscription where sub_batch = i_batch_id;
     if not found then
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
     -- Insert into dead letter table (no re-query of batch events)
-    insert into pgque.dead_letter (
+    insert into pg_current.dead_letter (
         dl_queue_id, dl_consumer_id, dl_reason,
         ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
         ev_extra1, ev_extra2, ev_extra3, ev_extra4)
@@ -1055,7 +1055,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 ```
 
 ### 4.6 Delayed / Scheduled Delivery
@@ -1066,7 +1066,7 @@ moves them to the main event table when their time arrives.
 **Table:**
 
 ```sql
-CREATE TABLE pgque.delayed_events (
+CREATE TABLE pg_current.delayed_events (
     de_id           bigserial PRIMARY KEY,
     de_queue_name   text NOT NULL,
     de_deliver_at   timestamptz NOT NULL,
@@ -1078,7 +1078,7 @@ CREATE TABLE pgque.delayed_events (
     de_extra4       text
 );
 
-CREATE INDEX de_deliver_idx ON pgque.delayed_events (de_deliver_at);
+CREATE INDEX de_deliver_idx ON pg_current.delayed_events (de_deliver_at);
 ```
 
 **`send_at()` implementation:**
@@ -1091,54 +1091,54 @@ a queue event ID. The actual queue event ID is assigned later when
 should document this distinction clearly.
 
 ```sql
-create function pgque.send_at(
+create function pg_current.send_at(
     i_queue text, i_type text, i_payload jsonb, i_deliver_at timestamptz)
 returns bigint as $$
 begin
     if i_deliver_at <= now() then
         -- Deliver immediately; returns queue event ID
-        return pgque.insert_event(i_queue, i_type, i_payload::text);
+        return pg_current.insert_event(i_queue, i_type, i_payload::text);
     end if;
 
-    insert into pgque.delayed_events
+    insert into pg_current.delayed_events
         (de_queue_name, de_deliver_at, de_type, de_data)
     values (i_queue, i_deliver_at, i_type, i_payload::text);
 
     -- Returns scheduled-entry ID (NOT a queue event ID)
-    return currval('pgque.delayed_events_de_id_seq');
+    return currval('pg_current.delayed_events_de_id_seq');
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pg_current, pg_catalog;
 ```
 
-**Maintenance integration:** `pgque.maint()` calls
-`pgque.maint_deliver_delayed()` which moves due events:
+**Maintenance integration:** `pg_current.maint()` calls
+`pg_current.maint_deliver_delayed()` which moves due events:
 
 ```sql
-CREATE FUNCTION pgque.maint_deliver_delayed()
+CREATE FUNCTION pg_current.maint_deliver_delayed()
 RETURNS integer AS $$
 DECLARE
     ev record;
     cnt integer := 0;
 BEGIN
     FOR ev IN
-        DELETE FROM pgque.delayed_events
+        DELETE FROM pg_current.delayed_events
         WHERE de_deliver_at <= now()
         RETURNING *
     LOOP
-        PERFORM pgque.insert_event(ev.de_queue_name, ev.de_type, ev.de_data,
+        PERFORM pg_current.insert_event(ev.de_queue_name, ev.de_type, ev.de_data,
             ev.de_extra1, ev.de_extra2, ev.de_extra3, ev.de_extra4);
         cnt := cnt + 1;
     END LOOP;
     RETURN cnt;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
 ### 4.7 Queue Management
 
 ```sql
 -- Create a queue with options
-SELECT pgque.create_queue('orders', '{
+SELECT pg_current.create_queue('orders', '{
     "rotation_period": "4 hours",
     "ticker_max_count": 1000,
     "ticker_max_lag": "5 seconds",
@@ -1146,33 +1146,33 @@ SELECT pgque.create_queue('orders', '{
 }'::jsonb);
 
 -- Pause/resume
-SELECT pgque.pause_queue('orders');
-SELECT pgque.resume_queue('orders');
+SELECT pg_current.pause_queue('orders');
+SELECT pg_current.resume_queue('orders');
 
 -- Simplified wrappers around set_queue_config
-CREATE FUNCTION pgque.pause_queue(i_queue text)
+CREATE FUNCTION pg_current.pause_queue(i_queue text)
 RETURNS void AS $$
 BEGIN
-    PERFORM pgque.set_queue_config(i_queue, 'ticker_paused', 'true');
+    PERFORM pg_current.set_queue_config(i_queue, 'ticker_paused', 'true');
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
 ### 4.8 API Summary: Modern vs. PgQ Primitives
 
 | Modern API | PgQ primitive underneath | Notes |
 |---|---|---|
-| `pgque.send(queue, payload)` | `pgque.insert_event(queue, type, data)` | TEXT overload is default for untyped literals (fast path, opaque bytes); JSONB overload is opt-in via `::jsonb` cast (validation + canonicalization) |
-| `pgque.send_batch(queue, type, payloads[])` | Loop of `insert_event()` calls | Single TX; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
-| `pgque.send_at(queue, type, payload, time)` | `delayed_events` table + `maint_deliver_delayed()` | New |
-| `pgque.receive(queue, consumer, n)` | `next_batch()` + `get_batch_events()` | Combined |
-| `pgque.ack(batch_id)` | `finish_batch(batch_id)` | Rename |
-| `pgque.nack(batch_id, msg, delay)` | `event_retry(batch_id, msg_id, seconds)` | + DLQ logic, reads max_retries from queue config |
-| `pgque.subscribe(queue, consumer)` | `register_consumer(queue, consumer)` | Rename |
-| `pgque.unsubscribe(queue, consumer)` | `unregister_consumer(queue, consumer)` | Rename |
-| `pgque.event_dead(batch, event_id, reason, ...)` | `dead_letter` table insert | New, accepts event fields from caller |
-| `pgque.dlq_replay(dl_id)` | `insert_event()` from dead_letter row | New |
-| `pgque.pause_queue(queue)` | `set_queue_config(queue, 'ticker_paused', 'true')` | Convenience |
+| `pg_current.send(queue, payload)` | `pg_current.insert_event(queue, type, data)` | TEXT overload is default for untyped literals (fast path, opaque bytes); JSONB overload is opt-in via `::jsonb` cast (validation + canonicalization) |
+| `pg_current.send_batch(queue, type, payloads[])` | Loop of `insert_event()` calls | Single TX; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
+| `pg_current.send_at(queue, type, payload, time)` | `delayed_events` table + `maint_deliver_delayed()` | New |
+| `pg_current.receive(queue, consumer, n)` | `next_batch()` + `get_batch_events()` | Combined |
+| `pg_current.ack(batch_id)` | `finish_batch(batch_id)` | Rename |
+| `pg_current.nack(batch_id, msg, delay)` | `event_retry(batch_id, msg_id, seconds)` | + DLQ logic, reads max_retries from queue config |
+| `pg_current.subscribe(queue, consumer)` | `register_consumer(queue, consumer)` | Rename |
+| `pg_current.unsubscribe(queue, consumer)` | `unregister_consumer(queue, consumer)` | Rename |
+| `pg_current.event_dead(batch, event_id, reason, ...)` | `dead_letter` table insert | New, accepts event fields from caller |
+| `pg_current.dlq_replay(dl_id)` | `insert_event()` from dead_letter row | New |
+| `pg_current.pause_queue(queue)` | `set_queue_config(queue, 'ticker_paused', 'true')` | Convenience |
 
 The PgQ-style API (`insert_event`, `next_batch`, `get_batch_events`,
 `finish_batch`, `event_retry`) remains fully available for users who need
@@ -1184,10 +1184,10 @@ fine-grained control.
 
 ### 5.1 SQL Metrics Views
 
-**`pgque.queue_stats()`** -- real-time queue health:
+**`pg_current.queue_stats()`** -- real-time queue health:
 
 ```sql
-CREATE FUNCTION pgque.queue_stats()
+CREATE FUNCTION pg_current.queue_stats()
 RETURNS TABLE (
     queue_name          text,
     queue_id            int4,
@@ -1210,32 +1210,32 @@ BEGIN
         q.queue_id,
         coalesce(
             (SELECT max(t_cur.tick_event_seq) - min(t_sub.tick_event_seq)
-             FROM pgque.subscription s
-             JOIN pgque.tick t_sub ON t_sub.tick_queue = q.queue_id
+             FROM pg_current.subscription s
+             JOIN pg_current.tick t_sub ON t_sub.tick_queue = q.queue_id
                  AND t_sub.tick_id = s.sub_last_tick
              CROSS JOIN LATERAL (
-                 SELECT tick_event_seq FROM pgque.tick
+                 SELECT tick_event_seq FROM pg_current.tick
                  WHERE tick_queue = q.queue_id
                  ORDER BY tick_id DESC LIMIT 1
              ) t_cur
              WHERE s.sub_queue = q.queue_id
             ), 0)::bigint AS depth,
         (SELECT now() - min(t.tick_time)
-         FROM pgque.subscription s
-         JOIN pgque.tick t ON t.tick_queue = q.queue_id
+         FROM pg_current.subscription s
+         JOIN pg_current.tick t ON t.tick_queue = q.queue_id
              AND t.tick_id = s.sub_last_tick
          WHERE s.sub_queue = q.queue_id
         ) AS oldest_msg_age,
-        (SELECT count(*)::int4 FROM pgque.subscription
+        (SELECT count(*)::int4 FROM pg_current.subscription
          WHERE sub_queue = q.queue_id) AS consumers,
         (SELECT CASE
             WHEN t2.tick_time = t1.tick_time THEN 0
             ELSE (t2.tick_event_seq - t1.tick_event_seq)::numeric
                 / extract(epoch from t2.tick_time - t1.tick_time)
          END
-         FROM pgque.tick t1, pgque.tick t2
+         FROM pg_current.tick t1, pg_current.tick t2
          WHERE t1.tick_queue = q.queue_id AND t2.tick_queue = q.queue_id
-           AND t2.tick_id = (SELECT max(tick_id) FROM pgque.tick
+           AND t2.tick_id = (SELECT max(tick_id) FROM pg_current.tick
                              WHERE tick_queue = q.queue_id)
            AND t1.tick_id = t2.tick_id - 1
         ) AS events_per_sec,
@@ -1243,22 +1243,22 @@ BEGIN
         now() - q.queue_switch_time AS rotation_age,
         q.queue_rotation_period,
         q.queue_ticker_paused,
-        (SELECT max(tick_time) FROM pgque.tick
+        (SELECT max(tick_time) FROM pg_current.tick
          WHERE tick_queue = q.queue_id) AS last_tick_time,
-        (SELECT max(tick_id) FROM pgque.tick
+        (SELECT max(tick_id) FROM pg_current.tick
          WHERE tick_queue = q.queue_id) AS last_tick_id,
-        (SELECT count(*) FROM pgque.dead_letter
+        (SELECT count(*) FROM pg_current.dead_letter
          WHERE dl_queue_id = q.queue_id)::bigint AS dlq_count
-    FROM pgque.queue q
+    FROM pg_current.queue q
     ORDER BY q.queue_name;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
-**`pgque.consumer_stats()`** -- per-consumer metrics:
+**`pg_current.consumer_stats()`** -- per-consumer metrics:
 
 ```sql
-CREATE FUNCTION pgque.consumer_stats()
+CREATE FUNCTION pg_current.consumer_stats()
 RETURNS TABLE (
     queue_name      text,
     consumer_name   text,
@@ -1275,26 +1275,26 @@ BEGIN
         c.co_name,
         now() - t.tick_time AS lag,
         coalesce(
-            (SELECT max(t2.tick_event_seq) FROM pgque.tick t2
+            (SELECT max(t2.tick_event_seq) FROM pg_current.tick t2
              WHERE t2.tick_queue = q.queue_id) - t.tick_event_seq,
             0)::bigint AS pending_events,
         s.sub_active,
         s.sub_batch IS NOT NULL,
         s.sub_batch
-    FROM pgque.subscription s
-    JOIN pgque.queue q ON q.queue_id = s.sub_queue
-    JOIN pgque.consumer c ON c.co_id = s.sub_consumer
-    LEFT JOIN pgque.tick t ON t.tick_queue = s.sub_queue
+    FROM pg_current.subscription s
+    JOIN pg_current.queue q ON q.queue_id = s.sub_queue
+    JOIN pg_current.consumer c ON c.co_id = s.sub_consumer
+    LEFT JOIN pg_current.tick t ON t.tick_queue = s.sub_queue
         AND t.tick_id = s.sub_last_tick
     ORDER BY q.queue_name, c.co_name;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
-**`pgque.queue_health()`** -- operational diagnostics:
+**`pg_current.queue_health()`** -- operational diagnostics:
 
 ```sql
-CREATE FUNCTION pgque.queue_health()
+CREATE FUNCTION pg_current.queue_health()
 RETURNS TABLE (
     queue_name  text,
     check_name  text,
@@ -1309,8 +1309,8 @@ BEGIN
              WHEN now() - max(t.tick_time) > interval '10 seconds'
              THEN 'critical' ELSE 'ok' END,
         'Last tick: ' || coalesce(max(t.tick_time)::text, 'never')
-    FROM pgque.queue q
-    LEFT JOIN pgque.tick t ON t.tick_queue = q.queue_id
+    FROM pg_current.queue q
+    LEFT JOIN pg_current.tick t ON t.tick_queue = q.queue_id
     WHERE NOT q.queue_ticker_paused
     GROUP BY q.queue_name;
 
@@ -1324,10 +1324,10 @@ BEGIN
             ELSE 'ok'
         END,
         c.co_name || ' lag: ' || (now() - t.tick_time)::text
-    FROM pgque.subscription s
-    JOIN pgque.queue q ON q.queue_id = s.sub_queue
-    JOIN pgque.consumer c ON c.co_id = s.sub_consumer
-    JOIN pgque.tick t ON t.tick_queue = s.sub_queue AND t.tick_id = s.sub_last_tick;
+    FROM pg_current.subscription s
+    JOIN pg_current.queue q ON q.queue_id = s.sub_queue
+    JOIN pg_current.consumer c ON c.co_id = s.sub_consumer
+    JOIN pg_current.tick t ON t.tick_queue = s.sub_queue AND t.tick_id = s.sub_last_tick;
 
     -- Check: rotation overdue
     RETURN QUERY
@@ -1342,7 +1342,7 @@ BEGIN
             WHEN q.queue_switch_step2 IS NULL THEN 'mid-rotation (step2 pending)'
             ELSE 'last rotation: ' || q.queue_switch_time::text
         END
-    FROM pgque.queue q;
+    FROM pg_current.queue q;
 
     -- Check: DLQ growing
     RETURN QUERY
@@ -1353,8 +1353,8 @@ BEGIN
             ELSE 'ok'
         END,
         count(dl.*)::text || ' dead letter events'
-    FROM pgque.queue q
-    LEFT JOIN pgque.dead_letter dl ON dl.dl_queue_id = q.queue_id
+    FROM pg_current.queue q
+    LEFT JOIN pg_current.dead_letter dl ON dl.dl_queue_id = q.queue_id
     GROUP BY q.queue_name;
 
     -- Check: pg_cron jobs
@@ -1365,7 +1365,7 @@ BEGIN
         CASE WHEN cfg.ticker_job_id IS NULL
              THEN 'ticker job not scheduled'
              ELSE 'job_id=' || cfg.ticker_job_id::text END
-    FROM pgque.config cfg;
+    FROM pg_current.config cfg;
 
     RETURN QUERY
     SELECT 'system'::text, 'pg_cron_maint'::text,
@@ -1374,25 +1374,25 @@ BEGIN
         CASE WHEN cfg.maint_job_id IS NULL
              THEN 'maint job not scheduled'
              ELSE 'job_id=' || cfg.maint_job_id::text END
-    FROM pgque.config cfg;
+    FROM pg_current.config cfg;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
 **Historical metrics:**
 
 ```sql
 -- Throughput over time (bucketed)
-pgque.throughput(queue_name text, period interval, bucket_size interval)
+pg_current.throughput(queue_name text, period interval, bucket_size interval)
     RETURNS TABLE (bucket_start timestamptz, events bigint, events_per_sec numeric)
     -- Uses tick history to compute per-bucket throughput
 
 -- Latency percentiles (estimated from tick-to-consume gap)
-pgque.latency_percentiles(queue_name text, consumer_name text, period interval)
+pg_current.latency_percentiles(queue_name text, consumer_name text, period interval)
     RETURNS TABLE (p50 interval, p95 interval, p99 interval)
 
 -- Error rate (retries + DLQ per time period)
-pgque.error_rate(queue_name text, period interval, bucket_size interval)
+pg_current.error_rate(queue_name text, period interval, bucket_size interval)
     RETURNS TABLE (bucket_start timestamptz, retries bigint, dead_letters bigint)
 ```
 
@@ -1400,41 +1400,41 @@ pgque.error_rate(queue_name text, period interval, bucket_size interval)
 
 ```sql
 -- Messages currently being processed
-pgque.in_flight(queue_name text)
+pg_current.in_flight(queue_name text)
     RETURNS TABLE (consumer_name text, batch_id bigint,
                    batch_age interval, estimated_events bigint)
 
 -- Consumers that haven't processed in a long time
-pgque.stuck_consumers(threshold interval DEFAULT '1 hour')
+pg_current.stuck_consumers(threshold interval DEFAULT '1 hour')
     RETURNS TABLE (queue_name text, consumer_name text,
                    lag interval, last_active timestamptz)
 ```
 
 ### 5.2 OpenTelemetry Integration
 
-pgque provides OTel-compatible metrics via SQL functions that can be polled by
+pg_current provides OTel-compatible metrics via SQL functions that can be polled by
 an OTel Collector sidecar or a pg_cron job that pushes to a collector.
 
 **OTel Metric Mapping:**
 
 | OTel Metric Name | Type | SQL Source |
 |---|---|---|
-| `pgque.queue.depth` | Gauge | `queue_stats().depth` |
-| `pgque.queue.oldest_message_age_seconds` | Gauge | `queue_stats().oldest_msg_age` |
-| `pgque.message.sent_total` | Counter | Tick event_seq delta |
-| `pgque.message.acked_total` | Counter | Derived from `finish_batch` calls |
-| `pgque.message.nacked_total` | Counter | `retry_queue` insertions |
-| `pgque.message.dead_lettered` | Gauge | `dead_letter` current count (resets on `dlq_purge`) |
-| `pgque.consumer.lag_seconds` | Gauge | `consumer_stats().lag` |
-| `pgque.consumer.pending_events` | Gauge | `consumer_stats().pending_events` |
-| `pgque.processing_latency_seconds` | Histogram | Consumer-side (client library) |
-| `pgque.batch.size` | Histogram | Consumer-side (client library) |
-| `pgque.ticker.duration_seconds` | Gauge | pg_cron `run_details` |
+| `pg_current.queue.depth` | Gauge | `queue_stats().depth` |
+| `pg_current.queue.oldest_message_age_seconds` | Gauge | `queue_stats().oldest_msg_age` |
+| `pg_current.message.sent_total` | Counter | Tick event_seq delta |
+| `pg_current.message.acked_total` | Counter | Derived from `finish_batch` calls |
+| `pg_current.message.nacked_total` | Counter | `retry_queue` insertions |
+| `pg_current.message.dead_lettered` | Gauge | `dead_letter` current count (resets on `dlq_purge`) |
+| `pg_current.consumer.lag_seconds` | Gauge | `consumer_stats().lag` |
+| `pg_current.consumer.pending_events` | Gauge | `consumer_stats().pending_events` |
+| `pg_current.processing_latency_seconds` | Histogram | Consumer-side (client library) |
+| `pg_current.batch.size` | Histogram | Consumer-side (client library) |
+| `pg_current.ticker.duration_seconds` | Gauge | pg_cron `run_details` |
 
 **OTel metrics export function** (called by pg_cron or external poller):
 
 ```sql
-CREATE FUNCTION pgque.otel_metrics()
+CREATE FUNCTION pg_current.otel_metrics()
 RETURNS TABLE (
     metric_name text,
     metric_type text,       -- 'gauge', 'counter'
@@ -1444,34 +1444,34 @@ RETURNS TABLE (
 BEGIN
     -- Queue depth gauges
     RETURN QUERY
-    SELECT 'pgque.queue.depth'::text, 'gauge'::text,
+    SELECT 'pg_current.queue.depth'::text, 'gauge'::text,
            qs.depth::numeric,
            jsonb_build_object('queue', qs.queue_name)
-    FROM pgque.queue_stats() qs;
+    FROM pg_current.queue_stats() qs;
 
     -- Consumer lag gauges
     RETURN QUERY
-    SELECT 'pgque.consumer.lag_seconds'::text, 'gauge'::text,
+    SELECT 'pg_current.consumer.lag_seconds'::text, 'gauge'::text,
            extract(epoch from cs.lag)::numeric,
            jsonb_build_object('queue', cs.queue_name,
                               'consumer', cs.consumer_name)
-    FROM pgque.consumer_stats() cs;
+    FROM pg_current.consumer_stats() cs;
 
     -- DLQ counters
     RETURN QUERY
-    SELECT 'pgque.message.dead_lettered'::text, 'gauge'::text,
+    SELECT 'pg_current.message.dead_lettered'::text, 'gauge'::text,
            qs.dlq_count::numeric,
            jsonb_build_object('queue', qs.queue_name)
-    FROM pgque.queue_stats() qs;
+    FROM pg_current.queue_stats() qs;
 
     -- Events per sec gauges
     RETURN QUERY
-    SELECT 'pgque.queue.throughput'::text, 'gauge'::text,
+    SELECT 'pg_current.queue.throughput'::text, 'gauge'::text,
            coalesce(qs.events_per_sec, 0),
            jsonb_build_object('queue', qs.queue_name)
-    FROM pgque.queue_stats() qs;
+    FROM pg_current.queue_stats() qs;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_current, pg_catalog;
 ```
 
 **OTel Traces:**
@@ -1480,7 +1480,7 @@ Trace propagation uses `ev_extra1` (or a dedicated field) to carry trace
 context. The pattern:
 
 1. **Producer:** Client library serializes W3C traceparent into `ev_extra1`
-   before calling `pgque.send()`
+   before calling `pg_current.send()`
 2. **Queue wait:** Duration between `ev_time` and consumer `receive()` is the
    queue span
 3. **Consumer:** Client library extracts traceparent from `ev_extra1`, creates
@@ -1494,11 +1494,11 @@ client libraries (section 6).
 Structured log events for key operations:
 
 ```sql
-CREATE FUNCTION pgque.log_event(
+CREATE FUNCTION pg_current.log_event(
     i_level text, i_component text, i_message text, i_attrs jsonb DEFAULT '{}')
 RETURNS void AS $$
 BEGIN
-    RAISE LOG 'pgque.%.% %', i_component, i_level, i_message
+    RAISE LOG 'pg_current.%.% %', i_component, i_level, i_message
         USING DETAIL = i_attrs::text;
 END;
 $$ LANGUAGE plpgsql;
@@ -1514,12 +1514,12 @@ registration/unregistration, DLQ insertions, rotation steps, ticker anomalies
 ┌──────────────────────────────────────────────────────┐
 │ PostgreSQL                                            │
 │                                                       │
-│  pgque.otel_metrics()  ──> JSON rows                  │
-│  pgque.queue_health()  ──> health check rows          │
+│  pg_current.otel_metrics()  ──> JSON rows                  │
+│  pg_current.queue_health()  ──> health check rows          │
 │                                                       │
 │  pg_cron (every 15s):                                │
-│    SELECT * FROM pgque.otel_metrics()                 │
-│    -> write to pgque.metrics_buffer (optional)        │
+│    SELECT * FROM pg_current.otel_metrics()                 │
+│    -> write to pg_current.metrics_buffer (optional)        │
 │                                                       │
 └────────────────────┬─────────────────────────────────┘
                      │
@@ -1540,7 +1540,7 @@ registration/unregistration, DLQ insertions, rotation steps, ticker anomalies
 Two export paths:
 
 1. **Sidecar poller:** An OTel Collector with a SQL receiver polls
-   `pgque.otel_metrics()` every 15 seconds and converts rows to OTLP.
+   `pg_current.otel_metrics()` every 15 seconds and converts rows to OTLP.
 2. **pg_cron + pg_net:** For environments where a sidecar is not feasible,
    pg_cron calls a function that formats OTLP JSON and pushes via `pg_net`
    (HTTP from inside PostgreSQL). This is the fully self-contained option.
@@ -1549,7 +1549,7 @@ Two export paths:
 
 ## 6. Client Libraries
 
-Each library wraps pgque's SQL API into idiomatic patterns. The SQL layer
+Each library wraps pg_current's SQL API into idiomatic patterns. The SQL layer
 handles all queue semantics; the client library handles connection lifecycle,
 error recovery, and developer experience.
 
@@ -1565,7 +1565,7 @@ All client libraries share the same structure:
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
-│ pgque Client Library                      │
+│ pg_current Client Library                      │
 │   - Connection pool awareness            │
 │   - Graceful shutdown (drain + ack)      │
 │   - Auto-reconnect with backoff          │
@@ -1577,8 +1577,8 @@ All client libraries share the same structure:
                │ SQL
 ┌──────────────▼──────────────────────────┐
 │ PostgreSQL                               │
-│   pgque.send() / pgque.receive()          │
-│   pgque.ack() / pgque.nack()             │
+│   pg_current.send() / pg_current.receive()          │
+│   pg_current.ack() / pg_current.nack()             │
 └──────────────────────────────────────────┘
 ```
 
@@ -1588,21 +1588,21 @@ All client libraries share the same structure:
 |---|---|
 | Connection pooling | Works with connection poolers (PgBouncer, Supavisor). Advisory locks and LISTEN require session-mode pooling; document this clearly. |
 | Graceful shutdown | On SIGTERM/SIGINT: stop accepting new batches, finish current batch, ack, exit. No orphaned batches. |
-| Auto-reconnect | Exponential backoff (100ms, 200ms, 400ms, ..., 30s cap). On reconnect, any in-progress batch is automatically redelivered by pgque. |
+| Auto-reconnect | Exponential backoff (100ms, 200ms, 400ms, ..., 30s cap). On reconnect, any in-progress batch is automatically redelivered by pg_current. |
 | OTel propagation | Inject W3C traceparent into `ev_extra1` on send. Extract and create child span on receive. |
 | Batch transactions | The library wraps `receive -> process -> ack` in a database transaction. Crash = rollback = batch redelivered. |
-| Health check | `library.health()` calls `pgque.queue_health()` and returns structured result. |
+| Health check | `library.health()` calls `pg_current.queue_health()` and returns structured result. |
 
-### 6.2 Python -- `pgque-py`
+### 6.2 Python -- `pg_current-py`
 
 Built on `psycopg` (v3). Feels like a Python library, not a SQL wrapper.
 
 **Producer:**
 
 ```python
-import pgque
+import pg_current
 
-conn = pgque.connect("postgresql://localhost/mydb")
+conn = pg_current.connect("postgresql://localhost/mydb")
 
 # Simple send
 conn.send("orders", {"order_id": 42, "total": 99.95})
@@ -1624,9 +1624,9 @@ conn.send_at("orders", "reminder.send",
 **Consumer:**
 
 ```python
-import pgque
+import pg_current
 
-consumer = pgque.Consumer(
+consumer = pg_current.Consumer(
     "postgresql://localhost/mydb",
     queue="orders",
     name="order_processor",
@@ -1635,12 +1635,12 @@ consumer = pgque.Consumer(
 )
 
 @consumer.on("order.created")
-def handle_order(msg: pgque.Message):
+def handle_order(msg: pg_current.Message):
     process_order(msg.payload)
     # Auto-acked if no exception raised
 
 @consumer.on("order.created")
-def handle_order_explicit(msg: pgque.Message):
+def handle_order_explicit(msg: pg_current.Message):
     try:
         process_order(msg.payload)
     except TransientError:
@@ -1652,13 +1652,13 @@ consumer.start()  # Blocks, processes until SIGTERM
 ```
 
 **Internals:**
-- `consumer.start()` runs: `LISTEN pgque_orders` + poll loop
-- Each iteration: `SELECT * FROM pgque.receive('orders', 'order_processor', 100)`
+- `consumer.start()` runs: `LISTEN pg_current_orders` + poll loop
+- Each iteration: `SELECT * FROM pg_current.receive('orders', 'order_processor', 100)`
 - For each message: dispatch to registered handler based on `type`
-- After batch: `SELECT pgque.ack(batch_id)` (in same TX as processing)
-- On handler exception: `SELECT pgque.nack(batch_id, msg_id, 60)`
+- After batch: `SELECT pg_current.ack(batch_id)` (in same TX as processing)
+- On handler exception: `SELECT pg_current.nack(batch_id, msg_id, 60)`
 
-### 6.3 Go -- `pgque-go`
+### 6.3 Go -- `pg_current-go`
 
 Built on `pgx/v5`. Follows Go conventions (context, interfaces, struct tags).
 
@@ -1667,25 +1667,25 @@ package main
 
 import (
     "context"
-    "github.com/pgque/pgque-go"
+    "github.com/pg_current/pg_current-go"
 )
 
 func main() {
-    client, _ := pgque.Connect(ctx, "postgresql://localhost/mydb")
+    client, _ := pg_current.Connect(ctx, "postgresql://localhost/mydb")
 
     // Producer
-    client.Send(ctx, "orders", pgque.Event{
+    client.Send(ctx, "orders", pg_current.Event{
         Type:    "order.created",
         Payload: Order{ID: 42, Total: 99.95},
     })
 
     // Consumer
     consumer := client.NewConsumer("orders", "order_processor",
-        pgque.WithPollInterval(30 * time.Second),
-        pgque.WithMaxRetries(5),
+        pg_current.WithPollInterval(30 * time.Second),
+        pg_current.WithMaxRetries(5),
     )
 
-    consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) error {
+    consumer.Handle("order.created", func(ctx context.Context, msg pg_current.Message) error {
         var order Order
         msg.Decode(&order)
         return processOrder(ctx, order)
@@ -1696,12 +1696,12 @@ func main() {
 }
 ```
 
-### 6.4 Node.js -- `pgque-js`
+### 6.4 Node.js -- `pg_current-js`
 
 Built on `pg` (node-postgres). TypeScript-first.
 
 ```typescript
-import { PgqueClient } from 'pgque-js';
+import { PgqueClient } from 'pg_current-js';
 
 const client = new PgqueClient('postgresql://localhost/mydb');
 
@@ -1725,12 +1725,12 @@ consumer.on('order.created', async (msg) => {
 await consumer.start();
 ```
 
-### 6.5 Ruby -- `pgque-rb`
+### 6.5 Ruby -- `pg_current-rb`
 
 Built on `pg` gem. Rails-friendly.
 
 ```ruby
-require 'pgque'
+require 'pg_current'
 
 client = Pgque::Client.new("postgresql://localhost/mydb")
 
@@ -1772,7 +1772,7 @@ exactly-once processing within a database transaction:
 ```sql
 BEGIN;
     -- Receive messages (inside the transaction)
-    SELECT * FROM pgque.receive('orders', 'processor', 100)
+    SELECT * FROM pg_current.receive('orders', 'processor', 100)
     INTO TEMP msgs;
 
     -- Process: write results to application tables (same TX)
@@ -1781,7 +1781,7 @@ BEGIN;
     FROM msgs;
 
     -- Ack the batch (same TX)
-    SELECT pgque.ack(
+    SELECT pg_current.ack(
         (SELECT DISTINCT batch_id FROM msgs LIMIT 1)
     );
 COMMIT;
@@ -1832,7 +1832,7 @@ batch for the same key is still in flight.
 Client-side rate limiting using `next_batch_custom`:
 
 ```python
-consumer = pgque.Consumer(
+consumer = pg_current.Consumer(
     dsn, queue="notifications", name="email_sender",
     # Process at most 1 batch per 5 seconds
     min_interval=timedelta(seconds=5),
@@ -1843,7 +1843,7 @@ consumer = pgque.Consumer(
 )
 ```
 
-These map directly to `pgque.next_batch_custom(queue, consumer,
+These map directly to `pg_current.next_batch_custom(queue, consumer,
 min_lag, min_count, min_interval)`.
 
 For hard rate limiting (e.g., max 100 emails/minute), implement a token
@@ -1851,7 +1851,7 @@ bucket in the client:
 
 ```python
 @consumer.on("notification.send",
-             rate_limit=pgque.RateLimit(max_per_minute=100))
+             rate_limit=pg_current.RateLimit(max_per_minute=100))
 def send_notification(msg):
     send_email(msg.payload)
     # Framework automatically throttles by sleeping between events
@@ -1860,19 +1860,19 @@ def send_notification(msg):
 
 ### 7.4 Cron / Scheduled Jobs
 
-pgque uses `send_at()` for future delivery, and recommends `pg_cron` for
+pg_current uses `send_at()` for future delivery, and recommends `pg_cron` for
 recurring schedules:
 
 ```sql
 -- One-time scheduled delivery
-SELECT pgque.send_at('reminders', 'reminder.send',
+SELECT pg_current.send_at('reminders', 'reminder.send',
     '{"user_id": 7}'::jsonb,
     now() + interval '24 hours');
 
 -- Recurring jobs: use pg_cron to insert events
 SELECT cron.schedule('daily_report',
     '0 9 * * *',
-    $$SELECT pgque.send('jobs', 'report.generate',
+    $$SELECT pg_current.send('jobs', 'report.generate',
         '{"type": "daily"}'::jsonb)$$);
 ```
 
@@ -1883,7 +1883,7 @@ skipped during batch retrieval:
 
 ```sql
 -- Configure TTL on a queue
-SELECT pgque.set_queue_config('notifications', 'event_ttl', '7 days');
+SELECT pg_current.set_queue_config('notifications', 'event_ttl', '7 days');
 ```
 
 Implementation: `get_batch_events()` adds a filter:
@@ -1898,21 +1898,21 @@ are worthless.
 
 ### 7.6 Priority Queues
 
-pgque does not natively support per-message priority within a batch (all events
+pg_current does not natively support per-message priority within a batch (all events
 in a batch are processed in `ev_id` order). For priority processing, use
 separate queues:
 
 ```sql
-SELECT pgque.create_queue('orders_high');
-SELECT pgque.create_queue('orders_normal');
-SELECT pgque.create_queue('orders_low');
+SELECT pg_current.create_queue('orders_high');
+SELECT pg_current.create_queue('orders_normal');
+SELECT pg_current.create_queue('orders_low');
 ```
 
 The client library's multi-queue consumer processes higher-priority queues
 first:
 
 ```python
-consumer = pgque.MultiQueueConsumer(dsn, [
+consumer = pg_current.MultiQueueConsumer(dsn, [
     ("orders_high", "processor", priority=0),
     ("orders_normal", "processor", priority=1),
     ("orders_low", "processor", priority=2),
@@ -1935,7 +1935,7 @@ concrete deliverables and test plans.
 
 ### 8.0 PgQ Code Import Strategy
 
-**pgque must not modify PgQ's core source code in-place.** The PgQ engine
+**pg_current must not modify PgQ's core source code in-place.** The PgQ engine
 (snapshot isolation, batch processing, table rotation, consumer tracking) is
 proven code with 15+ years of production validation. We import it as a
 dependency and apply transformations mechanically during the build step.
@@ -1943,10 +1943,10 @@ dependency and apply transformations mechanically during the build step.
 **Approach: git submodule.**
 
 ```
-pgque/
+pg_current/
   pgq/                 -- git submodule pointing to github.com/pgq/pgq
   sql/
-    pgque.sql   -- built from pgq/ sources + pgque additions
+    pg_current.sql   -- built from pgq/ sources + pg_current additions
   build/
     transform.sh        -- mechanical rename + modernization script
 ```
@@ -1954,9 +1954,9 @@ pgque/
 The `pgq/` submodule pins to a specific PgQ release tag (v3.5.1).
 The build script (`transform.sh`) reads PgQ's PL-only source files, applies
 the mechanical transformations (schema rename, `txid_*` -> `pg_*`, `xid8`,
-`search_path` pinning, cleanup), and concatenates the result with pgque's
+`search_path` pinning, cleanup), and concatenates the result with pg_current's
 new code (modern API, DLQ, delayed events, observability) into
-`pgque.sql`.
+`pg_current.sql`.
 
 **Why git submodule:**
 
@@ -1966,7 +1966,7 @@ new code (modern API, DLQ, delayed events, observability) into
 - Build is reproducible: submodule pin + transform script = deterministic output
 - License compliance: PgQ's ISC-licensed source is preserved unmodified
 
-**Why not fork/copy:** Copying PgQ files into pgque and editing them
+**Why not fork/copy:** Copying PgQ files into pg_current and editing them
 in-place creates a maintenance burden — any upstream fix requires manual
 cherry-picking across renamed files. The submodule + transform approach
 keeps the upstream relationship clean.
@@ -1979,26 +1979,26 @@ keeps the upstream relationship clean.
 1. Set up PgQ as a git submodule (`pgq/`, pinned to v3.5.1)
 2. Create `build/transform.sh` that reads PL-only source files and applies
    all mechanical transformations (items 3-9 below)
-3. Global rename: `pgq.` -> `pgque.` (schema prefix in ~40 files)
+3. Global rename: `pgq.` -> `pg_current.` (schema prefix in ~40 files)
 4. Replace `txid_*` with `pg_*` functions (8 distinct replacements)
 5. Replace `bigint` with `xid8` for txid columns (schema + functions)
 6. Replace `txid_snapshot` type with `pg_snapshot`
-7. Add `SET search_path = pgque, pg_catalog` to all `SECURITY DEFINER` functions
+7. Add `SET search_path = pg_current, pg_catalog` to all `SECURITY DEFINER` functions
 8. Remove `queue_per_tx_limit` column and references
 9. Remove `set default_with_oids = 'off'`
 10. Remove `maint_operations` pgq_node/Londiste hooks
-11. Add `pgque.config` table
-12. Build concatenated `pgque.sql` and `pgque-unpgque.sql`
-13. Create roles: `pgque_reader`, `pgque_writer`, `pgque_admin`
-14. Regression tests: run PgQ's existing test suite against pgque
+11. Add `pg_current.config` table
+12. Build concatenated `pg_current.sql` and `pg_current-unpg_current.sql`
+13. Create roles: `pg_current_reader`, `pg_current_writer`, `pg_current_admin`
+14. Regression tests: run PgQ's existing test suite against pg_current
 
 **Tests for Sprint 1:**
-- Every PgQ test case (from `sql/` + `expected/`) passes against pgque after rename
-- `\i pgque.sql` is idempotent (run twice, no errors)
-- `pgque-unpgque.sql` cleanly removes all objects
-- `pgque_reader` can call `get_queue_info()` but not `insert_event()`
-- `pgque_writer` can call `insert_event()` but not `drop_queue()`
-- `pgque_admin` can call all functions including `drop_queue()`
+- Every PgQ test case (from `sql/` + `expected/`) passes against pg_current after rename
+- `\i pg_current.sql` is idempotent (run twice, no errors)
+- `pg_current-unpg_current.sql` cleanly removes all objects
+- `pg_current_reader` can call `get_queue_info()` but not `insert_event()`
+- `pg_current_writer` can call `insert_event()` but not `drop_queue()`
+- `pg_current_admin` can call all functions including `drop_queue()`
 - All `SECURITY DEFINER` functions have `search_path` pinned (automated grep check)
 
 **Verification:** The test from `sql/switch_plonly.sql` proves the PL/pgSQL
@@ -2011,21 +2011,21 @@ code is correct. After renaming, every PgQ test case should pass identically.
 **Nature:** New code, but simple (pg_cron API calls).
 
 **Deliverables:**
-1. `pgque.start()` -- creates pg_cron jobs, stores IDs in `pgque.config`
-2. `pgque.stop()` -- removes pg_cron jobs
-3. `pgque.uninstall()` -- stop + DROP SCHEMA
-4. `pgque.status()` -- diagnostic dashboard
+1. `pg_current.start()` -- creates pg_cron jobs, stores IDs in `pg_current.config`
+2. `pg_current.stop()` -- removes pg_cron jobs
+3. `pg_current.uninstall()` -- stop + DROP SCHEMA
+4. `pg_current.status()` -- diagnostic dashboard
 5. Graceful degradation when pg_cron not installed
 6. LISTEN/NOTIFY in ticker: add `pg_notify()` call
 
 **Tests for Sprint 2:**
-- `pgque.start()` creates exactly 2 pg_cron jobs with correct schedules
-- `pgque.start()` is idempotent (calling twice does not create duplicate jobs)
-- `pgque.stop()` removes both jobs; `pgque.status()` reports no active jobs
-- `pgque.status()` returns correct TABLE rows (ticker status, maint status, pg version)
-- Without pg_cron installed: `pgque.start()` raises informative error; manual `pgque.ticker()` and `pgque.maint()` still work
-- `LISTEN pgque_<queue>` receives notifications after `pgque.ticker()` runs
-- `pg_notify` channel name matches `'pgque_' || queue_name` exactly
+- `pg_current.start()` creates exactly 2 pg_cron jobs with correct schedules
+- `pg_current.start()` is idempotent (calling twice does not create duplicate jobs)
+- `pg_current.stop()` removes both jobs; `pg_current.status()` reports no active jobs
+- `pg_current.status()` returns correct TABLE rows (ticker status, maint status, pg version)
+- Without pg_cron installed: `pg_current.start()` raises informative error; manual `pg_current.ticker()` and `pg_current.maint()` still work
+- `LISTEN pg_current_<queue>` receives notifications after `pg_current.ticker()` runs
+- `pg_notify` channel name matches `'pg_current_' || queue_name` exactly
 
 **Line count estimate:** ~200-300 new lines.
 
@@ -2034,28 +2034,28 @@ code is correct. After renaming, every PgQ test case should pass identically.
 **Nature:** New code wrapping existing primitives.
 
 **Deliverables:**
-1. `pgque.message` type definition
-2. `pgque.send()` / `send_batch()` / `send_at()`
-3. `pgque.receive()`
-4. `pgque.ack()` / `pgque.nack()`
-5. `pgque.subscribe()` / `unsubscribe()`
-6. `pgque.dead_letter` table + `event_dead()` + `dlq_inspect/replay/purge`
-7. `pgque.delayed_events` table + `maint_deliver_delayed()`
-8. `pgque.pause_queue()` / `resume_queue()`
-9. `pgque.create_queue()` overload with JSONB options
+1. `pg_current.message` type definition
+2. `pg_current.send()` / `send_batch()` / `send_at()`
+3. `pg_current.receive()`
+4. `pg_current.ack()` / `pg_current.nack()`
+5. `pg_current.subscribe()` / `unsubscribe()`
+6. `pg_current.dead_letter` table + `event_dead()` + `dlq_inspect/replay/purge`
+7. `pg_current.delayed_events` table + `maint_deliver_delayed()`
+8. `pg_current.pause_queue()` / `resume_queue()`
+9. `pg_current.create_queue()` overload with JSONB options
 
 **Tests for Sprint 3:**
-- `pgque.send()` returns a valid event ID; event appears in `get_batch_events()` after tick
-- `pgque.send_batch()` inserts all payloads atomically (rollback leaves zero events)
-- `pgque.receive()` returns messages with correct fields; returns empty set when no events
-- `pgque.ack()` advances consumer position; subsequent `receive()` gets next batch
-- `pgque.nack()` with retry count < max schedules retry; event reappears after delay
-- `pgque.nack()` with retry count >= max moves event to `dead_letter` table
-- `pgque.dlq_replay()` re-inserts event into queue; `dlq_purge()` removes old entries
-- `pgque.send_at()` with future timestamp inserts into `delayed_events`; `maint_deliver_delayed()` moves it to queue when due
-- `pgque.send_at()` with past timestamp inserts directly into queue
-- `pgque.pause_queue()` stops ticker from generating ticks for that queue; `resume_queue()` restarts
-- `pgque.subscribe()` / `unsubscribe()` correctly manage consumer registration
+- `pg_current.send()` returns a valid event ID; event appears in `get_batch_events()` after tick
+- `pg_current.send_batch()` inserts all payloads atomically (rollback leaves zero events)
+- `pg_current.receive()` returns messages with correct fields; returns empty set when no events
+- `pg_current.ack()` advances consumer position; subsequent `receive()` gets next batch
+- `pg_current.nack()` with retry count < max schedules retry; event reappears after delay
+- `pg_current.nack()` with retry count >= max moves event to `dead_letter` table
+- `pg_current.dlq_replay()` re-inserts event into queue; `dlq_purge()` removes old entries
+- `pg_current.send_at()` with future timestamp inserts into `delayed_events`; `maint_deliver_delayed()` moves it to queue when due
+- `pg_current.send_at()` with past timestamp inserts directly into queue
+- `pg_current.pause_queue()` stops ticker from generating ticks for that queue; `resume_queue()` restarts
+- `pg_current.subscribe()` / `unsubscribe()` correctly manage consumer registration
 - `peek()` is deferred to v2 (semantics need rigorous definition — "peek without claiming" vs "read existing batch" are different operations)
 
 **Line count estimate:** ~500-700 new lines.
@@ -2065,23 +2065,23 @@ code is correct. After renaming, every PgQ test case should pass identically.
 **Nature:** New code (views and functions over existing tables).
 
 **Deliverables:**
-1. `pgque.queue_stats()` function
-2. `pgque.consumer_stats()` function
-3. `pgque.queue_health()` diagnostic function
-4. `pgque.otel_metrics()` export function
-5. `pgque.throughput()`, `latency_percentiles()`, `error_rate()` historical functions
-6. `pgque.in_flight()`, `pgque.stuck_consumers()` operational functions
+1. `pg_current.queue_stats()` function
+2. `pg_current.consumer_stats()` function
+3. `pg_current.queue_health()` diagnostic function
+4. `pg_current.otel_metrics()` export function
+5. `pg_current.throughput()`, `latency_percentiles()`, `error_rate()` historical functions
+6. `pg_current.in_flight()`, `pg_current.stuck_consumers()` operational functions
 7. Log event integration in key operations
 
 **Tests for Sprint 4:**
-- `pgque.queue_stats()` returns correct depth, consumer count, and DLQ count for a queue with known state
-- `pgque.consumer_stats()` shows correct lag and pending event count
-- `pgque.queue_health()` returns 'critical' for a queue with no recent ticks
-- `pgque.queue_health()` returns 'warning' for consumer lag > rotation_period / 2
-- `pgque.queue_health()` returns 'ok' for healthy queue
-- `pgque.otel_metrics()` returns rows with correct metric names, types, and label structure
-- `pgque.stuck_consumers()` identifies consumers with lag exceeding threshold
-- `pgque.in_flight()` shows open batches with correct age
+- `pg_current.queue_stats()` returns correct depth, consumer count, and DLQ count for a queue with known state
+- `pg_current.consumer_stats()` shows correct lag and pending event count
+- `pg_current.queue_health()` returns 'critical' for a queue with no recent ticks
+- `pg_current.queue_health()` returns 'warning' for consumer lag > rotation_period / 2
+- `pg_current.queue_health()` returns 'ok' for healthy queue
+- `pg_current.otel_metrics()` returns rows with correct metric names, types, and label structure
+- `pg_current.stuck_consumers()` identifies consumers with lag exceeding threshold
+- `pg_current.in_flight()` shows open batches with correct age
 
 **Line count estimate:** ~400-600 new lines.
 
@@ -2095,15 +2095,15 @@ better than four incomplete ones (per reviewer feedback and risk table).
 
 | Library | Language | DB Driver | Estimated Size |
 |---|---|---|---|
-| `pgque-py` | Python 3.10+ | psycopg 3 | ~800-1200 lines |
-| `pgque-go` | Go 1.21+ | pgx/v5 | ~1000-1500 lines |
+| `pg_current-py` | Python 3.10+ | psycopg 3 | ~800-1200 lines |
+| `pg_current-go` | Go 1.21+ | pgx/v5 | ~1000-1500 lines |
 
 **v2 libraries (deferred):**
 
 | Library | Language | DB Driver | Estimated Size |
 |---|---|---|---|
-| `pgque-js` | TypeScript/Node 18+ | pg / node-postgres | ~800-1200 lines |
-| `pgque-rb` | Ruby 3.1+ | pg gem | ~600-1000 lines |
+| `pg_current-js` | TypeScript/Node 18+ | pg / node-postgres | ~800-1200 lines |
+| `pg_current-rb` | Ruby 3.1+ | pg gem | ~600-1000 lines |
 
 Each library includes:
 - Producer class (send, send_batch, send_at)
@@ -2162,7 +2162,7 @@ With 2-3 engineers: **~8-10 weeks** to a complete release.
 
 ## 9. Team / Staffing
 
-pgque is a repackaging + extensions project, not a ground-up build. The core
+pg_current is a repackaging + extensions project, not a ground-up build. The core
 queue engine (snapshot isolation, batch processing, table rotation) already
 exists and has 15+ years of production validation. This means the team is
 smaller than a typical queue system build.
@@ -2172,7 +2172,7 @@ smaller than a typical queue system build.
 **E1: Senior PostgreSQL engineer.** Owns Sprint 1 (repackaging), Sprint 2
 (pg_cron lifecycle), and Sprint 4 (observability). Must understand PgQ
 internals, `pg_snapshot` functions, rotation mechanics, and SECURITY DEFINER
-hardening. This person writes the SQL that pgque is built on.
+hardening. This person writes the SQL that pg_current is built on.
 
 **E2: Application developer.** Owns Sprint 3 (modern API) and Sprint 5
 (client libraries). Must be comfortable with PL/pgSQL and at least 2 of
@@ -2194,13 +2194,13 @@ Week  E1 (PG internals)               E2 (API + libraries)
 4     Sprint 4: queue_stats,           Sprint 3: DLQ, delayed
       consumer_stats, health           events, pause/resume
 
-5     Sprint 4: otel_metrics,          Sprint 5: pgque-py
+5     Sprint 4: otel_metrics,          Sprint 5: pg_current-py
       historical metrics               (Python library)
 
-6     Sprint 6: SQL regression         Sprint 5: pgque-go
+6     Sprint 6: SQL regression         Sprint 5: pg_current-go
       tests, benchmarks                (Go library)
 
-7     Sprint 6: benchmark run,         Sprint 5: pgque-py + pgque-go
+7     Sprint 6: benchmark run,         Sprint 5: pg_current-py + pg_current-go
       stress tests                     integration tests, examples
 
 8     Sprint 6: docs, README,          Sprint 6: SDK docs, example
@@ -2228,10 +2228,10 @@ Week  E1 (PG internals)       E2 (API + libraries)     E3 (Test + DevOps)
 4     Sprint 4: observability Sprint 3: DLQ, delayed    Sprint 3 test suite,
                                                         API integration tests
 
-5     Sprint 4: otel metrics  Sprint 5: pgque-py         Benchmark harness,
+5     Sprint 4: otel metrics  Sprint 5: pg_current-py         Benchmark harness,
                                                         sustained load test
 
-6     Docs, release review    Sprint 5: pgque-go          Sprint 5 library
+6     Docs, release review    Sprint 5: pg_current-go          Sprint 5 library
                                                         tests, examples
 ```
 
@@ -2252,17 +2252,17 @@ a few days, since it is thin wrappers over well-documented PgQ primitives.
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| PgQ PL/pgSQL code has undiscovered bugs in edge cases | Low | High | PgQ has 15+ years of production use. Run full PgQ test suite against pgque in Sprint 1. Focus testing on snapshot boundary conditions and cross-rotation batches. |
+| PgQ PL/pgSQL code has undiscovered bugs in edge cases | Low | High | PgQ has 15+ years of production use. Run full PgQ test suite against pg_current in Sprint 1. Focus testing on snapshot boundary conditions and cross-rotation batches. |
 | Schema rename introduces subtle breakage | Medium | Medium | Automated rename with `sed` + comprehensive regression tests. Each function tested individually. Grep for any remaining `pgq.` references in output. |
 | `pg_snapshot` function behavior differs from `txid_*` | Very Low | High | Functions are documented aliases since PG13. Test with PG14+ specifically. Compare `pg_current_snapshot()` output with `txid_current_snapshot()` on PG13 (where both exist) to validate equivalence. |
-| Modern API adds unexpected overhead vs raw PgQ API | Low | Low | Modern API is thin wrappers (1-2 SQL calls each). Benchmark both `pgque.send()` and `pgque.insert_event()` paths. Overhead should be <5% per call. |
+| Modern API adds unexpected overhead vs raw PgQ API | Low | Low | Modern API is thin wrappers (1-2 SQL calls each). Benchmark both `pg_current.send()` and `pg_current.insert_event()` paths. Overhead should be <5% per call. |
 | Client libraries fragment maintenance effort | Medium | Medium | Start with Python + Go only. Add Node.js + Ruby based on demand. Each library is <1500 lines and shares the same architecture, so maintenance burden is proportional and predictable. |
-| Tick-based latency (1-2s) deters real-time use cases | Medium | Low | Document clearly in section 2.7 (When NOT to use pgque). LISTEN/NOTIFY reduces to ~100ms. For sub-10ms, recommend graphile-worker or direct LISTEN/NOTIFY. |
-| Long-lived transactions degrade rotation and cleanup | Medium | Medium | `pgque.queue_health()` alerts when consumer lag exceeds rotation_period / 2. Documentation includes max lag guidance. Operational runbook defines escalation procedures. Consider `queue_max_consumer_lag` config parameter that triggers warnings. |
+| Tick-based latency (1-2s) deters real-time use cases | Medium | Low | Document clearly in section 2.7 (When NOT to use pg_current). LISTEN/NOTIFY reduces to ~100ms. For sub-10ms, recommend graphile-worker or direct LISTEN/NOTIFY. |
+| Long-lived transactions degrade rotation and cleanup | Medium | Medium | `pg_current.queue_health()` alerts when consumer lag exceeds rotation_period / 2. Documentation includes max lag guidance. Operational runbook defines escalation procedures. Consider `queue_max_consumer_lag` config parameter that triggers warnings. |
 | pg_cron not available on a target provider | Low | High | Ticker and maint work from any scheduler. Document cron, systemd timer, `\watch`, and application-loop alternatives. Test all paths. |
 | pg_cron 1-second minimum granularity insufficient | Low | Low | PgQ's `pgqd` default was 1-2 seconds anyway. Sub-second ticking has diminishing returns. Document this. |
 | Old-style `INHERITS` deprecated in future PG | Very Low | High | INHERITS has been stable for 20+ years. Native partitioning is available but has different semantics for the rotation pattern (see SPEC.md 3.2.5). Monitor PG development. Migration path exists if needed. |
-| `retry_queue` bloats under high-retry workloads with MVCC horizon pinning | Low | Low | Add `VACUUM pgque.retry_queue` to the `maint()` cycle. Monitor in benchmarks. Retry queue is small relative to event tables. |
+| `retry_queue` bloats under high-retry workloads with MVCC horizon pinning | Low | Low | Add `VACUUM pg_current.retry_queue` to the `maint()` cycle. Monitor in benchmarks. Retry queue is small relative to event tables. |
 
 ---
 
@@ -2270,7 +2270,7 @@ a few days, since it is thin wrappers over well-documented PgQ primitives.
 
 ### 11.1 Producers
 
-- **Prefer `pgque.send()` for simplicity, `pgque.insert_event()` for control.**
+- **Prefer `pg_current.send()` for simplicity, `pg_current.insert_event()` for control.**
   `send()` is the right choice for 80% of use cases (JSON payload, auto type).
   Use `insert_event()` when you need to set `ev_extra1..4`, use non-JSON
   payloads, or need maximum insert performance (one fewer function call).
@@ -2291,7 +2291,7 @@ a few days, since it is thin wrappers over well-documented PgQ primitives.
   advance past them.
 
 - **Prefer direct API over triggers for high-throughput queues.**
-  `pgque.insert_event()` is faster than CDC triggers because it skips column
+  `pg_current.insert_event()` is faster than CDC triggers because it skips column
   introspection, serialization, and dynamic SQL. Use triggers for CDC (capture
   all changes); use the API when the application knows exactly what event to
   produce.
@@ -2299,8 +2299,8 @@ a few days, since it is thin wrappers over well-documented PgQ primitives.
 ### 11.2 Consumers
 
 - **Always ack batches.** An unfinished batch blocks the consumer's position.
-  Call `pgque.ack(batch_id)` after processing. If you crash before acking, the
-  same batch is redelivered on next `pgque.receive()` — this is at-least-once
+  Call `pg_current.ack(batch_id)` after processing. If you crash before acking, the
+  same batch is redelivered on next `pg_current.receive()` — this is at-least-once
   delivery. Exactly-once processing requires idempotent consumers.
 
 - **Make handlers idempotent.** If a consumer crashes after processing some
@@ -2308,18 +2308,18 @@ a few days, since it is thin wrappers over well-documented PgQ primitives.
   so that reprocessing an event is harmless (e.g., use upserts, check
   idempotency keys).
 
-- **Use `pgque.nack()` for transient failures, let DLQ handle permanent ones.**
+- **Use `pg_current.nack()` for transient failures, let DLQ handle permanent ones.**
   Don't fail the entire batch because one event has a temporary problem. Nack
   that event (it retries with delay) and ack the batch. After max retries,
   `nack()` automatically moves the event to the dead letter queue.
 
 - **Use LISTEN for low-latency wakeup with polling fallback.** Instead of
-  polling `receive()` in a tight sleep loop, `LISTEN pgque_<queue>` and wake
+  polling `receive()` in a tight sleep loop, `LISTEN pg_current_<queue>` and wake
   on notification. Always combine with a polling fallback (e.g., poll every
   30s in case a notification was missed). LISTEN requires session-mode
   connection pooling.
 
-- **Monitor consumer lag via `pgque.queue_health()`.** A consumer falling
+- **Monitor consumer lag via `pg_current.queue_health()`.** A consumer falling
   behind blocks table rotation. Set up alerts for lag exceeding half the
   rotation period.
 
@@ -2349,15 +2349,15 @@ a few days, since it is thin wrappers over well-documented PgQ primitives.
   alongside pg_cron — they will contend over tick generation and produce
   duplicate ticks.
 
-- **Monitor `pgque.queue_health()`.** It catches ticker stalls, consumer lag,
+- **Monitor `pg_current.queue_health()`.** It catches ticker stalls, consumer lag,
   rotation issues, and DLQ growth in one call. Wire it into your alerting
   system.
 
 - **Set rotation period > max consumer lag.** If your slowest consumer is 1
   hour behind, rotation period must be > 1 hour. Otherwise rotation is blocked
-  indefinitely and you lose pgque's zero-bloat advantage.
+  indefinitely and you lose pg_current's zero-bloat advantage.
 
-- **Event tables are transient.** Don't rely on pgque for long-term event
+- **Event tables are transient.** Don't rely on pg_current for long-term event
   storage. Consume events and write to a permanent destination (data
   warehouse, object storage, etc.). TRUNCATE rotation means events are gone
   after the rotation period.
@@ -2370,31 +2370,31 @@ a few days, since it is thin wrappers over well-documented PgQ primitives.
 
 ## 12. Relationship to SPEC.md
 
-SPEC.md (v0.7.0-draft, 1616 lines) was written for the "pgque
+SPEC.md (v0.7.0-draft, 1616 lines) was written for the "pg_current
 reimplementation" approach. It contains deep technical analysis that remains
-fully relevant to pgque:
+fully relevant to pg_current:
 
-| SPEC.md Section | Topic | Relevance to pgque |
+| SPEC.md Section | Topic | Relevance to pg_current |
 |---|---|---|
-| 3.2.5 | INHERITS justification for rotation | Directly applicable -- pgque uses same mechanism |
-| 3.2.6 | Snapshot-based batch isolation, dual-filter algorithm | Core of pgque, unchanged |
+| 3.2.5 | INHERITS justification for rotation | Directly applicable -- pg_current uses same mechanism |
+| 3.2.6 | Snapshot-based batch isolation, dual-filter algorithm | Core of pg_current, unchanged |
 | 3.2.6 | Subtransaction caveats | Same caveats apply |
-| 3.2.7 | SECURITY DEFINER hardening rules | Applied in pgque Sprint 1 |
-| 3.3 | C-to-PL/pgSQL replacement analysis | Documents exactly what pgque inherits |
+| 3.2.7 | SECURITY DEFINER hardening rules | Applied in pg_current Sprint 1 |
+| 3.3 | C-to-PL/pgSQL replacement analysis | Documents exactly what pg_current inherits |
 | 3.4 | Performance expectations | Same numbers apply |
-| 4.3 | pg_cron integration design | pgque uses this design |
-| 4.4 | Rotation state machine with recovery rules | Core of pgque maintenance |
+| 4.3 | pg_cron integration design | pg_current uses this design |
+| 4.4 | Rotation state machine with recovery rules | Core of pg_current maintenance |
 | 4.4.1 | Tick cleanup invariant | Applied unchanged |
 | 7 | Risk table | Applicable risks carried forward |
-| 8 | Migration paths (PGMQ, River, pg-boss, etc.) | Directly applicable with schema `pgque` |
+| 8 | Migration paths (PGMQ, River, pg-boss, etc.) | Directly applicable with schema `pg_current` |
 | 9 | Best practices | Applicable with schema rename |
-| 10 | Benchmark methodology (incl. Brandur/PlanetScale MVCC analysis) | pgque benchmark plan |
+| 10 | Benchmark methodology (incl. Brandur/PlanetScale MVCC analysis) | pg_current benchmark plan |
 
 **What changes:**
-- SPEC.md section 1 describes a "reimplementation" -- pgque is a repackaging
+- SPEC.md section 1 describes a "reimplementation" -- pg_current is a repackaging
 - SPEC.md section 5 (implementation plan) is replaced by this document's Sprint 1-6
 - SPEC.md section 6 (staffing) needs revision (less work = smaller team)
-- SPEC.md section 11 (future work) -- several items are now in pgque v1 scope
+- SPEC.md section 11 (future work) -- several items are now in pg_current v1 scope
   (DLQ, delayed events, metrics views)
 
 SPEC.md should be preserved alongside SPECx.md as the reference for PgQ's
@@ -2406,7 +2406,7 @@ internal architecture.
 
 ### 13.1 SQL Test Suite
 
-pgque ships a comprehensive SQL regression test suite modeled on PgQ's existing
+pg_current ships a comprehensive SQL regression test suite modeled on PgQ's existing
 `sql/` + `expected/` structure.
 
 **Test categories:**
@@ -2422,35 +2422,35 @@ pgque ships a comprehensive SQL regression test suite modeled on PgQ's existing
 | Retry | `event_retry`, `maint_retry_events`, retry count tracking |
 | DLQ | `nack` with max retries, `dlq_inspect`, `dlq_replay`, `dlq_purge` |
 | Modern API | `send/receive/ack/nack`, delayed delivery, priority |
-| Permissions | `pgque_reader`, `pgque_writer`, `pgque_admin` role enforcement |
+| Permissions | `pg_current_reader`, `pg_current_writer`, `pg_current_admin` role enforcement |
 | pg_cron integration | `start/stop/status`, idempotent start |
 | Observability | `queue_stats`, `consumer_stats`, `queue_health`, `otel_metrics` |
 | Triggers | `jsontriga` (INSERT/UPDATE/DELETE, pkey detection, ignore, backup) |
 | Multi-PG version | PG 14, 15, 16, 17, 18 |
 
-**Testing utilities** (available in pgque for user test suites):
+**Testing utilities** (available in pg_current for user test suites):
 
 ```sql
 -- Insert a test event and verify it arrives
-pgque.test_send(queue text, payload jsonb)
+pg_current.test_send(queue text, payload jsonb)
     RETURNS bigint  -- event_id
 
 -- Consume one event and verify content
-pgque.test_consume(queue text, consumer text, expected_type text)
-    RETURNS pgque.message
+pg_current.test_consume(queue text, consumer text, expected_type text)
+    RETURNS pg_current.message
 
 -- Assert queue is empty (no pending events for any consumer)
-pgque.assert_empty(queue text)
+pg_current.assert_empty(queue text)
     RETURNS boolean  -- raises exception if not empty
 
 -- Assert DLQ is empty for a queue
-pgque.assert_dlq_empty(queue text)
+pg_current.assert_dlq_empty(queue text)
     RETURNS boolean  -- raises exception if not empty
 ```
 
 ### 13.2 Test Methodology: Red/Green TDD
 
-All new pgque code (pgque-api layer, observability, client libraries) must
+All new pg_current code (pg_current-api layer, observability, client libraries) must
 be developed using **red/green TDD** where it makes sense:
 
 1. **Red:** Write a failing test that defines the expected behavior
@@ -2467,7 +2467,7 @@ be developed using **red/green TDD** where it makes sense:
 
 **Where TDD does not apply:**
 
-- pgque-core repackaging (Sprint 1) — PgQ already has tests; we run them
+- pg_current-core repackaging (Sprint 1) — PgQ already has tests; we run them
   after transformation and verify they pass. The tests exist before the code.
 - Exploratory benchmarks — these inform design, not verify correctness.
 
@@ -2478,32 +2478,32 @@ be developed using **red/green TDD** where it makes sense:
 -- (write this BEFORE implementing nack)
 do $$
 declare
-    v_msg pgque.message;
+    v_msg pg_current.message;
     v_dlq_count bigint;
 begin
     -- Setup: queue with max_retries=2
-    perform pgque.create_queue('test_dlq');
-    perform pgque.set_queue_config('test_dlq', 'max_retries', '2');
-    perform pgque.subscribe('test_dlq', 'c1');
-    perform pgque.send('test_dlq', '{"x":1}'::jsonb);
-    perform pgque.ticker();
+    perform pg_current.create_queue('test_dlq');
+    perform pg_current.set_queue_config('test_dlq', 'max_retries', '2');
+    perform pg_current.subscribe('test_dlq', 'c1');
+    perform pg_current.send('test_dlq', '{"x":1}'::jsonb);
+    perform pg_current.ticker();
 
     -- Simulate 2 prior retries (retry_count=2 >= max_retries=2)
-    select * into v_msg from pgque.receive('test_dlq', 'c1', 1);
+    select * into v_msg from pg_current.receive('test_dlq', 'c1', 1);
     -- Forge retry_count to simulate prior retries
     v_msg.retry_count := 2;
-    perform pgque.nack(v_msg.batch_id, v_msg, '1 second', 'test failure');
-    perform pgque.ack(v_msg.batch_id);
+    perform pg_current.nack(v_msg.batch_id, v_msg, '1 second', 'test failure');
+    perform pg_current.ack(v_msg.batch_id);
 
     -- Assert: event is in DLQ
-    select count(*) into v_dlq_count from pgque.dead_letter
-    where dl_queue_id = (select queue_id from pgque.queue
+    select count(*) into v_dlq_count from pg_current.dead_letter
+    where dl_queue_id = (select queue_id from pg_current.queue
                          where queue_name = 'test_dlq');
     assert v_dlq_count = 1, 'expected 1 DLQ entry, got ' || v_dlq_count;
 
     -- Cleanup
-    perform pgque.unsubscribe('test_dlq', 'c1');
-    perform pgque.drop_queue('test_dlq');
+    perform pg_current.unsubscribe('test_dlq', 'c1');
+    perform pg_current.drop_queue('test_dlq');
 end;
 $$;
 ```
@@ -2523,7 +2523,7 @@ as an acceptance test (section 13.3, US-3). Both must pass.
 
 ### 13.3 User Stories and Acceptance Tests
 
-These are end-to-end scenarios that verify pgque works as a complete system.
+These are end-to-end scenarios that verify pg_current works as a complete system.
 They serve as both **CI acceptance tests** (automated) and **manual
 verification paths** for humans or AI agents testing a fresh deployment.
 
@@ -2532,10 +2532,10 @@ Each story follows a consistent structure: setup, action, verify, teardown.
 #### US-1: Basic produce/consume cycle
 
 **As a** developer, **I want to** send a JSON message and receive it,
-**so that** I can use pgque as a simple queue.
+**so that** I can use pg_current as a simple queue.
 
 ```
-Setup:   install pgque, create queue "orders", subscribe consumer "app"
+Setup:   install pg_current, create queue "orders", subscribe consumer "app"
 Action:  send('orders', '{"id":1}'), ticker(), receive('orders','app',10)
 Verify:  exactly 1 message returned, payload = '{"id":1}', type = 'default'
          ack(batch_id) succeeds
@@ -2647,19 +2647,19 @@ Verify:  processed_payments contains payment_id=42
 
 #### US-8: Install on managed PostgreSQL
 
-**As a** developer on RDS/Cloud SQL/Supabase, **I want to** install pgque
+**As a** developer on RDS/Cloud SQL/Supabase, **I want to** install pg_current
 with a single SQL file and start it with pg_cron, **so that** I don't
 need DBA access or custom extensions.
 
 ```
 Setup:   fresh managed PG database with pg_cron enabled
-Action:  \i pgque.sql
-         select pgque.start()
-Verify:  pgque.status() shows ticker and maint running
+Action:  \i pg_current.sql
+         select pg_current.start()
+Verify:  pg_current.status() shows ticker and maint running
          create queue, send, ticker, receive, ack all work
-         pgque.queue_health() returns 'ok' for all checks
-         pgque.stop() removes pg_cron jobs
-         pgque.uninstall() removes all objects cleanly
+         pg_current.queue_health() returns 'ok' for all checks
+         pg_current.stop() removes pg_cron jobs
+         pg_current.uninstall() removes all objects cleanly
 ```
 
 #### US-9: Observability and health monitoring
@@ -2684,9 +2684,9 @@ Verify:  queue_stats() shows correct depth, throughput, DLQ count
 **so that** upgrades and accidental re-runs don't break anything.
 
 ```
-Setup:   install pgque, create queues, insert events, subscribe consumers
+Setup:   install pg_current, create queues, insert events, subscribe consumers
          note current queue depth and consumer positions
-Action:  run \i pgque.sql again
+Action:  run \i pg_current.sql again
 Verify:  no errors
          existing queues and events are preserved (check depth matches)
          consumer positions are preserved (sub_last_tick unchanged)
@@ -2718,23 +2718,23 @@ independently executable and verifiable without special tooling.
 
 ### 13.4 Admin CLI
 
-The `pgque` CLI is a thin wrapper around SQL calls, designed for operators
+The `pg_current` CLI is a thin wrapper around SQL calls, designed for operators
 and CI/CD pipelines. Written in Go (single binary, no dependencies).
 
 ```
-pgque - PgQ Extended administration tool
+pg_current - PgQ Extended administration tool
 
 Usage:
-  pgque <command> [flags]
+  pg_current <command> [flags]
 
 Connection:
   --dsn, -d     PostgreSQL connection string (or PGQUE_DSN env var)
   --database    Database name (or PGDATABASE)
 
 Commands:
-  install       Install pgque schema into database
-  upgrade       Upgrade pgque to latest version
-  uninstall     Remove pgque schema (requires --force)
+  install       Install pg_current schema into database
+  upgrade       Upgrade pg_current to latest version
+  uninstall     Remove pg_current schema (requires --force)
 
   start         Start pg_cron ticker and maintenance jobs
   stop          Stop pg_cron jobs
@@ -2754,20 +2754,20 @@ Commands:
   resume        Resume a queue's ticker
 
 Examples:
-  pgque install -d "postgresql://localhost/mydb"
-  pgque start
-  pgque status
-  pgque queues
-  pgque depth orders --watch 5s
-  pgque consumers orders
-  pgque replay-dlq orders --limit 100
-  pgque drain orders --timeout 60s
+  pg_current install -d "postgresql://localhost/mydb"
+  pg_current start
+  pg_current status
+  pg_current queues
+  pg_current depth orders --watch 5s
+  pg_current consumers orders
+  pg_current replay-dlq orders --limit 100
+  pg_current drain orders --timeout 60s
 ```
 
-**`pgque status` output example:**
+**`pg_current status` output example:**
 
 ```
-pgque v1.0.0 | PostgreSQL 16.2 | pg_cron 1.6
+pg_current v1.0.0 | PostgreSQL 16.2 | pg_cron 1.6
 
 System:
   Ticker:  running (job 42, every 2s, last run 1.2s ago)
@@ -2793,32 +2793,32 @@ Consumers:
 ## 14. Migration Paths
 
 SPEC.md section 8 contains detailed migration tables for each alternative
-queue system. The mappings apply to pgque with these adjustments:
+queue system. The mappings apply to pg_current with these adjustments:
 
-| SPEC.md reference | pgque equivalent |
+| SPEC.md reference | pg_current equivalent |
 |---|---|
-| `pgque.insert_event(queue, type, data)` | `pgque.send(queue, type, payload)` or `pgque.insert_event(queue, type, data)` |
-| `pgque.next_batch()` + `get_batch_events()` | `pgque.receive(queue, consumer, batch_size)` |
-| `pgque.finish_batch()` | `pgque.ack(batch_id)` |
-| `pgque.event_retry()` | `pgque.nack(batch_id, msg_id, delay)` |
-| Retry queue with max-retry logic in consumer | `pgque.nack()` handles DLQ automatically |
-| Schema `pgque` | Schema `pgque` |
+| `pg_current.insert_event(queue, type, data)` | `pg_current.send(queue, type, payload)` or `pg_current.insert_event(queue, type, data)` |
+| `pg_current.next_batch()` + `get_batch_events()` | `pg_current.receive(queue, consumer, batch_size)` |
+| `pg_current.finish_batch()` | `pg_current.ack(batch_id)` |
+| `pg_current.event_retry()` | `pg_current.nack(batch_id, msg_id, delay)` |
+| Retry queue with max-retry logic in consumer | `pg_current.nack()` handles DLQ automatically |
+| Schema `pg_current` | Schema `pg_current` |
 
 ### Quick migration reference
 
-**From PgQ:** Schema rename (`pgq` -> `pgque`), remove pgqd, call
-`pgque.start()`. Consumer code structure is identical. See SPEC.md 8.1.
+**From PgQ:** Schema rename (`pgq` -> `pg_current`), remove pgqd, call
+`pg_current.start()`. Consumer code structure is identical. See SPEC.md 8.1.
 
 **From PGMQ:** Switch from per-message (`pgmq.read` + `pgmq.delete`) to
-batch model (`pgque.receive` + `pgque.ack`). The modern API makes this close
+batch model (`pg_current.receive` + `pg_current.ack`). The modern API makes this close
 to 1:1. See SPEC.md 8.2.
 
 **From River / pg-boss / graphile-worker / Oban:** Switch from
-callback-per-job to batch processing. pgque client libraries provide typed
+callback-per-job to batch processing. pg_current client libraries provide typed
 dispatch that feels similar (`consumer.on("type", handler)`). The main
 conceptual shift is batch-oriented ack. See SPEC.md 8.3-8.6.
 
-**From DIY SKIP LOCKED:** The strongest migration case. pgque eliminates
+**From DIY SKIP LOCKED:** The strongest migration case. pg_current eliminates
 the MVCC dead tuple failure mode entirely (see SPEC.md 10.2 for the
 Brandur/PlanetScale analysis). See SPEC.md 8.7.
 
@@ -2847,12 +2847,12 @@ Brandur/PlanetScale analysis). See SPEC.md 8.7.
 | Crunchy Bridge | Yes | Supported |
 | Self-hosted | Yes | Install separately |
 
-Without pg_cron, pgque is fully functional -- the ticker and maintenance must
+Without pg_cron, pg_current is fully functional -- the ticker and maintenance must
 be called from an external scheduler. See SPEC.md 4.3.
 
 ## Appendix C: Source File Inventory
 
-PgQ PL-only source files that pgque repackages:
+PgQ PL-only source files that pg_current repackages:
 
 | File | Lines | Purpose |
 |---|---|---|
@@ -2895,7 +2895,7 @@ PgQ PL-only source files that pgque repackages:
 | `structure/grants.sql` | 13 | Default grants |
 | **Total** | **4,028** | |
 
-New code added by pgque (estimated):
+New code added by pg_current (estimated):
 
 | Component | Estimated Lines |
 |---|---|

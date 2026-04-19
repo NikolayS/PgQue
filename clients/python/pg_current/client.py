@@ -1,8 +1,8 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
-# PgQue includes code derived from PgQ (ISC license,
+# pg_current includes code derived from PgQ (ISC license,
 # Marko Kreen / Skype Technologies OU).
 
-"""PgqueClient -- thin Python wrapper over pgque SQL API."""
+"""PgqueClient -- thin Python wrapper over pg_current SQL API."""
 
 import json
 from typing import Optional
@@ -13,7 +13,7 @@ from .types import Message
 
 
 class PgqueClient:
-    """Thin wrapper around pgque SQL functions.
+    """Thin wrapper around pg_current SQL functions.
 
     All methods execute SQL against the provided psycopg connection.
     Transaction management (commit/rollback) is the caller's
@@ -32,8 +32,8 @@ class PgqueClient:
     ) -> int:
         """Send a single message to a queue.
 
-        Maps to ``pgque.send(queue, payload)`` or
-        ``pgque.send(queue, type, payload)``.
+        Maps to ``pg_current.send(queue, payload)`` or
+        ``pg_current.send(queue, type, payload)``.
 
         Args:
             queue: Target queue name.
@@ -41,19 +41,19 @@ class PgqueClient:
             type: Event type (default ``"default"``).
 
         Returns:
-            The event ID assigned by pgque.
+            The event ID assigned by pg_current.
         """
         if isinstance(payload, dict):
             payload = json.dumps(payload)
 
         if type != "default":
             row = self.conn.execute(
-                "select pgque.send(%s, %s, %s::jsonb)",
+                "select pg_current.send(%s, %s, %s::jsonb)",
                 (queue, type, payload),
             ).fetchone()
         else:
             row = self.conn.execute(
-                "select pgque.send(%s, %s::jsonb)",
+                "select pg_current.send(%s, %s::jsonb)",
                 (queue, payload),
             ).fetchone()
 
@@ -67,7 +67,7 @@ class PgqueClient:
     ) -> list[int]:
         """Send multiple messages in a single transaction.
 
-        Maps to ``pgque.send_batch(queue, type, payloads[])``.
+        Maps to ``pg_current.send_batch(queue, type, payloads[])``.
 
         Args:
             queue: Target queue name.
@@ -81,7 +81,7 @@ class PgqueClient:
             json.dumps(p) if isinstance(p, dict) else p for p in payloads
         ]
         row = self.conn.execute(
-            "select pgque.send_batch(%s, %s, %s::jsonb[])",
+            "select pg_current.send_batch(%s, %s, %s::jsonb[])",
             (queue, type, json_payloads),
         ).fetchone()
         return list(row[0])
@@ -94,7 +94,7 @@ class PgqueClient:
     ) -> list[Message]:
         """Receive messages from a queue.
 
-        Maps to ``pgque.receive(queue, consumer, max_messages)``.
+        Maps to ``pg_current.receive(queue, consumer, max_messages)``.
         Opens a batch via ``next_batch()`` internally. The caller must
         ``ack()`` the batch after processing to advance the consumer.
 
@@ -109,7 +109,7 @@ class PgqueClient:
             available).
         """
         rows = self.conn.execute(
-            "select * from pgque.receive(%s, %s, %s)",
+            "select * from pg_current.receive(%s, %s, %s)",
             (queue, consumer, max_messages),
         ).fetchall()
 
@@ -132,18 +132,18 @@ class PgqueClient:
     def ack(self, batch_id: int) -> int:
         """Acknowledge (finish) a batch.
 
-        Maps to ``pgque.ack(batch_id)`` which calls
-        ``pgque.finish_batch()``.  This advances the consumer past
+        Maps to ``pg_current.ack(batch_id)`` which calls
+        ``pg_current.finish_batch()``.  This advances the consumer past
         the entire batch.
 
         Args:
             batch_id: Batch ID returned in received messages.
 
         Returns:
-            Result from ``pgque.ack()``.
+            Result from ``pg_current.ack()``.
         """
         row = self.conn.execute(
-            "select pgque.ack(%s)", (batch_id,)
+            "select pg_current.ack(%s)", (batch_id,)
         ).fetchone()
         return row[0]
 
@@ -156,7 +156,7 @@ class PgqueClient:
     ) -> None:
         """Negatively acknowledge a single message for retry.
 
-        Maps to ``pgque.nack(batch_id, msg, retry_after, reason)``.
+        Maps to ``pg_current.nack(batch_id, msg, retry_after, reason)``.
         The message is copied to the retry queue. If the retry count
         exceeds ``queue_max_retries``, the message is moved to the
         dead-letter table instead.
@@ -172,9 +172,9 @@ class PgqueClient:
                 retries exceeded).
         """
         self.conn.execute(
-            "select pgque.nack("
+            "select pg_current.nack("
             "  %s,"
-            "  ROW(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)::pgque.message,"
+            "  ROW(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)::pg_current.message,"
             "  %s::interval,"
             "  %s"
             ")",

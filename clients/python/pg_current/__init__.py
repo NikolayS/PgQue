@@ -1,8 +1,8 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
-# PgQue includes code derived from PgQ (ISC license,
+# pg_current includes code derived from PgQ (ISC license,
 # Marko Kreen / Skype Technologies OU).
 
-"""pgque -- Python client for PgQue (PgQ Universal Edition)."""
+"""pg_current -- Python client for pg_current (PgQ Universal Edition)."""
 
 from .client import PgqueClient
 from .consumer import Consumer

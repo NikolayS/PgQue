@@ -5,24 +5,24 @@ do $$
 declare
   v_tick_count bigint;
 begin
-  perform pgque.create_queue('test_ticker');
+  perform pg_current.create_queue('test_ticker');
 
   -- Run ticker a few times
-  perform pgque.ticker();
-  perform pgque.ticker();
-  perform pgque.ticker();
+  perform pg_current.ticker();
+  perform pg_current.ticker();
+  perform pg_current.ticker();
 
   -- Verify ticks exist
-  select count(*) into v_tick_count from pgque.tick
+  select count(*) into v_tick_count from pg_current.tick
   where tick_queue = (
-    select queue_id from pgque.queue
+    select queue_id from pg_current.queue
     where queue_name = 'test_ticker'
   );
   assert v_tick_count >= 1,
     'should have at least 1 tick, got ' || v_tick_count;
 
   -- Cleanup
-  perform pgque.drop_queue('test_ticker');
+  perform pg_current.drop_queue('test_ticker');
 
   raise notice 'PASS: core_ticker';
 end $$;

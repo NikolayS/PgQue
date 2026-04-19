@@ -1,4 +1,4 @@
-package pgque
+package pg_current
 
 import (
 	"context"
@@ -7,14 +7,14 @@ import (
 
 func TestSmoke(t *testing.T) {
 	ctx := context.Background()
-	client, err := Connect(ctx, "postgresql://postgres:pgque_test@localhost:5432/pgque_test")
+	client, err := Connect(ctx, "postgresql://postgres:pg_current_test@localhost:5432/pg_current_test")
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	defer client.Close()
 
 	pool := client.Pool()
-	if _, err := pool.Exec(ctx, "select pgque.subscribe('smoke_go', 'go-smoke')"); err != nil {
+	if _, err := pool.Exec(ctx, "select pg_current.subscribe('smoke_go', 'go-smoke')"); err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
 
@@ -23,10 +23,10 @@ func TestSmoke(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
-	if _, err := pool.Exec(ctx, "select pgque.force_tick('smoke_go')"); err != nil {
+	if _, err := pool.Exec(ctx, "select pg_current.force_tick('smoke_go')"); err != nil {
 		t.Fatalf("force_tick: %v", err)
 	}
-	if _, err := pool.Exec(ctx, "select pgque.ticker()"); err != nil {
+	if _, err := pool.Exec(ctx, "select pg_current.ticker()"); err != nil {
 		t.Fatalf("ticker: %v", err)
 	}
 

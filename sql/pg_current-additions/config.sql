@@ -1,7 +1,7 @@
--- pgque.config — singleton configuration table
+-- pg_current.config — singleton configuration table
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-create table if not exists pgque.config (
+create table if not exists pg_current.config (
     singleton       bool primary key default true check (singleton),
     ticker_job_id   bigint,
     maint_job_id    bigint,
@@ -9,5 +9,5 @@ create table if not exists pgque.config (
 );
 
 -- Idempotent insert
-insert into pgque.config (singleton) values (true)
+insert into pg_current.config (singleton) values (true)
 on conflict (singleton) do nothing;

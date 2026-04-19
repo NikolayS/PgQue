@@ -1,4 +1,4 @@
--- test_observability.sql -- pgque observability functions
+-- test_observability.sql -- pg_current observability functions
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- Red/green TDD: this test file was written BEFORE the implementation.
@@ -9,18 +9,18 @@
 
 -- Setup: create a queue with known state
 do $$ begin
-  perform pgque.create_queue('obs_queue');
-  perform pgque.register_consumer('obs_queue', 'obs_consumer');
+  perform pg_current.create_queue('obs_queue');
+  perform pg_current.register_consumer('obs_queue', 'obs_consumer');
 
   -- Insert some events
-  perform pgque.insert_event('obs_queue', 'obs.test', '{"n":1}');
-  perform pgque.insert_event('obs_queue', 'obs.test', '{"n":2}');
-  perform pgque.insert_event('obs_queue', 'obs.test', '{"n":3}');
+  perform pg_current.insert_event('obs_queue', 'obs.test', '{"n":1}');
+  perform pg_current.insert_event('obs_queue', 'obs.test', '{"n":2}');
+  perform pg_current.insert_event('obs_queue', 'obs.test', '{"n":3}');
 end $$;
 
 do $$ begin
-  perform pgque.force_tick('obs_queue');
-  perform pgque.ticker();
+  perform pg_current.force_tick('obs_queue');
+  perform pg_current.ticker();
 end $$;
 
 -- Test 1: queue_stats() returns rows
@@ -29,7 +29,7 @@ declare
   v_row record;
   v_found bool := false;
 begin
-  for v_row in select * from pgque.queue_stats()
+  for v_row in select * from pg_current.queue_stats()
   loop
     if v_row.queue_name = 'obs_queue' then
       v_found := true;
@@ -48,7 +48,7 @@ declare
   v_row record;
   v_found bool := false;
 begin
-  for v_row in select * from pgque.consumer_stats()
+  for v_row in select * from pg_current.consumer_stats()
   loop
     if v_row.queue_name = 'obs_queue' and v_row.consumer_name = 'obs_consumer' then
       v_found := true;
@@ -66,7 +66,7 @@ declare
   v_row record;
   v_found_ticker bool := false;
 begin
-  for v_row in select * from pgque.queue_health()
+  for v_row in select * from pg_current.queue_health()
   loop
     if v_row.queue_name = 'obs_queue' and v_row.check_name = 'ticker_running' then
       v_found_ticker := true;
@@ -84,15 +84,15 @@ declare
   v_row record;
   v_depth_found bool := false;
 begin
-  for v_row in select * from pgque.otel_metrics()
+  for v_row in select * from pg_current.otel_metrics()
   loop
-    if v_row.metric_name = 'pgque.queue.depth' then
+    if v_row.metric_name = 'pg_current.queue.depth' then
       v_depth_found := true;
       assert v_row.metric_type = 'gauge', 'depth should be gauge type';
       assert v_row.labels ? 'queue', 'should have queue label';
     end if;
   end loop;
-  assert v_depth_found, 'otel_metrics() should include pgque.queue.depth';
+  assert v_depth_found, 'otel_metrics() should include pg_current.queue.depth';
   raise notice 'PASS: otel_metrics() returns depth gauge';
 end $$;
 
@@ -101,7 +101,7 @@ do $$
 declare
   v_count int;
 begin
-  select count(*) into v_count from pgque.stuck_consumers('0 seconds'::interval);
+  select count(*) into v_count from pg_current.stuck_consumers('0 seconds'::interval);
   -- Our consumer should be "stuck" since we haven't consumed anything
   assert v_count >= 1, 'stuck_consumers(0s) should find obs_consumer';
   raise notice 'PASS: stuck_consumers() finds lagging consumer';
@@ -112,7 +112,7 @@ do $$
 declare
   v_count int;
 begin
-  select count(*) into v_count from pgque.in_flight('obs_queue');
+  select count(*) into v_count from pg_current.in_flight('obs_queue');
   assert v_count = 0, 'in_flight() should return 0 rows when no batch is open, got ' || v_count;
   raise notice 'PASS: in_flight() returns 0 rows when no batch is open';
 end $$;
@@ -123,7 +123,7 @@ declare
   v_count int;
 begin
   select count(*) into v_count
-  from pgque.throughput('obs_queue', '1 hour'::interval, '5 minutes'::interval);
+  from pg_current.throughput('obs_queue', '1 hour'::interval, '5 minutes'::interval);
   assert v_count >= 0, 'throughput() should return >= 0 rows';
   raise notice 'PASS: throughput() returns % rows', v_count;
 end $$;
@@ -134,13 +134,13 @@ declare
   v_count int;
 begin
   select count(*) into v_count
-  from pgque.error_rate('obs_queue', '1 hour'::interval, '5 minutes'::interval);
+  from pg_current.error_rate('obs_queue', '1 hour'::interval, '5 minutes'::interval);
   assert v_count >= 0, 'error_rate() should return >= 0 rows';
   raise notice 'PASS: error_rate() returns % rows', v_count;
 end $$;
 
 -- Teardown
 do $$ begin
-  perform pgque.unregister_consumer('obs_queue', 'obs_consumer');
-  perform pgque.drop_queue('obs_queue');
+  perform pg_current.unregister_consumer('obs_queue', 'obs_consumer');
+  perform pg_current.drop_queue('obs_queue');
 end $$;

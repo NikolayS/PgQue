@@ -1,6 +1,6 @@
-# pgque-ts-example
+# pg_current-ts-example
 
-Example TypeScript client for PgQue.
+Example TypeScript client for pg_current.
 
 This is an unpublished example library for now. It is meant to demonstrate
 integration patterns, not to promise a stable SDK yet.

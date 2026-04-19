@@ -8,8 +8,8 @@
 
 -- Setup
 do $$ begin
-  perform pgque.create_queue('us4_reminders');
-  perform pgque.subscribe('us4_reminders', 'sender');
+  perform pg_current.create_queue('us4_reminders');
+  perform pg_current.subscribe('us4_reminders', 'sender');
 end $$;
 
 -- Action: schedule a message for 5 seconds in the future (per spec)
@@ -18,14 +18,14 @@ declare
   v_id bigint;
   v_de_count bigint;
 begin
-  v_id := pgque.send_at('us4_reminders', 'remind', '{"remind":"call back"}'::jsonb,
+  v_id := pg_current.send_at('us4_reminders', 'remind', '{"remind":"call back"}'::jsonb,
     now() + interval '5 seconds');
 
   assert v_id is not null, 'send_at should return an id';
 
   -- Verify event is in delayed_events, not in main queue
   select count(*) into v_de_count
-  from pgque.delayed_events
+  from pg_current.delayed_events
   where de_queue_name = 'us4_reminders';
   assert v_de_count = 1, 'should have 1 delayed event, got ' || v_de_count;
 
@@ -34,17 +34,17 @@ end $$;
 
 -- Ticker (should produce no events yet -- delayed event not due)
 do $$ begin
-  perform pgque.force_tick('us4_reminders');
-  perform pgque.ticker();
+  perform pg_current.force_tick('us4_reminders');
+  perform pg_current.ticker();
 end $$;
 
 -- Verify: receive returns empty (event is still delayed)
 do $$
 declare
   v_count int := 0;
-  v_msg pgque.message;
+  v_msg pg_current.message;
 begin
-  for v_msg in select * from pgque.receive('us4_reminders', 'sender', 10)
+  for v_msg in select * from pg_current.receive('us4_reminders', 'sender', 10)
   loop
     v_count := v_count + 1;
   end loop;
@@ -59,13 +59,13 @@ declare
   v_batch_id bigint;
 begin
   select sub_batch into v_batch_id
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
+  from pg_current.subscription s
+  join pg_current.queue q on q.queue_id = s.sub_queue
   where q.queue_name = 'us4_reminders'
   and s.sub_batch is not null;
 
   if v_batch_id is not null then
-    perform pgque.ack(v_batch_id);
+    perform pg_current.ack(v_batch_id);
   end if;
 end $$;
 
@@ -76,22 +76,22 @@ end $$;
 
 -- Run maint (which calls maint_deliver_delayed) to move due events
 do $$ begin
-  perform pgque.maint();
+  perform pg_current.maint();
 end $$;
 
 -- Ticker to capture the now-delivered event (force_tick bypasses throttle)
 do $$ begin
-  perform pgque.force_tick('us4_reminders');
-  perform pgque.ticker();
+  perform pg_current.force_tick('us4_reminders');
+  perform pg_current.ticker();
 end $$;
 
 -- Verify: receive now returns the event
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_count int := 0;
 begin
-  for v_msg in select * from pgque.receive('us4_reminders', 'sender', 10)
+  for v_msg in select * from pg_current.receive('us4_reminders', 'sender', 10)
   loop
     v_count := v_count + 1;
     assert v_msg.type = 'remind',
@@ -99,7 +99,7 @@ begin
     assert v_msg.payload::jsonb = '{"remind":"call back"}'::jsonb,
       'payload should match, got ' || coalesce(v_msg.payload, 'NULL');
 
-    perform pgque.ack(v_msg.batch_id);
+    perform pg_current.ack(v_msg.batch_id);
   end loop;
 
   assert v_count = 1, 'should receive 1 delayed message, got ' || v_count;
@@ -109,9 +109,9 @@ end $$;
 -- Teardown
 do $$ begin
   -- Clean up any leftover delayed events
-  delete from pgque.delayed_events where de_queue_name = 'us4_reminders';
-  perform pgque.unsubscribe('us4_reminders', 'sender');
-  perform pgque.drop_queue('us4_reminders');
+  delete from pg_current.delayed_events where de_queue_name = 'us4_reminders';
+  perform pg_current.unsubscribe('us4_reminders', 'sender');
+  perform pg_current.drop_queue('us4_reminders');
 end $$;
 
 \echo 'US-4: PASSED'

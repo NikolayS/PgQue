@@ -1,24 +1,24 @@
-# CLAUDE.md -- PgQue
+# CLAUDE.md -- pg_current
 
 ## Project
 
-PgQue (pgque) -- PgQ Universal Edition. Zero-bloat PostgreSQL queue repackaged
-from PgQ for managed database environments. Repo: NikolayS/pgque.
+pg_current (pg_current) -- PgQ Universal Edition. Zero-bloat PostgreSQL queue repackaged
+from PgQ for managed database environments. Repo: NikolayS/pg_current.
 
 ## Naming Convention
 
-- `pgque` -- lowercase for schema, package names, CLI, repo, function prefixes
-- `PgQue` -- capitalized form for prose, headings, README titles
+- `pg_current` -- lowercase for schema, package names, CLI, repo, function prefixes
+- `pg_current` -- capitalized form for prose, headings, README titles
 - Mirrors PostgreSQL ecosystem convention (pgmq, pg_cron, psycopg)
 
 ## Architecture
 
 Two-layer design:
 
-- **pgque-core:** Productization of PgQ (rename, PG14+ modernization, pg_cron,
+- **pg_current-core:** Productization of PgQ (rename, PG14+ modernization, pg_cron,
   security hardening, single-file install). Mechanical transformation of ~4,028
   lines of proven PL/pgSQL.
-- **pgque-api:** Modern convenience layer (send/receive/ack/nack, DLQ, delayed
+- **pg_current-api:** Modern convenience layer (send/receive/ack/nack, DLQ, delayed
   delivery). New code (~1,500 lines) that must reduce cleanly to PgQ primitives.
 
 See `blueprints/SPECx.md` for the full specification.
@@ -28,7 +28,7 @@ snapshot isolation, batch_event_sql algorithm, dual-filter optimization).
 ## Stack
 
 - Pure SQL + PL/pgSQL (no extensions, no `.control` file)
-- Anti-extension design: `\i pgque.sql` to install
+- Anti-extension design: `\i pg_current.sql` to install
 - Works on RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, Crunchy Bridge
 - Optional pg_cron for automated ticker and maintenance
 - PostgreSQL 14+ required (uses `pg_snapshot`, `xid8`)
@@ -41,9 +41,9 @@ Follow the shared rules at https://gitlab.com/postgres-ai/rules/-/tree/main/rule
 
 - Lowercase SQL keywords: `select`, `create function`, not `SELECT`, `CREATE FUNCTION`
 - `snake_case` for all identifiers
-- Schema-qualify all internal references: `pgque.queue`, not just `queue`
+- Schema-qualify all internal references: `pg_current.queue`, not just `queue`
 - All `SECURITY DEFINER` functions MUST include
-  `SET search_path = pgque, pg_catalog`
+  `SET search_path = pg_current, pg_catalog`
 - Use `xid8` for transaction ID columns, `pg_snapshot` for snapshot columns
 - Use modern PG14+ function names: `pg_current_xact_id()` not `txid_current()`
 
@@ -74,17 +74,17 @@ set -Eeuo pipefail
 ## File Organization
 
 ```
-pgque/
+pg_current/
   pgq/                 -- git submodule (github.com/pgq/pgq, pinned tag)
   build/
     transform.sh       -- mechanical rename + modernization script
   blueprints/          -- specs, design docs, brainstorms
-    SPECx.md           -- pgque specification (the main spec)
+    SPECx.md           -- pg_current specification (the main spec)
     SPEC.md            -- PgQ internals reference (from pgq repo)
     PHASES.md          -- what ships in v0.1 vs experimental
   sql/                 -- source SQL files
-    pgque.sql  -- single-file install (built from sources)
-    pgque-unpgque.sql
+    pg_current.sql  -- single-file install (built from sources)
+    pg_current-unpg_current.sql
   tests/               -- regression tests (sql/ + expected/)
   docs/                -- user-facing documentation (flat layout)
     README.md          -- index of the docs directory
@@ -93,12 +93,12 @@ pgque/
     examples.md        -- short patterns (fan-out, exactly-once, etc.)
     benchmarks.md      -- throughput numbers + methodology
     pgq-concepts.md    -- contributor glossary (batch, tick, rotation)
-    pgq-history.md     -- short timeline from Skype to PgQue
+    pgq-history.md     -- short timeline from Skype to pg_current
   clients/             -- client libraries
-    python/            -- pgque-py
-    go/                -- pgque-go
-    typescript/        -- pgque-ts
-  cli/                 -- pgque CLI (Go)
+    python/            -- pg_current-py
+    go/                -- pg_current-go
+    typescript/        -- pg_current-ts
+  cli/                 -- pg_current CLI (Go)
 ```
 
 ## Key Design Rules
@@ -107,19 +107,19 @@ pgque/
 2. **The PgQ engine is sacred.** Batch/tick/rotation/consumer tracking logic
    is inherited from PgQ and must not be modified without deep understanding.
 3. **Modern API functions must reduce cleanly to PgQ primitives.**
-   If `pgque.send()` cannot be explained as "calls `pgque.insert_event()` with
+   If `pg_current.send()` cannot be explained as "calls `pg_current.insert_event()` with
    these args," it is too complex.
 4. **No subtransactions in hot paths.** Avoid `BEGIN ... EXCEPTION WHEN ... END`
    in ticker, event insertion, and trigger functions.
 5. **Test against PG 14, 15, 16, 17, 18.** CI must cover all supported versions.
 6. **Red/green TDD for all new code.** Write the failing test first, then
-   the implementation. Applies to pgque-api, observability, client libraries,
-   CLI. Does NOT apply to pgque-core repackaging (PgQ already has tests).
+   the implementation. Applies to pg_current-api, observability, client libraries,
+   CLI. Does NOT apply to pg_current-core repackaging (PgQ already has tests).
    See SPECx.md section 13.2.
 
 ## Copyright
 
 Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-PgQue includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
+pg_current includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 Always preserve the PgQ copyright notice in source headers.

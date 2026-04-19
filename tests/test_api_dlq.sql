@@ -13,44 +13,44 @@
 -- Setup
 do $$
 begin
-  perform pgque.create_queue('test_dlq');
-  perform pgque.set_queue_config('test_dlq', 'max_retries', '2');
-  perform pgque.register_consumer('test_dlq', 'c1');
+  perform pg_current.create_queue('test_dlq');
+  perform pg_current.set_queue_config('test_dlq', 'max_retries', '2');
+  perform pg_current.register_consumer('test_dlq', 'c1');
 end $$;
 
 -- Insert event
 do $$
 begin
-  perform pgque.insert_event('test_dlq', 'dlq.test', '{"x":1}');
+  perform pg_current.insert_event('test_dlq', 'dlq.test', '{"x":1}');
 end $$;
 
 -- Ticker
 do $$
 begin
-  perform pgque.ticker();
+  perform pg_current.ticker();
 end $$;
 
 -- Receive, nack (retry), ack
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
 begin
-  select * into v_msg from pgque.receive('test_dlq', 'c1', 1) limit 1;
+  select * into v_msg from pg_current.receive('test_dlq', 'c1', 1) limit 1;
   assert v_msg.msg_id is not null, 'should receive a message';
 
   -- Nack (retry_count is NULL/0, max_retries is 2, so should retry)
-  perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'test failure');
-  perform pgque.ack(v_msg.batch_id);
+  perform pg_current.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'test failure');
+  perform pg_current.ack(v_msg.batch_id);
 
   -- Event should be in retry queue, not DLQ
-  assert (select count(*) from pgque.dead_letter) = 0, 'should not be in DLQ yet';
+  assert (select count(*) from pg_current.dead_letter) = 0, 'should not be in DLQ yet';
 end $$;
 
 -- Cleanup test 1
 do $$
 begin
-  perform pgque.unregister_consumer('test_dlq', 'c1');
-  perform pgque.drop_queue('test_dlq');
+  perform pg_current.unregister_consumer('test_dlq', 'c1');
+  perform pg_current.drop_queue('test_dlq');
   raise notice 'PASS: nack retries when under max_retries';
 end $$;
 
@@ -61,41 +61,41 @@ end $$;
 -- Setup
 do $$
 begin
-  perform pgque.create_queue('test_dlq2');
-  perform pgque.set_queue_config('test_dlq2', 'max_retries', '2');
-  perform pgque.register_consumer('test_dlq2', 'c1');
+  perform pg_current.create_queue('test_dlq2');
+  perform pg_current.set_queue_config('test_dlq2', 'max_retries', '2');
+  perform pg_current.register_consumer('test_dlq2', 'c1');
 end $$;
 
 -- Insert event
 do $$
 begin
-  perform pgque.insert_event('test_dlq2', 'dlq.test', '{"x":1}');
+  perform pg_current.insert_event('test_dlq2', 'dlq.test', '{"x":1}');
 end $$;
 
 -- Ticker
 do $$
 begin
-  perform pgque.ticker();
+  perform pg_current.ticker();
 end $$;
 
 -- Receive, forge retry_count, nack -> DLQ
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
   v_dlq_count bigint;
 begin
-  select * into v_msg from pgque.receive('test_dlq2', 'c1', 1) limit 1;
+  select * into v_msg from pg_current.receive('test_dlq2', 'c1', 1) limit 1;
 
   -- Forge retry_count to simulate prior retries (unit test approach)
   v_msg.retry_count := 2;
 
   -- Nack should route to DLQ (retry_count=2 >= max_retries=2)
-  perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'max retries');
-  perform pgque.ack(v_msg.batch_id);
+  perform pg_current.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'max retries');
+  perform pg_current.ack(v_msg.batch_id);
 
   -- Verify event is in DLQ
-  select count(*) into v_dlq_count from pgque.dead_letter
-  where dl_queue_id = (select queue_id from pgque.queue where queue_name = 'test_dlq2');
+  select count(*) into v_dlq_count from pg_current.dead_letter
+  where dl_queue_id = (select queue_id from pg_current.queue where queue_name = 'test_dlq2');
   assert v_dlq_count = 1, 'should have 1 DLQ entry, got ' || v_dlq_count;
 end $$;
 
@@ -104,8 +104,8 @@ end $$;
 -- the queue is dropped or the consumer is unregistered — no manual purge.)
 do $$
 begin
-  perform pgque.unregister_consumer('test_dlq2', 'c1');
-  perform pgque.drop_queue('test_dlq2');
+  perform pg_current.unregister_consumer('test_dlq2', 'c1');
+  perform pg_current.drop_queue('test_dlq2');
   raise notice 'PASS: nack routes to DLQ after max retries';
 end $$;
 
@@ -116,31 +116,31 @@ end $$;
 -- Setup
 do $$
 begin
-  perform pgque.create_queue('test_dlq3');
-  perform pgque.set_queue_config('test_dlq3', 'max_retries', '0');
-  perform pgque.register_consumer('test_dlq3', 'c1');
+  perform pg_current.create_queue('test_dlq3');
+  perform pg_current.set_queue_config('test_dlq3', 'max_retries', '0');
+  perform pg_current.register_consumer('test_dlq3', 'c1');
 end $$;
 
 -- Insert event
 do $$
 begin
-  perform pgque.insert_event('test_dlq3', 'dlq.replay', '{"replay":true}');
+  perform pg_current.insert_event('test_dlq3', 'dlq.replay', '{"replay":true}');
 end $$;
 
 -- Ticker
 do $$
 begin
-  perform pgque.ticker();
+  perform pg_current.ticker();
 end $$;
 
 -- Receive and nack -> DLQ (max_retries=0 so any nack goes to DLQ)
 do $$
 declare
-  v_msg pgque.message;
+  v_msg pg_current.message;
 begin
-  select * into v_msg from pgque.receive('test_dlq3', 'c1', 1) limit 1;
-  perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'force dlq');
-  perform pgque.ack(v_msg.batch_id);
+  select * into v_msg from pg_current.receive('test_dlq3', 'c1', 1) limit 1;
+  perform pg_current.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'force dlq');
+  perform pg_current.ack(v_msg.batch_id);
 end $$;
 
 -- Verify dlq_inspect, dlq_replay, dlq_purge
@@ -150,20 +150,20 @@ declare
   v_new_eid bigint;
 begin
   -- dlq_inspect
-  select count(*) into v_dl_count from pgque.dlq_inspect('test_dlq3', 100);
+  select count(*) into v_dl_count from pg_current.dlq_inspect('test_dlq3', 100);
   assert v_dl_count >= 1, 'dlq_inspect should show entries';
 
   -- dlq_replay
-  select pgque.dlq_replay(dl_id) into v_new_eid
-  from pgque.dead_letter
-  where dl_queue_id = (select queue_id from pgque.queue where queue_name = 'test_dlq3')
+  select pg_current.dlq_replay(dl_id) into v_new_eid
+  from pg_current.dead_letter
+  where dl_queue_id = (select queue_id from pg_current.queue where queue_name = 'test_dlq3')
   limit 1;
   assert v_new_eid is not null, 'dlq_replay should return new event id';
 
   raise notice 'PASS: dlq_inspect and dlq_replay';
 
   -- dlq_purge
-  perform pgque.dlq_purge('test_dlq3', '0 seconds'::interval);
+  perform pg_current.dlq_purge('test_dlq3', '0 seconds'::interval);
 
   raise notice 'PASS: dlq_purge';
 end $$;
@@ -171,6 +171,6 @@ end $$;
 -- Cleanup test 3
 do $$
 begin
-  perform pgque.unregister_consumer('test_dlq3', 'c1');
-  perform pgque.drop_queue('test_dlq3');
+  perform pg_current.unregister_consumer('test_dlq3', 'c1');
+  perform pg_current.drop_queue('test_dlq3');
 end $$;

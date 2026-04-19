@@ -1,4 +1,4 @@
-# PgQue phases
+# pg_current phases
 
 ## Goal
 
@@ -8,9 +8,9 @@ The default install should expose only the minimum supported API for v0.1.
 Additional features can live in `sql/experimental/` until they prove simple,
 useful, and stable enough to promote into the default install.
 
-## Default install (`sql/pgque.sql`) — v0.1
+## Default install (`sql/pg_current.sql`) — v0.1
 
-This section lists the API categories that ship in the default `\i sql/pgque.sql`
+This section lists the API categories that ship in the default `\i sql/pg_current.sql`
 install. Function-by-function signatures, grants, and return types live in
 `docs/reference.md`.
 
@@ -18,35 +18,35 @@ install. Function-by-function signatures, grants, and return types live in
 - repackaged PgQ batching, ticking, rotation, retry queue, consumer tracking
 
 ### Lifecycle
-- `pgque.start()`, `pgque.stop()`, `pgque.status()`, `pgque.version()`
-- `pgque.maint()`, `pgque.ticker()`, `pgque.force_tick(queue)`
-- `pgque.uninstall()` (superuser only)
+- `pg_current.start()`, `pg_current.stop()`, `pg_current.status()`, `pg_current.version()`
+- `pg_current.maint()`, `pg_current.ticker()`, `pg_current.force_tick(queue)`
+- `pg_current.uninstall()` (superuser only)
 
 ### Queue management
-- `pgque.create_queue(queue)`
-- `pgque.drop_queue(queue)` / `pgque.drop_queue(queue, force)`
-- `pgque.set_queue_config(queue, param, value)` — `param` is the short name
+- `pg_current.create_queue(queue)`
+- `pg_current.drop_queue(queue)` / `pg_current.drop_queue(queue, force)`
+- `pg_current.set_queue_config(queue, param, value)` — `param` is the short name
   (`max_retries`, `ticker_max_count`, `ticker_max_lag`, `ticker_idle_period`,
   `ticker_paused`, `rotation_period`, `external_ticker`); the function
   auto-prefixes `queue_` internally
 
 ### Modern API
-- `pgque.send(queue[, type], payload)` — `jsonb` + `text` overloads
-- `pgque.send_batch(queue, type, payloads)` — `jsonb[]` + `text[]` overloads
-- `pgque.subscribe(queue, consumer)` / `pgque.unsubscribe(queue, consumer)`
-- `pgque.receive(queue, consumer, max_return)`
-- `pgque.ack(batch_id)` / `pgque.nack(batch_id, msg, retry_after, reason)`
+- `pg_current.send(queue[, type], payload)` — `jsonb` + `text` overloads
+- `pg_current.send_batch(queue, type, payloads)` — `jsonb[]` + `text[]` overloads
+- `pg_current.subscribe(queue, consumer)` / `pg_current.unsubscribe(queue, consumer)`
+- `pg_current.receive(queue, consumer, max_return)`
+- `pg_current.ack(batch_id)` / `pg_current.nack(batch_id, msg, retry_after, reason)`
 
 ### Dead letter queue
-- `pgque.dead_letter` table (FKs cascade on queue / consumer removal)
-- `pgque.event_dead()` — called by `nack()` when `retry_count >= max_retries`
-- `pgque.dlq_inspect()`, `pgque.dlq_replay()`, `pgque.dlq_replay_all()`,
-  `pgque.dlq_purge()`
+- `pg_current.dead_letter` table (FKs cascade on queue / consumer removal)
+- `pg_current.event_dead()` — called by `nack()` when `retry_count >= max_retries`
+- `pg_current.dlq_inspect()`, `pg_current.dlq_replay()`, `pg_current.dlq_replay_all()`,
+  `pg_current.dlq_purge()`
 
 ### Observability
-- `pgque.get_queue_info()` / `pgque.get_queue_info(queue)`
-- `pgque.get_consumer_info()` / `(queue)` / `(queue, consumer)`
-- `pgque.get_batch_info(batch_id)`
+- `pg_current.get_queue_info()` / `pg_current.get_queue_info(queue)`
+- `pg_current.get_consumer_info()` / `(queue)` / `(queue, consumer)`
+- `pg_current.get_batch_info(batch_id)`
 
 ### PgQ primitives (advanced use)
 Available but most users should prefer the modern API above. See
@@ -57,10 +57,10 @@ Available but most users should prefer the modern API above. See
 - `finish_batch`, `event_retry`, `batch_retry`
 
 ### Trigger helpers (change-data-capture)
-- `pgque.jsontriga()`, `pgque.logutriga()`, `pgque.sqltriga()`
+- `pg_current.jsontriga()`, `pg_current.logutriga()`, `pg_current.sqltriga()`
 
 ### Roles
-- `pgque_reader`, `pgque_writer`, `pgque_admin` (with inheritance
+- `pg_current_reader`, `pg_current_writer`, `pg_current_admin` (with inheritance
   `admin > writer > reader`)
 
 ## Experimental SQL (`sql/experimental/`)
@@ -69,7 +69,7 @@ These files are not installed by default in v0.1.
 
 ### `sql/experimental/delayed.sql`
 - delayed delivery table
-- `pgque.send_at()`
+- `pg_current.send_at()`
 - delayed-delivery maintenance hook
 
 ### `sql/experimental/observability.sql`

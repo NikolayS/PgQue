@@ -1,7 +1,7 @@
 import { PgqueClient } from './index.js';
 
 async function main(): Promise<void> {
-  const client = new PgqueClient('postgresql://postgres:pgque_test@localhost:5432/pgque_test');
+  const client = new PgqueClient('postgresql://postgres:pg_current_test@localhost:5432/pg_current_test');
   await client.connect();
 
   await client.subscribe('smoke_ts', 'ts-smoke');

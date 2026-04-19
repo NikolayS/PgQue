@@ -1,4 +1,4 @@
-module github.com/NikolayS/pgque/clients/go
+module github.com/NikolayS/pg_current/clients/go
 
 go 1.21
 

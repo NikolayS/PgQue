@@ -1,23 +1,23 @@
--- run_all.sql -- pgque regression test suite
+-- run_all.sql -- pg_current regression test suite
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- Usage: psql -d pgque_test -f tests/run_all.sql
--- Requires: pgque.sql already loaded
+-- Usage: psql -d pg_current_test -f tests/run_all.sql
+-- Requires: pg_current.sql already loaded
 
 -- Abort on first error
 \set ON_ERROR_STOP on
 
-\echo '=== pgque regression test suite ==='
+\echo '=== pg_current regression test suite ==='
 \echo ''
 
-\echo 'Running: test_pgque_config'
-\i tests/test_pgque_config.sql
+\echo 'Running: test_pg_current_config'
+\i tests/test_pg_current_config.sql
 
-\echo 'Running: test_pgque_roles'
-\i tests/test_pgque_roles.sql
+\echo 'Running: test_pg_current_roles'
+\i tests/test_pg_current_roles.sql
 
-\echo 'Running: test_pgque_additions'
-\i tests/test_pgque_additions.sql
+\echo 'Running: test_pg_current_additions'
+\i tests/test_pg_current_additions.sql
 
 \echo 'Running: test_security_definer'
 \i tests/test_security_definer.sql

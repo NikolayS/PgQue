@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-DSN="${1:-postgresql://postgres@localhost/pgque_test}"
+DSN="${1:-postgresql://postgres@localhost/pg_current_test}"
 
-echo "=== pgque benchmark suite ==="
+echo "=== pg_current benchmark suite ==="
 echo "DSN: ${DSN}"
 echo ""
 

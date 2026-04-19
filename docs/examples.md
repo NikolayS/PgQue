@@ -1,16 +1,16 @@
 # Examples
 
-Common PgQue patterns. For a guided first-run, see [the tutorial](tutorial.md). For every function signature, see [the reference](reference.md).
+Common pg_current patterns. For a guided first-run, see [the tutorial](tutorial.md). For every function signature, see [the reference](reference.md).
 
 ## Send with event type
 
 The event type is a string tag consumers can filter on.
 
 ```sql
-select pgque.send('orders', 'order.created',
+select pg_current.send('orders', 'order.created',
   '{"order_id": 42}'::jsonb);
 
-select pgque.send('orders', 'order.shipped',
+select pg_current.send('orders', 'order.shipped',
   '{"order_id": 42, "tracking": "1Z999AA10123456784"}'::jsonb);
 ```
 
@@ -19,7 +19,7 @@ select pgque.send('orders', 'order.shipped',
 Both `jsonb[]` and `text[]` overloads exist — the [reference](reference.md) explains the trade-off.
 
 ```sql
-select pgque.send_batch('orders', 'order.created', array[
+select pg_current.send_batch('orders', 'order.created', array[
   '{"order_id": 1}'::jsonb,
   '{"order_id": 2}'::jsonb,
   '{"order_id": 3}'::jsonb
@@ -33,16 +33,16 @@ Three subscribers on the same queue, each tracking its own cursor. Unlike SKIP L
 Subscribe **before** producing — a new consumer starts from the latest tick and will not see events that were sent before its `subscribe` call.
 
 ```sql
-select pgque.subscribe('orders', 'audit_logger');
-select pgque.subscribe('orders', 'notification_sender');
-select pgque.subscribe('orders', 'analytics_pipeline');
+select pg_current.subscribe('orders', 'audit_logger');
+select pg_current.subscribe('orders', 'notification_sender');
+select pg_current.subscribe('orders', 'analytics_pipeline');
 
-select pgque.send('orders', 'order.created', '{"order_id": 1}'::jsonb);
-select pgque.force_tick('orders');
-select pgque.ticker();
+select pg_current.send('orders', 'order.created', '{"order_id": 1}'::jsonb);
+select pg_current.force_tick('orders');
+select pg_current.ticker();
 
-select * from pgque.receive('orders', 'audit_logger', 100);
-select * from pgque.receive('orders', 'notification_sender', 100);
+select * from pg_current.receive('orders', 'audit_logger', 100);
+select * from pg_current.receive('orders', 'notification_sender', 100);
 ```
 
 Each consumer sees the same event through its own cursor — no producer-side duplication, independent cursors on the consumer side.
@@ -54,13 +54,13 @@ Wrap the receive, your writes, and the ack in one transaction — either all com
 ```sql
 begin;
   create temp table msgs as
-    select * from pgque.receive('orders', 'processor', 100);
+    select * from pg_current.receive('orders', 'processor', 100);
 
   insert into processed_orders (order_id, status)
   select (payload::jsonb->>'order_id')::int, 'done'
   from msgs;
 
-  select pgque.ack((select distinct batch_id from msgs limit 1));
+  select pg_current.ack((select distinct batch_id from msgs limit 1));
 commit;
 ```
 
@@ -71,23 +71,23 @@ Every row in `msgs` shares the same `batch_id`, so `select distinct batch_id fro
 ```sql
 select cron.schedule('daily_report',
   '0 9 * * *',
-  $$select pgque.send('jobs', 'report.generate',
+  $$select pg_current.send('jobs', 'report.generate',
       '{"type": "daily"}'::jsonb)$$);
 ```
 
 ## Dead letter queue inspection
 
-`pgque.dlq_inspect()` lists entries for a queue. Replay a single row by its `dl_id`, or purge rows older than a given interval.
+`pg_current.dlq_inspect()` lists entries for a queue. Replay a single row by its `dl_id`, or purge rows older than a given interval.
 
 ```sql
 select dl_id, dl_reason, ev_type, ev_data
-from pgque.dlq_inspect('orders');
+from pg_current.dlq_inspect('orders');
 
 -- replay a single entry (returns the new ev_id)
-select pgque.dlq_replay(42);
+select pg_current.dlq_replay(42);
 
 -- or drop entries older than 7 days
-select pgque.dlq_purge('orders', interval '7 days');
+select pg_current.dlq_purge('orders', interval '7 days');
 ```
 
 See [the tutorial](tutorial.md) for the full DLQ flow including retry budgets and nack.
@@ -101,7 +101,7 @@ A healthy snapshot:
 ```
 \x
 
-select * from pgque.get_queue_info('orders');
+select * from pg_current.get_queue_info('orders');
 -[ RECORD 1 ]------------+------------------------
 queue_name               | orders
 queue_ntables            | 3
@@ -118,7 +118,7 @@ ev_per_sec               | 3.40
 ev_new                   | 12
 last_tick_id             | 1247
 
-select * from pgque.get_consumer_info('orders', 'processor');
+select * from pg_current.get_consumer_info('orders', 'processor');
 -[ RECORD 1 ]--+--------------
 queue_name     | orders
 consumer_name  | processor
@@ -133,7 +133,7 @@ pending_events | 0
 A stuck consumer, same queue, a couple of hours later:
 
 ```
-select * from pgque.get_consumer_info('orders', 'processor');
+select * from pg_current.get_consumer_info('orders', 'processor');
 -[ RECORD 1 ]--+----------------
 queue_name     | orders
 consumer_name  | processor
@@ -154,4 +154,4 @@ Red flags to alert on:
 - **`last_seen`** climbing into minutes or longer — the consumer has stopped calling `receive` at all. Check the worker process is alive.
 - **`pending_events`** growing without bound while `lag` is high — a stuck consumer also blocks table rotation; event tables will grow.
 
-`pgque.status()` rolls up cron-job state, version, queue count, and consumer count into a single diagnostic view — run it first when something looks off.
+`pg_current.status()` rolls up cron-job state, version, queue count, and consumer count into a single diagnostic view — run it first when something looks off.
