@@ -138,10 +138,15 @@ begin
         join pgque.queue q on q.queue_id = dl.dl_queue_id
         where q.queue_name = i_queue_name
     loop
-        perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
-            v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
-        delete from pgque.dead_letter where dl_id = v_dl.dl_id;
-        v_cnt := v_cnt + 1;
+        begin
+            perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
+                v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
+            delete from pgque.dead_letter where dl_id = v_dl.dl_id;
+            v_cnt := v_cnt + 1;
+        exception when others then
+            raise notice 'dlq_replay_all: failed to replay dl_id=%, error: %',
+                v_dl.dl_id, sqlerrm;
+        end;
     end loop;
 
     return v_cnt;

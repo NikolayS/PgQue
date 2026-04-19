@@ -22,7 +22,7 @@ begin
         if f.func_name = 'pgque.maint_rotate_tables_step2' then
             continue;
         elsif f.func_name = 'vacuum' then
-            sql := 'vacuum ' || f.func_arg;
+            sql := 'vacuum ' || quote_ident(f.func_arg);
             execute sql;
             total := total + 1;
         elsif f.func_arg is not null then

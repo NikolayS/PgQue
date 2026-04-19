@@ -37,11 +37,11 @@ create schema if not exists pgque;
 -- 
 -- Standard triggers store events in the pgque.event_* data tables
 -- There is one top event table pgque.event_<queue_id> for each queue
--- inherited from pgque.event_template wuith three tables for actual data
+-- inherited from pgque.event_template with three tables for actual data
 -- pgque.event_<queue_id>_0 to pgque.event_<queue_id>_2.
 --
--- The active table is rotated at interval, so that if all the consubers
--- have passed some poin the oldes one can be emptied using TRUNCATE command
+-- The active table is rotated at interval, so that if all the consumers
+-- have passed some point the oldest one can be emptied using TRUNCATE command
 -- for efficiency
 -- 
 -- 
@@ -290,7 +290,9 @@ begin
     end if;
     perform 1 from pg_catalog.pg_roles where rolname = 'pgque_admin';
     if not found then
-        create role pgque_admin in role pgque_reader, pgque_writer;
+        create role pgque_admin;
+        grant pgque_reader to pgque_admin;
+        grant pgque_writer to pgque_admin;
         cnt := cnt + 1;
     end if;
 
@@ -301,7 +303,7 @@ begin
         alter table pgque.queue add column queue_extra_maint text[];
     end if;
 
-    return 0;
+    return cnt;
 end;
 $$ language plpgsql;
 
@@ -955,7 +957,7 @@ begin
     -- That should keep all ticks for all batches that are completely
     -- in old table.  This keeps them for longer than needed, but:
     -- 1. we want the pgque.tick table to be big, to avoid Postgres
-    --    accitentally switching to seqscans on that.
+    --    accidentally switching to seqscans on that.
     -- 2. that way we guarantee to consumers that they an be moved
     --    back on the queue at least for one rotation_period.
     --    (may help in disaster recovery)
@@ -1011,21 +1013,7 @@ begin
         ('pgque', 'consumer'),
         ('pgque', 'queue'),
         ('pgque', 'tick'),
-        ('pgque', 'retry_queue'),
-        ('pgq_ext', 'completed_tick'),
-        ('pgq_ext', 'completed_batch'),
-        ('pgq_ext', 'completed_event'),
-        ('pgq_ext', 'partial_batch'),
-        --('pgq_node', 'node_location'),
-        --('pgq_node', 'node_info'),
-        ('pgq_node', 'local_state'),
-        --('pgq_node', 'subscriber_info'),
-        --('londiste', 'table_info'),
-        ('londiste', 'seq_info'),
-        --('londiste', 'applied_execute'),
-        --('londiste', 'pending_fkeys'),
-        ('txid', 'epoch'),
-        ('londiste', 'completed')
+        ('pgque', 'retry_queue')
     loop
         select n.nspname || '.' || t.relname into fqname
             from pg_class t, pg_namespace n
@@ -1227,14 +1215,10 @@ returns integer as $$
 -- ----------------------------------------------------------------------
 declare
     tbl  text;
-    tbloid oid;
     q record;
     i int4;
     sql text;
-    pgver int4;
 begin
-    pgver := current_setting('server_version_num');
-
     select * into q
       from pgque.queue where queue_name = i_queue_name;
     if not found then
@@ -1244,22 +1228,10 @@ begin
     for i in 0 .. (q.queue_ntables - 1) loop
         tbl := q.queue_data_pfx || '_' || i::text;
 
-        -- set fillfactor
-        sql := 'alter table ' || tbl || ' set (fillfactor = 100';
-
-        -- autovacuum for 8.4+
-        if pgver >= 80400 then
-            sql := sql || ', autovacuum_enabled=off, toast.autovacuum_enabled =off';
-        end if;
-        sql := sql || ')';
+        -- set fillfactor + disable autovacuum (PgQue manages its own vacuum via maint)
+        sql := 'alter table ' || tbl
+            || ' set (fillfactor = 100, autovacuum_enabled=off, toast.autovacuum_enabled=off)';
         execute sql;
-
-        -- autovacuum for 8.3
-        if pgver < 80400 then
-            tbloid := tbl::regclass::oid;
-            delete from pg_catalog.pg_autovacuum where vacrelid = tbloid;
-            insert into pg_catalog.pg_autovacuum values (tbloid, false, -1,-1,-1,-1,-1,-1,-1,-1);
-        end if;
     end loop;
 
     return 1;
@@ -1386,7 +1358,7 @@ returns text as $$
 -- ----------------------------------------------------------------------
 -- Function: pgque.quote_fqname(1)
 --
---      Quete fully-qualified object name for SQL.
+--      Quote fully-qualified object name for SQL.
 --
 --      First dot is taken as schema separator.
 --
@@ -2855,6 +2827,10 @@ begin
         nextval(q.queue_event_seq) as next_ev_id,
         q.queue_disable_insert
     from pgque.queue q where q.queue_name = _qname into qstate;
+
+    if not found then
+        raise exception 'queue not found: %', _qname;
+    end if;
 
     if ev_id is null then
         ev_id := qstate.next_ev_id;
@@ -4407,10 +4383,15 @@ begin
         join pgque.queue q on q.queue_id = dl.dl_queue_id
         where q.queue_name = i_queue_name
     loop
-        perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
-            v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
-        delete from pgque.dead_letter where dl_id = v_dl.dl_id;
-        v_cnt := v_cnt + 1;
+        begin
+            perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
+                v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
+            delete from pgque.dead_letter where dl_id = v_dl.dl_id;
+            v_cnt := v_cnt + 1;
+        exception when others then
+            raise notice 'dlq_replay_all: failed to replay dl_id=%, error: %',
+                v_dl.dl_id, sqlerrm;
+        end;
     end loop;
 
     return v_cnt;
