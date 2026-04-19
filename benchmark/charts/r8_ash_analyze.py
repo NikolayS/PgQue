@@ -4,8 +4,10 @@
 Input:  /tmp/bench_r8_full/<sys>/ash.csv per system.
 Output: /tmp/r8_ash_chart.png + /tmp/r8_ash_summary.json
 
-Per-system stacked-area of wait-event category proportion over 2h bench.
-LINEAR y-axis (0..1.0). NO log/symlog anywhere.
+Per-system stacked-area of **active session count** by wait-event category
+over 2h bench, 1-min buckets. Each ash.csv row is one active-backend sample;
+stack thickness at time t = number of sessions sampled in that category in
+that bucket. LINEAR y-axis (integer count). NO log/symlog anywhere.
 
 ash.csv schema:
   sample_time,database_name,active_backends,wait_event,query_id,query_text
@@ -142,21 +144,27 @@ def load_ash(bench_dir: Path):
 
 
 def bucket_stack(rows, bucket_s=60, total_s=TOTAL_MIN * 60):
-    """Returns dict[cat] = np.array of proportion over n buckets."""
+    """Returns dict[cat] = np.array of mean active-session COUNT per bucket.
+
+    ash.csv samples at ~1Hz. Each row is one active backend in a specific
+    wait state. For a 60s bucket, we want the average number of sessions in
+    that wait state per sample. So we count rows per (bucket, cat) and divide
+    by the number of distinct samples in the bucket — yielding mean count.
+    """
     n = total_s // bucket_s
     mat = {c: np.zeros(n, dtype=float) for c in CATEGORIES}
+    samples_in_bucket = defaultdict(set)  # bucket -> set of sample offsets (seconds)
     for off, cat, ab in rows:
         b = int(off // bucket_s)
         if 0 <= b < n:
-            mat[cat][b] += ab
-    total = np.zeros(n, dtype=float)
-    for c in CATEGORIES:
-        total += mat[c]
-    out = {}
-    for c in CATEGORIES:
-        with np.errstate(divide='ignore', invalid='ignore'):
-            out[c] = np.where(total > 0, mat[c] / total, 0.0)
-    return out, n, total
+            mat[cat][b] += 1
+            samples_in_bucket[b].add(off)
+    # Normalize per-bucket by number of distinct sample timestamps → mean count
+    for b in range(n):
+        num_samples = len(samples_in_bucket.get(b, ())) or 1
+        for c in CATEGORIES:
+            mat[c][b] /= num_samples
+    return mat, n
 
 
 def main():
@@ -183,17 +191,26 @@ def main():
     n = total_s // bucket_s
     xs = np.array([i * bucket_s / 60 for i in range(n)])
 
-    for ax, sys_name in zip(axes, SYSTEMS):
+    # First pass: compute per-system stacks so we can set a consistent y-max per row
+    all_stacks = {}
+    for sys_name in SYSTEMS:
         d = base / sys_name
         t0, rows, meta = load_ash(d)
-        if not rows:
+        if rows:
+            stack, _ = bucket_stack(rows, bucket_s=bucket_s, total_s=total_s)
+            all_stacks[sys_name] = (stack, meta)
+        else:
+            all_stacks[sys_name] = (None, meta)
+
+    for ax, sys_name in zip(axes, SYSTEMS):
+        stack, meta = all_stacks[sys_name]
+        if stack is None:
             ax.text(0.5, 0.5, f"{sys_name}: no ash data",
                     ha='center', va='center', transform=ax.transAxes, color=ALERT)
-            ax.set_ylim(0, 1); ax.set_yticks([])
+            ax.set_yticks([])
             ax.set_ylabel(sys_name, rotation=0, labelpad=55, ha='right', va='center',
                           color=FG_EMPH, fontweight='bold')
             continue
-        stack, _, totals = bucket_stack(rows, bucket_s=bucket_s, total_s=total_s)
         ys = [stack[c] for c in CATEGORIES]
         colors = [CAT_COLORS[c] for c in CATEGORIES]
         ax.stackplot(xs, *ys, labels=CATEGORIES, colors=colors, alpha=0.95)
@@ -201,9 +218,15 @@ def main():
         ax.axvspan(TX_START_MIN, TX_END_MIN, color=SURF, alpha=0.55, zorder=0)
         ax.axvline(TX_START_MIN, color=ALERT, lw=0.8, alpha=0.6, zorder=0.5)
         ax.axvline(TX_END_MIN,   color=ALERT, lw=0.8, alpha=0.6, zorder=0.5)
-        ax.set_ylim(0, 1.0)
-        ax.set_yticks([0, 0.5, 1.0])
-        ax.set_yticklabels(["0", "0.5", "1.0"])
+        # Y-limit: max(total) across buckets, rounded up to an integer; ensure min >=1
+        totals = sum(stack[c] for c in CATEGORIES)
+        ymax = max(1.0, float(np.max(totals)))
+        # Round up to nearest integer, ensuring some headroom
+        ymax_int = int(np.ceil(ymax)) + 1
+        ax.set_ylim(0, ymax_int)
+        # Integer ticks: 0, 2, 4, ...; choose step to get ~4-5 ticks
+        step = max(1, ymax_int // 4)
+        ax.set_yticks(list(range(0, ymax_int + 1, step)))
         ax.set_xlim(0, TOTAL_MIN)
         ax.set_ylabel(sys_name, rotation=0, labelpad=55, ha='right', va='center',
                       color=FG_EMPH, fontweight='bold')
@@ -212,6 +235,7 @@ def main():
             "top_we": meta.get("top_we", [])[:10],
             "top_qids": meta.get("top_qids", [])[:10],
             "samples": meta.get("samples"),
+            "peak_total_active": float(np.max(totals)),
         }
 
     # Shared legend at top
@@ -220,7 +244,7 @@ def main():
                         color=FG_EMPH)
     axes[-1].set_xticks([0, 15, 30, 45, 60, 75, 90, 105, 120])
 
-    fig.suptitle("R8 — ASH wait-event proportions, per system · 1-min buckets · linear scale",
+    fig.suptitle("R8 — ASH active sessions (count) by wait-event category, per system · 1-min buckets · linear y",
                  y=0.998, color=FG_EMPH, fontsize=13, fontweight='bold')
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
     fig.legend(handles, CATEGORIES, loc="upper center",
