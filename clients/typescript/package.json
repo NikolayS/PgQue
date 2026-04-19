@@ -1,8 +1,8 @@
 {
-  "name": "pgque-ts-example",
+  "name": "logres-ts-example",
   "private": true,
   "version": "0.0.1",
-  "description": "Example TypeScript client for PgQue",
+  "description": "Example TypeScript client for logres",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

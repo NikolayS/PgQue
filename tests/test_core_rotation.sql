@@ -10,11 +10,11 @@
 -- Setup
 do $$
 begin
-  perform pgque.create_queue('test_rotation');
-  perform pgque.set_queue_config('test_rotation', 'rotation_period', '1 second');
-  perform pgque.ticker('test_rotation');
-  perform pgque.insert_event('test_rotation', 'test', 'data');
-  perform pgque.ticker('test_rotation');
+  perform logres.create_queue('test_rotation');
+  perform logres.set_queue_config('test_rotation', 'rotation_period', '1 second');
+  perform logres.ticker('test_rotation');
+  perform logres.insert_event('test_rotation', 'test', 'data');
+  perform logres.ticker('test_rotation');
   raise notice 'PASS: rotation test setup complete';
 end;
 $$;
@@ -27,7 +27,7 @@ do $$
 declare
   v_result integer;
 begin
-  select pgque.maint_rotate_tables_step1('test_rotation') into v_result;
+  select logres.maint_rotate_tables_step1('test_rotation') into v_result;
   raise notice 'step1 returned %, queue_cur_table should now be 1', v_result;
 end;
 $$;
@@ -37,10 +37,10 @@ do $$
 declare
   v_cur integer;
 begin
-  perform pgque.maint_rotate_tables_step2();
+  perform logres.maint_rotate_tables_step2();
 
   select queue_cur_table into v_cur
-  from pgque.queue where queue_name = 'test_rotation';
+  from logres.queue where queue_name = 'test_rotation';
 
   if v_cur != 1 then
     raise exception 'FAIL: expected queue_cur_table = 1, got %', v_cur;
@@ -53,14 +53,14 @@ $$;
 select pg_sleep(2);
 
 -- Rotation 2: step1
-do $$ begin perform pgque.maint_rotate_tables_step1('test_rotation'); end; $$;
+do $$ begin perform logres.maint_rotate_tables_step1('test_rotation'); end; $$;
 
 -- Rotation 2: step2
 do $$
 declare v_cur integer;
 begin
-  perform pgque.maint_rotate_tables_step2();
-  select queue_cur_table into v_cur from pgque.queue where queue_name = 'test_rotation';
+  perform logres.maint_rotate_tables_step2();
+  select queue_cur_table into v_cur from logres.queue where queue_name = 'test_rotation';
   if v_cur != 2 then raise exception 'FAIL: expected 2, got %', v_cur; end if;
   raise notice 'PASS: rotation 2 complete (cur_table = %)', v_cur;
 end;
@@ -70,14 +70,14 @@ $$;
 select pg_sleep(2);
 
 -- Rotation 3: step1 (wraps 2 → 0)
-do $$ begin perform pgque.maint_rotate_tables_step1('test_rotation'); end; $$;
+do $$ begin perform logres.maint_rotate_tables_step1('test_rotation'); end; $$;
 
 -- Rotation 3: step2
 do $$
 declare v_cur integer;
 begin
-  perform pgque.maint_rotate_tables_step2();
-  select queue_cur_table into v_cur from pgque.queue where queue_name = 'test_rotation';
+  perform logres.maint_rotate_tables_step2();
+  select queue_cur_table into v_cur from logres.queue where queue_name = 'test_rotation';
   if v_cur != 0 then raise exception 'FAIL: expected 0 (wrap), got %', v_cur; end if;
   raise notice 'PASS: rotation 3 complete (cur_table = %, wrapped 2→0)', v_cur;
 end;
@@ -86,7 +86,7 @@ $$;
 -- Cleanup
 do $$
 begin
-  perform pgque.drop_queue('test_rotation');
+  perform logres.drop_queue('test_rotation');
   raise notice 'PASS: all rotation tests passed (0→1→2→0)';
 end;
 $$;

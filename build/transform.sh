@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# transform.sh -- Mechanical transformation of PgQ sources into pgque
+# transform.sh -- Mechanical transformation of PgQ sources into logres
 #
 # Reads PgQ PL-only source files from pgq/ and applies:
-#   1. Schema rename: pgq -> pgque
+#   1. Schema rename: pgq -> logres
 #   2. txid_* -> pg_* snapshot function renames
 #   3. txid_snapshot type -> pg_snapshot
 #   4. bigint -> xid8 for txid-related columns
@@ -14,7 +14,7 @@ set -Eeuo pipefail
 #   8. Remove pgq_node/Londiste hooks from maint_operations
 #
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
-# PgQue includes code derived from PgQ (ISC license, Marko Kreen).
+# logres includes code derived from PgQ (ISC license, Marko Kreen).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -86,31 +86,31 @@ SOURCE_FILES=(
 # -- Transformation functions -------------------------------------------------
 
 apply_schema_rename() {
-  # Rename pgq schema references to pgque.
+  # Rename pgq schema references to logres.
   # Must be word-boundary-aware to avoid mangling _pgq_ev_ magic columns,
-  # pgq_node, pgq_ext, or text inside larger identifiers like "pgqueue".
+  # pgq_node, pgq_ext, or text inside larger identifiers like "logresue".
   #
   # Strategy: apply targeted replacements in order of specificity.
   local content="$1"
 
-  # 1. Role names: pgq_reader -> pgque_reader, etc.
+  # 1. Role names: pgq_reader -> logres_reader, etc.
   content=$(echo "$content" | sed \
-    -e "s/pgq_reader/pgque_reader/g" \
-    -e "s/pgq_writer/pgque_writer/g" \
-    -e "s/pgq_admin/pgque_admin/g")
+    -e "s/pgq_reader/logres_reader/g" \
+    -e "s/pgq_writer/logres_writer/g" \
+    -e "s/pgq_admin/logres_admin/g")
 
-  # 2. Schema-qualified references: pgq.something -> pgque.something
+  # 2. Schema-qualified references: pgq.something -> logres.something
   #    Matches pgq. followed by a letter or underscore (not a digit boundary issue)
-  content=$(echo "$content" | sed -E "s/pgq\\.([a-zA-Z_])/pgque.\\1/g")
+  content=$(echo "$content" | sed -E "s/pgq\\.([a-zA-Z_])/logres.\\1/g")
 
   # 3. String literals referencing the schema name:
-  #    'pgq' -> 'pgque' (used in information_schema queries, extname, etc.)
-  content=$(echo "$content" | sed "s/'pgq'/'pgque'/g")
+  #    'pgq' -> 'logres' (used in information_schema queries, extname, etc.)
+  content=$(echo "$content" | sed "s/'pgq'/'logres'/g")
 
   # 4. Standalone pgq as schema name in CREATE/DROP SCHEMA, GRANT ON SCHEMA, etc.
-  #    "schema pgq" -> "schema pgque"
-  content=$(echo "$content" | sed -E "s/schema pgq([^a-zA-Z0-9_])/schema pgque\\1/g")
-  content=$(echo "$content" | sed -E "s/schema pgq$/schema pgque/g")
+  #    "schema pgq" -> "schema logres"
+  content=$(echo "$content" | sed -E "s/schema pgq([^a-zA-Z0-9_])/schema logres\\1/g")
+  content=$(echo "$content" | sed -E "s/schema pgq$/schema logres/g")
 
   # 5. pgq prefix on function/table names within the schema (e.g., in comments
   #    that say "pgq.something" -- already handled by rule 2)
@@ -180,7 +180,7 @@ apply_bigint_to_xid8() {
 }
 
 apply_search_path_to_security_definer() {
-  # Add SET search_path = pgque, pg_catalog to SECURITY DEFINER functions
+  # Add SET search_path = logres, pg_catalog to SECURITY DEFINER functions
   # that don't already have it. Handles the pattern:
   #   $$ language plpgsql security definer;
   # and variations with trailing comments.
@@ -192,7 +192,7 @@ apply_search_path_to_security_definer() {
   #   $$ language plpgsql security definer;
   #   $$ language plpgsql security definer; -- comment
   content=$(echo "$content" | sed -E \
-    's/^(\$\$ language plpgsql) security definer;(.*)$/\1 security definer set search_path = pgque, pg_catalog;\2/')
+    's/^(\$\$ language plpgsql) security definer;(.*)$/\1 security definer set search_path = logres, pg_catalog;\2/')
 
   echo "$content"
 }
@@ -285,7 +285,7 @@ remove_pgq_node_londiste_hooks() {
 
 # -- Main transformation pipeline --------------------------------------------
 
-echo "=== PgQ -> PgQue transformation pipeline ==="
+echo "=== PgQ -> logres transformation pipeline ==="
 echo "Source: ${PGQ_DIR}"
 echo "Output: ${OUTPUT_DIR}"
 echo ""
@@ -300,7 +300,7 @@ for src_file in "${SOURCE_FILES[@]}"; do
   fi
 
   # Determine output filename (rename pgq. prefix in filenames)
-  out_file=$(echo "${src_file}" | sed 's/pgq\./pgque./g')
+  out_file=$(echo "${src_file}" | sed 's/pgq\./logres./g')
   out_path="${OUTPUT_DIR}/${out_file}"
 
   # Read source
@@ -403,7 +403,7 @@ else
 fi
 
 # Verify pgq_node/londiste hooks are gone from maint_operations
-remaining_hooks=$(grep -n 'pgq_node\|londiste' "${OUTPUT_DIR}/functions/pgque.maint_operations.sql" \
+remaining_hooks=$(grep -n 'pgq_node\|londiste' "${OUTPUT_DIR}/functions/logres.maint_operations.sql" \
   | grep -v '^[0-9]*:\s*--' \
   || true)
 
@@ -447,19 +447,19 @@ sedi() {
   fi
 }
 
-TICKER_FILE="${OUTPUT_DIR}/functions/pgque.ticker.sql"
+TICKER_FILE="${OUTPUT_DIR}/functions/logres.ticker.sql"
 
 # Patch the ticker: inject pg_notify before return statements (awk for portability)
 awk '
 /^    return i_tick_id;$/ {
   print ""
-  print "    -- pgque: notify listeners after tick"
-  print "    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, i_tick_id::text);"
+  print "    -- logres: notify listeners after tick"
+  print "    perform pg_notify('"'"'logres_'"'"' || i_queue_name, i_tick_id::text);"
 }
 /^    return currval\(q\.queue_tick_seq\);$/ {
   print ""
-  print "    -- pgque: notify listeners after tick"
-  print "    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, currval(q.queue_tick_seq)::text);"
+  print "    -- logres: notify listeners after tick"
+  print "    perform pg_notify('"'"'logres_'"'"' || i_queue_name, currval(q.queue_tick_seq)::text);"
 }
 { print }
 ' "${TICKER_FILE}" > "${TICKER_FILE}.tmp" && mv "${TICKER_FILE}.tmp" "${TICKER_FILE}"
@@ -467,12 +467,12 @@ awk '
 echo "PASS: pg_notify injected into ticker function"
 
 # Fix inherited PgQ copy-paste bug: sqltriga comment says logutriga
-sedi 's/Function: pgque.logutriga()/Function: pgque.sqltriga()/' "${OUTPUT_DIR}/lowlevel_pl/sqltriga.sql"
+sedi 's/Function: logres.logutriga()/Function: logres.sqltriga()/' "${OUTPUT_DIR}/lowlevel_pl/sqltriga.sql"
 
 echo "PASS: sqltriga comment header fixed"
 
 # Remove debug comments from ticker
-sedi 's/ -- unsure about access//' "${OUTPUT_DIR}/functions/pgque.ticker.sql"
+sedi 's/ -- unsure about access//' "${OUTPUT_DIR}/functions/logres.ticker.sql"
 
 echo "PASS: debug comments removed from ticker"
 
@@ -480,7 +480,7 @@ echo "PASS: debug comments removed from ticker"
 # ev_txid is xid8, but the dynamic SQL builds "ev.ev_txid >= 855" where 855
 # is a plain integer. PostgreSQL has no xid8 >= integer operator.
 # Fix: wrap values in '...'::xid8 casts in the generated SQL.
-BATCH_SQL_FILE="${OUTPUT_DIR}/functions/pgque.batch_event_sql.sql"
+BATCH_SQL_FILE="${OUTPUT_DIR}/functions/logres.batch_event_sql.sql"
 sedi "s/|| ' and ev.ev_txid >= ' || batch.tx_start::text/|| ' and ev.ev_txid >= ''' || batch.tx_start::text || '''::xid8'/" \
   "${BATCH_SQL_FILE}"
 sedi "s/|| ' and ev.ev_txid <= ' || batch.tx_end::text/|| ' and ev.ev_txid <= ''' || batch.tx_end::text || '''::xid8'/" \
@@ -500,14 +500,14 @@ sedi "s|batch.tx_start := rec.id1;|batch.tx_start := rec.id1::text::bigint;|" \
 
 echo "PASS: xid8 casts added to batch_event_sql for ev_txid comparisons"
 
-# -- Assembly: build sql/pgque.sql ------------------------------------
+# -- Assembly: build sql/logres.sql ------------------------------------
 
 echo ""
-echo "=== Assembling sql/pgque.sql ==="
+echo "=== Assembling sql/logres.sql ==="
 
 SQL_DIR="${REPO_ROOT}/sql"
-INSTALL_FILE="${SQL_DIR}/pgque.sql"
-ADDITIONS_DIR="${SQL_DIR}/pgque-additions"
+INSTALL_FILE="${SQL_DIR}/logres.sql"
+ADDITIONS_DIR="${SQL_DIR}/logres-additions"
 
 apply_idempotency_guards() {
   # Make DDL statements idempotent:
@@ -538,19 +538,19 @@ apply_idempotency_guards() {
 
 # Start with header
 cat > "${INSTALL_FILE}" << 'HEADER'
--- pgque.sql -- PgQ Universal Edition
+-- logres.sql -- PgQ Universal Edition
 -- Version: 1.0.0-dev
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
--- Install: \i pgque.sql
--- Start:   SELECT pgque.start();
--- Usage:   See https://github.com/NikolayS/pgque
+-- Install: \i logres.sql
+-- Start:   SELECT logres.start();
+-- Usage:   See https://github.com/NikolayS/logres
 
 HEADER
 
 # Schema creation
-echo "create schema if not exists pgque;" >> "${INSTALL_FILE}"
+echo "create schema if not exists logres;" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
 # Section 1: Tables
@@ -558,8 +558,8 @@ echo "-- ======================================================================"
 echo "-- Section 1: Tables (derived from PgQ)" >> "${INSTALL_FILE}"
 echo "-- Origin: pgq/structure/tables.sql" >> "${INSTALL_FILE}"
 echo "--" >> "${INSTALL_FILE}"
-echo "-- PgQue transformations applied:" >> "${INSTALL_FILE}"
-echo "--   1. Schema rename: pgq → pgque (all identifiers, grants, references)" >> "${INSTALL_FILE}"
+echo "-- logres transformations applied:" >> "${INSTALL_FILE}"
+echo "--   1. Schema rename: pgq → logres (all identifiers, grants, references)" >> "${INSTALL_FILE}"
 echo "--   2. txid_current() → pg_current_xact_id()::text::bigint (PG14+ API)" >> "${INSTALL_FILE}"
 echo "--   3. txid_snapshot → pg_snapshot (type rename)" >> "${INSTALL_FILE}"
 echo "--   4. ev_txid kept as xid8 (required by pg_visible_in_snapshot)" >> "${INSTALL_FILE}"
@@ -570,8 +570,8 @@ echo "-- ======================================================================"
 echo "" >> "${INSTALL_FILE}"
 
 tables_content=$(cat "${OUTPUT_DIR}/structure/tables.sql")
-# Remove the original "create schema pgque;" line (we already have IF NOT EXISTS above)
-tables_content=$(echo "$tables_content" | sed '/^create schema pgque;$/d')
+# Remove the original "create schema logres;" line (we already have IF NOT EXISTS above)
+tables_content=$(echo "$tables_content" | sed '/^create schema logres;$/d')
 # Remove "set client_min_messages" — install script should not change session settings
 tables_content=$(echo "$tables_content" | sed "/^set client_min_messages/d")
 # Remove commented-out "drop schema" line
@@ -585,49 +585,49 @@ echo "-- ======================================================================"
 echo "-- Section 2: Internal functions (derived from PgQ)" >> "${INSTALL_FILE}"
 echo "-- Origin: pgq/functions/*.sql" >> "${INSTALL_FILE}"
 echo "--" >> "${INSTALL_FILE}"
-echo "-- PgQue transformations applied:" >> "${INSTALL_FILE}"
-echo "--   1. Schema rename: pgq → pgque" >> "${INSTALL_FILE}"
+echo "-- logres transformations applied:" >> "${INSTALL_FILE}"
+echo "--   1. Schema rename: pgq → logres" >> "${INSTALL_FILE}"
 echo "--   2. txid_* → pg_* function renames (PG14+ snapshot API)" >> "${INSTALL_FILE}"
 echo "--   3. pg_snapshot_xmin/xmax wrapped with ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
 echo "--   4. pg_current_xact_id() cast to ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
-echo "--   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog" >> "${INSTALL_FILE}"
+echo "--   5. SECURITY DEFINER functions get SET search_path = logres, pg_catalog" >> "${INSTALL_FILE}"
 echo "--   6. pgq_node/Londiste hooks removed from maint_operations" >> "${INSTALL_FILE}"
 echo "--   7. pg_notify() injected into ticker for LISTEN/NOTIFY wakeup" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
 FUNCTION_FILES=(
-  pgque.upgrade_schema.sql
-  pgque.batch_event_sql.sql
-  pgque.batch_event_tables.sql
-  pgque.event_retry_raw.sql
-  pgque.find_tick_helper.sql
-  pgque.ticker.sql
-  pgque.maint_retry_events.sql
-  pgque.maint_rotate_tables.sql
-  pgque.maint_tables_to_vacuum.sql
-  pgque.maint_operations.sql
-  pgque.grant_perms.sql
-  pgque.tune_storage.sql
-  pgque.force_tick.sql
-  pgque.seq_funcs.sql
-  pgque.quote_fqname.sql
-  pgque.create_queue.sql
-  pgque.drop_queue.sql
-  pgque.set_queue_config.sql
-  pgque.insert_event.sql
-  pgque.current_event_table.sql
-  pgque.register_consumer.sql
-  pgque.unregister_consumer.sql
-  pgque.next_batch.sql
-  pgque.get_batch_events.sql
-  pgque.get_batch_cursor.sql
-  pgque.event_retry.sql
-  pgque.batch_retry.sql
-  pgque.finish_batch.sql
-  pgque.get_queue_info.sql
-  pgque.get_consumer_info.sql
-  pgque.get_batch_info.sql
+  logres.upgrade_schema.sql
+  logres.batch_event_sql.sql
+  logres.batch_event_tables.sql
+  logres.event_retry_raw.sql
+  logres.find_tick_helper.sql
+  logres.ticker.sql
+  logres.maint_retry_events.sql
+  logres.maint_rotate_tables.sql
+  logres.maint_tables_to_vacuum.sql
+  logres.maint_operations.sql
+  logres.grant_perms.sql
+  logres.tune_storage.sql
+  logres.force_tick.sql
+  logres.seq_funcs.sql
+  logres.quote_fqname.sql
+  logres.create_queue.sql
+  logres.drop_queue.sql
+  logres.set_queue_config.sql
+  logres.insert_event.sql
+  logres.current_event_table.sql
+  logres.register_consumer.sql
+  logres.unregister_consumer.sql
+  logres.next_batch.sql
+  logres.get_batch_events.sql
+  logres.get_batch_cursor.sql
+  logres.event_retry.sql
+  logres.batch_retry.sql
+  logres.finish_batch.sql
+  logres.get_queue_info.sql
+  logres.get_consumer_info.sql
+  logres.get_batch_info.sql
 )
 
 for func_file in "${FUNCTION_FILES[@]}"; do
@@ -644,7 +644,7 @@ done
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "-- Section 3: PL/pgSQL event insertion (derived from PgQ)" >> "${INSTALL_FILE}"
 echo "-- Origin: pgq/lowlevel_pl/insert_event.sql" >> "${INSTALL_FILE}"
-echo "-- PgQue transformations: schema rename, txid→pg_* renames, search_path" >> "${INSTALL_FILE}"
+echo "-- logres transformations: schema rename, txid→pg_* renames, search_path" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -655,7 +655,7 @@ echo "" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "-- Section 4: Trigger functions (derived from PgQ)" >> "${INSTALL_FILE}"
 echo "-- Origin: pgq/lowlevel_pl/{jsontriga,logutriga,sqltriga}.sql" >> "${INSTALL_FILE}"
-echo "-- PgQue transformations: schema rename, search_path hardening" >> "${INSTALL_FILE}"
+echo "-- logres transformations: schema rename, search_path hardening" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
@@ -668,30 +668,30 @@ done
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "-- Section 5: Default grants (derived from PgQ)" >> "${INSTALL_FILE}"
 echo "-- Origin: pgq/structure/grants.sql" >> "${INSTALL_FILE}"
-echo "-- PgQue transformations: pgq_reader/writer/admin → pgque_reader/writer/admin" >> "${INSTALL_FILE}"
+echo "-- logres transformations: pgq_reader/writer/admin → logres_reader/writer/admin" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
 cat "${OUTPUT_DIR}/structure/grants.sql" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
-# Section 6: pgque additions
+# Section 6: logres additions
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
-echo "-- Section 6: pgque additions (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
+echo "-- Section 6: logres additions (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
 for addition_file in config.sql queue_max_retries.sql lifecycle.sql roles.sql dlq.sql; do
-  echo "-- pgque-additions/${addition_file}" >> "${INSTALL_FILE}"
+  echo "-- logres-additions/${addition_file}" >> "${INSTALL_FILE}"
   cat "${ADDITIONS_DIR}/${addition_file}" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
 done
 
-# Section 7: pgque-api (default v0.1 API surface)
-API_DIR="${SQL_DIR}/pgque-api"
+# Section 7: logres-api (default v0.1 API surface)
+API_DIR="${SQL_DIR}/logres-api"
 if [[ -d "${API_DIR}" ]]; then
   echo "-- ======================================================================" >> "${INSTALL_FILE}"
-  echo "-- Section 7: pgque-api (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
+  echo "-- Section 7: logres-api (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
   echo "-- ======================================================================" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
 
@@ -704,7 +704,7 @@ if [[ -d "${API_DIR}" ]]; then
   for api_name in "${DEFAULT_API_FILES[@]}"; do
     api_file="${API_DIR}/${api_name}"
     if [[ -f "${api_file}" ]]; then
-      echo "-- pgque-api/$(basename "${api_file}")" >> "${INSTALL_FILE}"
+      echo "-- logres-api/$(basename "${api_file}")" >> "${INSTALL_FILE}"
       cat "${api_file}" >> "${INSTALL_FILE}"
       echo "" >> "${INSTALL_FILE}"
     fi
@@ -712,20 +712,20 @@ if [[ -d "${API_DIR}" ]]; then
 fi
 
 # -- Inline transformation comments -------------------------------------------
-# Add "PgQue transformation:" comments to specific lines in the output.
+# Add "logres transformation:" comments to specific lines in the output.
 # These annotate each mechanical change so reviewers can trace what was modified.
 
 # Column default transformations (appear once each in tables section)
-sedi '/queue_switch_step1.*default pg_current_xact_id/s/$/ -- PgQue transformation: txid_current()→pg_current_xact_id()::text::bigint (PG14+)/' "${INSTALL_FILE}"
+sedi '/queue_switch_step1.*default pg_current_xact_id/s/$/ -- logres transformation: txid_current()→pg_current_xact_id()::text::bigint (PG14+)/' "${INSTALL_FILE}"
 
-sedi '/ev_txid.*xid8.*default pg_current_xact_id/s/$/ -- PgQue transformation: bigint→xid8 (needed for pg_visible_in_snapshot)/' "${INSTALL_FILE}"
+sedi '/ev_txid.*xid8.*default pg_current_xact_id/s/$/ -- logres transformation: bigint→xid8 (needed for pg_visible_in_snapshot)/' "${INSTALL_FILE}"
 
 # LISTEN/NOTIFY injection (appears twice in ticker)
-sedi '/perform pg_notify.*pgque_/s/$/ -- PgQue transformation: LISTEN\/NOTIFY wakeup (not in original PgQ)/' "${INSTALL_FILE}"
+sedi '/perform pg_notify.*logres_/s/$/ -- logres transformation: LISTEN\/NOTIFY wakeup (not in original PgQ)/' "${INSTALL_FILE}"
 
 # search_path pinning — annotate first occurrence only via awk
-awk '/set search_path = pgque, pg_catalog;/ && !sp_done {
-  sp_done=1; sub(/;/, "; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)")
+awk '/set search_path = logres, pg_catalog;/ && !sp_done {
+  sp_done=1; sub(/;/, "; -- logres transformation: pin search_path (SECURITY DEFINER hardening)")
 } {print}' "${INSTALL_FILE}" > "${INSTALL_FILE}.tmp" && mv "${INSTALL_FILE}.tmp" "${INSTALL_FILE}"
 
 install_lines=$(wc -l < "${INSTALL_FILE}")
@@ -739,7 +739,7 @@ echo "=== Assembly verification ==="
 asm_errors=0
 
 # Verify header is present
-if head -1 "${INSTALL_FILE}" | grep -q 'pgque.sql'; then
+if head -1 "${INSTALL_FILE}" | grep -q 'logres.sql'; then
   echo "PASS: Install script header present"
 else
   echo "FAIL: Install script header missing"
@@ -747,7 +747,7 @@ else
 fi
 
 # Verify schema creation with IF NOT EXISTS
-if grep -q 'create schema if not exists pgque;' "${INSTALL_FILE}"; then
+if grep -q 'create schema if not exists logres;' "${INSTALL_FILE}"; then
   echo "PASS: Schema creation is idempotent"
 else
   echo "FAIL: Missing idempotent schema creation"
@@ -803,24 +803,24 @@ else
   asm_errors=$((asm_errors + 1))
 fi
 
-# Verify pgque additions and API layer are in the script
-if grep -q 'lifecycle.sql\|pgque.version\|pgque.start\|pgque.stop' "${INSTALL_FILE}"; then
-  echo "PASS: pgque additions present in install script"
+# Verify logres additions and API layer are in the script
+if grep -q 'lifecycle.sql\|logres.version\|logres.start\|logres.stop' "${INSTALL_FILE}"; then
+  echo "PASS: logres additions present in install script"
 else
-  echo "FAIL: pgque additions not found in install script"
+  echo "FAIL: logres additions not found in install script"
   asm_errors=$((asm_errors + 1))
 fi
 
-# Verify default pgque-api functions are in the script
-if grep -q 'pgque.receive\|pgque.ack\|pgque.send\|pgque.subscribe\|pgque.maint' "${INSTALL_FILE}"; then
-  echo "PASS: default pgque-api surface present in install script"
+# Verify default logres-api functions are in the script
+if grep -q 'logres.receive\|logres.ack\|logres.send\|logres.subscribe\|logres.maint' "${INSTALL_FILE}"; then
+  echo "PASS: default logres-api surface present in install script"
 else
-  echo "FAIL: default pgque-api surface not found in install script"
+  echo "FAIL: default logres-api surface not found in install script"
   asm_errors=$((asm_errors + 1))
 fi
 
 # Verify experimental APIs are NOT in the default install script.
-# DLQ (dlq_inspect / event_dead / pgque.dead_letter) was promoted to the default
+# DLQ (dlq_inspect / event_dead / logres.dead_letter) was promoted to the default
 # install — nack() depends on event_dead, so the DLQ has to ship by default.
 if grep -q 'maint_deliver_delayed\|send_at\|delayed_events\|otel_metrics\|queue_stats' "${INSTALL_FILE}"; then
   echo "FAIL: experimental APIs leaked into default install script"
@@ -829,12 +829,12 @@ else
   echo "PASS: experimental APIs excluded from default install script"
 fi
 
-# Verify pgque-api section is present (if default api files exist)
+# Verify logres-api section is present (if default api files exist)
 if [[ -d "${API_DIR}" ]]; then
-  if grep -q 'Section 7: pgque-api' "${INSTALL_FILE}"; then
-    echo "PASS: pgque-api section present in install script"
+  if grep -q 'Section 7: logres-api' "${INSTALL_FILE}"; then
+    echo "PASS: logres-api section present in install script"
   else
-    echo "FAIL: pgque-api section missing from install script"
+    echo "FAIL: logres-api section missing from install script"
     asm_errors=$((asm_errors + 1))
   fi
 fi

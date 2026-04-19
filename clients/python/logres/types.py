@@ -1,8 +1,8 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
-# PgQue includes code derived from PgQ (ISC license,
+# logres includes code derived from PgQ (ISC license,
 # Marko Kreen / Skype Technologies OU).
 
-"""Message and type definitions for pgque."""
+"""Message and type definitions for logres."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,9 +11,9 @@ from typing import Optional
 
 @dataclass
 class Message:
-    """A message received from a pgque queue.
+    """A message received from a logres queue.
 
-    Maps to the pgque.message composite type:
+    Maps to the logres.message composite type:
         msg_id      -- ev_id
         batch_id    -- batch containing this message
         type        -- ev_type

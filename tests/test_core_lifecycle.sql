@@ -6,23 +6,23 @@ declare
   v_qinfo record;
 begin
   -- Create a queue
-  perform pgque.create_queue('test_lifecycle');
+  perform logres.create_queue('test_lifecycle');
 
   -- Verify it exists
   select * into v_qinfo
-    from pgque.get_queue_info('test_lifecycle');
+    from logres.get_queue_info('test_lifecycle');
   assert v_qinfo.queue_name = 'test_lifecycle', 'queue should exist';
 
   -- Configure it
-  perform pgque.set_queue_config(
+  perform logres.set_queue_config(
     'test_lifecycle', 'ticker_max_count', '500');
 
   -- Drop it
-  perform pgque.drop_queue('test_lifecycle');
+  perform logres.drop_queue('test_lifecycle');
 
   -- Verify it's gone
   assert not exists (
-    select 1 from pgque.get_queue_info()
+    select 1 from logres.get_queue_info()
     where queue_name = 'test_lifecycle'
   ), 'queue should be gone after drop';
 

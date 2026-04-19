@@ -1,5 +1,5 @@
 import pytest
-from pgque import PgqueClient, Message
+from logres import PgqueClient, Message
 
 def test_send_returns_event_id(conn, setup_queue):
     client = PgqueClient(conn)

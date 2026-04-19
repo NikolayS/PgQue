@@ -1,5 +1,5 @@
 \set ON_ERROR_STOP on
-\echo '=== pgque acceptance tests ==='
+\echo '=== logres acceptance tests ==='
 \echo ''
 \echo 'Running: US-1 Basic produce/consume cycle'
 \i tests/acceptance/us1_basic_produce_consume.sql

@@ -2,14 +2,14 @@
 
 -- US-5: Batch processing under load
 -- As a platform team, I want to process 10,000 events in one batch,
--- confirming pgque handles real workloads without dead-tuple bloat.
+-- confirming logres handles real workloads without dead-tuple bloat.
 -- SPECx.md section 13.3
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 -- Setup: create queue and subscribe consumer
 do $$ begin
-  perform pgque.create_queue('us5_ingest');
-  perform pgque.subscribe('us5_ingest', 'etl');
+  perform logres.create_queue('us5_ingest');
+  perform logres.subscribe('us5_ingest', 'etl');
 end $$;
 
 -- Action: insert 10,000 events in a single transaction
@@ -18,7 +18,7 @@ declare
   v_id bigint;
 begin
   for i in 1..10000 loop
-    v_id := pgque.insert_event('us5_ingest', 'data.load',
+    v_id := logres.insert_event('us5_ingest', 'data.load',
       '{"seq":' || i || '}');
   end loop;
   raise notice 'US-5: inserted 10,000 events';
@@ -26,18 +26,18 @@ end $$;
 
 -- Tick (force_tick bypasses throttle)
 do $$ begin
-  perform pgque.force_tick('us5_ingest');
-  perform pgque.ticker();
+  perform logres.force_tick('us5_ingest');
+  perform logres.ticker();
 end $$;
 
 -- Verify: receive returns all 10,000 events
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us5_ingest', 'etl', 20000)
+  for v_msg in select * from logres.receive('us5_ingest', 'etl', 20000)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -48,7 +48,7 @@ begin
   assert v_batch_id is not null, 'batch_id should be set';
 
   -- Ack the batch
-  perform pgque.ack(v_batch_id);
+  perform logres.ack(v_batch_id);
 
   raise notice 'PASS: US-5 received and acked 10,000 events';
 end $$;
@@ -59,9 +59,9 @@ declare
   v_batch bigint;
 begin
   select sub_batch into v_batch
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from logres.subscription s
+  join logres.queue q on q.queue_id = s.sub_queue
+  join logres.consumer c on c.co_id = s.sub_consumer
   where q.queue_name = 'us5_ingest'
     and c.co_name = 'etl';
 
@@ -69,7 +69,7 @@ begin
   raise notice 'PASS: US-5 consumer batch cleared after ack';
 end $$;
 
--- Verify: no dead tuples in pgque event tables
+-- Verify: no dead tuples in logres event tables
 -- After ack, PgQ rotation should leave no dead tuples.
 -- We trigger rotation and vacuum, then check pg_stat_user_tables.
 do $$
@@ -77,12 +77,12 @@ declare
   v_dead bigint;
 begin
   -- Force a rotation so old event table data can be reclaimed
-  perform pgque.maint();
+  perform logres.maint();
 
-  -- Check dead tuples across all pgque event tables
+  -- Check dead tuples across all logres event tables
   select coalesce(sum(n_dead_tup), 0) into v_dead
   from pg_stat_user_tables
-  where schemaname = 'pgque'
+  where schemaname = 'logres'
     and relname like 'event_%';
 
   -- Dead tuples should be 0 (or very low -- stats may lag slightly)
@@ -95,8 +95,8 @@ end $$;
 
 -- Teardown
 do $$ begin
-  perform pgque.unsubscribe('us5_ingest', 'etl');
-  perform pgque.drop_queue('us5_ingest');
+  perform logres.unsubscribe('us5_ingest', 'etl');
+  perform logres.drop_queue('us5_ingest');
 end $$;
 
 \echo 'US-5: PASSED'

@@ -10,7 +10,7 @@ begin
     select p.proname
     from pg_proc p
     join pg_namespace n on p.pronamespace = n.oid
-    where n.nspname = 'pgque'
+    where n.nspname = 'logres'
     and p.prosecdef = true
     and (p.proconfig is null
          or not exists (

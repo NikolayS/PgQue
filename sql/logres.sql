@@ -1,20 +1,20 @@
--- pgque.sql -- PgQ Universal Edition
+-- logres.sql -- PgQ Universal Edition
 -- Version: 1.0.0-dev
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
--- Install: \i pgque.sql
--- Start:   SELECT pgque.start();
--- Usage:   See https://github.com/NikolayS/pgque
+-- Install: \i logres.sql
+-- Start:   SELECT logres.start();
+-- Usage:   See https://github.com/NikolayS/logres
 
-create schema if not exists pgque;
+create schema if not exists logres;
 
 -- ======================================================================
 -- Section 1: Tables (derived from PgQ)
 -- Origin: pgq/structure/tables.sql
 --
--- PgQue transformations applied:
---   1. Schema rename: pgq → pgque (all identifiers, grants, references)
+-- logres transformations applied:
+--   1. Schema rename: pgq → logres (all identifiers, grants, references)
 --   2. txid_current() → pg_current_xact_id()::text::bigint (PG14+ API)
 --   3. txid_snapshot → pg_snapshot (type rename)
 --   4. ev_txid kept as xid8 (required by pg_visible_in_snapshot)
@@ -27,18 +27,18 @@ create schema if not exists pgque;
 -- Section: Internal Tables
 --
 -- Overview:
---      pgque.queue                   - Queue configuration
---      pgque.consumer                - Consumer names
---      pgque.subscription            - Consumer registrations
---      pgque.tick                    - Per-queue snapshots (ticks)
---      pgque.event_*                 - Data tables
---      pgque.retry_queue             - Events to be retried later
+--      logres.queue                   - Queue configuration
+--      logres.consumer                - Consumer names
+--      logres.subscription            - Consumer registrations
+--      logres.tick                    - Per-queue snapshots (ticks)
+--      logres.event_*                 - Data tables
+--      logres.retry_queue             - Events to be retried later
 --
 -- 
--- Standard triggers store events in the pgque.event_* data tables
--- There is one top event table pgque.event_<queue_id> for each queue
--- inherited from pgque.event_template wuith three tables for actual data
--- pgque.event_<queue_id>_0 to pgque.event_<queue_id>_2.
+-- Standard triggers store events in the logres.event_* data tables
+-- There is one top event table logres.event_<queue_id> for each queue
+-- inherited from logres.event_template wuith three tables for actual data
+-- logres.event_<queue_id>_0 to logres.event_<queue_id>_2.
 --
 -- The active table is rotated at interval, so that if all the consubers
 -- have passed some poin the oldes one can be emptied using TRUNCATE command
@@ -50,7 +50,7 @@ create schema if not exists pgque;
 
 
 -- ----------------------------------------------------------------------
--- Table: pgque.consumer
+-- Table: logres.consumer
 --
 --      Name to id lookup for consumers
 --
@@ -58,7 +58,7 @@ create schema if not exists pgque;
 --      co_id       - consumer's id for internal usage
 --      co_name     - consumer's id for external usage
 -- ----------------------------------------------------------------------
-create table if not exists pgque.consumer (
+create table if not exists logres.consumer (
         co_id       serial,
         co_name     text        not null,
 
@@ -68,7 +68,7 @@ create table if not exists pgque.consumer (
 
 
 -- ----------------------------------------------------------------------
--- Table: pgque.queue
+-- Table: logres.queue
 --
 --     Information about available queues
 --
@@ -83,7 +83,7 @@ create table if not exists pgque.consumer (
 --      queue_switch_time           - time when switch happened
 --      queue_external_ticker       - ticks come from some external sources
 --      queue_ticker_paused         - ticker is paused
---      queue_disable_insert        - disallow pgque.insert_event()
+--      queue_disable_insert        - disallow logres.insert_event()
 --      queue_ticker_max_count      - batch should not contain more events
 --      queue_ticker_max_lag        - events should not age more
 --      queue_ticker_idle_period    - how often to tick when no events happen
@@ -92,14 +92,14 @@ create table if not exists pgque.consumer (
 --      queue_tick_seq              - sequence for tick id's
 --      queue_extra_maint           - array of functon names to call during maintenance
 -- ----------------------------------------------------------------------
-create table if not exists pgque.queue (
+create table if not exists logres.queue (
         queue_id                    serial,
         queue_name                  text        not null,
 
         queue_ntables               integer     not null default 3,
         queue_cur_table             integer     not null default 0,
         queue_rotation_period       interval    not null default '2 hours',
-        queue_switch_step1          bigint      not null default pg_current_xact_id()::text::bigint, -- PgQue transformation: txid_current()→pg_current_xact_id()::text::bigint (PG14+)
+        queue_switch_step1          bigint      not null default pg_current_xact_id()::text::bigint, -- logres transformation: txid_current()→pg_current_xact_id()::text::bigint (PG14+)
         queue_switch_step2          bigint               default pg_current_xact_id()::text::bigint,
         queue_switch_time           timestamptz not null default now(),
 
@@ -122,7 +122,7 @@ create table if not exists pgque.queue (
 );
 
 -- ----------------------------------------------------------------------
--- Table: pgque.tick
+-- Table: logres.tick
 --
 --      Snapshots for event batching
 --
@@ -133,7 +133,7 @@ create table if not exists pgque.queue (
 --      tick_snapshot   - transaction state
 --      tick_event_seq  - last value for event seq
 -- ----------------------------------------------------------------------
-create table if not exists pgque.tick (
+create table if not exists logres.tick (
         tick_queue                  int4            not null,
         tick_id                     bigint          not null,
         tick_time                   timestamptz     not null default now(),
@@ -142,18 +142,18 @@ create table if not exists pgque.tick (
 
         constraint tick_pkey primary key (tick_queue, tick_id),
         constraint tick_queue_fkey foreign key (tick_queue)
-                                   references pgque.queue (queue_id)
+                                   references logres.queue (queue_id)
 );
 
 -- ----------------------------------------------------------------------
--- Sequence: pgque.batch_id_seq
+-- Sequence: logres.batch_id_seq
 --
 --      Sequence for batch id's.
 -- ----------------------------------------------------------------------
-create sequence if not exists pgque.batch_id_seq;
+create sequence if not exists logres.batch_id_seq;
 
 -- ----------------------------------------------------------------------
--- Table: pgque.subscription
+-- Table: logres.subscription
 --
 --      Consumer registration on a queue.
 --
@@ -166,7 +166,7 @@ create sequence if not exists pgque.batch_id_seq;
 --      sub_batch       - shortcut for queue_id/consumer_id/tick_id
 --      sub_next_tick   - batch end pos
 -- ----------------------------------------------------------------------
-create table if not exists pgque.subscription (
+create table if not exists logres.subscription (
         sub_id                          serial      not null,
         sub_queue                       int4        not null,
         sub_consumer                    int4        not null,
@@ -178,13 +178,13 @@ create table if not exists pgque.subscription (
         constraint subscription_pkey primary key (sub_queue, sub_consumer),
         constraint subscription_batch_idx unique (sub_batch),
         constraint sub_queue_fkey foreign key (sub_queue)
-                                   references pgque.queue (queue_id),
+                                   references logres.queue (queue_id),
         constraint sub_consumer_fkey foreign key (sub_consumer)
-                                   references pgque.consumer (co_id)
+                                   references logres.consumer (co_id)
 );
 
 -- ----------------------------------------------------------------------
--- Table: pgque.event_template
+-- Table: logres.event_template
 --
 --      Parent table for all event tables
 --
@@ -201,11 +201,11 @@ create table if not exists pgque.subscription (
 --      ev_extra3           - extra data field
 --      ev_extra4           - extra data field
 -- ----------------------------------------------------------------------
-create table if not exists pgque.event_template (
+create table if not exists logres.event_template (
         ev_id               bigint          not null,
         ev_time             timestamptz     not null,
 
-        ev_txid             xid8          not null default pg_current_xact_id(), -- PgQue transformation: bigint→xid8 (needed for pg_visible_in_snapshot)
+        ev_txid             xid8          not null default pg_current_xact_id(), -- logres transformation: bigint→xid8 (needed for pg_visible_in_snapshot)
         ev_owner            int4,
         ev_retry            int4,
 
@@ -218,7 +218,7 @@ create table if not exists pgque.event_template (
 );
 
 -- ----------------------------------------------------------------------
--- Table: pgque.retry_queue
+-- Table: logres.retry_queue
 --
 --      Events to be retried.  When retry time reaches, they will
 --      be put back into main queue.
@@ -226,89 +226,89 @@ create table if not exists pgque.event_template (
 -- Columns:
 --      ev_retry_after          - time when it should be re-inserted to main queue
 --      ev_queue                - queue id, used to speed up event copy into queue
---      *                       - same as pgque.event_template
+--      *                       - same as logres.event_template
 -- ----------------------------------------------------------------------
-create table if not exists pgque.retry_queue (
+create table if not exists logres.retry_queue (
     ev_retry_after          timestamptz     not null,
     ev_queue                int4            not null,
 
-    like pgque.event_template,
+    like logres.event_template,
 
     constraint rq_pkey primary key (ev_owner, ev_id),
     constraint rq_queue_id_fkey foreign key (ev_queue)
-                             references pgque.queue (queue_id)
+                             references logres.queue (queue_id)
 );
-alter table pgque.retry_queue alter column ev_owner set not null;
-alter table pgque.retry_queue alter column ev_txid drop not null;
-create index if not exists rq_retry_idx on pgque.retry_queue (ev_retry_after);
+alter table logres.retry_queue alter column ev_owner set not null;
+alter table logres.retry_queue alter column ev_txid drop not null;
+create index if not exists rq_retry_idx on logres.retry_queue (ev_retry_after);
 
 -- ======================================================================
 -- Section 2: Internal functions (derived from PgQ)
 -- Origin: pgq/functions/*.sql
 --
--- PgQue transformations applied:
---   1. Schema rename: pgq → pgque
+-- logres transformations applied:
+--   1. Schema rename: pgq → logres
 --   2. txid_* → pg_* function renames (PG14+ snapshot API)
 --   3. pg_snapshot_xmin/xmax wrapped with ::text::bigint (xid8→bigint)
 --   4. pg_current_xact_id() cast to ::text::bigint (xid8→bigint)
---   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog
+--   5. SECURITY DEFINER functions get SET search_path = logres, pg_catalog
 --   6. pgq_node/Londiste hooks removed from maint_operations
 --   7. pg_notify() injected into ticker for LISTEN/NOTIFY wakeup
 -- ======================================================================
 
 
-create or replace function pgque.upgrade_schema()
+create or replace function logres.upgrade_schema()
 returns int4 as $$
 -- updates table structure if necessary
 declare
     cnt int4 = 0;
 begin
 
-    -- pgque.subscription.sub_last_tick: NOT NULL -> NULL
+    -- logres.subscription.sub_last_tick: NOT NULL -> NULL
     perform 1 from information_schema.columns
-      where table_schema = 'pgque'
+      where table_schema = 'logres'
         and table_name = 'subscription'
         and column_name ='sub_last_tick'
         and is_nullable = 'NO';
     if found then
-        alter table pgque.subscription
+        alter table logres.subscription
             alter column sub_last_tick
             drop not null;
         cnt := cnt + 1;
     end if;
 
     -- create roles
-    perform 1 from pg_catalog.pg_roles where rolname = 'pgque_reader';
+    perform 1 from pg_catalog.pg_roles where rolname = 'logres_reader';
     if not found then
-        create role pgque_reader;
+        create role logres_reader;
         cnt := cnt + 1;
     end if;
-    perform 1 from pg_catalog.pg_roles where rolname = 'pgque_writer';
+    perform 1 from pg_catalog.pg_roles where rolname = 'logres_writer';
     if not found then
-        create role pgque_writer;
+        create role logres_writer;
         cnt := cnt + 1;
     end if;
-    perform 1 from pg_catalog.pg_roles where rolname = 'pgque_admin';
+    perform 1 from pg_catalog.pg_roles where rolname = 'logres_admin';
     if not found then
-        create role pgque_admin in role pgque_reader, pgque_writer;
+        create role logres_admin in role logres_reader, logres_writer;
         cnt := cnt + 1;
     end if;
 
     perform 1 from pg_attribute
-        where attrelid = 'pgque.queue'::regclass
+        where attrelid = 'logres.queue'::regclass
           and attname = 'queue_extra_maint';
     if not found then
-        alter table pgque.queue add column queue_extra_maint text[];
+        alter table logres.queue add column queue_extra_maint text[];
     end if;
 
     return 0;
 end;
 $$ language plpgsql;
 
-create or replace function pgque.batch_event_sql(x_batch_id bigint)
+create or replace function logres.batch_event_sql(x_batch_id bigint)
 returns text as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.batch_event_sql(1)
+-- Function: logres.batch_event_sql(1)
 --      Creates SELECT statement that fetches events for this batch.
 --
 -- Parameters:
@@ -360,7 +360,7 @@ begin
            last.tick_snapshot as last_snapshot,
            cur.tick_snapshot as cur_snapshot
         into batch
-        from pgque.subscription s, pgque.tick last, pgque.tick cur
+        from logres.subscription s, logres.tick last, logres.tick cur
         where s.sub_batch = x_batch_id
           and last.tick_queue = s.sub_queue
           and last.tick_id = s.sub_last_tick
@@ -393,7 +393,7 @@ begin
         end if;
     end loop;
 
-    -- must match pgque.event_template
+    -- must match logres.event_template
     select_fields := 'select ev_id, ev_time, ev_txid, ev_retry, ev_type,'
         || ' ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4';
     retry_expr :=  ' and (ev_owner is null or ev_owner = '
@@ -402,12 +402,12 @@ begin
     -- now generate query that goes over all potential tables
     sql := '';
     for rec in
-        select xtbl from pgque.batch_event_tables(x_batch_id) xtbl
+        select xtbl from logres.batch_event_tables(x_batch_id) xtbl
     loop
-        tbl := pgque.quote_fqname(rec.xtbl);
+        tbl := logres.quote_fqname(rec.xtbl);
         -- this gets newer queries that definitely are not in prev_snapshot
         part := select_fields
-            || ' from pgque.tick cur, pgque.tick last, ' || tbl || ' ev '
+            || ' from logres.tick cur, logres.tick last, ' || tbl || ' ev '
             || ' where cur.tick_id = ' || batch.sub_next_tick::text
             || ' and cur.tick_queue = ' || batch.sub_queue::text
             || ' and last.tick_id = ' || batch.sub_last_tick::text
@@ -438,10 +438,10 @@ begin
 end;
 $$ language plpgsql;  -- no perms needed
 
-create or replace function pgque.batch_event_tables(x_batch_id bigint)
+create or replace function logres.batch_event_tables(x_batch_id bigint)
 returns setof text as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.batch_event_tables(1)
+-- Function: logres.batch_event_tables(1)
 --
 --     Returns set of table names where this batch events may reside.
 --
@@ -461,7 +461,7 @@ begin
            q.queue_data_pfx, q.queue_ntables,
            q.queue_cur_table, q.queue_switch_step1, q.queue_switch_step2
         into batch
-        from pgque.tick last, pgque.tick cur, pgque.subscription s, pgque.queue q
+        from logres.tick last, logres.tick cur, logres.subscription s, logres.queue q
         where cur.tick_id = s.sub_next_tick
           and cur.tick_queue = s.sub_queue
           and last.tick_id = s.sub_last_tick
@@ -504,7 +504,7 @@ begin
 end;
 $$ language plpgsql; -- no perms needed
 
-create or replace function pgque.event_retry_raw(
+create or replace function logres.event_retry_raw(
     x_queue text,
     x_consumer text,
     x_retry_after timestamptz,
@@ -519,7 +519,7 @@ create or replace function pgque.event_retry_raw(
     x_ev_extra4 text)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.event_retry_raw(12)
+-- Function: logres.event_retry_raw(12)
 --
 --      Allows full control over what goes to retry queue.
 --
@@ -545,7 +545,7 @@ declare
     id bigint;
 begin
     select sub_id, queue_event_seq, sub_queue into q
-      from pgque.consumer, pgque.queue, pgque.subscription
+      from logres.consumer, logres.queue, logres.subscription
      where queue_name = x_queue
        and co_name = x_consumer
        and sub_consumer = co_id
@@ -559,7 +559,7 @@ begin
         id := nextval(q.queue_event_seq);
     end if;
 
-    insert into pgque.retry_queue (ev_retry_after, ev_queue,
+    insert into logres.retry_queue (ev_retry_after, ev_queue,
             ev_id, ev_time, ev_owner, ev_retry,
             ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4)
     values (x_retry_after, q.sub_queue,
@@ -569,9 +569,9 @@ begin
 
     return id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)
+$$ language plpgsql security definer set search_path = logres, pg_catalog; -- logres transformation: pin search_path (SECURITY DEFINER hardening)
 
-create or replace function pgque.find_tick_helper(
+create or replace function logres.find_tick_helper(
     in i_queue_id int4,
     in i_prev_tick_id int8,
     in i_prev_tick_time timestamptz,
@@ -583,9 +583,9 @@ create or replace function pgque.find_tick_helper(
     out next_tick_seq int8)
 as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.find_tick_helper(6)
+-- Function: logres.find_tick_helper(6)
 --
---      Helper function for pgque.next_batch_custom() to do extended tick search.
+--      Helper function for logres.next_batch_custom() to do extended tick search.
 -- ----------------------------------------------------------------------
 declare
     sure    boolean;
@@ -596,7 +596,7 @@ declare
 begin
     -- first, fetch last tick of the queue
     select tick_id, tick_time, tick_event_seq into t
-        from pgque.tick
+        from logres.tick
         where tick_queue = i_queue_id
           and tick_id > i_prev_tick_id
         order by tick_queue desc, tick_id desc
@@ -630,7 +630,7 @@ begin
     -- if last tick too far away, do large scan
     if not sure then
         select tick_id, tick_time, tick_event_seq into t
-            from pgque.tick
+            from logres.tick
             where tick_queue = i_queue_id
               and tick_id > i_prev_tick_id
               and ((i_min_count is not null and (tick_event_seq - i_prev_tick_seq) >= i_min_count)
@@ -649,10 +649,10 @@ begin
 end;
 $$ language plpgsql stable;
 
-create or replace function pgque.ticker(i_queue_name text, i_tick_id bigint, i_orig_timestamp timestamptz, i_event_seq bigint)
+create or replace function logres.ticker(i_queue_name text, i_tick_id bigint, i_orig_timestamp timestamptz, i_event_seq bigint)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.ticker(3)
+-- Function: logres.ticker(3)
 --
 --     External ticker: Insert a tick with a particular tick_id and timestamp.
 --
@@ -664,9 +664,9 @@ returns bigint as $$
 --     Tick id.
 -- ----------------------------------------------------------------------
 begin
-    insert into pgque.tick (tick_queue, tick_id, tick_time, tick_event_seq)
+    insert into logres.tick (tick_queue, tick_id, tick_time, tick_event_seq)
     select queue_id, i_tick_id, i_orig_timestamp, i_event_seq
-        from pgque.queue
+        from logres.queue
         where queue_name = i_queue_name
           and queue_external_ticker
           and not queue_ticker_paused;
@@ -675,23 +675,23 @@ begin
     end if;
 
     -- make sure seqs stay current
-    perform pgque.seq_setval(queue_tick_seq, i_tick_id),
-            pgque.seq_setval(queue_event_seq, i_event_seq)
-        from pgque.queue
+    perform logres.seq_setval(queue_tick_seq, i_tick_id),
+            logres.seq_setval(queue_event_seq, i_event_seq)
+        from logres.queue
         where queue_name = i_queue_name;
 
 
-    -- pgque: notify listeners after tick
-    perform pg_notify('pgque_' || i_queue_name, i_tick_id::text); -- PgQue transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
+    -- logres: notify listeners after tick
+    perform pg_notify('logres_' || i_queue_name, i_tick_id::text); -- logres transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
     return i_tick_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque.ticker(i_queue_name text)
+create or replace function logres.ticker(i_queue_name text)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.ticker(1)
+-- Function: logres.ticker(1)
 --
 --     Check if tick is needed for the queue and insert it.
 --
@@ -712,10 +712,10 @@ begin
     select queue_id, queue_tick_seq, queue_external_ticker,
             queue_ticker_max_count, queue_ticker_max_lag,
             queue_ticker_idle_period, queue_event_seq,
-            pgque.seq_getval(queue_event_seq) as event_seq,
+            logres.seq_getval(queue_event_seq) as event_seq,
             queue_ticker_paused
         into q
-        from pgque.queue where queue_name = i_queue_name;
+        from logres.queue where queue_name = i_queue_name;
     if not found then
         raise exception 'no such queue';
     end if;
@@ -735,7 +735,7 @@ begin
            pg_snapshot_xmax(tick_snapshot)::text::bigint as sxmax,
            pg_snapshot_xmin(tick_snapshot)::text::bigint as sxmin
         into state
-        from pgque.tick
+        from logres.tick
         where tick_queue = q.queue_id
         order by tick_queue desc, tick_id desc
         limit 1;
@@ -764,7 +764,7 @@ begin
             -- check previous event from the last one.
             select state.tick_time - tick_time as lag
                 into last2
-                from pgque.tick
+                from logres.tick
                 where tick_queue = q.queue_id
                     and tick_id < state.tick_id
                 order by tick_queue desc, tick_id desc
@@ -782,19 +782,19 @@ begin
         end if;
     end if;
 
-    insert into pgque.tick (tick_queue, tick_id, tick_event_seq)
+    insert into logres.tick (tick_queue, tick_id, tick_event_seq)
         values (q.queue_id, nextval(q.queue_tick_seq), q.event_seq);
 
 
-    -- pgque: notify listeners after tick
-    perform pg_notify('pgque_' || i_queue_name, currval(q.queue_tick_seq)::text); -- PgQue transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
+    -- logres: notify listeners after tick
+    perform pg_notify('logres_' || i_queue_name, currval(q.queue_tick_seq)::text); -- logres transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
     return currval(q.queue_tick_seq);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.ticker() returns bigint as $$
+create or replace function logres.ticker() returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.ticker(0)
+-- Function: logres.ticker(0)
 --
 --     Creates ticks for all unpaused queues which dont have external ticker.
 --
@@ -807,23 +807,23 @@ declare
 begin
     res := 0;
     for q in
-        select queue_name from pgque.queue
+        select queue_name from logres.queue
             where not queue_external_ticker
                   and not queue_ticker_paused
             order by queue_name
     loop
-        if pgque.ticker(q.queue_name) > 0 then
+        if logres.ticker(q.queue_name) > 0 then
             res := res + 1;
         end if;
     end loop;
     return res;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.maint_retry_events()
+create or replace function logres.maint_retry_events()
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.maint_retry_events(0)
+-- Function: logres.maint_retry_events(0)
 --
 --      Moves retry events back to main queue.
 --
@@ -840,24 +840,24 @@ begin
     cnt := 0;
 
     -- allow only single event mover at a time, without affecting inserts
-    lock table pgque.retry_queue in share update exclusive mode;
+    lock table logres.retry_queue in share update exclusive mode;
 
     for rec in
         select queue_name,
                ev_id, ev_time, ev_owner, ev_retry, ev_type, ev_data,
                ev_extra1, ev_extra2, ev_extra3, ev_extra4
-          from pgque.retry_queue, pgque.queue
+          from logres.retry_queue, logres.queue
          where ev_retry_after <= current_timestamp
            and queue_id = ev_queue
          order by ev_retry_after
          limit 10
     loop
         cnt := cnt + 1;
-        perform pgque.insert_event_raw(rec.queue_name,
+        perform logres.insert_event_raw(rec.queue_name,
                     rec.ev_id, rec.ev_time, rec.ev_owner, rec.ev_retry,
                     rec.ev_type, rec.ev_data, rec.ev_extra1, rec.ev_extra2,
                     rec.ev_extra3, rec.ev_extra4);
-        delete from pgque.retry_queue
+        delete from logres.retry_queue
          where ev_owner = rec.ev_owner
            and ev_id = rec.ev_id;
     end loop;
@@ -865,10 +865,10 @@ begin
 end;
 $$ language plpgsql; -- need admin access
 
-create or replace function pgque.maint_rotate_tables_step1(i_queue_name text)
+create or replace function logres.maint_rotate_tables_step1(i_queue_name text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.maint_rotate_tables_step1(1)
+-- Function: logres.maint_rotate_tables_step1(1)
 --
 --      Rotate tables for one queue.
 --
@@ -887,7 +887,7 @@ declare
     lowest_xmin     int8;
 begin
     -- check if needed and load record
-    select * from pgque.queue into cf
+    select * from logres.queue into cf
         where queue_name = i_queue_name
           and queue_rotation_period is not null
           and queue_switch_step2 is not null
@@ -905,14 +905,14 @@ begin
 
     -- find lowest tick for that queue
     select min(sub_last_tick) into lowest_tick_id
-      from pgque.subscription
+      from logres.subscription
      where sub_queue = cf.queue_id;
 
     -- if some consumer exists
     if lowest_tick_id is not null then
         -- is the slowest one still on previous table?
         select pg_snapshot_xmin(tick_snapshot)::text::bigint into lowest_xmin
-          from pgque.tick
+          from logres.tick
          where tick_queue = cf.queue_id
            and tick_id = lowest_tick_id;
         if not found then
@@ -935,8 +935,8 @@ begin
     -- there may be long lock on the table from pg_dump,
     -- detect it and skip rotate then
     begin
-        execute 'lock table ' || pgque.quote_fqname(tbl) || ' nowait';
-        execute 'truncate ' || pgque.quote_fqname(tbl);
+        execute 'lock table ' || logres.quote_fqname(tbl) || ' nowait';
+        execute 'truncate ' || logres.quote_fqname(tbl);
     exception
         when lock_not_available then
             -- cannot truncate, skipping rotate
@@ -944,7 +944,7 @@ begin
     end;
 
     -- remember the moment
-    update pgque.queue
+    update logres.queue
         set queue_cur_table = nr,
             queue_switch_time = current_timestamp,
             queue_switch_step1 = pg_current_xact_id()::text::bigint,
@@ -954,12 +954,12 @@ begin
     -- Clean ticks by using step2 txid from previous rotation.
     -- That should keep all ticks for all batches that are completely
     -- in old table.  This keeps them for longer than needed, but:
-    -- 1. we want the pgque.tick table to be big, to avoid Postgres
+    -- 1. we want the logres.tick table to be big, to avoid Postgres
     --    accitentally switching to seqscans on that.
     -- 2. that way we guarantee to consumers that they an be moved
     --    back on the queue at least for one rotation_period.
     --    (may help in disaster recovery)
-    delete from pgque.tick
+    delete from logres.tick
         where tick_queue = cf.queue_id
           and pg_snapshot_xmin(tick_snapshot)::text::bigint < cf.queue_switch_step2;
 
@@ -968,26 +968,26 @@ end;
 $$ language plpgsql; -- need admin access
 
 
-create or replace function pgque.maint_rotate_tables_step2()
+create or replace function logres.maint_rotate_tables_step2()
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.maint_rotate_tables_step2(0)
+-- Function: logres.maint_rotate_tables_step2(0)
 --
 --      Stores the txid when the rotation was visible.  It should be
---      called in separate transaction than pgque.maint_rotate_tables_step1()
+--      called in separate transaction than logres.maint_rotate_tables_step1()
 -- ----------------------------------------------------------------------
 begin
-    update pgque.queue
+    update logres.queue
        set queue_switch_step2 = pg_current_xact_id()::text::bigint
      where queue_switch_step2 is null;
     return 0;
 end;
 $$ language plpgsql; -- need admin access
 
-create or replace function pgque.maint_tables_to_vacuum()
+create or replace function logres.maint_tables_to_vacuum()
 returns setof text as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.maint_tables_to_vacuum(0)
+-- Function: logres.maint_tables_to_vacuum(0)
 --
 --      Returns list of tablenames that need frequent vacuuming.
 --
@@ -1007,11 +1007,11 @@ begin
     end if;
 
     for scm, tbl in values
-        ('pgque', 'subscription'),
-        ('pgque', 'consumer'),
-        ('pgque', 'queue'),
-        ('pgque', 'tick'),
-        ('pgque', 'retry_queue'),
+        ('logres', 'subscription'),
+        ('logres', 'consumer'),
+        ('logres', 'queue'),
+        ('logres', 'tick'),
+        ('logres', 'retry_queue'),
         ('pgq_ext', 'completed_tick'),
         ('pgq_ext', 'completed_batch'),
         ('pgq_ext', 'completed_event'),
@@ -1040,10 +1040,10 @@ begin
 end;
 $$ language plpgsql;
 
-create or replace function pgque.maint_operations(out func_name text, out func_arg text)
+create or replace function logres.maint_operations(out func_name text, out func_arg text)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.maint_operations(0)
+-- Function: logres.maint_operations(0)
 --
 --      Returns list of functions to call for maintenance.
 --
@@ -1063,9 +1063,9 @@ declare
 begin
     -- rotate step 1
     nrot := 0;
-    func_name := 'pgque.maint_rotate_tables_step1';
+    func_name := 'logres.maint_rotate_tables_step1';
     for func_arg in
-        select queue_name from pgque.queue
+        select queue_name from logres.queue
             where queue_rotation_period is not null
                 and queue_switch_step2 is not null
                 and queue_switch_time + queue_rotation_period < current_timestamp
@@ -1077,25 +1077,25 @@ begin
 
     -- rotate step 2
     if nrot = 0 then
-        select count(1) from pgque.queue
+        select count(1) from logres.queue
             where queue_rotation_period is not null
                 and queue_switch_step2 is null
             into nrot;
     end if;
     if nrot > 0 then
-        func_name := 'pgque.maint_rotate_tables_step2';
+        func_name := 'logres.maint_rotate_tables_step2';
         func_arg := NULL;
         return next;
     end if;
 
     -- check if extra field exists
     perform 1 from pg_attribute
-      where attrelid = 'pgque.queue'::regclass
+      where attrelid = 'logres.queue'::regclass
         and attname = 'queue_extra_maint';
     if found then
         -- add extra ops
         for func_arg, ops in
-            select q.queue_name, queue_extra_maint from pgque.queue q
+            select q.queue_name, queue_extra_maint from logres.queue q
              where queue_extra_maint is not null
              order by 1
         loop
@@ -1110,7 +1110,7 @@ begin
     -- vacuum tables
     func_name := 'vacuum';
     for func_arg in
-        select * from pgque.maint_tables_to_vacuum()
+        select * from logres.maint_tables_to_vacuum()
     loop
         return next;
     end loop;
@@ -1119,10 +1119,10 @@ begin
 end;
 $$ language plpgsql;
 
-create or replace function pgque.grant_perms(x_queue_name text)
+create or replace function logres.grant_perms(x_queue_name text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.grant_perms(1)
+-- Function: logres.grant_perms(1)
 --
 --      Make event tables readable by public.
 --
@@ -1142,7 +1142,7 @@ declare
     dst_table   text;
     part_table  text;
 begin
-    select * from pgque.queue into q
+    select * from logres.queue into q
         where queue_name = x_queue_name;
     if not found then
         raise exception 'Queue not found';
@@ -1159,30 +1159,30 @@ begin
     end if;
 
     -- tick seq, normal users don't need to modify it
-    execute 'grant select on ' || pgque.quote_fqname(q.queue_tick_seq) || ' to public';
+    execute 'grant select on ' || logres.quote_fqname(q.queue_tick_seq) || ' to public';
 
     -- event seq
-    execute 'grant select on ' || pgque.quote_fqname(q.queue_event_seq) || ' to public';
-    execute 'grant usage on ' || pgque.quote_fqname(q.queue_event_seq) || ' to pgque_admin';
+    execute 'grant select on ' || logres.quote_fqname(q.queue_event_seq) || ' to public';
+    execute 'grant usage on ' || logres.quote_fqname(q.queue_event_seq) || ' to logres_admin';
 
     -- set grants on parent table
-    perform pgque._grant_perms_from('pgque', 'event_template', dst_schema, dst_table);
+    perform logres._grant_perms_from('logres', 'event_template', dst_schema, dst_table);
 
     -- set grants on real event tables
     for i in 0 .. q.queue_ntables - 1 loop
         part_table := dst_table  || '_' || i::text;
-        perform pgque._grant_perms_from('pgque', 'event_template', dst_schema, part_table);
+        perform logres._grant_perms_from('logres', 'event_template', dst_schema, part_table);
     end loop;
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque._grant_perms_from(src_schema text, src_table text, dst_schema text, dst_table text)
+create or replace function logres._grant_perms_from(src_schema text, src_table text, dst_schema text, dst_table text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.grant_perms_from(1)
+-- Function: logres.grant_perms_from(1)
 --
 --      Copy grants from one table to another.
 --      Workaround for missing GRANTS option for CREATE TABLE LIKE.
@@ -1218,10 +1218,10 @@ begin
 end;
 $$ language plpgsql strict;
 
-create or replace function pgque.tune_storage(i_queue_name text)
+create or replace function logres.tune_storage(i_queue_name text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.tune_storage(1)
+-- Function: logres.tune_storage(1)
 --
 --      Tunes storage settings for queue data tables
 -- ----------------------------------------------------------------------
@@ -1236,7 +1236,7 @@ begin
     pgver := current_setting('server_version_num');
 
     select * into q
-      from pgque.queue where queue_name = i_queue_name;
+      from logres.queue where queue_name = i_queue_name;
     if not found then
         return 0;
     end if;
@@ -1268,17 +1268,17 @@ $$ language plpgsql strict;
 
 
 
-create or replace function pgque.force_tick(i_queue_name text)
+create or replace function logres.force_tick(i_queue_name text)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.force_tick(2)
+-- Function: logres.force_tick(2)
 --
 --      Simulate lots of events happening to force ticker to tick.
 --
 --      Should be called in loop, with some delay until last tick
 --      changes or too much time is passed.
 --
---      Such function is needed because paraller calls of pgque.ticker() are
+--      Such function is needed because paraller calls of logres.ticker() are
 --      dangerous, and cannot be protected with locks as snapshot
 --      is taken before locking.
 --
@@ -1296,7 +1296,7 @@ begin
     select queue_id,
            setval(queue_event_seq, nextval(queue_event_seq)
                                    + queue_ticker_max_count * 2 + 1000) as tmp
-      into q from pgque.queue
+      into q from logres.queue
      where queue_name = i_queue_name
        and not queue_external_ticker
        and not queue_ticker_paused;
@@ -1307,19 +1307,19 @@ begin
 
     -- return last tick id
     select tick_id into t
-      from pgque.tick, pgque.queue
+      from logres.tick, logres.queue
      where tick_queue = queue_id and queue_name = i_queue_name
      order by tick_queue desc, tick_id desc limit 1;
 
     return t.tick_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque.seq_getval(i_seq_name text)
+create or replace function logres.seq_getval(i_seq_name text)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.seq_getval(1)
+-- Function: logres.seq_getval(1)
 --
 --      Read current last_val from seq, without affecting it.
 --
@@ -1351,10 +1351,10 @@ begin
 end;
 $$ language plpgsql strict;
 
-create or replace function pgque.seq_setval(i_seq_name text, i_new_value int8)
+create or replace function logres.seq_setval(i_seq_name text, i_new_value int8)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.seq_setval(2)
+-- Function: logres.seq_setval(2)
 --
 --      Like setval() but does not allow going back.
 --
@@ -1369,9 +1369,9 @@ declare
     res     int8;
     fqname  text;
 begin
-    fqname := pgque.quote_fqname(i_seq_name);
+    fqname := logres.quote_fqname(i_seq_name);
 
-    res := pgque.seq_getval(i_seq_name);
+    res := logres.seq_getval(i_seq_name);
     if res < i_new_value then
         perform setval(fqname, i_new_value);
         return i_new_value;
@@ -1381,10 +1381,10 @@ end;
 $$ language plpgsql strict;
 
 
-create or replace function pgque.quote_fqname(i_name text)
+create or replace function logres.quote_fqname(i_name text)
 returns text as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.quote_fqname(1)
+-- Function: logres.quote_fqname(1)
 --
 --      Quete fully-qualified object name for SQL.
 --
@@ -1416,10 +1416,10 @@ begin
 end;
 $$ language plpgsql strict immutable;
 
-create or replace function pgque.create_queue(i_queue_name text)
+create or replace function logres.create_queue(i_queue_name text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.create_queue(1)
+-- Function: logres.create_queue(1)
 --
 --      Creates new queue with given name.
 --
@@ -1427,13 +1427,13 @@ returns integer as $$
 --      0 - queue already exists
 --      1 - queue created
 -- Calls:
---      pgque.grant_perms(i_queue_name);
---      pgque.ticker(i_queue_name);
---      pgque.tune_storage(i_queue_name);
+--      logres.grant_perms(i_queue_name);
+--      logres.ticker(i_queue_name);
+--      logres.tune_storage(i_queue_name);
 -- Tables directly manipulated:
---      insert - pgque.queue
---      create - pgque.event_N () inherits (pgque.event_template)
---      create - pgque.event_N_0 .. pgque.event_N_M () inherits (pgque.event_N)
+--      insert - logres.queue
+--      create - logres.event_N () inherits (logres.event_template)
+--      create - logres.event_N_0 .. logres.event_N_M () inherits (logres.event_N)
 -- ----------------------------------------------------------------------
 declare
     tblpfx   text;
@@ -1451,56 +1451,56 @@ begin
     end if;
 
     -- check if exists
-    perform 1 from pgque.queue where queue_name = i_queue_name;
+    perform 1 from logres.queue where queue_name = i_queue_name;
     if found then
         return 0;
     end if;
 
     -- insert event
-    id := nextval('pgque.queue_queue_id_seq');
-    tblpfx := 'pgque.event_' || id::text;
+    id := nextval('logres.queue_queue_id_seq');
+    tblpfx := 'logres.event_' || id::text;
     idxpfx := 'event_' || id::text;
-    tick_seq := 'pgque.event_' || id::text || '_tick_seq';
-    ev_seq := 'pgque.event_' || id::text || '_id_seq';
-    insert into pgque.queue (queue_id, queue_name,
+    tick_seq := 'logres.event_' || id::text || '_tick_seq';
+    ev_seq := 'logres.event_' || id::text || '_id_seq';
+    insert into logres.queue (queue_id, queue_name,
             queue_data_pfx, queue_event_seq, queue_tick_seq)
         values (id, i_queue_name, tblpfx, ev_seq, tick_seq);
 
-    select queue_ntables into n_tables from pgque.queue
+    select queue_ntables into n_tables from logres.queue
         where queue_id = id;
 
     -- create seqs
-    execute 'CREATE SEQUENCE ' || pgque.quote_fqname(tick_seq);
-    execute 'CREATE SEQUENCE ' || pgque.quote_fqname(ev_seq);
+    execute 'CREATE SEQUENCE ' || logres.quote_fqname(tick_seq);
+    execute 'CREATE SEQUENCE ' || logres.quote_fqname(ev_seq);
 
     -- create data tables
-    execute 'CREATE TABLE ' || pgque.quote_fqname(tblpfx) || ' () '
-            || ' INHERITS (pgque.event_template)';
+    execute 'CREATE TABLE ' || logres.quote_fqname(tblpfx) || ' () '
+            || ' INHERITS (logres.event_template)';
     for i in 0 .. (n_tables - 1) loop
         tblname := tblpfx || '_' || i::text;
         idxname := idxpfx || '_' || i::text || '_txid_idx';
-        execute 'CREATE TABLE ' || pgque.quote_fqname(tblname) || ' () '
-                || ' INHERITS (' || pgque.quote_fqname(tblpfx) || ')';
-        execute 'ALTER TABLE ' || pgque.quote_fqname(tblname) || ' ALTER COLUMN ev_id '
+        execute 'CREATE TABLE ' || logres.quote_fqname(tblname) || ' () '
+                || ' INHERITS (' || logres.quote_fqname(tblpfx) || ')';
+        execute 'ALTER TABLE ' || logres.quote_fqname(tblname) || ' ALTER COLUMN ev_id '
                 || ' SET DEFAULT nextval(' || quote_literal(ev_seq) || ')';
         execute 'create index ' || quote_ident(idxname) || ' on '
-                || pgque.quote_fqname(tblname) || ' (ev_txid)';
+                || logres.quote_fqname(tblname) || ' (ev_txid)';
     end loop;
 
-    perform pgque.grant_perms(i_queue_name);
+    perform logres.grant_perms(i_queue_name);
 
-    perform pgque.ticker(i_queue_name);
+    perform logres.ticker(i_queue_name);
 
-    perform pgque.tune_storage(i_queue_name);
+    perform logres.tune_storage(i_queue_name);
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.drop_queue(x_queue_name text, x_force bool)
+create or replace function logres.drop_queue(x_queue_name text, x_force bool)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.drop_queue(2)
+-- Function: logres.drop_queue(2)
 --
 --     Drop queue and all associated tables.
 --
@@ -1510,12 +1510,12 @@ returns integer as $$
 -- Returns:
 --      1 - success
 -- Calls:
---      pgque.unregister_consumer(queue_name, consumer_name)
---      perform pgque.ticker(i_queue_name);
---      perform pgque.tune_storage(i_queue_name);
+--      logres.unregister_consumer(queue_name, consumer_name)
+--      perform logres.ticker(i_queue_name);
+--      perform logres.tune_storage(i_queue_name);
 -- Tables directly manipulated:
---      delete - pgque.queue
---      drop - pgque.event_N (), pgque.event_N_0 .. pgque.event_N_M 
+--      delete - logres.queue
+--      drop - logres.event_N (), logres.event_N_0 .. logres.event_N_M 
 -- ----------------------------------------------------------------------
 declare
     tblname  text;
@@ -1523,7 +1523,7 @@ declare
     num integer;
 begin
     -- check if exists
-    select * into q from pgque.queue
+    select * into q from logres.queue
         where queue_name = x_queue_name
         for update;
     if not found then
@@ -1531,11 +1531,11 @@ begin
     end if;
 
     if x_force then
-        perform pgque.unregister_consumer(queue_name, consumer_name)
-           from pgque.get_consumer_info(x_queue_name);
+        perform logres.unregister_consumer(queue_name, consumer_name)
+           from logres.get_consumer_info(x_queue_name);
     else
         -- check if no consumers
-        select count(*) into num from pgque.subscription
+        select count(*) into num from logres.subscription
             where sub_queue = q.queue_id;
         if num > 0 then
             raise exception 'cannot drop queue, consumers still attached';
@@ -1545,48 +1545,48 @@ begin
     -- drop data tables
     for i in 0 .. (q.queue_ntables - 1) loop
         tblname := q.queue_data_pfx || '_' || i::text;
-        execute 'DROP TABLE ' || pgque.quote_fqname(tblname);
+        execute 'DROP TABLE ' || logres.quote_fqname(tblname);
     end loop;
-    execute 'DROP TABLE ' || pgque.quote_fqname(q.queue_data_pfx);
+    execute 'DROP TABLE ' || logres.quote_fqname(q.queue_data_pfx);
 
     -- delete ticks
-    delete from pgque.tick where tick_queue = q.queue_id;
+    delete from logres.tick where tick_queue = q.queue_id;
 
     -- drop seqs
     -- FIXME: any checks needed here?
-    execute 'DROP SEQUENCE ' || pgque.quote_fqname(q.queue_tick_seq);
-    execute 'DROP SEQUENCE ' || pgque.quote_fqname(q.queue_event_seq);
+    execute 'DROP SEQUENCE ' || logres.quote_fqname(q.queue_tick_seq);
+    execute 'DROP SEQUENCE ' || logres.quote_fqname(q.queue_event_seq);
 
     -- delete event
-    delete from pgque.queue
+    delete from logres.queue
         where queue_name = x_queue_name;
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.drop_queue(x_queue_name text)
+create or replace function logres.drop_queue(x_queue_name text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.drop_queue(1)
+-- Function: logres.drop_queue(1)
 --
 --     Drop queue and all associated tables.
 --     No consumers must be listening on the queue.
 --
 -- ----------------------------------------------------------------------
 begin
-    return pgque.drop_queue(x_queue_name, false);
+    return logres.drop_queue(x_queue_name, false);
 end;
 $$ language plpgsql strict;
 
 
-create or replace function pgque.set_queue_config(
+create or replace function logres.set_queue_config(
     x_queue_name    text,
     x_param_name    text,
     x_param_value   text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.set_queue_config(3)
+-- Function: logres.set_queue_config(3)
 --
 --
 --     Set configuration for specified queue.
@@ -1601,7 +1601,7 @@ returns integer as $$
 -- Calls:
 --      None
 -- Tables directly manipulated:
---      update - pgque.queue
+--      update - logres.queue
 -- ----------------------------------------------------------------------
 declare
     v_param_name    text;
@@ -1612,7 +1612,7 @@ begin
     end if;
 
     -- check if queue exists
-    perform 1 from pgque.queue where queue_name = x_queue_name;
+    perform 1 from logres.queue where queue_name = x_queue_name;
     if not found then
         raise exception 'No such event queue';
     end if;
@@ -1630,18 +1630,18 @@ begin
         raise exception 'cannot change parameter "%s"', x_param_name;
     end if;
 
-    execute 'update pgque.queue set ' 
+    execute 'update logres.queue set ' 
         || v_param_name || ' = ' || quote_literal(x_param_value)
         || ' where queue_name = ' || quote_literal(x_queue_name);
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.insert_event(queue_name text, ev_type text, ev_data text)
+create or replace function logres.insert_event(queue_name text, ev_type text, ev_data text)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.insert_event(3)
+-- Function: logres.insert_event(3)
 --
 --      Insert a event into queue.
 --
@@ -1653,21 +1653,21 @@ returns bigint as $$
 -- Returns:
 --      Event ID
 -- Calls:
---      pgque.insert_event(7)
+--      logres.insert_event(7)
 -- ----------------------------------------------------------------------
 begin
-    return pgque.insert_event(queue_name, ev_type, ev_data, null, null, null, null);
+    return logres.insert_event(queue_name, ev_type, ev_data, null, null, null, null);
 end;
 $$ language plpgsql;
 
 
 
-create or replace function pgque.insert_event(
+create or replace function logres.insert_event(
     queue_name text, ev_type text, ev_data text,
     ev_extra1 text, ev_extra2 text, ev_extra3 text, ev_extra4 text)
 returns bigint as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.insert_event(7)
+-- Function: logres.insert_event(7)
 --
 --      Insert a event into queue with all the extra fields.
 --
@@ -1683,20 +1683,20 @@ returns bigint as $$
 -- Returns:
 --      Event ID
 -- Calls:
---      pgque.insert_event_raw(11)
+--      logres.insert_event_raw(11)
 -- Tables directly manipulated:
---      insert - pgque.insert_event_raw(11), a C function, inserts into current event_N_M table
+--      insert - logres.insert_event_raw(11), a C function, inserts into current event_N_M table
 -- ----------------------------------------------------------------------
 begin
-    return pgque.insert_event_raw(queue_name, null, now(), null, null,
+    return logres.insert_event_raw(queue_name, null, now(), null, null,
             ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.current_event_table(x_queue_name text)
+create or replace function logres.current_event_table(x_queue_name text)
 returns text as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.current_event_table(1)
+-- Function: logres.current_event_table(1)
 --
 --      Return active event table for particular queue.
 --      Event can be added to it without going via functions,
@@ -1724,7 +1724,7 @@ begin
     select queue_data_pfx || '_' || queue_cur_table::text,
            queue_disable_insert
         into res, disabled
-        from pgque.queue where queue_name = x_queue_name;
+        from logres.queue where queue_name = x_queue_name;
     if not found then
         raise exception 'Event queue not found';
     end if;
@@ -1737,12 +1737,12 @@ begin
 end;
 $$ language plpgsql; -- no perms needed
 
-create or replace function pgque.register_consumer(
+create or replace function logres.register_consumer(
     x_queue_name text,
     x_consumer_id text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.register_consumer(2)
+-- Function: logres.register_consumer(2)
 --
 --      Subscribe consumer on a queue.
 --
@@ -1756,23 +1756,23 @@ returns integer as $$
 --      0  - if already registered
 --      1  - if new registration
 -- Calls:
---      pgque.register_consumer_at(3)
+--      logres.register_consumer_at(3)
 -- Tables directly manipulated:
 --      None
 -- ----------------------------------------------------------------------
 begin
-    return pgque.register_consumer_at(x_queue_name, x_consumer_id, NULL);
+    return logres.register_consumer_at(x_queue_name, x_consumer_id, NULL);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque.register_consumer_at(
+create or replace function logres.register_consumer_at(
     x_queue_name text,
     x_consumer_name text,
     x_tick_pos bigint)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.register_consumer_at(3)
+-- Function: logres.register_consumer_at(3)
 --
 --      Extended registration, allows to specify tick_id.
 --
@@ -1789,7 +1789,7 @@ returns integer as $$
 -- Calls:
 --      None
 -- Tables directly manipulated:
---      update/insert - pgque.subscription
+--      update/insert - logres.subscription
 -- ----------------------------------------------------------------------
 declare
     tmp         text;
@@ -1799,24 +1799,24 @@ declare
     queue integer;
     sub record;
 begin
-    select queue_id into x_queue_id from pgque.queue
+    select queue_id into x_queue_id from logres.queue
         where queue_name = x_queue_name;
     if not found then
         raise exception 'Event queue not created yet';
     end if;
 
     -- get consumer and create if new
-    select co_id into x_consumer_id from pgque.consumer
+    select co_id into x_consumer_id from logres.consumer
         where co_name = x_consumer_name
         for update;
     if not found then
-        insert into pgque.consumer (co_name) values (x_consumer_name);
-        x_consumer_id := currval('pgque.consumer_co_id_seq');
+        insert into logres.consumer (co_name) values (x_consumer_name);
+        x_consumer_id := currval('logres.consumer_co_id_seq');
     end if;
 
     -- if particular tick was requested, check if it exists
     if x_tick_pos is not null then
-        perform 1 from pgque.tick
+        perform 1 from logres.tick
             where tick_queue = x_queue_id
               and tick_id = x_tick_pos;
         if not found then
@@ -1826,13 +1826,13 @@ begin
 
     -- check if already registered
     select sub_last_tick, sub_batch into sub
-        from pgque.subscription
+        from logres.subscription
         where sub_consumer = x_consumer_id
           and sub_queue  = x_queue_id;
     if found then
         if x_tick_pos is not null then
             -- if requested, update tick pos and drop partial batch
-            update pgque.subscription
+            update logres.subscription
                 set sub_last_tick = x_tick_pos,
                     sub_batch = null,
                     sub_next_tick = null,
@@ -1847,7 +1847,7 @@ begin
     --  new registration
     if x_tick_pos is null then
         -- start from current tick
-        select tick_id into last_tick from pgque.tick
+        select tick_id into last_tick from logres.tick
             where tick_queue = x_queue_id
             order by tick_queue desc, tick_id desc
             limit 1;
@@ -1859,19 +1859,19 @@ begin
     end if;
 
     -- register
-    insert into pgque.subscription (sub_queue, sub_consumer, sub_last_tick)
+    insert into logres.subscription (sub_queue, sub_consumer, sub_last_tick)
         values (x_queue_id, x_consumer_id, last_tick);
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque.unregister_consumer(
+create or replace function logres.unregister_consumer(
     x_queue_name text,
     x_consumer_name text)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.unregister_consumer(2)
+-- Function: logres.unregister_consumer(2)
 --
 --      Unsubscribe consumer from the queue.
 --      Also consumer's retry events are deleted.
@@ -1885,8 +1885,8 @@ returns integer as $$
 -- Calls:
 --      None
 -- Tables directly manipulated:
---      delete - pgque.retry_queue
---      delete - pgque.subscription
+--      delete - logres.retry_queue
+--      delete - logres.subscription
 -- ----------------------------------------------------------------------
 declare
     x_sub_id integer;
@@ -1898,7 +1898,7 @@ begin
            -- subconsumers can only have both null or both not null - main consumer for subconsumers has only one not null
            (s.sub_last_tick IS NULL AND s.sub_next_tick IS NULL) OR (s.sub_last_tick IS NOT NULL AND s.sub_next_tick IS NOT NULL)
       into x_sub_id, _consumer_id, _is_subconsumer
-      from pgque.subscription s, pgque.consumer c, pgque.queue q
+      from logres.subscription s, logres.consumer c, logres.queue q
      where s.sub_queue = q.queue_id
        and s.sub_consumer = c.co_id
        and q.queue_name = x_queue_name
@@ -1910,12 +1910,12 @@ begin
 
     -- consumer + subconsumer count
     select count(*) into _sub_id_cnt
-        from pgque.subscription
+        from logres.subscription
        where sub_id = x_sub_id;
 
     -- delete only one subconsumer
     if _sub_id_cnt > 1 and _is_subconsumer then
-        delete from pgque.subscription
+        delete from logres.subscription
               where sub_id = x_sub_id
                 and sub_consumer = _consumer_id;
         return 1;
@@ -1923,17 +1923,17 @@ begin
         -- delete main consumer (including possible subconsumers)
 
         -- retry events
-        delete from pgque.retry_queue
+        delete from logres.retry_queue
             where ev_owner = x_sub_id;
 
         -- this will drop subconsumers too
-        delete from pgque.subscription
+        delete from logres.subscription
             where sub_id = x_sub_id;
 
-        perform 1 from pgque.subscription
+        perform 1 from logres.subscription
             where sub_consumer = _consumer_id;
         if not found then
-            delete from pgque.consumer
+            delete from logres.consumer
                 where co_id = _consumer_id;
         end if;
 
@@ -1941,9 +1941,9 @@ begin
     end if;
 
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.next_batch_info(
+create or replace function logres.next_batch_info(
     in i_queue_name text,
     in i_consumer_name text,
     out batch_id int8,
@@ -1955,7 +1955,7 @@ create or replace function pgque.next_batch_info(
     out prev_tick_event_seq int8)
 as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.next_batch_info(2)
+-- Function: logres.next_batch_info(2)
 --
 --      Makes next block of events active.
 --
@@ -1980,7 +1980,7 @@ as $$
 --      prev_tick_time      - Start tick time.
 --      prev_tick_event_seq - value from event id sequence at the time tick was issued.
 -- Calls:
---      pgque.next_batch_custom(5)
+--      logres.next_batch_custom(5)
 -- Tables directly manipulated:
 --      None
 -- ----------------------------------------------------------------------
@@ -1990,17 +1990,17 @@ begin
            f.cur_tick_event_seq, f.prev_tick_event_seq
         into batch_id, cur_tick_id, prev_tick_id, cur_tick_time, prev_tick_time,
              cur_tick_event_seq, prev_tick_event_seq
-        from pgque.next_batch_custom(i_queue_name, i_consumer_name, NULL, NULL, NULL) f;
+        from logres.next_batch_custom(i_queue_name, i_consumer_name, NULL, NULL, NULL) f;
     return;
 end;
 $$ language plpgsql;
 
-create or replace function pgque.next_batch(
+create or replace function logres.next_batch(
     in i_queue_name text,
     in i_consumer_name text)
 returns int8 as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.next_batch(2)
+-- Function: logres.next_batch(2)
 --
 --      Old function that returns just batch_id.
 --
@@ -2015,12 +2015,12 @@ declare
     res int8;
 begin
     select batch_id into res
-        from pgque.next_batch_info(i_queue_name, i_consumer_name);
+        from logres.next_batch_info(i_queue_name, i_consumer_name);
     return res;
 end;
 $$ language plpgsql;
 
-create or replace function pgque.next_batch_custom(
+create or replace function logres.next_batch_custom(
     in i_queue_name text,
     in i_consumer_name text,
     in i_min_lag interval,
@@ -2035,7 +2035,7 @@ create or replace function pgque.next_batch_custom(
     out prev_tick_event_seq int8)
 as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.next_batch_custom(5)
+-- Function: logres.next_batch_custom(5)
 --
 --      Makes next block of events active.  Block size can be tuned
 --      with i_min_count, i_min_interval parameters.  Events age can
@@ -2068,9 +2068,9 @@ as $$
 --      prev_tick_time      - Start tick time.
 --      prev_tick_event_seq - value from event id sequence at the time tick was issued.
 -- Calls:
---      pgque.insert_event_raw(11)
+--      logres.insert_event_raw(11)
 -- Tables directly manipulated:
---      update - pgque.subscription
+--      update - logres.subscription
 -- ----------------------------------------------------------------------
 declare
     errmsg          text;
@@ -2084,13 +2084,13 @@ begin
         into queue_id, cons_id, sub_id, batch_id,
              prev_tick_id, prev_tick_time, prev_tick_event_seq,
              cur_tick_id, cur_tick_time, cur_tick_event_seq
-        from pgque.consumer c,
-             pgque.queue q,
-             pgque.subscription s
-             left join pgque.tick t1
+        from logres.consumer c,
+             logres.queue q,
+             logres.subscription s
+             left join logres.tick t1
                 on (t1.tick_queue = s.sub_queue
                     and t1.tick_id = s.sub_last_tick)
-             left join pgque.tick t2
+             left join logres.tick t2
                 on (t2.tick_queue = s.sub_queue
                     and t2.tick_id = s.sub_next_tick)
         where q.queue_name = i_queue_name
@@ -2119,7 +2119,7 @@ begin
         -- find next tick
         select tick_id, tick_time, tick_event_seq
             into cur_tick_id, cur_tick_time, cur_tick_event_seq
-            from pgque.tick
+            from logres.tick
             where tick_id > prev_tick_id
               and tick_queue = queue_id
             order by tick_queue asc, tick_id asc
@@ -2128,7 +2128,7 @@ begin
         -- find custom tick
         select next_tick_id, next_tick_time, next_tick_seq
           into cur_tick_id, cur_tick_time, cur_tick_event_seq
-          from pgque.find_tick_helper(queue_id, prev_tick_id,
+          from logres.find_tick_helper(queue_id, prev_tick_id,
                                     prev_tick_time, prev_tick_event_seq,
                                     i_min_count, i_min_interval);
     end if;
@@ -2151,8 +2151,8 @@ begin
     end if;
 
     -- get next batch
-    batch_id := nextval('pgque.batch_id_seq');
-    update pgque.subscription
+    batch_id := nextval('logres.batch_id_seq');
+    update logres.subscription
         set sub_batch = batch_id,
             sub_next_tick = cur_tick_id,
             sub_active = now()
@@ -2160,9 +2160,9 @@ begin
           and sub_consumer = cons_id;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.get_batch_events(
+create or replace function logres.get_batch_events(
     in x_batch_id   bigint,
     out ev_id       bigint,
     out ev_time     timestamptz,
@@ -2176,7 +2176,7 @@ create or replace function pgque.get_batch_events(
     out ev_extra4   text)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_batch_events(1)
+-- Function: logres.get_batch_events(1)
 --
 --      Get all events in batch.
 --
@@ -2189,7 +2189,7 @@ returns setof record as $$
 declare
     sql text;
 begin
-    sql := pgque.batch_event_sql(x_batch_id);
+    sql := logres.batch_event_sql(x_batch_id);
     for ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
         ev_extra1, ev_extra2, ev_extra3, ev_extra4
         in execute sql
@@ -2201,7 +2201,7 @@ end;
 $$ language plpgsql; -- no perms needed
 
 
-create or replace function pgque.get_batch_cursor(
+create or replace function logres.get_batch_cursor(
     in i_batch_id       bigint,
     in i_cursor_name    text,
     in i_quick_limit    int4,
@@ -2219,7 +2219,7 @@ create or replace function pgque.get_batch_cursor(
     out ev_extra4   text)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_batch_cursor(4)
+-- Function: logres.get_batch_cursor(4)
 --
 --      Get events in batch using a cursor.
 --
@@ -2232,7 +2232,7 @@ returns setof record as $$
 -- Returns:
 --      List of events.
 -- Calls:
---      pgque.batch_event_sql(i_batch_id) - internal function which generates SQL optimised specially for getting events in this batch
+--      logres.batch_event_sql(i_batch_id) - internal function which generates SQL optimised specially for getting events in this batch
 -- ----------------------------------------------------------------------
 declare
     _cname  text;
@@ -2243,7 +2243,7 @@ begin
     end if;
 
     _cname := quote_ident(i_cursor_name);
-    _sql := pgque.batch_event_sql(i_batch_id);
+    _sql := logres.batch_event_sql(i_batch_id);
 
     -- apply extra where
     if i_extra_where is not null then
@@ -2273,7 +2273,7 @@ begin
 end;
 $$ language plpgsql; -- no perms needed
 
-create or replace function pgque.get_batch_cursor(
+create or replace function logres.get_batch_cursor(
     in i_batch_id       bigint,
     in i_cursor_name    text,
     in i_quick_limit    int4,
@@ -2290,7 +2290,7 @@ create or replace function pgque.get_batch_cursor(
     out ev_extra4   text)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_batch_cursor(3)
+-- Function: logres.get_batch_cursor(3)
 --
 --      Get events in batch using a cursor.
 --
@@ -2302,13 +2302,13 @@ returns setof record as $$
 -- Returns:
 --      List of events.
 -- Calls:
---      pgque.get_batch_cursor(4)
+--      logres.get_batch_cursor(4)
 -- ----------------------------------------------------------------------
 begin
     for ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
         ev_extra1, ev_extra2, ev_extra3, ev_extra4
     in
-        select * from pgque.get_batch_cursor(i_batch_id,
+        select * from logres.get_batch_cursor(i_batch_id,
             i_cursor_name, i_quick_limit, null)
     loop
         return next;
@@ -2317,13 +2317,13 @@ begin
 end;
 $$ language plpgsql strict; -- no perms needed
 
-create or replace function pgque.event_retry(
+create or replace function logres.event_retry(
     x_batch_id bigint,
     x_event_id bigint,
     x_retry_time timestamptz)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.event_retry(3a)
+-- Function: logres.event_retry(3a)
 --
 --     Put the event into retry queue, to be processed again later.
 --
@@ -2338,17 +2338,17 @@ returns integer as $$
 -- Calls:
 --      None
 -- Tables directly manipulated:
---      insert - pgque.retry_queue
+--      insert - logres.retry_queue
 -- ----------------------------------------------------------------------
 begin
-    insert into pgque.retry_queue (ev_retry_after, ev_queue,
+    insert into logres.retry_queue (ev_retry_after, ev_queue,
         ev_id, ev_time, ev_txid, ev_owner, ev_retry, ev_type, ev_data,
         ev_extra1, ev_extra2, ev_extra3, ev_extra4)
     select x_retry_time, sub_queue,
            ev_id, ev_time, NULL, sub_id, coalesce(ev_retry, 0) + 1,
            ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4
-      from pgque.get_batch_events(x_batch_id),
-           pgque.subscription
+      from logres.get_batch_events(x_batch_id),
+           logres.subscription
      where sub_batch = x_batch_id
        and ev_id = x_event_id;
     if not found then
@@ -2361,16 +2361,16 @@ exception
     when unique_violation then
         return 0;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque.event_retry(
+create or replace function logres.event_retry(
     x_batch_id bigint,
     x_event_id bigint,
     x_retry_seconds integer)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.event_retry(3b)
+-- Function: logres.event_retry(3b)
 --
 --     Put the event into retry queue, to be processed later again.
 --
@@ -2383,7 +2383,7 @@ returns integer as $$
 --     1 - success
 --     0 - event already in retry queue
 -- Calls:
---      pgque.event_retry(3a)
+--      logres.event_retry(3a)
 -- Tables directly manipulated:
 --      None
 -- ----------------------------------------------------------------------
@@ -2391,16 +2391,16 @@ declare
     new_retry  timestamptz;
 begin
     new_retry := current_timestamp + ((x_retry_seconds::text || ' seconds')::interval);
-    return pgque.event_retry(x_batch_id, x_event_id, new_retry);
+    return logres.event_retry(x_batch_id, x_event_id, new_retry);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.batch_retry(
+create or replace function logres.batch_retry(
     i_batch_id bigint,
     i_retry_seconds integer)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.batch_retry(2)
+-- Function: logres.batch_retry(2)
 --
 --     Put whole batch into retry queue, to be processed again later.
 --
@@ -2413,7 +2413,7 @@ returns integer as $$
 -- Calls:
 --      None
 -- Tables directly manipulated:
---      pgque.retry_queue
+--      logres.retry_queue
 -- ----------------------------------------------------------------------
 declare
     _retry timestamptz;
@@ -2422,12 +2422,12 @@ declare
 begin
     _retry := current_timestamp + ((i_retry_seconds::text || ' seconds')::interval);
 
-    select * into _s from pgque.subscription where sub_batch = i_batch_id;
+    select * into _s from logres.subscription where sub_batch = i_batch_id;
     if not found then
         raise exception 'batch_retry: batch % not found', i_batch_id;
     end if;
 
-    insert into pgque.retry_queue (ev_retry_after, ev_queue,
+    insert into logres.retry_queue (ev_retry_after, ev_queue,
         ev_id, ev_time, ev_txid, ev_owner, ev_retry,
         ev_type, ev_data, ev_extra1, ev_extra2,
         ev_extra3, ev_extra4)
@@ -2435,8 +2435,8 @@ begin
            b.ev_id, b.ev_time, NULL::int8, _s.sub_id, coalesce(b.ev_retry, 0) + 1,
            b.ev_type, b.ev_data, b.ev_extra1, b.ev_extra2,
            b.ev_extra3, b.ev_extra4
-      from pgque.get_batch_events(i_batch_id) b
-           left join pgque.retry_queue rq
+      from logres.get_batch_events(i_batch_id) b
+           left join logres.retry_queue rq
                   on (rq.ev_id = b.ev_id
                       and rq.ev_owner = _s.sub_id
                       and rq.ev_queue = _s.sub_queue)
@@ -2445,14 +2445,14 @@ begin
     GET DIAGNOSTICS _cnt = ROW_COUNT;
     return _cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque.finish_batch(
+create or replace function logres.finish_batch(
     x_batch_id bigint)
 returns integer as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.finish_batch(1)
+-- Function: logres.finish_batch(1)
 --
 --      Closes a batch.  No more operations can be done with events
 --      of this batch.
@@ -2465,10 +2465,10 @@ returns integer as $$
 -- Calls:
 --      None
 -- Tables directly manipulated:
---      update - pgque.subscription
+--      update - logres.subscription
 -- ----------------------------------------------------------------------
 begin
-    update pgque.subscription
+    update logres.subscription
         set sub_active = now(),
             sub_last_tick = sub_next_tick,
             sub_next_tick = null,
@@ -2481,12 +2481,12 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-drop function if exists pgque.get_queue_info();
-drop function if exists pgque.get_queue_info(text);
+drop function if exists logres.get_queue_info();
+drop function if exists logres.get_queue_info(text);
 
-create or replace function pgque.get_queue_info(
+create or replace function logres.get_queue_info(
     out queue_name                  text,
     out queue_ntables               integer,
     out queue_cur_table             integer,
@@ -2503,12 +2503,12 @@ create or replace function pgque.get_queue_info(
     out last_tick_id                bigint)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_queue_info(0)
+-- Function: logres.get_queue_info(0)
 --
 --      Get info about all queues.
 --
 -- Returns:
---      List of pgque.ret_queue_info records.
+--      List of logres.ret_queue_info records.
 --     queue_name                  - queue name
 --     queue_ntables               - number of tables in this queue
 --     queue_cur_table             - ???
@@ -2535,7 +2535,7 @@ begin
         f.queue_switch_time, f.queue_external_ticker, f.queue_ticker_paused,
         f.queue_ticker_max_count, f.queue_ticker_max_lag, f.queue_ticker_idle_period,
         f.ticker_lag, f.ev_per_sec, f.ev_new, f.last_tick_id
-        from pgque.get_queue_info(null) f
+        from logres.get_queue_info(null) f
     loop
         return next;
     end loop;
@@ -2543,7 +2543,7 @@ begin
 end;
 $$ language plpgsql;
 
-create or replace function pgque.get_queue_info(
+create or replace function logres.get_queue_info(
     in i_queue_name                 text,
     out queue_name                  text,
     out queue_ntables               integer,
@@ -2561,13 +2561,13 @@ create or replace function pgque.get_queue_info(
     out last_tick_id                bigint)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_queue_info(1)
+-- Function: logres.get_queue_info(1)
 --
 --      Get info about particular queue.
 --
 -- Returns:
---      One pgque.ret_queue_info record.
---      contente same as forpgque.get_queue_info() 
+--      One logres.ret_queue_info record.
+--      contente same as forlogres.get_queue_info() 
 -- ----------------------------------------------------------------------
 declare
     _ticker_lag interval;
@@ -2591,7 +2591,7 @@ begin
         q.queue_ticker_max_count, q.queue_ticker_max_lag,
         q.queue_ticker_idle_period,
         q.queue_id, q.queue_event_seq
-        from pgque.queue q
+        from logres.queue q
         where (i_queue_name is null or q.queue_name = i_queue_name)
         order by q.queue_name
     loop
@@ -2599,14 +2599,14 @@ begin
         select (current_timestamp - t.tick_time),
                tick_id, t.tick_time, t.tick_event_seq
             into ticker_lag, _top_tick_id, _top_tick_time, _top_tick_event_seq
-            from pgque.tick t
+            from logres.tick t
             where t.tick_queue = _queue_id
             order by t.tick_queue desc, t.tick_id desc
             limit 1;
         -- slightly older tick
         select ht.tick_id, ht.tick_time, ht.tick_event_seq
             into _ht_tick_id, _ht_tick_time, _ht_tick_event_seq
-            from pgque.tick ht
+            from logres.tick ht
             where ht.tick_queue = _queue_id
              and ht.tick_id >= _top_tick_id - 20
             order by ht.tick_queue asc, ht.tick_id asc
@@ -2616,7 +2616,7 @@ begin
         else
             ev_per_sec = null;
         end if;
-        ev_new = pgque.seq_getval(_queue_event_seq) - _top_tick_event_seq;
+        ev_new = logres.seq_getval(_queue_event_seq) - _top_tick_event_seq;
         last_tick_id = _top_tick_id;
         return next;
     end loop;
@@ -2625,7 +2625,7 @@ end;
 $$ language plpgsql;
 
 
-create or replace function pgque.get_consumer_info(
+create or replace function logres.get_consumer_info(
     out queue_name      text,
     out consumer_name   text,
     out lag             interval,
@@ -2636,12 +2636,12 @@ create or replace function pgque.get_consumer_info(
     out pending_events  bigint)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_consumer_info(0)
+-- Function: logres.get_consumer_info(0)
 --
 --      Returns info about all consumers on all queues.
 --
 -- Returns:
---      See pgque.get_consumer_info(2)
+--      See logres.get_consumer_info(2)
 -- ----------------------------------------------------------------------
 begin
     for queue_name, consumer_name, lag, last_seen,
@@ -2649,17 +2649,17 @@ begin
     in
         select f.queue_name, f.consumer_name, f.lag, f.last_seen,
                f.last_tick, f.current_batch, f.next_tick, f.pending_events
-            from pgque.get_consumer_info(null, null) f
+            from logres.get_consumer_info(null, null) f
     loop
         return next;
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
 
-create or replace function pgque.get_consumer_info(
+create or replace function logres.get_consumer_info(
     in i_queue_name     text,
     out queue_name      text,
     out consumer_name   text,
@@ -2671,12 +2671,12 @@ create or replace function pgque.get_consumer_info(
     out pending_events  bigint)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_consumer_info(1)
+-- Function: logres.get_consumer_info(1)
 --
 --      Returns info about all consumers on single queue.
 --
 -- Returns:
---      See pgque.get_consumer_info(2)
+--      See logres.get_consumer_info(2)
 -- ----------------------------------------------------------------------
 begin
     for queue_name, consumer_name, lag, last_seen,
@@ -2684,17 +2684,17 @@ begin
     in
         select f.queue_name, f.consumer_name, f.lag, f.last_seen,
                f.last_tick, f.current_batch, f.next_tick, f.pending_events
-            from pgque.get_consumer_info(i_queue_name, null) f
+            from logres.get_consumer_info(i_queue_name, null) f
     loop
         return next;
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
 
-create or replace function pgque.get_consumer_info(
+create or replace function logres.get_consumer_info(
     in i_queue_name     text,
     in i_consumer_name  text,
     out queue_name      text,
@@ -2707,7 +2707,7 @@ create or replace function pgque.get_consumer_info(
     out pending_events  bigint)
 returns setof record as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_consumer_info(2)
+-- Function: logres.get_consumer_info(2)
 --
 --      Get info about particular consumer on particular queue.
 --
@@ -2736,10 +2736,10 @@ begin
                current_timestamp - s.sub_active,
                s.sub_last_tick, s.sub_batch, s.sub_next_tick,
                t.tick_event_seq, q.queue_id
-          from pgque.queue q,
-               pgque.consumer c,
-               pgque.subscription s
-               left join pgque.tick t
+          from logres.queue q,
+               logres.consumer c,
+               logres.subscription s
+               left join logres.tick t
                  on (t.tick_queue = s.sub_queue and t.tick_id = s.sub_last_tick)
          where q.queue_id = s.sub_queue
            and c.co_id = s.sub_consumer
@@ -2749,7 +2749,7 @@ begin
     loop
         select t.tick_event_seq - _pending_events
             into pending_events
-            from pgque.tick t
+            from logres.tick t
             where t.tick_queue = _queue_id
             order by t.tick_queue desc, t.tick_id desc
             limit 1;
@@ -2757,10 +2757,10 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 
-create or replace function pgque.get_batch_info(
+create or replace function logres.get_batch_info(
     in x_batch_id       bigint,
     out queue_name      text,
     out consumer_name   text,
@@ -2773,7 +2773,7 @@ create or replace function pgque.get_batch_info(
     out seq_end         bigint)
 as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.get_batch_info(1)
+-- Function: logres.get_batch_info(1)
 --
 --      Returns detailed info about a batch.
 --
@@ -2799,8 +2799,8 @@ begin
            prev.tick_event_seq, cur.tick_event_seq
         into queue_name, consumer_name, batch_start, batch_end,
              prev_tick_id, tick_id, lag, seq_start, seq_end
-        from pgque.subscription s, pgque.tick cur, pgque.tick prev,
-             pgque.queue q, pgque.consumer c
+        from logres.subscription s, logres.tick cur, logres.tick prev,
+             logres.queue q, logres.consumer c
         where s.sub_batch = x_batch_id
           and prev.tick_id = s.sub_last_tick
           and prev.tick_queue = s.sub_queue
@@ -2810,17 +2810,17 @@ begin
           and c.co_id = s.sub_consumer;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 -- ======================================================================
 -- Section 3: PL/pgSQL event insertion (derived from PgQ)
 -- Origin: pgq/lowlevel_pl/insert_event.sql
--- PgQue transformations: schema rename, txid→pg_* renames, search_path
+-- logres transformations: schema rename, txid→pg_* renames, search_path
 -- ======================================================================
 
 
 -- ----------------------------------------------------------------------
--- Function: pgque.insert_event_raw(11)
+-- Function: logres.insert_event_raw(11)
 --
 --      Actual event insertion.  Used also by retry queue maintenance.
 --
@@ -2840,7 +2840,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- Returns:
 --      Event ID.
 -- ----------------------------------------------------------------------
-create or replace function pgque.insert_event_raw(
+create or replace function logres.insert_event_raw(
     queue_name text, ev_id bigint, ev_time timestamptz,
     ev_owner integer, ev_retry integer, ev_type text, ev_data text,
     ev_extra1 text, ev_extra2 text, ev_extra3 text, ev_extra4 text)
@@ -2851,10 +2851,10 @@ declare
 begin
     _qname := queue_name;
     select q.queue_id,
-        pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
+        logres.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
         nextval(q.queue_event_seq) as next_ev_id,
         q.queue_disable_insert
-    from pgque.queue q where q.queue_name = _qname into qstate;
+    from logres.queue q where q.queue_name = _qname into qstate;
 
     if ev_id is null then
         ev_id := qstate.next_ev_id;
@@ -2880,12 +2880,12 @@ $$ language plpgsql;
 -- ======================================================================
 -- Section 4: Trigger functions (derived from PgQ)
 -- Origin: pgq/lowlevel_pl/{jsontriga,logutriga,sqltriga}.sql
--- PgQue transformations: schema rename, search_path hardening
+-- logres transformations: schema rename, search_path hardening
 -- ======================================================================
 
-create or replace function pgque.jsontriga() returns trigger as $$
+create or replace function logres.jsontriga() returns trigger as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.jsontriga()
+-- Function: logres.jsontriga()
 --
 --      Trigger function that puts row data in JSON-encoded form into queue.
 --
@@ -2913,11 +2913,11 @@ create or replace function pgque.jsontriga() returns trigger as $$
 --
 -- Regular listen trigger example:
 -- >   CREATE TRIGGER triga_nimi AFTER INSERT OR UPDATE ON customer
--- >   FOR EACH ROW EXECUTE PROCEDURE pgque.jsontriga('qname');
+-- >   FOR EACH ROW EXECUTE PROCEDURE logres.jsontriga('qname');
 --
 -- Redirect trigger example:
 -- >   CREATE TRIGGER triga_nimi BEFORE INSERT OR UPDATE ON customer
--- >   FOR EACH ROW EXECUTE PROCEDURE pgque.jsontriga('qname', 'SKIP');
+-- >   FOR EACH ROW EXECUTE PROCEDURE logres.jsontriga('qname', 'SKIP');
 -- ----------------------------------------------------------------------
 declare
     qname text;
@@ -3037,7 +3037,7 @@ begin
         raise exception 'Table ''%.%'' to queue ''%'': change not allowed (%)',
                     TG_TABLE_SCHEMA, TG_TABLE_NAME, qname, TG_OP;
     elsif TG_OP = 'TRUNCATE' then
-        perform pgque.insert_event(qname, ev_type, '{}', ev_extra1, ev_extra2, ev_extra3, ev_extra4);
+        perform logres.insert_event(qname, ev_type, '{}', ev_extra1, ev_extra2, ev_extra3, ev_extra4);
         return null;
     end if;
 
@@ -3188,7 +3188,7 @@ begin
 
     -- insert final values
     if do_insert then
-        perform pgque.insert_event(qname, ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
+        perform logres.insert_event(qname, ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
     end if;
 
     if do_skip or TG_WHEN = 'AFTER' or TG_OP = 'TRUNCATE' then
@@ -3201,9 +3201,9 @@ begin
 end;
 $$ language plpgsql;
 
-create or replace function pgque.logutriga() returns trigger as $$
+create or replace function logres.logutriga() returns trigger as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.logutriga()
+-- Function: logres.logutriga()
 --
 --      Trigger function that puts row data in urlencoded form into queue.
 --
@@ -3233,11 +3233,11 @@ create or replace function pgque.logutriga() returns trigger as $$
 --
 -- Regular listen trigger example:
 -- >   CREATE TRIGGER triga_nimi AFTER INSERT OR UPDATE ON customer
--- >   FOR EACH ROW EXECUTE PROCEDURE pgque.logutriga('qname');
+-- >   FOR EACH ROW EXECUTE PROCEDURE logres.logutriga('qname');
 --
 -- Redirect trigger example:
 -- >   CREATE TRIGGER triga_nimi BEFORE INSERT OR UPDATE ON customer
--- >   FOR EACH ROW EXECUTE PROCEDURE pgque.logutriga('qname', 'SKIP');
+-- >   FOR EACH ROW EXECUTE PROCEDURE logres.logutriga('qname', 'SKIP');
 -- ----------------------------------------------------------------------
 declare
     qname text;
@@ -3359,7 +3359,7 @@ begin
         raise exception 'Table ''%.%'' to queue ''%'': change not allowed (%)',
                     TG_TABLE_SCHEMA, TG_TABLE_NAME, qname, TG_OP;
     elsif TG_OP = 'TRUNCATE' then
-        perform pgque.insert_event(qname, ev_type, '', ev_extra1, ev_extra2, ev_extra3, ev_extra4);
+        perform logres.insert_event(qname, ev_type, '', ev_extra1, ev_extra2, ev_extra3, ev_extra4);
         return null;
     end if;
 
@@ -3412,8 +3412,8 @@ begin
             end if;
 
             data_sql_buf := array_append(data_sql_buf,
-                    'select pgque._urlencode(' || quote_literal(attr.attname)
-                    || ') || coalesce(''='' || pgque._urlencode(' || valexp
+                    'select logres._urlencode(' || quote_literal(attr.attname)
+                    || ') || coalesce(''='' || logres._urlencode(' || valexp
                     || '), '''') as upair from (select $1.*) r');
         end loop;
 
@@ -3508,7 +3508,7 @@ begin
 
     -- insert final values
     if do_insert then
-        perform pgque.insert_event(qname, ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
+        perform logres.insert_event(qname, ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
     end if;
 
     if do_skip or TG_WHEN = 'AFTER' or TG_OP = 'TRUNCATE' then
@@ -3521,15 +3521,15 @@ begin
 end;
 $$ language plpgsql;
 
-create or replace function pgque._urlencode(val text)
+create or replace function logres._urlencode(val text)
 returns text as $$
     select replace(string_agg(pair[1] || regexp_replace(encode(convert_to(pair[2], 'utf8'), 'hex'), '..', E'%\\&', 'g'), ''), '%20', '+')
         from regexp_matches($1, '([-_.a-zA-Z0-9]*)([^-_.a-zA-Z0-9]*)', 'g') pair
 $$ language sql strict immutable;
 
-create or replace function pgque.sqltriga() returns trigger as $$
+create or replace function logres.sqltriga() returns trigger as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.sqltriga()
+-- Function: logres.sqltriga()
 --
 --      Trigger function that puts row data in SQL-fragment form into queue.
 --
@@ -3557,11 +3557,11 @@ create or replace function pgque.sqltriga() returns trigger as $$
 --
 -- Regular listen trigger example:
 -- >   CREATE TRIGGER triga_nimi AFTER INSERT OR UPDATE ON customer
--- >   FOR EACH ROW EXECUTE PROCEDURE pgque.logutriga('qname');
+-- >   FOR EACH ROW EXECUTE PROCEDURE logres.logutriga('qname');
 --
 -- Redirect trigger example:
 -- >   CREATE TRIGGER triga_nimi BEFORE INSERT OR UPDATE ON customer
--- >   FOR EACH ROW EXECUTE PROCEDURE pgque.logutriga('qname', 'SKIP');
+-- >   FOR EACH ROW EXECUTE PROCEDURE logres.logutriga('qname', 'SKIP');
 -- ----------------------------------------------------------------------
 declare
     qname text;
@@ -3683,7 +3683,7 @@ begin
         raise exception 'Table ''%.%'' to queue ''%'': change not allowed (%)',
                     TG_TABLE_SCHEMA, TG_TABLE_NAME, qname, TG_OP;
     elsif TG_OP = 'TRUNCATE' then
-        perform pgque.insert_event(qname, ev_type, '', ev_extra1, ev_extra2, ev_extra3, ev_extra4);
+        perform logres.insert_event(qname, ev_type, '', ev_extra1, ev_extra2, ev_extra3, ev_extra4);
         return null;
     end if;
 
@@ -3877,7 +3877,7 @@ begin
 
     -- insert final values
     if do_insert then
-        perform pgque.insert_event(qname, ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
+        perform logres.insert_event(qname, ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
     end if;
 
     if do_skip or TG_WHEN = 'AFTER' or TG_OP = 'TRUNCATE' then
@@ -3893,31 +3893,31 @@ $$ language plpgsql;
 -- ======================================================================
 -- Section 5: Default grants (derived from PgQ)
 -- Origin: pgq/structure/grants.sql
--- PgQue transformations: pgq_reader/writer/admin → pgque_reader/writer/admin
+-- logres transformations: pgq_reader/writer/admin → logres_reader/writer/admin
 -- ======================================================================
 
 
 
-grant usage on schema pgque to public;
+grant usage on schema logres to public;
 
 -- old default grants
-grant select on table pgque.consumer to public;
-grant select on table pgque.queue to public;
-grant select on table pgque.tick to public;
-grant select on table pgque.queue to public;
-grant select on table pgque.subscription to public;
-grant select on table pgque.event_template to public;
-grant select on table pgque.retry_queue to public;
+grant select on table logres.consumer to public;
+grant select on table logres.queue to public;
+grant select on table logres.tick to public;
+grant select on table logres.queue to public;
+grant select on table logres.subscription to public;
+grant select on table logres.event_template to public;
+grant select on table logres.retry_queue to public;
 
 -- ======================================================================
--- Section 6: pgque additions (NEW — not derived from PgQ)
+-- Section 6: logres additions (NEW — not derived from PgQ)
 -- ======================================================================
 
--- pgque-additions/config.sql
--- pgque.config — singleton configuration table
+-- logres-additions/config.sql
+-- logres.config — singleton configuration table
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-create table if not exists pgque.config (
+create table if not exists logres.config (
     singleton       bool primary key default true check (singleton),
     ticker_job_id   bigint,
     maint_job_id    bigint,
@@ -3925,29 +3925,29 @@ create table if not exists pgque.config (
 );
 
 -- Idempotent insert
-insert into pgque.config (singleton) values (true)
+insert into logres.config (singleton) values (true)
 on conflict (singleton) do nothing;
 
--- pgque-additions/queue_max_retries.sql
--- Add queue_max_retries column to pgque.queue
+-- logres-additions/queue_max_retries.sql
+-- Add queue_max_retries column to logres.queue
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- The queue table is defined in PgQ's tables.sql.  After the transformed
--- PgQ schema is installed, we add this pgque-specific column.
+-- PgQ schema is installed, we add this logres-specific column.
 
 do $$
 begin
     if not exists (
         select 1 from information_schema.columns
-        where table_schema = 'pgque' and table_name = 'queue'
+        where table_schema = 'logres' and table_name = 'queue'
         and column_name = 'queue_max_retries'
     ) then
-        alter table pgque.queue add column queue_max_retries int4;
+        alter table logres.queue add column queue_max_retries int4;
     end if;
 end $$;
 
 -- Override set_queue_config to also accept queue_max_retries
-create or replace function pgque.set_queue_config(
+create or replace function logres.set_queue_config(
     x_queue_name    text,
     x_param_name    text,
     x_param_value   text)
@@ -3961,7 +3961,7 @@ begin
     end if;
 
     -- check if queue exists
-    perform 1 from pgque.queue where queue_name = x_queue_name;
+    perform 1 from logres.queue where queue_name = x_queue_name;
     if not found then
         raise exception 'No such event queue';
     end if;
@@ -3980,19 +3980,19 @@ begin
         raise exception 'cannot change parameter "%s"', x_param_name;
     end if;
 
-    execute 'update pgque.queue set '
+    execute 'update logres.queue set '
         || v_param_name || ' = ' || quote_literal(x_param_value)
         || ' where queue_name = ' || quote_literal(x_queue_name);
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque-additions/lifecycle.sql
--- pgque lifecycle functions
+-- logres-additions/lifecycle.sql
+-- logres lifecycle functions
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-create or replace function pgque.start()
+create or replace function logres.start()
 returns void as $$
 declare
     v_ticker_id bigint;
@@ -4004,40 +4004,40 @@ begin
     -- pg_cron is optional; start() specifically requires it because it schedules jobs.
     if not exists (select 1 from pg_extension where extname = 'pg_cron') then
         raise exception 'pg_cron extension is not installed. '
-            'PgQue itself works without pg_cron, but pgque.start() schedules cron jobs. '
-            'Install pg_cron first, or run pgque.ticker() and pgque.maint() manually.';
+            'logres itself works without pg_cron, but logres.start() schedules cron jobs. '
+            'Install pg_cron first, or run logres.ticker() and logres.maint() manually.';
     end if;
 
     -- Idempotent: stop existing jobs first
-    perform pgque.stop();
+    perform logres.stop();
 
     v_dbname := current_database();
 
     -- Ticker: every 1 second (matches pgqd cadence; requires pg_cron >= 1.5
     -- for sub-minute scheduling)
     select cron.schedule_in_database(
-        'pgque_ticker',
+        'logres_ticker',
         '1 second',
-        $sql$SET statement_timeout = '950ms'; SELECT pgque.ticker()$sql$,
+        $sql$SET statement_timeout = '950ms'; SELECT logres.ticker()$sql$,
         v_dbname
     ) into v_ticker_id;
 
     -- Retry events: every 30 seconds (move nack'd events from the retry
     -- queue back into the main event stream for the next tick).
-    -- pgque.maint() / maint_operations() does NOT include retry handling,
+    -- logres.maint() / maint_operations() does NOT include retry handling,
     -- so this has to be scheduled separately — matches pgqd cadence.
     select cron.schedule_in_database(
-        'pgque_retry_events',
+        'logres_retry_events',
         '30 seconds',
-        $sql$set statement_timeout = '25s'; select pgque.maint_retry_events()$sql$,
+        $sql$set statement_timeout = '25s'; select logres.maint_retry_events()$sql$,
         v_dbname
     ) into v_retry_id;
 
     -- Maintenance: every 30 seconds (rotation step 1 and vacuum).
     select cron.schedule_in_database(
-        'pgque_maint',
+        'logres_maint',
         '30 seconds',
-        $sql$SET statement_timeout = '25s'; SELECT pgque.maint()$sql$,
+        $sql$SET statement_timeout = '25s'; SELECT logres.maint()$sql$,
         v_dbname
     ) into v_maint_id;
 
@@ -4045,23 +4045,23 @@ begin
     -- PgQ requires step1 and step2 in different transactions so that
     -- step2's txid is guaranteed to be visible to all new transactions.
     select cron.schedule_in_database(
-        'pgque_rotate_step2',
+        'logres_rotate_step2',
         '10 seconds',
-        $sql$SELECT pgque.maint_rotate_tables_step2()$sql$,
+        $sql$SELECT logres.maint_rotate_tables_step2()$sql$,
         v_dbname
     ) into v_step2_id;
 
     -- Store job IDs in config (retry + rotate_step2 unscheduled by name)
-    update pgque.config
+    update logres.config
     set ticker_job_id = v_ticker_id,
         maint_job_id = v_maint_id;
 
-    raise notice 'pgque started: ticker=%, retry_events=%, maint=%, rotate_step2=%',
+    raise notice 'logres started: ticker=%, retry_events=%, maint=%, rotate_step2=%',
         v_ticker_id, v_retry_id, v_maint_id, v_step2_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.stop()
+create or replace function logres.stop()
 returns void as $$
 declare
     v_ticker_id bigint;
@@ -4071,7 +4071,7 @@ begin
     -- Read current job IDs
     select ticker_job_id, maint_job_id
     into v_ticker_id, v_maint_id
-    from pgque.config;
+    from logres.config;
 
     -- Check if pg_cron is available
     select exists (select 1 from pg_extension where extname = 'pg_cron')
@@ -4091,49 +4091,49 @@ begin
         -- Unschedule retry_events by name (job ID not stored in config).
         -- Ignore if job doesn't exist (first run or already removed).
         begin
-            perform cron.unschedule('pgque_retry_events');
+            perform cron.unschedule('logres_retry_events');
         exception when others then
-            raise notice 'pgque.stop: retry_events job not found (OK on first install)';
+            raise notice 'logres.stop: retry_events job not found (OK on first install)';
         end;
 
         -- Unschedule rotate_step2 by name (job ID not stored in config)
         -- Ignore if job doesn't exist (first run or already removed)
         begin
-            perform cron.unschedule('pgque_rotate_step2');
+            perform cron.unschedule('logres_rotate_step2');
         exception when others then
-            raise notice 'pgque.stop: rotate_step2 job not found (OK on first install)';
+            raise notice 'logres.stop: rotate_step2 job not found (OK on first install)';
         end;
     end if;
 
     -- Clear job IDs regardless (even if pg_cron is gone)
-    update pgque.config
+    update logres.config
     set ticker_job_id = null,
         maint_job_id = null;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.uninstall()
+create or replace function logres.uninstall()
 returns void as $$
 begin
     -- Stop pg_cron jobs before dropping the schema.
     if exists (select 1 from pg_extension where extname = 'pg_cron') then
-        perform pgque.stop();
+        perform logres.stop();
     end if;
     -- Drop everything
-    drop schema pgque cascade;
+    drop schema logres cascade;
     -- Note: roles are not dropped here (they may be in use by other databases)
-    raise notice 'pgque uninstalled. Run DROP ROLE IF EXISTS pgque_reader, pgque_writer, pgque_admin; manually if needed.';
+    raise notice 'logres uninstalled. Run DROP ROLE IF EXISTS logres_reader, logres_writer, logres_admin; manually if needed.';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.version()
+create or replace function logres.version()
 returns text as $$
 begin
     return '1.0.0-dev';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
-create or replace function pgque.status()
+create or replace function logres.status()
 returns table (
     component text,
     status text,
@@ -4143,8 +4143,8 @@ begin
     -- PostgreSQL version
     return query select 'postgresql'::text, 'info'::text, pg_catalog.version()::text;
 
-    -- pgque version
-    return query select 'pgque'::text, 'info'::text, pgque.version();
+    -- logres version
+    return query select 'logres'::text, 'info'::text, logres.version();
 
     -- pg_cron status
     if exists (select 1 from pg_extension where extname = 'pg_cron') then
@@ -4155,7 +4155,7 @@ begin
                 then 'job_id=' || c.ticker_job_id::text
                 else 'not scheduled'
             end
-        from pgque.config c;
+        from logres.config c;
 
         return query
         select 'maintenance'::text,
@@ -4164,133 +4164,133 @@ begin
                 then 'job_id=' || c.maint_job_id::text
                 else 'not scheduled'
             end
-        from pgque.config c;
+        from logres.config c;
     else
         return query select 'pg_cron'::text, 'unavailable'::text,
-            'pg_cron not installed -- call pgque.ticker() and pgque.maint() manually'::text;
+            'pg_cron not installed -- call logres.ticker() and logres.maint() manually'::text;
     end if;
 
     -- Queue count
     return query select 'queues'::text, 'info'::text,
-        (select count(*)::text from pgque.queue) || ' queues configured';
+        (select count(*)::text from logres.queue) || ' queues configured';
 
     -- Consumer count
     return query select 'consumers'::text, 'info'::text,
-        (select count(*)::text from pgque.subscription) || ' active subscriptions';
+        (select count(*)::text from logres.subscription) || ' active subscriptions';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque-additions/roles.sql
--- pgque security roles
+-- logres-additions/roles.sql
+-- logres security roles
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 -- Create roles idempotently
-do $$ begin create role pgque_reader; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_writer; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_admin;  exception when duplicate_object then null; end $$;
+do $$ begin create role logres_reader; exception when duplicate_object then null; end $$;
+do $$ begin create role logres_writer; exception when duplicate_object then null; end $$;
+do $$ begin create role logres_admin;  exception when duplicate_object then null; end $$;
 
 -- Inheritance: admin > writer > reader
 -- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
 -- for role grants until PG16).
 do $$ begin
-    grant pgque_reader to pgque_writer;
+    grant logres_reader to logres_writer;
 exception when duplicate_object then null;
 end $$;
 do $$ begin
-    grant pgque_writer to pgque_admin;
+    grant logres_writer to logres_admin;
 exception when duplicate_object then null;
 end $$;
 
 -- ---------------------------------------------------------------------------
 -- Reader: read-only access to schema and information functions
 -- ---------------------------------------------------------------------------
-grant usage on schema pgque to pgque_reader;
-grant select on all tables in schema pgque to pgque_reader;
+grant usage on schema logres to logres_reader;
+grant select on all tables in schema logres to logres_reader;
 
 -- get_queue_info — 0-arg (all queues) and 1-arg (single queue)
-grant execute on function pgque.get_queue_info() to pgque_reader;
-grant execute on function pgque.get_queue_info(text) to pgque_reader;
+grant execute on function logres.get_queue_info() to logres_reader;
+grant execute on function logres.get_queue_info(text) to logres_reader;
 
 -- get_consumer_info — 0-arg, 1-arg, 2-arg overloads
-grant execute on function pgque.get_consumer_info() to pgque_reader;
-grant execute on function pgque.get_consumer_info(text) to pgque_reader;
-grant execute on function pgque.get_consumer_info(text, text) to pgque_reader;
+grant execute on function logres.get_consumer_info() to logres_reader;
+grant execute on function logres.get_consumer_info(text) to logres_reader;
+grant execute on function logres.get_consumer_info(text, text) to logres_reader;
 
 -- get_batch_info(bigint)
-grant execute on function pgque.get_batch_info(bigint) to pgque_reader;
+grant execute on function logres.get_batch_info(bigint) to logres_reader;
 
 -- version
-grant execute on function pgque.version() to pgque_reader;
+grant execute on function logres.version() to logres_reader;
 
 -- ---------------------------------------------------------------------------
 -- Writer: can produce events and manage consumer lifecycle
 -- ---------------------------------------------------------------------------
 
 -- insert_event — 3-arg and 7-arg overloads
-grant execute on function pgque.insert_event(text, text, text) to pgque_writer;
-grant execute on function pgque.insert_event(text, text, text, text, text, text, text) to pgque_writer;
+grant execute on function logres.insert_event(text, text, text) to logres_writer;
+grant execute on function logres.insert_event(text, text, text, text, text, text, text) to logres_writer;
 
 -- consumer registration
-grant execute on function pgque.register_consumer(text, text) to pgque_writer;
-grant execute on function pgque.register_consumer_at(text, text, bigint) to pgque_writer;
-grant execute on function pgque.unregister_consumer(text, text) to pgque_writer;
+grant execute on function logres.register_consumer(text, text) to logres_writer;
+grant execute on function logres.register_consumer_at(text, text, bigint) to logres_writer;
+grant execute on function logres.unregister_consumer(text, text) to logres_writer;
 
 -- batch processing
-grant execute on function pgque.next_batch(text, text) to pgque_writer;
-grant execute on function pgque.next_batch_info(text, text) to pgque_writer;
-grant execute on function pgque.next_batch_custom(text, text, interval, int4, interval) to pgque_writer;
-grant execute on function pgque.get_batch_events(bigint) to pgque_writer;
-grant execute on function pgque.finish_batch(bigint) to pgque_writer;
+grant execute on function logres.next_batch(text, text) to logres_writer;
+grant execute on function logres.next_batch_info(text, text) to logres_writer;
+grant execute on function logres.next_batch_custom(text, text, interval, int4, interval) to logres_writer;
+grant execute on function logres.get_batch_events(bigint) to logres_writer;
+grant execute on function logres.finish_batch(bigint) to logres_writer;
 
 -- event retry — timestamptz and integer overloads
-grant execute on function pgque.event_retry(bigint, bigint, timestamptz) to pgque_writer;
-grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_writer;
+grant execute on function logres.event_retry(bigint, bigint, timestamptz) to logres_writer;
+grant execute on function logres.event_retry(bigint, bigint, integer) to logres_writer;
 
 -- Note: grants for the modern API wrappers (send*, subscribe, unsubscribe,
 -- receive, ack, nack) live colocated with their definitions in
--- sql/pgque-api/*.sql. transform.sh appends pgque-additions/ before
--- pgque-api/, so API-layer grants cannot reference their functions from
+-- sql/logres-api/*.sql. transform.sh appends logres-additions/ before
+-- logres-api/, so API-layer grants cannot reference their functions from
 -- this file.
 
 -- ---------------------------------------------------------------------------
--- Admin: full access to everything in the pgque schema
+-- Admin: full access to everything in the logres schema
 -- ---------------------------------------------------------------------------
-grant all on schema pgque to pgque_admin;
-grant all on all tables in schema pgque to pgque_admin;
-grant all on all sequences in schema pgque to pgque_admin;
-grant execute on all functions in schema pgque to pgque_admin;
+grant all on schema logres to logres_admin;
+grant all on all tables in schema logres to logres_admin;
+grant all on all sequences in schema logres to logres_admin;
+grant execute on all functions in schema logres to logres_admin;
 
 -- uninstall() drops the entire schema — only superuser / schema owner should run it.
 -- SECURITY DEFINER functions default to PUBLIC execute; revoke both PUBLIC and
--- pgque_admin so the function really is superuser-only.
-revoke execute on function pgque.uninstall() from public;
-revoke execute on function pgque.uninstall() from pgque_admin;
+-- logres_admin so the function really is superuser-only.
+revoke execute on function logres.uninstall() from public;
+revoke execute on function logres.uninstall() from logres_admin;
 
--- pgque-additions/dlq.sql
--- pgque dead letter queue (DLQ) -- table + helper functions
+-- logres-additions/dlq.sql
+-- logres dead letter queue (DLQ) -- table + helper functions
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- PgQ has a retry queue but no dead letter queue. pgque adds one.
+-- PgQ has a retry queue but no dead letter queue. logres adds one.
 -- See SPECx.md section 4.5.
 
--- pgque.dead_letter table
+-- logres.dead_letter table
 --
 -- FK behavior: both dl_queue_id and dl_consumer_id use `on delete cascade`.
 -- Rationale:
---   - `pgque.drop_queue()` deletes the pgque.queue row unconditionally. DLQ
+--   - `logres.drop_queue()` deletes the logres.queue row unconditionally. DLQ
 --     entries for a dropped queue are meaningless, so cascading them is
 --     correct (users who want to preserve the audit trail should call
---     `pgque.dlq_purge` or copy the rows out before dropping the queue).
---   - `pgque.unregister_consumer()` deletes the pgque.consumer row only when
+--     `logres.dlq_purge` or copy the rows out before dropping the queue).
+--   - `logres.unregister_consumer()` deletes the logres.consumer row only when
 --     the consumer has no other subscriptions. That is an explicit,
 --     user-initiated action (not routine maintenance), so cascading the
 --     historical DLQ rows tied to that (now-removed) consumer id is the
 --     least-surprising default. Same escape hatch: purge/copy first if the
 --     audit trail matters.
-create table if not exists pgque.dead_letter (
+create table if not exists logres.dead_letter (
     dl_id           bigserial primary key,
-    dl_queue_id     int4 not null references pgque.queue(queue_id)    on delete cascade,
-    dl_consumer_id  int4 not null references pgque.consumer(co_id)    on delete cascade,
+    dl_queue_id     int4 not null references logres.queue(queue_id)    on delete cascade,
+    dl_consumer_id  int4 not null references logres.consumer(co_id)    on delete cascade,
     dl_time         timestamptz not null default now(),
     dl_reason       text,
 
@@ -4308,10 +4308,10 @@ create table if not exists pgque.dead_letter (
 );
 
 create index if not exists dl_queue_time_idx
-    on pgque.dead_letter (dl_queue_id, dl_time);
+    on logres.dead_letter (dl_queue_id, dl_time);
 
--- pgque.event_dead() -- move event to DLQ (called by nack() when max retries exceeded)
-create or replace function pgque.event_dead(
+-- logres.event_dead() -- move event to DLQ (called by nack() when max retries exceeded)
+create or replace function logres.event_dead(
     i_batch_id bigint,
     i_event_id bigint,
     i_reason text,
@@ -4330,13 +4330,13 @@ declare
 begin
     -- Look up subscription from batch
     select sub_queue, sub_consumer into v_sub
-    from pgque.subscription where sub_batch = i_batch_id;
+    from logres.subscription where sub_batch = i_batch_id;
     if not found then
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
     -- Insert into dead letter table (no re-query of batch events)
-    insert into pgque.dead_letter (
+    insert into logres.dead_letter (
         dl_queue_id, dl_consumer_id, dl_reason,
         ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
         ev_extra1, ev_extra2, ev_extra3, ev_extra4)
@@ -4347,25 +4347,25 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.dlq_inspect() -- inspect DLQ entries for a queue
-create or replace function pgque.dlq_inspect(
+-- logres.dlq_inspect() -- inspect DLQ entries for a queue
+create or replace function logres.dlq_inspect(
     i_queue_name text, i_limit_count int default 100)
-returns setof pgque.dead_letter as $$
+returns setof logres.dead_letter as $$
 begin
     return query
     select dl.*
-    from pgque.dead_letter dl
-    join pgque.queue q on q.queue_id = dl.dl_queue_id
+    from logres.dead_letter dl
+    join logres.queue q on q.queue_id = dl.dl_queue_id
     where q.queue_name = i_queue_name
     order by dl.dl_time desc
     limit i_limit_count;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.dlq_replay() -- replay a single dead letter event back into the queue
-create or replace function pgque.dlq_replay(i_dead_letter_id bigint)
+-- logres.dlq_replay() -- replay a single dead letter event back into the queue
+create or replace function logres.dlq_replay(i_dead_letter_id bigint)
 returns bigint as $$
 declare
     v_dl record;
@@ -4373,8 +4373,8 @@ declare
     v_new_eid bigint;
 begin
     select dl.*, q.queue_name into v_dl
-    from pgque.dead_letter dl
-    join pgque.queue q on q.queue_id = dl.dl_queue_id
+    from logres.dead_letter dl
+    join logres.queue q on q.queue_id = dl.dl_queue_id
     where dl.dl_id = i_dead_letter_id;
 
     if not found then
@@ -4382,18 +4382,18 @@ begin
     end if;
 
     -- Re-insert into the queue
-    v_new_eid := pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
+    v_new_eid := logres.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
         v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
 
     -- Remove from DLQ
-    delete from pgque.dead_letter where dl_id = i_dead_letter_id;
+    delete from logres.dead_letter where dl_id = i_dead_letter_id;
 
     return v_new_eid;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.dlq_replay_all() -- replay all DLQ events for a queue
-create or replace function pgque.dlq_replay_all(i_queue_name text)
+-- logres.dlq_replay_all() -- replay all DLQ events for a queue
+create or replace function logres.dlq_replay_all(i_queue_name text)
 returns integer as $$
 declare
     v_dl record;
@@ -4403,34 +4403,34 @@ begin
         select dl.dl_id, dl.ev_type, dl.ev_data,
                dl.ev_extra1, dl.ev_extra2, dl.ev_extra3, dl.ev_extra4,
                q.queue_name
-        from pgque.dead_letter dl
-        join pgque.queue q on q.queue_id = dl.dl_queue_id
+        from logres.dead_letter dl
+        join logres.queue q on q.queue_id = dl.dl_queue_id
         where q.queue_name = i_queue_name
     loop
-        perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
+        perform logres.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
             v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
-        delete from pgque.dead_letter where dl_id = v_dl.dl_id;
+        delete from logres.dead_letter where dl_id = v_dl.dl_id;
         v_cnt := v_cnt + 1;
     end loop;
 
     return v_cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.dlq_purge() -- purge old DLQ entries
-create or replace function pgque.dlq_purge(
+-- logres.dlq_purge() -- purge old DLQ entries
+create or replace function logres.dlq_purge(
     i_queue_name text, i_older_than interval default '30 days')
 returns integer as $$
 declare
     v_cnt integer;
 begin
-    delete from pgque.dead_letter
-    where dl_queue_id = (select queue_id from pgque.queue where queue_name = i_queue_name)
+    delete from logres.dead_letter
+    where dl_queue_id = (select queue_id from logres.queue where queue_name = i_queue_name)
       and dl_time < now() - i_older_than;
     get diagnostics v_cnt = row_count;
     return v_cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 -- ---------------------------------------------------------------------------
 -- Grants
@@ -4440,34 +4440,34 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- functions" passes ran *before* dlq.sql created these objects, so they do
 -- NOT cover the DLQ table and functions. The explicit grants below are
 -- therefore required (not redundant) for every role mentioned, including
--- pgque_admin.
+-- logres_admin.
 --
--- dlq_inspect is read-only — available to pgque_reader and above.
+-- dlq_inspect is read-only — available to logres_reader and above.
 -- dlq_replay / dlq_replay_all re-insert events — writer-level.
 -- dlq_purge / event_dead: admin-level operations (purge = data loss,
--- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
+-- event_dead = internal DLQ hook called from nack()). Granted to logres_admin
 -- explicitly for the reason above. Left on PUBLIC default EXECUTE for now;
 -- consider revoke-from-public if the codebase adopts that convention more
 -- broadly.
 
-grant select on pgque.dead_letter                           to pgque_reader;
-grant all    on pgque.dead_letter                           to pgque_admin;
-grant all    on sequence pgque.dead_letter_dl_id_seq        to pgque_admin;
+grant select on logres.dead_letter                           to logres_reader;
+grant all    on logres.dead_letter                           to logres_admin;
+grant all    on sequence logres.dead_letter_dl_id_seq        to logres_admin;
 
-grant execute on function pgque.dlq_inspect(text, int)      to pgque_reader;
-grant execute on function pgque.dlq_replay(bigint)          to pgque_writer;
-grant execute on function pgque.dlq_replay_all(text)        to pgque_writer;
-grant execute on function pgque.event_dead(
+grant execute on function logres.dlq_inspect(text, int)      to logres_reader;
+grant execute on function logres.dlq_replay(bigint)          to logres_writer;
+grant execute on function logres.dlq_replay_all(text)        to logres_writer;
+grant execute on function logres.event_dead(
     bigint, bigint, text, timestamptz, xid8, int4,
-    text, text, text, text, text, text)                     to pgque_admin;
-grant execute on function pgque.dlq_purge(text, interval)   to pgque_admin;
+    text, text, text, text, text, text)                     to logres_admin;
+grant execute on function logres.dlq_purge(text, interval)   to logres_admin;
 
 -- ======================================================================
--- Section 7: pgque-api (NEW — not derived from PgQ)
+-- Section 7: logres-api (NEW — not derived from PgQ)
 -- ======================================================================
 
--- pgque-api/maint.sql
--- pgque maint() -- default maintenance runner for v0.1
+-- logres-api/maint.sql
+-- logres maint() -- default maintenance runner for v0.1
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- Runs PgQ maintenance operations (rotation, retry, vacuum).
@@ -4475,9 +4475,9 @@ grant execute on function pgque.dlq_purge(text, interval)   to pgque_admin;
 
 -- maint() runs rotation step1, retry, and vacuum.
 -- IMPORTANT: rotation step2 is NOT included here — it MUST run in a separate
--- transaction from step1 (PgQ design requirement). pgque.start() schedules
+-- transaction from step1 (PgQ design requirement). logres.start() schedules
 -- step2 as its own pg_cron job.
-create or replace function pgque.maint()
+create or replace function logres.maint()
 returns integer as $$
 declare
     f record;
@@ -4485,10 +4485,10 @@ declare
     r integer;
     total integer := 0;
 begin
-    for f in select func_name, func_arg from pgque.maint_operations()
+    for f in select func_name, func_arg from logres.maint_operations()
     loop
-        -- Skip step2: it needs a separate transaction (scheduled by pgque.start)
-        if f.func_name = 'pgque.maint_rotate_tables_step2' then
+        -- Skip step2: it needs a separate transaction (scheduled by logres.start)
+        if f.func_name = 'logres.maint_rotate_tables_step2' then
             continue;
         elsif f.func_name = 'vacuum' then
             sql := 'vacuum ' || f.func_arg;
@@ -4505,10 +4505,10 @@ begin
 
     return total;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque-api/receive.sql
--- pgque.receive(), pgque.ack(), pgque.nack() -- modern consume API
+-- logres-api/receive.sql
+-- logres.receive(), logres.ack(), logres.nack() -- modern consume API
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -4516,9 +4516,9 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- finish_batch, event_retry) into a simpler receive/ack/nack interface.
 -- See SPECx.md sections 4.2 and 4.3.
 
--- pgque.message type (idempotent creation)
+-- logres.message type (idempotent creation)
 do $$ begin
-    create type pgque.message as (
+    create type logres.message as (
         msg_id      bigint,
         batch_id    bigint,
         type        text,
@@ -4533,17 +4533,17 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
--- pgque.receive() -- wraps next_batch + get_batch_events
-create or replace function pgque.receive(
+-- logres.receive() -- wraps next_batch + get_batch_events
+create or replace function logres.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
-returns setof pgque.message as $$
+returns setof logres.message as $$
 declare
     v_batch_id bigint;
     ev record;
     cnt int := 0;
 begin
     -- Get next batch (may return NULL if no events)
-    v_batch_id := pgque.next_batch(i_queue, i_consumer);
+    v_batch_id := logres.next_batch(i_queue, i_consumer);
     if v_batch_id is null then
         return;
     end if;
@@ -4552,32 +4552,32 @@ begin
     for ev in
         select ev_id, ev_type, ev_data, ev_retry, ev_time,
                ev_extra1, ev_extra2, ev_extra3, ev_extra4
-        from pgque.get_batch_events(v_batch_id)
+        from logres.get_batch_events(v_batch_id)
     loop
         return next row(
             ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,
             ev.ev_retry, ev.ev_time,
             ev.ev_extra1, ev.ev_extra2, ev.ev_extra3, ev.ev_extra4
-        )::pgque.message;
+        )::logres.message;
         cnt := cnt + 1;
         exit when cnt >= i_max_return;
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.ack() -- finishes the batch, advances consumer position
-create or replace function pgque.ack(i_batch_id bigint)
+-- logres.ack() -- finishes the batch, advances consumer position
+create or replace function logres.ack(i_batch_id bigint)
 returns integer as $$
 begin
-    return pgque.finish_batch(i_batch_id);
+    return logres.finish_batch(i_batch_id);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
-create or replace function pgque.nack(
+-- logres.nack() -- retry or route to DLQ based on retry_count vs max_retries
+create or replace function logres.nack(
     i_batch_id bigint,
-    i_msg pgque.message,
+    i_msg logres.message,
     i_retry_after interval default '60 seconds',
     i_reason text default null)
 returns integer as $$
@@ -4586,8 +4586,8 @@ declare
 begin
     -- Single lookup: subscription -> queue config
     select coalesce(q.queue_max_retries, 5) into v_max_retries
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
+    from logres.subscription s
+    join logres.queue q on q.queue_id = s.sub_queue
     where s.sub_batch = i_batch_id;
 
     if not found then
@@ -4596,50 +4596,50 @@ begin
 
     if coalesce(i_msg.retry_count, 0) >= v_max_retries then
         -- Move to dead letter queue (pass event fields, no re-query)
-        perform pgque.event_dead(i_batch_id, i_msg.msg_id,
+        perform logres.event_dead(i_batch_id, i_msg.msg_id,
             coalesce(i_reason, 'max retries exceeded'),
             i_msg.created_at, null::xid8, i_msg.retry_count,
             i_msg.type, i_msg.payload,
             i_msg.extra1, i_msg.extra2, i_msg.extra3, i_msg.extra4);
     else
         -- Retry after delay
-        perform pgque.event_retry(i_batch_id, i_msg.msg_id,
+        perform logres.event_retry(i_batch_id, i_msg.msg_id,
             extract(epoch from i_retry_after)::integer);
     end if;
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
--- Colocated here (not in pgque-additions/roles.sql) because roles.sql is
--- assembled before pgque-api/, so these functions do not yet exist when
--- roles.sql runs. Same convention as sql/pgque-api/send.sql.
+-- Colocated here (not in logres-additions/roles.sql) because roles.sql is
+-- assembled before logres-api/, so these functions do not yet exist when
+-- roles.sql runs. Same convention as sql/logres-api/send.sql.
 
-grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
-grant execute on function pgque.ack(bigint)                                   to pgque_writer;
-grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;
+grant execute on function logres.receive(text, text, int)                      to logres_writer;
+grant execute on function logres.ack(bigint)                                   to logres_writer;
+grant execute on function logres.nack(bigint, logres.message, interval, text)   to logres_writer;
 
--- pgque-api/send.sql
--- pgque-api/send.sql -- Modern send/subscribe API layer
+-- logres-api/send.sql
+-- logres-api/send.sql -- Modern send/subscribe API layer
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
 -- Implements default v0.1 API surface:
---   pgque.message type
---   pgque.send(queue, payload)                -- text + jsonb overloads
---   pgque.send(queue, type, payload)          -- text + jsonb overloads
---   pgque.send_batch(queue, type, payloads[]) -- text[] + jsonb[] overloads
---   pgque.subscribe(queue, consumer)
---   pgque.unsubscribe(queue, consumer)
+--   logres.message type
+--   logres.send(queue, payload)                -- text + jsonb overloads
+--   logres.send(queue, type, payload)          -- text + jsonb overloads
+--   logres.send_batch(queue, type, payloads[]) -- text[] + jsonb[] overloads
+--   logres.subscribe(queue, consumer)
+--   logres.unsubscribe(queue, consumer)
 --
 -- Overload resolution note: PostgreSQL resolves untyped string literals
 -- (type `unknown`) to the `text` overload because `unknown -> text` needs
 -- no implicit cast, while `unknown -> jsonb` does. Consequently:
 --
---   select pgque.send('orders', '{"k":1}');           -- picks send(text, text)
---   select pgque.send('orders', '{"k":1}'::jsonb);    -- picks send(text, jsonb)
+--   select logres.send('orders', '{"k":1}');           -- picks send(text, text)
+--   select logres.send('orders', '{"k":1}'::jsonb);    -- picks send(text, jsonb)
 --
 -- The `text` overloads are the default for untyped literals: bytes flow
 -- through verbatim (no parse, no canonicalization, key order preserved)
@@ -4652,9 +4652,9 @@ grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to
 -- validates JSON at parse time and stores the canonical form.
 -- Storage (ev_data TEXT) is identical in both paths.
 
--- pgque.message type (idempotent creation)
+-- logres.message type (idempotent creation)
 do $$ begin
-    create type pgque.message as (
+    create type logres.message as (
         msg_id      bigint,       -- ev_id
         batch_id    bigint,       -- batch containing this message
         type        text,         -- ev_type
@@ -4669,45 +4669,45 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
--- pgque.send(queue, payload jsonb) -- send with default type, JSON payload
-create or replace function pgque.send(i_queue text, i_payload jsonb)
+-- logres.send(queue, payload jsonb) -- send with default type, JSON payload
+create or replace function logres.send(i_queue text, i_payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload::text);
+    return logres.insert_event(i_queue, 'default', i_payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.send(queue, payload text) -- fast path, opaque textual payload
+-- logres.send(queue, payload text) -- fast path, opaque textual payload
 -- Skips the jsonb parse + canonical reserialize round-trip. Use this when
 -- the payload is text (JSON, XML, CSV, base64/hex-encoded binary) or when
 -- the caller has already validated the payload. Raw binary with NUL bytes
 -- (protobuf, msgpack, Avro wire format) is not accepted by PG `text` --
 -- encode first.
-create or replace function pgque.send(i_queue text, i_payload text)
+create or replace function logres.send(i_queue text, i_payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload);
+    return logres.insert_event(i_queue, 'default', i_payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
-create or replace function pgque.send(i_queue text, i_type text, i_payload jsonb)
+-- logres.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
+create or replace function logres.send(i_queue text, i_type text, i_payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload::text);
+    return logres.insert_event(i_queue, i_type, i_payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.send(queue, type, payload text) -- fast path with explicit type
-create or replace function pgque.send(i_queue text, i_type text, i_payload text)
+-- logres.send(queue, type, payload text) -- fast path with explicit type
+create or replace function logres.send(i_queue text, i_type text, i_payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload);
+    return logres.insert_event(i_queue, i_type, i_payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.send_batch(queue, type, payloads jsonb[]) -- batch send, JSON payloads
-create or replace function pgque.send_batch(
+-- logres.send_batch(queue, type, payloads jsonb[]) -- batch send, JSON payloads
+create or replace function logres.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
 declare
@@ -4716,14 +4716,14 @@ declare
 begin
     foreach p in array i_payloads loop
         ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p::text));
+            logres.insert_event(i_queue, i_type, p::text));
     end loop;
     return ids;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.send_batch(queue, type, payloads text[]) -- fast-path batch send
-create or replace function pgque.send_batch(
+-- logres.send_batch(queue, type, payloads text[]) -- fast-path batch send
+create or replace function logres.send_batch(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
 declare
@@ -4732,39 +4732,39 @@ declare
 begin
     foreach p in array i_payloads loop
         ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p));
+            logres.insert_event(i_queue, i_type, p));
     end loop;
     return ids;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
-create or replace function pgque.subscribe(i_queue text, i_consumer text)
+-- logres.subscribe(queue, consumer) -- wrapper for register_consumer
+create or replace function logres.subscribe(i_queue text, i_consumer text)
 returns integer as $$
 begin
-    return pgque.register_consumer(i_queue, i_consumer);
+    return logres.register_consumer(i_queue, i_consumer);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
--- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
-create or replace function pgque.unsubscribe(i_queue text, i_consumer text)
+-- logres.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
+create or replace function logres.unsubscribe(i_queue text, i_consumer text)
 returns integer as $$
 begin
-    return pgque.unregister_consumer(i_queue, i_consumer);
+    return logres.unregister_consumer(i_queue, i_consumer);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = logres, pg_catalog;
 
 -- Explicit writer grants for the send* + subscribe/unsubscribe family.
--- Colocated here (not in pgque-additions/roles.sql) because roles.sql
--- runs before the pgque-api section during build, so API-layer grants
+-- Colocated here (not in logres-additions/roles.sql) because roles.sql
+-- runs before the logres-api section during build, so API-layer grants
 -- must live alongside the function definitions they apply to.
-grant execute on function pgque.send(text, jsonb)               to pgque_writer;
-grant execute on function pgque.send(text, text)                to pgque_writer;
-grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
-grant execute on function pgque.send(text, text, text)          to pgque_writer;
-grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
-grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
-grant execute on function pgque.subscribe(text, text)           to pgque_writer;
-grant execute on function pgque.unsubscribe(text, text)         to pgque_writer;
+grant execute on function logres.send(text, jsonb)               to logres_writer;
+grant execute on function logres.send(text, text)                to logres_writer;
+grant execute on function logres.send(text, text, jsonb)         to logres_writer;
+grant execute on function logres.send(text, text, text)          to logres_writer;
+grant execute on function logres.send_batch(text, text, jsonb[]) to logres_writer;
+grant execute on function logres.send_batch(text, text, text[])  to logres_writer;
+grant execute on function logres.subscribe(text, text)           to logres_writer;
+grant execute on function logres.unsubscribe(text, text)         to logres_writer;
 
 

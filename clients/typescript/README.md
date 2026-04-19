@@ -1,6 +1,6 @@
-# pgque-ts-example
+# logres-ts-example
 
-Example TypeScript client for PgQue.
+Example TypeScript client for logres.
 
 This is an unpublished example library for now. It is meant to demonstrate
 integration patterns, not to promise a stable SDK yet.

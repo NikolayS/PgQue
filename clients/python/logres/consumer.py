@@ -1,5 +1,5 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
-# PgQue includes code derived from PgQ (ISC license,
+# logres includes code derived from PgQ (ISC license,
 # Marko Kreen / Skype Technologies OU).
 
 """Consumer -- event-driven message consumer with LISTEN/NOTIFY support."""
@@ -15,7 +15,7 @@ from psycopg import sql
 from .client import PgqueClient
 from .types import Message
 
-logger = logging.getLogger("pgque")
+logger = logging.getLogger("logres")
 
 
 class Consumer:
@@ -70,7 +70,7 @@ class Consumer:
         """Decorator to register a handler for a given event type.
 
         Args:
-            event_type: The ``pgque.message.type`` value to match.
+            event_type: The ``logres.message.type`` value to match.
                 Use ``"*"`` to register a default/catch-all handler.
         """
 
@@ -106,7 +106,7 @@ class Consumer:
         try:
             with psycopg.connect(self.dsn, autocommit=True) as conn:
                 # Subscribe for wakeup notifications
-                channel = f"pgque_{self.queue}"
+                channel = f"logres_{self.queue}"
                 conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
                 logger.info(
                     "consumer %s listening on %s (poll=%ds)",

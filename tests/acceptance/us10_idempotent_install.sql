@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 
 -- US-10: Idempotent install
--- As an operator, I want to re-run pgque.sql without losing
+-- As an operator, I want to re-run logres.sql without losing
 -- existing queues, consumers, or event data.
 -- SPECx.md section 13.3
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
@@ -18,42 +18,42 @@ create temporary table if not exists _us10_state (
 
 -- Create queues and consumers
 do $$ begin
-  perform pgque.create_queue('us10_orders');
-  perform pgque.create_queue('us10_logs');
-  perform pgque.subscribe('us10_orders', 'fulfillment');
-  perform pgque.subscribe('us10_orders', 'analytics');
-  perform pgque.subscribe('us10_logs', 'archiver');
+  perform logres.create_queue('us10_orders');
+  perform logres.create_queue('us10_logs');
+  perform logres.subscribe('us10_orders', 'fulfillment');
+  perform logres.subscribe('us10_orders', 'analytics');
+  perform logres.subscribe('us10_logs', 'archiver');
 end $$;
 
 -- Insert events
 do $$ begin
-  perform pgque.insert_event('us10_orders', 'order.created', '{"id":1}');
-  perform pgque.insert_event('us10_orders', 'order.created', '{"id":2}');
-  perform pgque.insert_event('us10_orders', 'order.created', '{"id":3}');
-  perform pgque.insert_event('us10_logs', 'log.entry', '{"msg":"hello"}');
+  perform logres.insert_event('us10_orders', 'order.created', '{"id":1}');
+  perform logres.insert_event('us10_orders', 'order.created', '{"id":2}');
+  perform logres.insert_event('us10_orders', 'order.created', '{"id":3}');
+  perform logres.insert_event('us10_logs', 'log.entry', '{"msg":"hello"}');
 end $$;
 
 -- Tick to create proper state
 do $$ begin
-  perform pgque.force_tick('us10_orders');
-  perform pgque.force_tick('us10_logs');
-  perform pgque.ticker();
+  perform logres.force_tick('us10_orders');
+  perform logres.force_tick('us10_logs');
+  perform logres.ticker();
 end $$;
 
 -- Partially consume: fulfillment processes orders
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_batch_id bigint;
   v_count int := 0;
 begin
-  for v_msg in select * from pgque.receive('us10_orders', 'fulfillment', 100)
+  for v_msg in select * from logres.receive('us10_orders', 'fulfillment', 100)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
   end loop;
   if v_batch_id is not null then
-    perform pgque.ack(v_batch_id);
+    perform logres.ack(v_batch_id);
   end if;
   raise notice 'US-10 phase 1: fulfillment consumed % events', v_count;
 end $$;
@@ -65,13 +65,13 @@ declare
   v_sub_count int;
   v_last_tick bigint;
 begin
-  select count(*) into v_queue_count from pgque.queue;
-  select count(*) into v_sub_count from pgque.subscription;
+  select count(*) into v_queue_count from logres.queue;
+  select count(*) into v_sub_count from logres.subscription;
 
   select s.sub_last_tick into v_last_tick
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from logres.subscription s
+  join logres.queue q on q.queue_id = s.sub_queue
+  join logres.consumer c on c.co_id = s.sub_consumer
   where q.queue_name = 'us10_orders'
     and c.co_name = 'analytics';
 
@@ -87,7 +87,7 @@ end $$;
 -- ==============================
 -- Phase 2: Re-run install (idempotent)
 -- ==============================
-\i sql/pgque.sql
+\i sql/logres.sql
 
 -- ==============================
 -- Phase 3: Verify state preserved
@@ -95,7 +95,7 @@ end $$;
 
 -- Verify: no errors during install (if we got here, install succeeded)
 do $$ begin
-  raise notice 'PASS: US-10 pgque.sql re-run completed without errors';
+  raise notice 'PASS: US-10 logres.sql re-run completed without errors';
 end $$;
 
 -- Verify: queues still exist with same count
@@ -104,7 +104,7 @@ declare
   v_queue_count int;
   v_expected int;
 begin
-  select count(*) into v_queue_count from pgque.queue;
+  select count(*) into v_queue_count from logres.queue;
   select val::int into v_expected from _us10_state where key = 'queue_count';
 
   assert v_queue_count = v_expected,
@@ -119,7 +119,7 @@ declare
   v_sub_count int;
   v_expected int;
 begin
-  select count(*) into v_sub_count from pgque.subscription;
+  select count(*) into v_sub_count from logres.subscription;
   select val::int into v_expected from _us10_state where key = 'sub_count';
 
   assert v_sub_count = v_expected,
@@ -135,9 +135,9 @@ declare
   v_expected bigint;
 begin
   select s.sub_last_tick into v_last_tick
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from logres.subscription s
+  join logres.queue q on q.queue_id = s.sub_queue
+  join logres.consumer c on c.co_id = s.sub_consumer
   where q.queue_name = 'us10_orders'
     and c.co_name = 'analytics';
 
@@ -156,7 +156,7 @@ do $$
 declare
   v_id bigint;
 begin
-  v_id := pgque.send('us10_orders', 'order.created',
+  v_id := logres.send('us10_orders', 'order.created',
     '{"id":99,"after_reinstall":true}'::jsonb);
   assert v_id is not null, 'send should return event id after reinstall';
   raise notice 'PASS: US-10 send() works after reinstall';
@@ -164,19 +164,19 @@ end $$;
 
 -- ticker still works
 do $$ begin
-  perform pgque.force_tick('us10_orders');
-  perform pgque.ticker();
+  perform logres.force_tick('us10_orders');
+  perform logres.ticker();
   raise notice 'PASS: US-10 ticker() works after reinstall';
 end $$;
 
 -- receive still works
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us10_orders', 'analytics', 100)
+  for v_msg in select * from logres.receive('us10_orders', 'analytics', 100)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -184,7 +184,7 @@ begin
 
   assert v_count >= 1,
     'analytics should receive events after reinstall, got ' || v_count;
-  perform pgque.ack(v_batch_id);
+  perform logres.ack(v_batch_id);
   raise notice 'PASS: US-10 receive() works after reinstall (got % events)', v_count;
 end $$;
 
@@ -194,7 +194,7 @@ declare
   v_found bool := false;
 begin
   select true into v_found
-  from pgque.queue
+  from logres.queue
   where queue_name = 'us10_orders';
 
   assert coalesce(v_found, false), 'queue metadata should include us10_orders after reinstall';
@@ -207,11 +207,11 @@ end $$;
 drop table if exists _us10_state;
 
 do $$ begin
-  perform pgque.unsubscribe('us10_orders', 'fulfillment');
-  perform pgque.unsubscribe('us10_orders', 'analytics');
-  perform pgque.unsubscribe('us10_logs', 'archiver');
-  perform pgque.drop_queue('us10_orders');
-  perform pgque.drop_queue('us10_logs');
+  perform logres.unsubscribe('us10_orders', 'fulfillment');
+  perform logres.unsubscribe('us10_orders', 'analytics');
+  perform logres.unsubscribe('us10_logs', 'archiver');
+  perform logres.drop_queue('us10_orders');
+  perform logres.drop_queue('us10_logs');
 end $$;
 
 \echo 'US-10: PASSED'

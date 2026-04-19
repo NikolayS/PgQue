@@ -9,21 +9,21 @@ Vocabulary adapted from the 2009 PgCon talk by Kreen & Pihlak
 - **Batch** — events between two ticks, served to a consumer together.
 - **Queue** — named event stream; 3 rotating tables, purged by `TRUNCATE`.
   Any number of queues can coexist in one database.
-- **Producer** — anything that calls `insert_event` / `pgque.send`. Any
+- **Producer** — anything that calls `insert_event` / `logres.send`. Any
   number of producers can write to the same queue concurrently.
 - **Consumer** — subscribes, reads batches, calls `ack` (or `finish_batch`).
   Any number of consumers can subscribe to the same queue; each has its
   own cursor and independently sees every event (fan-out by default).
 - **Ticker** — creates ticks, vacuums, rotates, reschedules retries.
-  In PgQue: `pg_cron` calling `pgque.ticker()`.
+  In logres: `pg_cron` calling `logres.ticker()`.
 - **Tick** — position marker in the event stream; delimits batches.
 
 ## Delivery
 
 At-least-once. Exactly-once requires either:
 
-- **Same DB:** process in the same transaction as `finish_batch` (or `pgque.ack`).
-- **Cross DB:** target-side batch/event tracking — record the `batch_id` or per-event ids on the target side and skip duplicates. PgQue does not ship a helper for this today.
+- **Same DB:** process in the same transaction as `finish_batch` (or `logres.ack`).
+- **Cross DB:** target-side batch/event tracking — record the `batch_id` or per-event ids on the target side and skip duplicates. logres does not ship a helper for this today.
 
 ## Consumer loop
 
@@ -39,26 +39,26 @@ commit
 
 `ev_id`, `ev_time`, `ev_txid` (`xid8`), `ev_retry`, `ev_type`, `ev_data`,
 `ev_extra1..4`. `ev_extra1` is table name by convention (triggers).
-Payload format is a producer/consumer contract — PgQue does not interpret it.
+Payload format is a producer/consumer contract — logres does not interpret it.
 
 ## Health signals
 
-`pgque.get_consumer_info()`:
+`logres.get_consumer_info()`:
 
 - **lag** — age of last finished batch; high = falling behind.
 - **last_seen** — time since last batch; high = consumer not running.
 
 ## Per-queue tuning
 
-Stored on `pgque.queue`, read by `pgque.ticker()` (pg_cron). Set via
-`pgque.set_queue_config(queue, param, value)` — `param` is the short name
+Stored on `logres.queue`, read by `logres.ticker()` (pg_cron). Set via
+`logres.set_queue_config(queue, param, value)` — `param` is the short name
 below; the function auto-prefixes `queue_` internally.
 
 - `ticker_max_lag` — max wall time between ticks.
 - `ticker_idle_period` — tick interval when idle.
 - `ticker_max_count` — force tick at N events (batch-size cap).
 - `rotation_period` — table rotation period (disk vs. history).
-- `max_retries` — retry ceiling before a message goes to `pgque.dead_letter`.
+- `max_retries` — retry ceiling before a message goes to `logres.dead_letter`.
 
 ## Ticker rule
 

@@ -1,16 +1,16 @@
-from pgque import PgqueClient
+from logres import PgqueClient
 
 
 def test_python_client_smoke(conn):
-    conn.execute("select pgque.subscribe('smoke_py', 'py-smoke')")
+    conn.execute("select logres.subscribe('smoke_py', 'py-smoke')")
     conn.commit()
 
     client = PgqueClient(conn)
     client.send("smoke_py", {"hello": "world"}, type="smoke.test")
     conn.commit()
 
-    conn.execute("select pgque.force_tick('smoke_py')")
-    conn.execute("select pgque.ticker()")
+    conn.execute("select logres.force_tick('smoke_py')")
+    conn.execute("select logres.ticker()")
     conn.commit()
 
     messages = client.receive("smoke_py", "py-smoke", max_messages=10)

@@ -1,7 +1,7 @@
 [project]
-name = "pgque"
+name = "logres"
 version = "0.1.0"
-description = "Python client for PgQue -- PgQ Universal Edition"
+description = "Python client for logres -- PgQ Universal Edition"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [

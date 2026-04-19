@@ -1,7 +1,7 @@
-// pgque-go -- Go client for PgQue
+// logres-go -- Go client for logres
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-package pgque
+package logres
 
 import "time"
 

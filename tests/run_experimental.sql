@@ -1,9 +1,9 @@
--- run_experimental.sql -- pgque experimental SQL test suite
--- Requires: pgque.sql already loaded, plus selected experimental SQL loaded explicitly.
+-- run_experimental.sql -- logres experimental SQL test suite
+-- Requires: logres.sql already loaded, plus selected experimental SQL loaded explicitly.
 
 \set ON_ERROR_STOP on
 
-\echo '=== pgque experimental test suite ==='
+\echo '=== logres experimental test suite ==='
 \echo ''
 
 \echo 'Running: test_api_delayed'

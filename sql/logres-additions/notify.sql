@@ -1,11 +1,11 @@
--- LISTEN/NOTIFY integration for pgque ticker
+-- LISTEN/NOTIFY integration for logres ticker
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- The ticker function (pgque.ticker) will emit:
---   perform pg_notify('pgque_' || queue_name, tick_id::text);
+-- The ticker function (logres.ticker) will emit:
+--   perform pg_notify('logres_' || queue_name, tick_id::text);
 -- after each tick.
 --
 -- This is applied as a post-transform patch to the ticker function
 -- in build/transform.sh or during install script assembly.
 --
--- Consumers can: LISTEN pgque_<queue_name>;
+-- Consumers can: LISTEN logres_<queue_name>;

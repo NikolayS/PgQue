@@ -1,7 +1,7 @@
-// pgque-go -- Go client for PgQue
+// logres-go -- Go client for logres
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-package pgque
+package logres
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Client is the main PgQue client backed by a pgx connection pool.
+// Client is the main logres client backed by a pgx connection pool.
 type Client struct {
 	pool *pgxpool.Pool
 }
@@ -21,7 +21,7 @@ type Client struct {
 func Connect(ctx context.Context, dsn string) (*Client, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("pgque: connect: %w", err)
+		return nil, fmt.Errorf("logres: connect: %w", err)
 	}
 	return &Client{pool: pool}, nil
 }
@@ -36,7 +36,7 @@ func (c *Client) Pool() *pgxpool.Pool { return c.pool }
 func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error) {
 	payload, err := json.Marshal(ev.Payload)
 	if err != nil {
-		return 0, fmt.Errorf("pgque: marshal payload: %w", err)
+		return 0, fmt.Errorf("logres: marshal payload: %w", err)
 	}
 	typ := ev.Type
 	if typ == "" {
@@ -44,10 +44,10 @@ func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error
 	}
 	var eid int64
 	err = c.pool.QueryRow(ctx,
-		"SELECT pgque.send($1, $2, $3::jsonb)", queue, typ, string(payload),
+		"SELECT logres.send($1, $2, $3::jsonb)", queue, typ, string(payload),
 	).Scan(&eid)
 	if err != nil {
-		return 0, fmt.Errorf("pgque: send: %w", err)
+		return 0, fmt.Errorf("logres: send: %w", err)
 	}
 	return eid, nil
 }
@@ -55,9 +55,9 @@ func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error
 // Receive fetches up to maxMessages from the next batch for the consumer.
 func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessages int) ([]Message, error) {
 	rows, err := c.pool.Query(ctx,
-		"SELECT * FROM pgque.receive($1, $2, $3)", queue, consumer, maxMessages)
+		"SELECT * FROM logres.receive($1, $2, $3)", queue, consumer, maxMessages)
 	if err != nil {
-		return nil, fmt.Errorf("pgque: receive: %w", err)
+		return nil, fmt.Errorf("logres: receive: %w", err)
 	}
 	defer rows.Close()
 
@@ -71,22 +71,22 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 			&m.Extra1, &m.Extra2, &m.Extra3, &m.Extra4,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("pgque: scan message: %w", err)
+			return nil, fmt.Errorf("logres: scan message: %w", err)
 		}
 		m.CreatedAt = createdAt
 		msgs = append(msgs, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("pgque: receive rows: %w", err)
+		return nil, fmt.Errorf("logres: receive rows: %w", err)
 	}
 	return msgs, nil
 }
 
 // Ack acknowledges (finishes) a batch, advancing the consumer position.
 func (c *Client) Ack(ctx context.Context, batchID int64) error {
-	_, err := c.pool.Exec(ctx, "SELECT pgque.ack($1)", batchID)
+	_, err := c.pool.Exec(ctx, "SELECT logres.ack($1)", batchID)
 	if err != nil {
-		return fmt.Errorf("pgque: ack: %w", err)
+		return fmt.Errorf("logres: ack: %w", err)
 	}
 	return nil
 }

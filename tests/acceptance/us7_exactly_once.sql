@@ -16,8 +16,8 @@ create temporary table if not exists _us7_state (batch_id bigint);
 
 -- Setup: create queue and subscribe consumer
 do $$ begin
-  perform pgque.create_queue('us7_payments');
-  perform pgque.subscribe('us7_payments', 'processor');
+  perform logres.create_queue('us7_payments');
+  perform logres.subscribe('us7_payments', 'processor');
 end $$;
 
 -- ==============================
@@ -26,25 +26,25 @@ end $$;
 
 -- Send event
 do $$ begin
-  perform pgque.send('us7_payments', 'payment.process',
+  perform logres.send('us7_payments', 'payment.process',
     '{"amount":100,"id":"pay_001"}'::jsonb);
 end $$;
 
 -- Tick
 do $$ begin
-  perform pgque.force_tick('us7_payments');
-  perform pgque.ticker();
+  perform logres.force_tick('us7_payments');
+  perform logres.ticker();
 end $$;
 
 -- Receive, process (insert result), and ack -- all in one DO block
 -- (simulates a committed transaction)
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us7_payments', 'processor', 10)
+  for v_msg in select * from logres.receive('us7_payments', 'processor', 10)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -59,7 +59,7 @@ begin
   assert v_count = 1, 'should receive exactly 1 event, got ' || v_count;
 
   -- Ack the batch (commit the consumption)
-  perform pgque.ack(v_batch_id);
+  perform logres.ack(v_batch_id);
 
   raise notice 'PASS: US-7 scenario A: committed receive+process+ack';
 end $$;
@@ -79,9 +79,9 @@ end $$;
 do $$
 declare
   v_count int := 0;
-  v_msg pgque.message;
+  v_msg logres.message;
 begin
-  for v_msg in select * from pgque.receive('us7_payments', 'processor', 10)
+  for v_msg in select * from logres.receive('us7_payments', 'processor', 10)
   loop
     v_count := v_count + 1;
   end loop;
@@ -96,13 +96,13 @@ declare
   v_batch_id bigint;
 begin
   select sub_batch into v_batch_id
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
+  from logres.subscription s
+  join logres.queue q on q.queue_id = s.sub_queue
   where q.queue_name = 'us7_payments'
   and s.sub_batch is not null;
 
   if v_batch_id is not null then
-    perform pgque.ack(v_batch_id);
+    perform logres.ack(v_batch_id);
   end if;
 end $$;
 
@@ -112,14 +112,14 @@ end $$;
 
 -- Send another event
 do $$ begin
-  perform pgque.send('us7_payments', 'payment.process',
+  perform logres.send('us7_payments', 'payment.process',
     '{"amount":200,"id":"pay_002"}'::jsonb);
 end $$;
 
 -- Tick
 do $$ begin
-  perform pgque.force_tick('us7_payments');
-  perform pgque.ticker();
+  perform logres.force_tick('us7_payments');
+  perform logres.ticker();
 end $$;
 
 -- Receive the event, process it, but DO NOT ack (simulate crash/rollback).
@@ -128,12 +128,12 @@ end $$;
 -- while keeping the overall block alive.
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_count int := 0;
   v_batch_id bigint;
   v_payload text;
 begin
-  for v_msg in select * from pgque.receive('us7_payments', 'processor', 10)
+  for v_msg in select * from logres.receive('us7_payments', 'processor', 10)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -168,30 +168,30 @@ begin
   select batch_id into v_batch_id from _us7_state;
   if v_batch_id is not null then
     -- Close the batch without processing (events pass through)
-    perform pgque.finish_batch(v_batch_id);
+    perform logres.finish_batch(v_batch_id);
   end if;
 end $$;
 
 -- Send a third event and tick so we can test that the consumer
 -- continues to function correctly after the simulated crash
 do $$ begin
-  perform pgque.send('us7_payments', 'payment.process',
+  perform logres.send('us7_payments', 'payment.process',
     '{"amount":300,"id":"pay_003"}'::jsonb);
 end $$;
 
 do $$ begin
-  perform pgque.force_tick('us7_payments');
-  perform pgque.ticker();
+  perform logres.force_tick('us7_payments');
+  perform logres.ticker();
 end $$;
 
 -- Verify: consumer can still receive new events after the crash sim
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_count int := 0;
   v_batch_id bigint;
 begin
-  for v_msg in select * from pgque.receive('us7_payments', 'processor', 10)
+  for v_msg in select * from logres.receive('us7_payments', 'processor', 10)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -200,7 +200,7 @@ begin
   -- Should get pay_003 (the new event)
   assert v_count >= 1,
     'should receive at least 1 event after crash recovery, got ' || v_count;
-  perform pgque.ack(v_batch_id);
+  perform logres.ack(v_batch_id);
   raise notice 'PASS: US-7 scenario B: consumer recovered, received % event(s)', v_count;
 end $$;
 
@@ -228,8 +228,8 @@ drop table if exists _us7_results;
 drop table if exists _us7_state;
 
 do $$ begin
-  perform pgque.unsubscribe('us7_payments', 'processor');
-  perform pgque.drop_queue('us7_payments');
+  perform logres.unsubscribe('us7_payments', 'processor');
+  perform logres.drop_queue('us7_payments');
 end $$;
 
 \echo 'US-7: PASSED'

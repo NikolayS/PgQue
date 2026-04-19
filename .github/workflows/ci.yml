@@ -21,61 +21,61 @@ jobs:
 
       - name: Start PostgreSQL ${{ matrix.pg_version }}
         run: |
-          docker run -d --name pgque-test \
-            -e POSTGRES_PASSWORD=pgque_test \
-            -e POSTGRES_DB=pgque_test \
+          docker run -d --name logres-test \
+            -e POSTGRES_PASSWORD=logres_test \
+            -e POSTGRES_DB=logres_test \
             -p 5432:5432 \
             postgres:${{ matrix.pg_version }}
 
           # Wait for PG to be ready
           for i in $(seq 1 30); do
-            docker exec pgque-test pg_isready -U postgres && break
+            docker exec logres-test pg_isready -U postgres && break
             sleep 1
           done || { echo "PG not ready after 30 seconds"; exit 1; }
 
-      - name: Build pgque
+      - name: Build logres
         run: bash build/transform.sh
 
-      - name: Install pgque
+      - name: Install logres
         run: |
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
+            -v ON_ERROR_STOP=1 -f sql/logres.sql
 
       - name: Run regression tests
         run: |
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
             -v ON_ERROR_STOP=1 -f tests/run_all.sql
 
       - name: Run acceptance tests
         run: |
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
             -v ON_ERROR_STOP=1 -f tests/acceptance/run_acceptance.sql
 
       - name: Test install idempotency
         run: |
           # Re-run install -- should produce no errors
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
+            -v ON_ERROR_STOP=1 -f sql/logres.sql
           # Verify everything still works
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
 
       - name: Test uninstall
         run: |
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f sql/pgque_uninstall.sql
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
+            -v ON_ERROR_STOP=1 -f sql/logres_uninstall.sql
           # Verify schema is gone
-          result=$(PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -tAc "select count(*) from pg_namespace where nspname = 'pgque'")
+          result=$(PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
+            -v ON_ERROR_STOP=1 -tAc "select count(*) from pg_namespace where nspname = 'logres'")
           if [ "$result" != "0" ]; then
-            echo "FAIL: pgque schema still exists after uninstall"
+            echo "FAIL: logres schema still exists after uninstall"
             exit 1
           fi
-          echo "PASS: pgque schema removed after uninstall"
+          echo "PASS: logres schema removed after uninstall"
 
       - name: Cleanup
         if: always()
-        run: docker rm -f pgque-test
+        run: docker rm -f logres-test
 
   client-smoke:
     runs-on: ubuntu-latest
@@ -86,28 +86,28 @@ jobs:
 
       - name: Start PostgreSQL 18
         run: |
-          docker run -d --name pgque-client-test \
-            -e POSTGRES_PASSWORD=pgque_test \
-            -e POSTGRES_DB=pgque_test \
+          docker run -d --name logres-client-test \
+            -e POSTGRES_PASSWORD=logres_test \
+            -e POSTGRES_DB=logres_test \
             -p 5432:5432 \
             postgres:18
 
           for i in $(seq 1 30); do
-            docker exec pgque-client-test pg_isready -U postgres && break
+            docker exec logres-client-test pg_isready -U postgres && break
             sleep 1
           done || { echo "PG not ready after 30 seconds"; exit 1; }
 
-      - name: Build pgque
+      - name: Build logres
         run: bash build/transform.sh
 
-      - name: Install pgque
+      - name: Install logres
         run: |
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f sql/pgque.sql
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -c "select pgque.create_queue('smoke_py'); select pgque.create_queue('smoke_go'); select pgque.create_queue('smoke_ts');"
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -c "select pgque.force_tick('smoke_py'); select pgque.force_tick('smoke_go'); select pgque.force_tick('smoke_ts'); select pgque.ticker();"
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
+            -v ON_ERROR_STOP=1 -f sql/logres.sql
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
+            -v ON_ERROR_STOP=1 -c "select logres.create_queue('smoke_py'); select logres.create_queue('smoke_go'); select logres.create_queue('smoke_ts');"
+          PGPASSWORD=logres_test psql -h localhost -U postgres -d logres_test \
+            -v ON_ERROR_STOP=1 -c "select logres.force_tick('smoke_py'); select logres.force_tick('smoke_go'); select logres.force_tick('smoke_ts'); select logres.ticker();"
 
       - name: Python smoke
         run: |
@@ -129,7 +129,7 @@ jobs:
 
       - name: Cleanup client smoke DB
         if: always()
-        run: docker rm -f pgque-client-test
+        run: docker rm -f logres-client-test
 
   verify:
     runs-on: ubuntu-latest

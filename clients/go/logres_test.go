@@ -1,4 +1,4 @@
-package pgque_test
+package logres_test
 
 import (
 	"context"
@@ -6,44 +6,44 @@ import (
 	"testing"
 	"time"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	logres "github.com/NikolayS/logres/clients/go"
 )
 
 func getDSN() string {
 	dsn := os.Getenv("PGQUE_TEST_DSN")
 	if dsn == "" {
-		dsn = "postgresql://postgres:pgque_test@localhost/pgque_test"
+		dsn = "postgresql://postgres:logres_test@localhost/logres_test"
 	}
 	return dsn
 }
 
-func setupQueue(t *testing.T, client *pgque.Client) {
+func setupQueue(t *testing.T, client *logres.Client) {
 	t.Helper()
 	ctx := context.Background()
-	_, err := client.Pool().Exec(ctx, "SELECT pgque.create_queue('gotest_queue')")
+	_, err := client.Pool().Exec(ctx, "SELECT logres.create_queue('gotest_queue')")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Pool().Exec(ctx, "SELECT pgque.register_consumer('gotest_queue', 'gotest_consumer')")
+	_, err = client.Pool().Exec(ctx, "SELECT logres.register_consumer('gotest_queue', 'gotest_consumer')")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		client.Pool().Exec(ctx, "SELECT pgque.unregister_consumer('gotest_queue', 'gotest_consumer')")
-		client.Pool().Exec(ctx, "SELECT pgque.drop_queue('gotest_queue')")
+		client.Pool().Exec(ctx, "SELECT logres.unregister_consumer('gotest_queue', 'gotest_consumer')")
+		client.Pool().Exec(ctx, "SELECT logres.drop_queue('gotest_queue')")
 	})
 }
 
 func TestSend(t *testing.T) {
 	ctx := context.Background()
-	client, err := pgque.Connect(ctx, getDSN())
+	client, err := logres.Connect(ctx, getDSN())
 	if err != nil {
 		t.Skip("Cannot connect to PG:", err)
 	}
 	defer client.Close()
 	setupQueue(t, client)
 
-	eid, err := client.Send(ctx, "gotest_queue", pgque.Event{
+	eid, err := client.Send(ctx, "gotest_queue", logres.Event{
 		Type:    "order.created",
 		Payload: map[string]any{"order_id": 42},
 	})
@@ -57,7 +57,7 @@ func TestSend(t *testing.T) {
 
 func TestSendAndReceive(t *testing.T) {
 	ctx := context.Background()
-	client, err := pgque.Connect(ctx, getDSN())
+	client, err := logres.Connect(ctx, getDSN())
 	if err != nil {
 		t.Skip("Cannot connect to PG:", err)
 	}
@@ -65,7 +65,7 @@ func TestSendAndReceive(t *testing.T) {
 	setupQueue(t, client)
 
 	// Send
-	_, err = client.Send(ctx, "gotest_queue", pgque.Event{
+	_, err = client.Send(ctx, "gotest_queue", logres.Event{
 		Type:    "test.type",
 		Payload: map[string]any{"key": "value"},
 	})
@@ -74,7 +74,7 @@ func TestSendAndReceive(t *testing.T) {
 	}
 
 	// Ticker
-	_, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()")
+	_, err = client.Pool().Exec(ctx, "SELECT logres.ticker()")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestConsumerHandlerDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, err := pgque.Connect(ctx, getDSN())
+	client, err := logres.Connect(ctx, getDSN())
 	if err != nil {
 		t.Skip("Cannot connect to PG:", err)
 	}
@@ -110,20 +110,20 @@ func TestConsumerHandlerDispatch(t *testing.T) {
 	setupQueue(t, client)
 
 	// Send event
-	_, err = client.Send(ctx, "gotest_queue", pgque.Event{
+	_, err = client.Send(ctx, "gotest_queue", logres.Event{
 		Type:    "dispatch.test",
 		Payload: map[string]any{"dispatched": true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.Pool().Exec(ctx, "SELECT pgque.ticker()")
+	client.Pool().Exec(ctx, "SELECT logres.ticker()")
 
-	received := make(chan pgque.Message, 1)
+	received := make(chan logres.Message, 1)
 	consumer := client.NewConsumer("gotest_queue", "gotest_consumer",
-		pgque.WithPollInterval(100*time.Millisecond),
+		logres.WithPollInterval(100*time.Millisecond),
 	)
-	consumer.Handle("dispatch.test", func(ctx context.Context, msg pgque.Message) error {
+	consumer.Handle("dispatch.test", func(ctx context.Context, msg logres.Message) error {
 		received <- msg
 		return nil
 	})

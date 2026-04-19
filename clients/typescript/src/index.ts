@@ -32,32 +32,32 @@ export class PgqueClient {
 
   async send(queue: string, payload: unknown, type = 'message'): Promise<void> {
     await this.client.query(
-      'select pgque.send($1, $2, $3::jsonb)',
+      'select logres.send($1, $2, $3::jsonb)',
       [queue, type, JSON.stringify(payload)]
     );
   }
 
   async subscribe(queue: string, consumer: string): Promise<void> {
-    await this.client.query('select pgque.subscribe($1, $2)', [queue, consumer]);
+    await this.client.query('select logres.subscribe($1, $2)', [queue, consumer]);
   }
 
   async receive(queue: string, consumer: string, limit = 100): Promise<PgqueMessage[]> {
     const result = await this.client.query<PgqueMessage>(
-      'select * from pgque.receive($1, $2, $3)',
+      'select * from logres.receive($1, $2, $3)',
       [queue, consumer, limit]
     );
     return result.rows;
   }
 
   async ack(batchId: number): Promise<void> {
-    await this.client.query('select pgque.ack($1)', [batchId]);
+    await this.client.query('select logres.ack($1)', [batchId]);
   }
 
   async forceTick(queue: string): Promise<void> {
-    await this.client.query('select pgque.force_tick($1)', [queue]);
+    await this.client.query('select logres.force_tick($1)', [queue]);
   }
 
   async ticker(): Promise<void> {
-    await this.client.query('select pgque.ticker()');
+    await this.client.query('select logres.ticker()');
   }
 }

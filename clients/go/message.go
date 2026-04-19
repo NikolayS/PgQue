@@ -1,11 +1,11 @@
-// pgque-go -- Go client for PgQue
+// logres-go -- Go client for logres
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-package pgque
+package logres
 
 import "time"
 
-// Message represents a message received from a PgQue queue.
+// Message represents a message received from a logres queue.
 type Message struct {
 	MsgID      int64     `json:"msg_id"`
 	BatchID    int64     `json:"batch_id"`
@@ -19,7 +19,7 @@ type Message struct {
 	Extra4     *string   `json:"extra4"`
 }
 
-// Event represents an event to be sent to a PgQue queue.
+// Event represents an event to be sent to a logres queue.
 type Event struct {
 	Type    string
 	Payload any // will be JSON-marshaled

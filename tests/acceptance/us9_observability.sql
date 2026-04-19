@@ -11,27 +11,27 @@
 -- Queue 3: has DLQ entries
 
 do $$ begin
-  perform pgque.create_queue('us9_healthy');
-  perform pgque.create_queue('us9_lagging');
-  perform pgque.create_queue('us9_dlq');
+  perform logres.create_queue('us9_healthy');
+  perform logres.create_queue('us9_lagging');
+  perform logres.create_queue('us9_dlq');
 
-  perform pgque.register_consumer('us9_healthy', 'fast_worker');
-  perform pgque.register_consumer('us9_lagging', 'slow_worker');
-  perform pgque.register_consumer('us9_dlq', 'dlq_worker');
+  perform logres.register_consumer('us9_healthy', 'fast_worker');
+  perform logres.register_consumer('us9_lagging', 'slow_worker');
+  perform logres.register_consumer('us9_dlq', 'dlq_worker');
 
   -- Insert events into all queues
-  perform pgque.insert_event('us9_healthy', 'order.created', '{"id":1}');
-  perform pgque.insert_event('us9_lagging', 'order.created', '{"id":2}');
-  perform pgque.insert_event('us9_lagging', 'order.created', '{"id":3}');
-  perform pgque.insert_event('us9_dlq', 'order.created', '{"id":4}');
+  perform logres.insert_event('us9_healthy', 'order.created', '{"id":1}');
+  perform logres.insert_event('us9_lagging', 'order.created', '{"id":2}');
+  perform logres.insert_event('us9_lagging', 'order.created', '{"id":3}');
+  perform logres.insert_event('us9_dlq', 'order.created', '{"id":4}');
 end $$;
 
 -- Tick all queues
 do $$ begin
-  perform pgque.force_tick('us9_healthy');
-  perform pgque.force_tick('us9_lagging');
-  perform pgque.force_tick('us9_dlq');
-  perform pgque.ticker();
+  perform logres.force_tick('us9_healthy');
+  perform logres.force_tick('us9_lagging');
+  perform logres.force_tick('us9_dlq');
+  perform logres.ticker();
 end $$;
 
 -- Consume us9_healthy fully (fast worker keeps up)
@@ -39,9 +39,9 @@ do $$
 declare
   v_batch_id bigint;
 begin
-  select pgque.next_batch('us9_healthy', 'fast_worker') into v_batch_id;
+  select logres.next_batch('us9_healthy', 'fast_worker') into v_batch_id;
   if v_batch_id is not null then
-    perform pgque.finish_batch(v_batch_id);
+    perform logres.finish_batch(v_batch_id);
   end if;
 end $$;
 
@@ -51,18 +51,18 @@ declare
   v_batch_id bigint;
   v_ev record;
 begin
-  select pgque.next_batch('us9_dlq', 'dlq_worker') into v_batch_id;
+  select logres.next_batch('us9_dlq', 'dlq_worker') into v_batch_id;
   if v_batch_id is not null then
     -- Get first event and send it to DLQ
-    for v_ev in select * from pgque.get_batch_events(v_batch_id)
+    for v_ev in select * from logres.get_batch_events(v_batch_id)
     loop
-      perform pgque.event_dead(
+      perform logres.event_dead(
         v_batch_id, v_ev.ev_id, 'max retries exceeded',
         v_ev.ev_time, v_ev.ev_txid, v_ev.ev_retry,
         v_ev.ev_type, v_ev.ev_data);
       exit;  -- just one event
     end loop;
-    perform pgque.finish_batch(v_batch_id);
+    perform logres.finish_batch(v_batch_id);
   end if;
 end $$;
 
@@ -74,7 +74,7 @@ declare
   v_found_lagging bool := false;
   v_found_dlq bool := false;
 begin
-  for v_row in select * from pgque.queue_stats()
+  for v_row in select * from logres.queue_stats()
   loop
     if v_row.queue_name = 'us9_healthy' then
       v_found_healthy := true;
@@ -105,7 +105,7 @@ declare
   v_found_fast bool := false;
   v_found_slow bool := false;
 begin
-  for v_row in select * from pgque.consumer_stats()
+  for v_row in select * from logres.consumer_stats()
   loop
     if v_row.queue_name = 'us9_healthy' and v_row.consumer_name = 'fast_worker' then
       v_found_fast := true;
@@ -133,7 +133,7 @@ declare
   v_rotation_checks int := 0;
   v_dlq_checks int := 0;
 begin
-  for v_row in select * from pgque.queue_health()
+  for v_row in select * from logres.queue_health()
   loop
     -- All statuses must be valid
     if v_row.check_name not in ('pg_cron_ticker', 'pg_cron_maint') then
@@ -170,19 +170,19 @@ declare
   v_lag_count int := 0;
   v_dlq_count int := 0;
 begin
-  for v_row in select * from pgque.otel_metrics()
+  for v_row in select * from logres.otel_metrics()
   loop
-    if v_row.metric_name = 'pgque.queue.depth' then
+    if v_row.metric_name = 'logres.queue.depth' then
       v_depth_count := v_depth_count + 1;
       assert v_row.metric_type = 'gauge', 'depth should be gauge';
       assert v_row.labels ? 'queue', 'depth should have queue label';
     end if;
-    if v_row.metric_name = 'pgque.consumer.lag_seconds' then
+    if v_row.metric_name = 'logres.consumer.lag_seconds' then
       v_lag_count := v_lag_count + 1;
       assert v_row.metric_type = 'gauge', 'lag should be gauge';
       assert v_row.labels ? 'consumer', 'lag should have consumer label';
     end if;
-    if v_row.metric_name = 'pgque.message.dead_lettered' then
+    if v_row.metric_name = 'logres.message.dead_lettered' then
       v_dlq_count := v_dlq_count + 1;
       assert v_row.metric_type = 'gauge', 'dead_lettered should be gauge';
     end if;
@@ -199,7 +199,7 @@ declare
   v_found_slow bool := false;
   v_row record;
 begin
-  for v_row in select * from pgque.stuck_consumers('0 seconds'::interval)
+  for v_row in select * from logres.stuck_consumers('0 seconds'::interval)
   loop
     if v_row.queue_name = 'us9_lagging' and v_row.consumer_name = 'slow_worker' then
       v_found_slow := true;
@@ -212,13 +212,13 @@ end $$;
 -- Teardown: purge DLQ entries before unregistering consumers
 -- (dead_letter has FK to consumer, so DLQ must be cleaned first)
 do $$ begin
-  perform pgque.dlq_purge('us9_dlq', '0 seconds'::interval);
-  perform pgque.unregister_consumer('us9_healthy', 'fast_worker');
-  perform pgque.unregister_consumer('us9_lagging', 'slow_worker');
-  perform pgque.unregister_consumer('us9_dlq', 'dlq_worker');
-  perform pgque.drop_queue('us9_healthy');
-  perform pgque.drop_queue('us9_lagging');
-  perform pgque.drop_queue('us9_dlq');
+  perform logres.dlq_purge('us9_dlq', '0 seconds'::interval);
+  perform logres.unregister_consumer('us9_healthy', 'fast_worker');
+  perform logres.unregister_consumer('us9_lagging', 'slow_worker');
+  perform logres.unregister_consumer('us9_dlq', 'dlq_worker');
+  perform logres.drop_queue('us9_healthy');
+  perform logres.drop_queue('us9_lagging');
+  perform logres.drop_queue('us9_dlq');
 end $$;
 
 \echo 'US-9: PASSED'

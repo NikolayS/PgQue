@@ -25,19 +25,19 @@ create temporary table if not exists _us3_state (batch_id bigint);
 -- Setup: queue with max_retries=2
 -- ==============================
 do $$ begin
-  perform pgque.create_queue('us3_jobs', '{"max_retries": 2}'::jsonb);
-  perform pgque.subscribe('us3_jobs', 'worker');
+  perform logres.create_queue('us3_jobs', '{"max_retries": 2}'::jsonb);
+  perform logres.subscribe('us3_jobs', 'worker');
 end $$;
 
 -- Send event
 do $$ begin
-  perform pgque.send('us3_jobs', 'job.process', '{"task":"test"}'::jsonb);
+  perform logres.send('us3_jobs', 'job.process', '{"task":"test"}'::jsonb);
 end $$;
 
 -- Ticker (force_tick bypasses throttle)
 do $$ begin
-  perform pgque.force_tick('us3_jobs');
-  perform pgque.ticker();
+  perform logres.force_tick('us3_jobs');
+  perform logres.ticker();
 end $$;
 
 -- ==============================
@@ -45,11 +45,11 @@ end $$;
 -- ==============================
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_batch_id bigint;
   v_count int := 0;
 begin
-  for v_msg in select * from pgque.receive('us3_jobs', 'worker', 10)
+  for v_msg in select * from logres.receive('us3_jobs', 'worker', 10)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -59,7 +59,7 @@ begin
       'payload should match, got ' || coalesce(v_msg.payload, 'NULL');
 
     -- Nack: schedule for retry (0 seconds delay for testing)
-    perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'transient failure');
+    perform logres.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'transient failure');
   end loop;
 
   assert v_count = 1, 'should receive exactly 1 message, got ' || v_count;
@@ -78,7 +78,7 @@ declare
 begin
   select batch_id into v_batch_id from _us3_state;
   assert v_batch_id is not null, 'batch_id should not be null';
-  perform pgque.ack(v_batch_id);
+  perform logres.ack(v_batch_id);
 end $$;
 
 -- ==============================
@@ -87,23 +87,23 @@ end $$;
 
 -- maint_retry_events: move from retry_queue back to event table
 do $$ begin
-  perform pgque.maint_retry_events();
+  perform logres.maint_retry_events();
 end $$;
 
 -- force_tick + ticker: create a new tick covering the re-inserted event
 do $$ begin
-  perform pgque.force_tick('us3_jobs');
-  perform pgque.ticker();
+  perform logres.force_tick('us3_jobs');
+  perform logres.ticker();
 end $$;
 
 -- Receive: retry_count should be 1
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_batch_id bigint;
   v_count int := 0;
 begin
-  for v_msg in select * from pgque.receive('us3_jobs', 'worker', 10)
+  for v_msg in select * from logres.receive('us3_jobs', 'worker', 10)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -111,7 +111,7 @@ begin
       'cycle 1: retry_count should be 1, got ' || coalesce(v_msg.retry_count::text, 'NULL');
 
     -- Nack again
-    perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'still failing');
+    perform logres.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'still failing');
   end loop;
 
   assert v_count = 1, 'cycle 1: should receive 1 message, got ' || v_count;
@@ -130,7 +130,7 @@ declare
 begin
   select batch_id into v_batch_id from _us3_state;
   assert v_batch_id is not null, 'batch_id should not be null';
-  perform pgque.ack(v_batch_id);
+  perform logres.ack(v_batch_id);
 end $$;
 
 -- ==============================
@@ -139,23 +139,23 @@ end $$;
 
 -- maint_retry_events
 do $$ begin
-  perform pgque.maint_retry_events();
+  perform logres.maint_retry_events();
 end $$;
 
 -- force_tick + ticker
 do $$ begin
-  perform pgque.force_tick('us3_jobs');
-  perform pgque.ticker();
+  perform logres.force_tick('us3_jobs');
+  perform logres.ticker();
 end $$;
 
 -- Receive: retry_count should be 2 (now >= max_retries)
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_batch_id bigint;
   v_count int := 0;
 begin
-  for v_msg in select * from pgque.receive('us3_jobs', 'worker', 10)
+  for v_msg in select * from logres.receive('us3_jobs', 'worker', 10)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
@@ -163,7 +163,7 @@ begin
       'cycle 2: retry_count should be 2, got ' || coalesce(v_msg.retry_count::text, 'NULL');
 
     -- Nack: retry_count=2 >= max_retries=2, so this should go to DLQ
-    perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'permanent failure');
+    perform logres.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'permanent failure');
   end loop;
 
   assert v_count = 1, 'cycle 2: should receive 1 message, got ' || v_count;
@@ -182,7 +182,7 @@ declare
 begin
   select batch_id into v_batch_id from _us3_state;
   assert v_batch_id is not null, 'batch_id should not be null';
-  perform pgque.ack(v_batch_id);
+  perform logres.ack(v_batch_id);
 end $$;
 
 -- ==============================
@@ -194,14 +194,14 @@ declare
   v_dl record;
 begin
   select count(*) into v_dlq_count
-  from pgque.dead_letter dl
-  join pgque.queue q on q.queue_id = dl.dl_queue_id
+  from logres.dead_letter dl
+  join logres.queue q on q.queue_id = dl.dl_queue_id
   where q.queue_name = 'us3_jobs';
 
   assert v_dlq_count = 1, 'should have 1 DLQ entry, got ' || v_dlq_count;
 
   -- Verify dlq_inspect shows the event
-  select * into v_dl from pgque.dlq_inspect('us3_jobs', 100) limit 1;
+  select * into v_dl from logres.dlq_inspect('us3_jobs', 100) limit 1;
   assert v_dl.dl_id is not null, 'dlq_inspect should return an entry';
   assert v_dl.dl_reason = 'permanent failure',
     'DLQ reason should be permanent failure, got ' || coalesce(v_dl.dl_reason, 'NULL');
@@ -222,18 +222,18 @@ declare
   v_new_eid bigint;
 begin
   select dl_id into v_dl_id
-  from pgque.dead_letter dl
-  join pgque.queue q on q.queue_id = dl.dl_queue_id
+  from logres.dead_letter dl
+  join logres.queue q on q.queue_id = dl.dl_queue_id
   where q.queue_name = 'us3_jobs'
   limit 1;
 
-  v_new_eid := pgque.dlq_replay(v_dl_id);
+  v_new_eid := logres.dlq_replay(v_dl_id);
   assert v_new_eid is not null, 'dlq_replay should return new event id';
 
   -- Verify DLQ is now empty for this queue
   assert not exists (
-    select 1 from pgque.dead_letter dl
-    join pgque.queue q on q.queue_id = dl.dl_queue_id
+    select 1 from logres.dead_letter dl
+    join logres.queue q on q.queue_id = dl.dl_queue_id
     where q.queue_name = 'us3_jobs'
   ), 'DLQ should be empty after replay';
 
@@ -242,17 +242,17 @@ end $$;
 
 -- Ticker after replay (force_tick bypasses throttle)
 do $$ begin
-  perform pgque.force_tick('us3_jobs');
-  perform pgque.ticker();
+  perform logres.force_tick('us3_jobs');
+  perform logres.ticker();
 end $$;
 
 -- Receive the replayed event (retry_count should be reset/NULL)
 do $$
 declare
-  v_msg pgque.message;
+  v_msg logres.message;
   v_count int := 0;
 begin
-  for v_msg in select * from pgque.receive('us3_jobs', 'worker', 10)
+  for v_msg in select * from logres.receive('us3_jobs', 'worker', 10)
   loop
     v_count := v_count + 1;
     assert v_msg.type = 'job.process',
@@ -261,7 +261,7 @@ begin
       'replayed event payload should match, got ' || coalesce(v_msg.payload, 'NULL');
 
     -- Ack the replayed event
-    perform pgque.ack(v_msg.batch_id);
+    perform logres.ack(v_msg.batch_id);
   end loop;
 
   assert v_count = 1, 'should receive 1 replayed event, got ' || v_count;
@@ -275,10 +275,10 @@ drop table if exists _us3_state;
 
 do $$ begin
   -- Clean up any remaining DLQ entries
-  delete from pgque.dead_letter
-  where dl_queue_id = (select queue_id from pgque.queue where queue_name = 'us3_jobs');
-  perform pgque.unsubscribe('us3_jobs', 'worker');
-  perform pgque.drop_queue('us3_jobs');
+  delete from logres.dead_letter
+  where dl_queue_id = (select queue_id from logres.queue where queue_name = 'us3_jobs');
+  perform logres.unsubscribe('us3_jobs', 'worker');
+  perform logres.drop_queue('us3_jobs');
 end $$;
 
 \echo 'US-3: PASSED'
