@@ -1,11 +1,11 @@
-from logres import PgqueClient
+from logres import LogresClient
 
 
 def test_python_client_smoke(conn):
     conn.execute("select logres.subscribe('smoke_py', 'py-smoke')")
     conn.commit()
 
-    client = PgqueClient(conn)
+    client = LogresClient(conn)
     client.send("smoke_py", {"hello": "world"}, type="smoke.test")
     conn.commit()
 

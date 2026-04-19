@@ -2,7 +2,7 @@
 # logres includes code derived from PgQ (ISC license,
 # Marko Kreen / Skype Technologies OU).
 
-"""PgqueClient -- thin Python wrapper over logres SQL API."""
+"""LogresClient -- thin Python wrapper over logres SQL API."""
 
 import json
 from typing import Optional
@@ -12,7 +12,7 @@ import psycopg
 from .types import Message
 
 
-class PgqueClient:
+class LogresClient:
     """Thin wrapper around logres SQL functions.
 
     All methods execute SQL against the provided psycopg connection.

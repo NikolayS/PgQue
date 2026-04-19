@@ -88,7 +88,7 @@ SOURCE_FILES=(
 apply_schema_rename() {
   # Rename pgq schema references to logres.
   # Must be word-boundary-aware to avoid mangling _pgq_ev_ magic columns,
-  # pgq_node, pgq_ext, or text inside larger identifiers like "logresue".
+  # pgq_node, pgq_ext, or text inside larger identifiers like "pgqueue".
   #
   # Strategy: apply targeted replacements in order of specificity.
   local content="$1"

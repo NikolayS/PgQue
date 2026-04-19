@@ -1,8 +1,8 @@
 import pytest
-from logres import PgqueClient, Consumer, Message
+from logres import LogresClient, Consumer, Message
 
 def test_receive_returns_messages(conn, setup_queue):
-    client = PgqueClient(conn)
+    client = LogresClient(conn)
     client.send("pytest_queue", {"key": "value"})
     conn.execute("SELECT logres.ticker()")
     conn.commit()
@@ -14,7 +14,7 @@ def test_receive_returns_messages(conn, setup_queue):
     assert msgs[0].batch_id is not None
 
 def test_ack_advances_position(conn, setup_queue):
-    client = PgqueClient(conn)
+    client = LogresClient(conn)
     client.send("pytest_queue", {"key": "value"})
     conn.execute("SELECT logres.ticker()")
     conn.commit()
@@ -28,7 +28,7 @@ def test_ack_advances_position(conn, setup_queue):
     assert len(msgs2) == 0
 
 def test_nack_retries_event(conn, setup_queue):
-    client = PgqueClient(conn)
+    client = LogresClient(conn)
     client.send("pytest_queue", {"key": "retry"})
     conn.execute("SELECT logres.ticker()")
     conn.commit()

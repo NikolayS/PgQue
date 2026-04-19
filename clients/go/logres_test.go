@@ -10,7 +10,7 @@ import (
 )
 
 func getDSN() string {
-	dsn := os.Getenv("PGQUE_TEST_DSN")
+	dsn := os.Getenv("LOGRES_TEST_DSN")
 	if dsn == "" {
 		dsn = "postgresql://postgres:logres_test@localhost/logres_test"
 	}

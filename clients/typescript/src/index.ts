@@ -1,6 +1,6 @@
 import { Client, type ClientConfig } from 'pg';
 
-export interface PgqueMessage {
+export interface LogresMessage {
   msg_id: number;
   batch_id: number;
   type: string;
@@ -13,7 +13,7 @@ export interface PgqueMessage {
   extra4: string | null;
 }
 
-export class PgqueClient {
+export class LogresClient {
   private readonly client: Client;
 
   constructor(config: string | ClientConfig) {
@@ -41,8 +41,8 @@ export class PgqueClient {
     await this.client.query('select logres.subscribe($1, $2)', [queue, consumer]);
   }
 
-  async receive(queue: string, consumer: string, limit = 100): Promise<PgqueMessage[]> {
-    const result = await this.client.query<PgqueMessage>(
+  async receive(queue: string, consumer: string, limit = 100): Promise<LogresMessage[]> {
+    const result = await this.client.query<LogresMessage>(
       'select * from logres.receive($1, $2, $3)',
       [queue, consumer, limit]
     );

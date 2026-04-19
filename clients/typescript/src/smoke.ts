@@ -1,7 +1,7 @@
-import { PgqueClient } from './index.js';
+import { LogresClient } from './index.js';
 
 async function main(): Promise<void> {
-  const client = new PgqueClient('postgresql://postgres:logres_test@localhost:5432/logres_test');
+  const client = new LogresClient('postgresql://postgres:logres_test@localhost:5432/logres_test');
   await client.connect();
 
   await client.subscribe('smoke_ts', 'ts-smoke');

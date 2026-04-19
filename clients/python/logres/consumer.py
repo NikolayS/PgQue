@@ -12,7 +12,7 @@ from typing import Callable, Optional
 import psycopg
 from psycopg import sql
 
-from .client import PgqueClient
+from .client import LogresClient
 from .types import Message
 
 logger = logging.getLogger("logres")
@@ -145,7 +145,7 @@ class Consumer:
         """Receive one batch and dispatch messages."""
         # Use a transaction block for receive + ack
         with conn.transaction():
-            client = PgqueClient(conn)
+            client = LogresClient(conn)
             msgs = client.receive(
                 self.queue, self.name, self.max_messages
             )

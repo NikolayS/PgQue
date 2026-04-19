@@ -4,8 +4,8 @@
 
 """logres -- Python client for logres (PgQ Universal Edition)."""
 
-from .client import PgqueClient
+from .client import LogresClient
 from .consumer import Consumer
 from .types import Message
 
-__all__ = ["PgqueClient", "Consumer", "Message"]
+__all__ = ["LogresClient", "Consumer", "Message"]

@@ -227,9 +227,9 @@ logres is SQL-first, so any Postgres driver works. Example client libraries exis
 ### Python (`logres-py`) — psycopg 3
 
 ```python
-from logres import PgqueClient, Consumer
+from logres import LogresClient, Consumer
 
-client = PgqueClient(conn)
+client = LogresClient(conn)
 client.send("orders", {"order_id": 42})
 
 consumer = Consumer(dsn, queue="orders", name="processor", poll_interval=30)
@@ -256,7 +256,7 @@ consumer.Start(ctx)
 ### TypeScript (`logres-ts`) — node-postgres
 
 ```ts
-const client = new PgqueClient('postgresql://localhost/mydb');
+const client = new LogresClient('postgresql://localhost/mydb');
 await client.connect();
 
 await client.send('orders', { order_id: 42 }, 'order.created');

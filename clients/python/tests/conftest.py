@@ -2,7 +2,7 @@ import os
 import pytest
 import psycopg
 
-DSN = os.environ.get("PGQUE_TEST_DSN", "postgresql://postgres:logres_test@localhost/logres_test")
+DSN = os.environ.get("LOGRES_TEST_DSN", "postgresql://postgres:logres_test@localhost/logres_test")
 
 @pytest.fixture
 def conn():

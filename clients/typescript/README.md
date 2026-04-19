@@ -8,9 +8,9 @@ integration patterns, not to promise a stable SDK yet.
 ## Usage
 
 ```ts
-import { PgqueClient } from './src/index.js';
+import { LogresClient } from './src/index.js';
 
-const client = new PgqueClient('postgresql://localhost/mydb');
+const client = new LogresClient('postgresql://localhost/mydb');
 await client.connect();
 
 await client.send('orders', { order_id: 42 }, 'order.created');
