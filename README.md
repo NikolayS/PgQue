@@ -12,6 +12,10 @@
 
 <p align="center"><img src="docs/images/death_spiral.gif" alt="Death spiral of a SKIP LOCKED queue under sustained load — the failure mode PgQue avoids by construction" width="720"></p>
 
+<p align="center">Discussion: <a href="https://news.ycombinator.com/item?id=47817349">Hacker News</a>.</p>
+
+> **For teams who want a durable Postgres queue on managed Postgres without `SKIP LOCKED` decay or another daemon in the stack** — PgQue gives you snapshot-based batching and zero-bloat hot paths in pure SQL. The rest of this README walks the history, comparison, and install paths that back up the claim.
+
 ## Contents
 
 - [Why PgQue](#why-pgque)
