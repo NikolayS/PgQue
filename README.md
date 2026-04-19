@@ -13,7 +13,9 @@
 
 <p align="center"><img src="docs/images/death_spiral.gif" alt="Death spiral of a SKIP LOCKED queue under sustained load — the failure mode PgQue avoids by construction" width="720"></p>
 
-**For teams who want a durable event stream inside Postgres — closer to a Kafka topic than to a `SKIP LOCKED` job queue.** Shared event log, independent per-consumer cursors, zero bloat under sustained load. Pure SQL, any Postgres 14+ — managed or self-hosted, no sidecar daemon. The rest of this README walks the history, comparison, and install paths that back up the claim.
+Discussion on [Hacker News](https://news.ycombinator.com/item?id=47817349).
+
+*For teams who want a durable event stream inside Postgres — closer to a Kafka topic than to a `SKIP LOCKED` job queue. Shared event log, independent per-consumer cursors, zero bloat under sustained load. Pure SQL, any Postgres 14+ — managed or self-hosted, no sidecar daemon. The rest of this README walks the history, comparison, and install paths that back up the claim.*
 
 ## Contents
 
