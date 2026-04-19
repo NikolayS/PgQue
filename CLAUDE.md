@@ -2,13 +2,12 @@
 
 ## Project
 
-logres (logres) -- PgQ Universal Edition. Zero-bloat PostgreSQL queue repackaged
-from PgQ for managed database environments. Repo: NikolayS/logres.
+logres -- zero-bloat event log for Postgres, derived from PgQ (Skype). Runs on
+any Postgres 14+ platform, managed providers included. Repo: NikolayS/logres.
 
-## Naming Convention
+## Naming convention
 
-- `logres` -- lowercase for schema, package names, CLI, repo, function prefixes
-- `logres` -- capitalized form for prose, headings, README titles
+- `logres` -- always lowercase (schema, package names, CLI, repo, prose, headings)
 - Mirrors PostgreSQL ecosystem convention (pgmq, pg_cron, psycopg)
 
 ## Architecture
@@ -84,7 +83,7 @@ logres/
     PHASES.md          -- what ships in v0.1 vs experimental
   sql/                 -- source SQL files
     logres.sql  -- single-file install (built from sources)
-    logres-unlogres.sql
+    logres_uninstall.sql
   tests/               -- regression tests (sql/ + expected/)
   docs/                -- user-facing documentation (flat layout)
     README.md          -- index of the docs directory
