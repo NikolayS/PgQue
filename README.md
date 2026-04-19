@@ -14,7 +14,7 @@
 
 <p align="center">Discussion: <a href="https://news.ycombinator.com/item?id=47817349">Hacker News</a>.</p>
 
-> **For teams who want a durable event stream inside Postgres — closer to a Kafka topic than to a `SKIP LOCKED` job queue.** Shared event log, independent per-consumer cursors, zero bloat under sustained load. Pure SQL, any Postgres 14+ — managed or self-hosted, no sidecar daemon. The rest of this README walks the history, comparison, and install paths that back up the claim.
+**For teams who want a durable event stream inside Postgres — closer to a Kafka topic than to a `SKIP LOCKED` job queue.** Shared event log, independent per-consumer cursors, zero bloat under sustained load. Pure SQL, any Postgres 14+ — managed or self-hosted, no sidecar daemon. The rest of this README walks the history, comparison, and install paths that back up the claim.
 
 ## Contents
 
