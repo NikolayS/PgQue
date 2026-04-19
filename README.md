@@ -37,7 +37,7 @@ logres brings back [PgQ](https://github.com/pgq/pgq) — one of the longest-runn
 
 PgQ was designed at Skype to run messaging for hundreds of millions of users, and it ran on large self-managed Postgres deployments for over a decade. Standard PgQ depends on a C extension (`pgq`) and an external daemon (`pgqd`), neither of which run on most managed Postgres providers.
 
-logres rebuilds that battle-tested engine in pure PL/pgSQL, so the zero-bloat queue pattern works anywhere you can run SQL — without adding another distributed system to your stack.
+logres rebuilds that battle-tested engine in pure PL/pgSQL, so the zero-bloat event-log pattern works anywhere you can run SQL — without adding another distributed system to your stack.
 
 **The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and most other managed providers. No C extension, no `shared_preload_libraries`, no provider approval, no restart.
 
@@ -58,7 +58,7 @@ logres avoids that whole class of problems. It uses **snapshot-based batching** 
 - **Real Postgres guarantees** — ACID transactions, transactional enqueue/consume, WAL, backups, replication, SQL visibility
 - **Works on managed Postgres** — no custom build, no C extension, no separate daemon
 
-logres gives you queue semantics **inside** Postgres, with Postgres durability and transactional behavior, without the bloat tax most in-database queues eventually hit.
+logres gives you event-log semantics **inside** Postgres, with Postgres durability and transactional behavior, without the bloat tax most in-database queues eventually hit.
 
 ## Latency trade-off
 
@@ -92,7 +92,7 @@ If your top priority is single-digit-millisecond dispatch, logres is the wrong t
 - **[Que](https://github.com/que-rb/que)** uses advisory locks (not SKIP LOCKED) — no dead tuples from *claiming*, but completed jobs are still DELETEd. Brandur's [bloat post](https://brandur.org/postgres-queues) was about Que at Heroku. Ruby-only.
 - **PGMQ retry** is visibility-timeout re-delivery (`read_ct` tracking) — no configurable backoff or max attempts.
 - **pg-boss fan-out** is copy-per-queue `publish()`/`subscribe()`, not a shared event log with independent cursors.
-- **Category:** River, Que, and pg-boss (and Oban, graphile-worker, solid_queue, good_job) are **job queue frameworks**. logres is an **event/message queue** optimized for high-throughput streaming with fan-out.
+- **Category:** River, Que, and pg-boss (and Oban, graphile-worker, solid_queue, good_job) are **job queue frameworks**. logres is a **shared event log** with per-consumer cursors — a different category (closer to a Kafka topic than to a job queue).
 
 ### What differentiates logres
 
@@ -110,8 +110,8 @@ Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autova
 
 logres is a log. It can still serve task-queue workloads when the workload fits a log's shape.
 
-- **Good fit:** per-key ordered processing (partition by key), high-throughput uniform tasks, replayable pipelines, multiple consumers on the same event stream, event-sourced systems where "task" and "event" collapse into one primitive.
-- **Bad fit:** high-variance task duration (a slow task head-of-lines the partition), per-message retry with backoff and priority, SQS-style visibility timeouts, dynamic load balancing across heterogeneous workers.
+- **Good fit:** high-throughput uniform tasks, replayable pipelines, multiple consumers on the same event stream, event-sourced systems where "task" and "event" collapse into one primitive. For per-key ordered processing, use one queue per partition key — each queue is already a FIFO log for its events (logres has no native partition primitive; the mechanism is multi-queue).
+- **Bad fit:** high-variance task duration (a slow task head-of-lines whichever queue it is in), per-message retry with backoff and priority, SQS-style visibility timeouts, dynamic load balancing across heterogeneous workers.
 
 For bad-fit workloads, use a task-queue library (River, graphile-worker, Oban, pgmq) or an external broker (RabbitMQ, ActiveMQ, SQS). For good-fit workloads, logres saves you from running a second system.
 

@@ -1,6 +1,6 @@
 # PgQue -- PgQ Universal Edition
 
-> **Rename note (2026-04-19):** the project was renamed from `pgque` / **PgQue** to **`logres`**. This document is kept as the historical specification for the approved v0.1 design and is not rewritten to reflect the new identifier — schema names, role names, and client class names below (`pgque.*`, `pgque_reader`, `PgqueClient`, …) are equivalent to `logres.*`, `logres_reader`, `LogresClient` in the shipped code. See `README.md` and `blueprints/PHASES.md` for the current name. The rationale for the rename is the log-vs-task-queue framing: what we ship is an event log, not a task queue, and the old name fought that shape.
+> **Rename note (2026-04-19):** the project was renamed from `pgque` / **PgQue** to **`logres`**. This document is kept as the historical specification for the approved v0.1 design and is not rewritten to reflect the new identifier — schema names, role names, and client class names below (`pgque.*`, `pgque_reader`, `PgqueClient`, …) are equivalent to `logres.*`, `logres_reader`, `LogresClient` in the shipped code. See [`README.md`](../README.md), [`docs/reference.md`](../docs/reference.md) for the current SQL surface, and [`blueprints/PHASES.md`](PHASES.md) for what ships in v0.1 vs experimental. The rationale for the rename is the log-vs-task-queue framing: what we ship is an event log, not a task queue, and the old name fought that shape.
 
 - **Version:** 1.1
 - **Date:** 2026-04-12
