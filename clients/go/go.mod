@@ -2,8 +2,6 @@ module github.com/NikolayS/pgque/clients/go
 
 go 1.21
 
-toolchain go1.25.6
-
 require github.com/jackc/pgx/v5 v5.7.4
 
 require (

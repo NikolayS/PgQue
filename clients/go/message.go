@@ -5,7 +5,9 @@ package pgque
 
 import "time"
 
-// Message represents a message received from a PgQue queue.
+// Message is a single event delivered as part of a batch. The BatchID
+// must be passed to Client.Ack once every message in the batch has
+// been processed.
 type Message struct {
 	MsgID      int64     `json:"msg_id"`
 	BatchID    int64     `json:"batch_id"`
@@ -19,8 +21,9 @@ type Message struct {
 	Extra4     *string   `json:"extra4"`
 }
 
-// Event represents an event to be sent to a PgQue queue.
+// Event is the input to Client.Send. Payload is JSON-marshalled before
+// being passed to pgque.send. An empty Type defaults to "default".
 type Event struct {
 	Type    string
-	Payload any // will be JSON-marshaled
+	Payload any
 }

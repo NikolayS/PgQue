@@ -9,10 +9,13 @@ import (
 	"time"
 )
 
-// HandlerFunc processes a single message. Return nil to indicate success.
+// HandlerFunc processes a single message. Returning a non-nil error
+// causes the entire batch to be NOT acked, so PgQue redelivers it on
+// the next Receive.
 type HandlerFunc func(ctx context.Context, msg Message) error
 
-// Consumer polls a queue and dispatches messages to registered handlers.
+// Consumer polls a queue and dispatches messages to registered
+// handlers. Create one via Client.NewConsumer.
 type Consumer struct {
 	client       *Client
 	queue        string
@@ -21,12 +24,17 @@ type Consumer struct {
 	handlers     map[string]HandlerFunc
 }
 
-// Handle registers a handler for the given event type.
+// Handle registers fn as the handler for messages whose Type matches
+// eventType. Messages with no registered handler are silently skipped
+// for now; a future release will surface them via a default handler.
 func (c *Consumer) Handle(eventType string, fn HandlerFunc) {
 	c.handlers[eventType] = fn
 }
 
-// Start begins the poll loop, blocking until ctx is cancelled.
+// Start begins the poll loop and blocks until ctx is cancelled. On
+// receive errors it logs and retries after the configured poll
+// interval. A batch is acked only if every handled message in it
+// returned nil.
 func (c *Consumer) Start(ctx context.Context) error {
 	for {
 		select {
