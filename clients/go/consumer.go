@@ -56,19 +56,26 @@ func (c *Consumer) Start(ctx context.Context) error {
 		}
 
 		var batchID int64
-		hasError := false
 		for _, msg := range msgs {
 			batchID = msg.BatchID
-			if handler, ok := c.handlers[msg.Type]; ok {
-				if err := handler(ctx, msg); err != nil {
-					log.Printf("pgque: handler error for %s: %v", msg.Type, err)
-					hasError = true
-					// Don't ack — batch will be redelivered
+			handler, ok := c.handlers[msg.Type]
+			if !ok {
+				log.Printf("pgque: no handler registered for event type %q, nacking message %d", msg.Type, msg.MsgID)
+				if nackErr := c.client.Nack(ctx, batchID, msg); nackErr != nil {
+					log.Printf("pgque: nack error for unhandled type %s: %v", msg.Type, nackErr)
 				}
+				continue
+			}
+			if err := handler(ctx, msg); err != nil {
+				log.Printf("pgque: handler error for %s: %v", msg.Type, err)
+				if nackErr := c.client.Nack(ctx, batchID, msg); nackErr != nil {
+					log.Printf("pgque: nack error for %s: %v", msg.Type, nackErr)
+				}
+				continue
 			}
 		}
 
-		if batchID != 0 && !hasError {
+		if batchID != 0 {
 			if err := c.client.Ack(ctx, batchID); err != nil {
 				log.Printf("pgque: ack error: %v", err)
 			}

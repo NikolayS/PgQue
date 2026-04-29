@@ -290,7 +290,9 @@ begin
     end if;
     perform 1 from pg_catalog.pg_roles where rolname = 'pgque_admin';
     if not found then
-        create role pgque_admin in role pgque_reader, pgque_writer;
+        create role pgque_admin;
+        grant pgque_reader to pgque_admin;
+        grant pgque_writer to pgque_admin;
         cnt := cnt + 1;
     end if;
 
@@ -301,7 +303,7 @@ begin
         alter table pgque.queue add column queue_extra_maint text[];
     end if;
 
-    return 0;
+    return cnt;
 end;
 $$ language plpgsql;
 
@@ -2856,6 +2858,10 @@ begin
         q.queue_disable_insert
     from pgque.queue q where q.queue_name = _qname into qstate;
 
+    if not found then
+        raise exception 'queue not found: %', _qname;
+    end if;
+
     if ev_id is null then
         ev_id := qstate.next_ev_id;
     end if;
@@ -4407,10 +4413,15 @@ begin
         join pgque.queue q on q.queue_id = dl.dl_queue_id
         where q.queue_name = i_queue_name
     loop
-        perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
-            v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
-        delete from pgque.dead_letter where dl_id = v_dl.dl_id;
-        v_cnt := v_cnt + 1;
+        begin
+            perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
+                v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
+            delete from pgque.dead_letter where dl_id = v_dl.dl_id;
+            v_cnt := v_cnt + 1;
+        exception when others then
+            raise notice 'dlq_replay_all: failed to replay dl_id=%, error: %',
+                v_dl.dl_id, sqlerrm;
+        end;
     end loop;
 
     return v_cnt;
