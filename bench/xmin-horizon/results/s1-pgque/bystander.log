@@ -1,0 +1,59 @@
+pgbench (18.3, server 17.9 (Debian 17.9-1.pgdg13+1))
+starting vacuum...pgbench: error: ERROR:  relation "pgbench_branches" does not exist
+pgbench: detail: (ignoring this error and continuing anyway)
+pgbench: error: ERROR:  relation "pgbench_tellers" does not exist
+pgbench: detail: (ignoring this error and continuing anyway)
+pgbench: error: ERROR:  relation "pgbench_history" does not exist
+pgbench: detail: (ignoring this error and continuing anyway)
+end.
+progress: 5.0 s, 98.1 tps, lat 2.788 ms stddev 8.116, 0 failed, lag 1.727 ms, 0 skipped
+progress: 10.0 s, 101.2 tps, lat 1.698 ms stddev 2.102, 0 failed, lag 1.210 ms, 0 skipped
+progress: 15.0 s, 93.8 tps, lat 1.429 ms stddev 1.297, 0 failed, lag 1.050 ms, 0 skipped
+progress: 20.0 s, 96.4 tps, lat 1.459 ms stddev 2.387, 0 failed, lag 0.968 ms, 0 skipped
+progress: 25.0 s, 96.2 tps, lat 1.678 ms stddev 2.187, 0 failed, lag 1.143 ms, 0 skipped
+progress: 30.0 s, 105.3 tps, lat 1.334 ms stddev 1.305, 0 failed, lag 1.010 ms, 0 skipped
+progress: 35.0 s, 101.8 tps, lat 1.257 ms stddev 1.232, 0 failed, lag 0.951 ms, 0 skipped
+progress: 40.0 s, 101.8 tps, lat 1.293 ms stddev 1.310, 0 failed, lag 0.994 ms, 0 skipped
+progress: 45.0 s, 101.2 tps, lat 1.366 ms stddev 1.373, 0 failed, lag 1.036 ms, 0 skipped
+progress: 50.0 s, 102.3 tps, lat 1.288 ms stddev 1.296, 0 failed, lag 0.987 ms, 0 skipped
+progress: 55.0 s, 95.4 tps, lat 1.403 ms stddev 1.356, 0 failed, lag 1.090 ms, 0 skipped
+progress: 60.0 s, 91.2 tps, lat 1.712 ms stddev 2.607, 0 failed, lag 1.158 ms, 0 skipped
+progress: 65.0 s, 93.8 tps, lat 1.435 ms stddev 1.314, 0 failed, lag 1.116 ms, 0 skipped
+progress: 70.0 s, 96.8 tps, lat 1.455 ms stddev 1.683, 0 failed, lag 1.030 ms, 0 skipped
+progress: 75.0 s, 107.0 tps, lat 1.395 ms stddev 1.280, 0 failed, lag 1.065 ms, 0 skipped
+progress: 80.0 s, 105.0 tps, lat 1.383 ms stddev 1.363, 0 failed, lag 1.088 ms, 0 skipped
+progress: 85.0 s, 95.4 tps, lat 1.320 ms stddev 1.322, 0 failed, lag 1.013 ms, 0 skipped
+progress: 90.0 s, 105.2 tps, lat 1.376 ms stddev 1.252, 0 failed, lag 0.970 ms, 0 skipped
+progress: 95.0 s, 99.0 tps, lat 1.411 ms stddev 1.400, 0 failed, lag 1.036 ms, 0 skipped
+progress: 100.0 s, 105.8 tps, lat 1.293 ms stddev 1.253, 0 failed, lag 0.978 ms, 0 skipped
+progress: 105.0 s, 105.6 tps, lat 1.245 ms stddev 1.207, 0 failed, lag 0.905 ms, 0 skipped
+progress: 110.0 s, 96.8 tps, lat 1.517 ms stddev 1.401, 0 failed, lag 1.190 ms, 0 skipped
+progress: 115.0 s, 97.6 tps, lat 1.239 ms stddev 1.146, 0 failed, lag 0.905 ms, 0 skipped
+progress: 120.0 s, 99.7 tps, lat 2.302 ms stddev 5.221, 0 failed, lag 1.723 ms, 0 skipped
+progress: 125.0 s, 104.4 tps, lat 1.382 ms stddev 1.245, 0 failed, lag 1.020 ms, 0 skipped
+progress: 130.0 s, 95.4 tps, lat 1.576 ms stddev 1.506, 0 failed, lag 1.110 ms, 0 skipped
+progress: 135.0 s, 95.3 tps, lat 1.448 ms stddev 1.315, 0 failed, lag 1.038 ms, 0 skipped
+progress: 140.0 s, 97.2 tps, lat 1.435 ms stddev 1.274, 0 failed, lag 1.049 ms, 0 skipped
+progress: 145.0 s, 97.4 tps, lat 1.423 ms stddev 1.318, 0 failed, lag 1.077 ms, 0 skipped
+progress: 150.0 s, 98.0 tps, lat 1.402 ms stddev 1.266, 0 failed, lag 1.025 ms, 0 skipped
+progress: 155.0 s, 94.8 tps, lat 1.352 ms stddev 1.279, 0 failed, lag 1.028 ms, 0 skipped
+progress: 160.0 s, 96.4 tps, lat 1.367 ms stddev 1.307, 0 failed, lag 1.049 ms, 0 skipped
+progress: 165.0 s, 96.4 tps, lat 1.492 ms stddev 1.488, 0 failed, lag 1.101 ms, 0 skipped
+progress: 170.0 s, 98.9 tps, lat 2.267 ms stddev 4.754, 0 failed, lag 1.460 ms, 0 skipped
+progress: 175.0 s, 109.3 tps, lat 1.508 ms stddev 1.452, 0 failed, lag 1.114 ms, 0 skipped
+transaction type: /Users/nik/github/pgque/.claude/worktrees/agent-a48559ba7fdb1315c/bench/xmin-horizon/scripts/bystander.bench
+scaling factor: 1
+query mode: simple
+number of clients: 2
+number of threads: 2
+maximum number of tries: 1
+duration: 180 s
+number of transactions actually processed: 17823
+number of failed transactions: 0 (0.000%)
+number of transactions skipped: 0 (0.000%)
+number of transactions above the 200.0 ms latency limit: 0/17823 (0.000%)
+latency average = 1.501 ms
+latency stddev = 2.307 ms
+rate limit schedule lag: avg 1.095 (max 58.759) ms
+initial connection time = 12.129 ms
+tps = 99.030593 (without initial connection time)

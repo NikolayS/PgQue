@@ -1,0 +1,3 @@
+\set p random(1, 1000000000)
+insert into jobs(payload) values ('p_' || :p);
+update bench_counters set enqueued = enqueued + 1 where workload = 'skiplocked';

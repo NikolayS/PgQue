@@ -1,0 +1,7 @@
+pgque,pgque.event_1,0,0,0,0,8192
+pgque,pgque.event_1_0,287583,0,0,0,28557312
+pgque,pgque.event_1_1,0,0,0,0,16384
+pgque,pgque.event_1_2,0,0,0,0,16384
+pgque,pgque.event_template,0,0,0,0,8192
+pgque,public.jobs,0,0,0,0,24576
+workload,table,n_live_tup,n_dead_tup,vacuum_count,autovacuum_count,total_size_bytes

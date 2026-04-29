@@ -1,0 +1,11 @@
+begin;
+with picked as (
+  select id from jobs order by id for update skip locked limit 1
+),
+deleted as (
+  delete from jobs using picked where jobs.id = picked.id returning 1
+)
+update bench_counters
+set dequeued = dequeued + (select count(*) from deleted)
+where workload = 'skiplocked';
+commit;

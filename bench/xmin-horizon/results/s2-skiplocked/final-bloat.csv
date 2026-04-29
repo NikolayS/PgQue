@@ -1,0 +1,7 @@
+skiplocked,pgque.event_1,0,0,0,0,8192
+skiplocked,pgque.event_1_0,143564,0,0,0,14278656
+skiplocked,pgque.event_1_1,0,0,0,0,16384
+skiplocked,pgque.event_1_2,0,0,0,0,16384
+skiplocked,pgque.event_template,0,0,0,0,8192
+skiplocked,public.jobs,50678,92644,0,18,16113664
+workload,table,n_live_tup,n_dead_tup,vacuum_count,autovacuum_count,total_size_bytes
