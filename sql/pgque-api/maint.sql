@@ -22,7 +22,12 @@ begin
         if f.func_name = 'pgque.maint_rotate_tables_step2' then
             continue;
         elsif f.func_name = 'vacuum' then
-            sql := 'vacuum ' || quote_ident(f.func_arg);
+            -- func_arg is "schema.table" (see pgque.maint_tables_to_vacuum).
+            -- Split and quote each side; quote_ident on the joined string
+            -- would yield "schema.table" (one identifier with a literal dot).
+            sql := format('vacuum %I.%I',
+                split_part(f.func_arg, '.', 1),
+                split_part(f.func_arg, '.', 2));
             execute sql;
             total := total + 1;
         elsif f.func_arg is not null then

@@ -287,9 +287,16 @@ Grant: `pgque_reader`. Source: `sql/pgque-additions/dlq.sql`.
 Re-inserts one dead-letter entry into its original queue and deletes it from `pgque.dead_letter`. Returns the new event id.
 Grant: `pgque_writer`. Source: `sql/pgque-additions/dlq.sql`.
 
-#### `pgque.dlq_replay_all(queue text) → integer`
+#### `pgque.dlq_replay_all(queue text) → (replayed bigint, failed bigint, first_error text)`
 
-Replays every dead-letter entry for `queue`. Returns the number of events replayed.
+Replays every dead-letter entry for `queue`. Per-event failures are isolated (one bad row does not abort the rest), surfaced via `raise warning`, and counted in `failed`; `first_error` carries the first failure's `dl_id` and `sqlerrm` for diagnostics.
+
+Breaking change in v0.2: previously returned a single `integer` count. Existing callers should switch to:
+
+```sql
+select replayed, failed, first_error from pgque.dlq_replay_all('orders');
+```
+
 Grant: `pgque_writer`. Source: `sql/pgque-additions/dlq.sql`.
 
 #### `pgque.dlq_purge(queue text, older_than interval default '30 days') → integer`

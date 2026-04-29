@@ -500,6 +500,39 @@ sedi "s|batch.tx_start := rec.id1;|batch.tx_start := rec.id1::text::bigint;|" \
 
 echo "PASS: xid8 casts added to batch_event_sql for ev_txid comparisons"
 
+# Fix upstream upgrade_schema(): use explicit grants instead of "in role" (the
+# original "create role pgque_admin in role pgque_reader, pgque_writer" works
+# but is harder to read and the role-creation case in PR review surfaced it as
+# inverted-looking). Also return the actual mutation count instead of a
+# hard-coded 0.
+UPGRADE_SCHEMA_FILE="${OUTPUT_DIR}/functions/pgque.upgrade_schema.sql"
+awk '
+/create role pgque_admin in role pgque_reader, pgque_writer;/ {
+  sub(/create role pgque_admin in role pgque_reader, pgque_writer;/, "create role pgque_admin;\n        grant pgque_reader to pgque_admin;\n        grant pgque_writer to pgque_admin;")
+}
+{ print }
+' "${UPGRADE_SCHEMA_FILE}" > "${UPGRADE_SCHEMA_FILE}.tmp" && mv "${UPGRADE_SCHEMA_FILE}.tmp" "${UPGRADE_SCHEMA_FILE}"
+sedi 's|^    return 0;$|    return cnt;|' "${UPGRADE_SCHEMA_FILE}"
+
+echo "PASS: upgrade_schema role grants flattened, return cnt"
+
+# Fix upstream insert_event_raw(): raise a clear "queue not found" error when
+# the queue lookup misses, instead of falling through to a NULL-deref later.
+INSERT_EVENT_FILE="${OUTPUT_DIR}/lowlevel_pl/insert_event.sql"
+awk '
+/from pgque\.queue q where q\.queue_name = _qname into qstate;/ {
+  print
+  print ""
+  print "    if not found then"
+  print "        raise exception '\''queue not found: %'\'', _qname;"
+  print "    end if;"
+  next
+}
+{ print }
+' "${INSERT_EVENT_FILE}" > "${INSERT_EVENT_FILE}.tmp" && mv "${INSERT_EVENT_FILE}.tmp" "${INSERT_EVENT_FILE}"
+
+echo "PASS: insert_event_raw raises clear error on unknown queue"
+
 # -- Assembly: build sql/pgque.sql ------------------------------------
 
 echo ""

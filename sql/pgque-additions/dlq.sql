@@ -123,13 +123,33 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.dlq_replay_all() -- replay all DLQ events for a queue
-create or replace function pgque.dlq_replay_all(i_queue_name text)
-returns integer as $$
+-- pgque.dlq_replay_all() -- replay all DLQ events for a queue.
+--
+-- Returns a single row (replayed, failed, first_error). Per-event failures are
+-- caught so one bad event does not abort the rest, and surfaced via raise
+-- warning (visible at the default log_min_messages = warning, unlike notice
+-- which is hidden under many production configs). Callers can check
+-- failed > 0 to detect partial success programmatically.
+--
+-- Return-type change from v0.1's bare integer count to a record is a breaking
+-- API change accepted at the v0.2 cut. Callers previously doing
+--   select pgque.dlq_replay_all('q')          -- returned int
+-- should switch to
+--   select replayed from pgque.dlq_replay_all('q')
+-- or destructure all three columns.
+--
+-- Drop first so upgrades from v0.1 do not hit "cannot change return type".
+drop function if exists pgque.dlq_replay_all(text);
+create or replace function pgque.dlq_replay_all(i_queue_name text,
+    out replayed bigint, out failed bigint, out first_error text)
+returns record as $$
 declare
     v_dl record;
-    v_cnt integer := 0;
 begin
+    replayed := 0;
+    failed := 0;
+    first_error := null;
+
     for v_dl in
         select dl.dl_id, dl.ev_type, dl.ev_data,
                dl.ev_extra1, dl.ev_extra2, dl.ev_extra3, dl.ev_extra4,
@@ -142,14 +162,16 @@ begin
             perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
                 v_dl.ev_extra1, v_dl.ev_extra2, v_dl.ev_extra3, v_dl.ev_extra4);
             delete from pgque.dead_letter where dl_id = v_dl.dl_id;
-            v_cnt := v_cnt + 1;
+            replayed := replayed + 1;
         exception when others then
-            raise notice 'dlq_replay_all: failed to replay dl_id=%, error: %',
+            failed := failed + 1;
+            if first_error is null then
+                first_error := format('dl_id=%s: %s', v_dl.dl_id, sqlerrm);
+            end if;
+            raise warning 'dlq_replay_all: failed to replay dl_id=%, error: %',
                 v_dl.dl_id, sqlerrm;
         end;
     end loop;
-
-    return v_cnt;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
