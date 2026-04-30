@@ -45,13 +45,34 @@ def handle_order(msg: pgque.Message) -> None:
     print(f"got {msg.type}: {msg.payload}")
 
 # Optional: catch-all handler for types with no specific handler.
-# Without it, messages with unhandled types are logged at WARNING and acked.
-# Register a `*` handler if you want to fail/nack/route unknown types yourself.
+# Without it, messages with unhandled types are nacked by default
+# (sent to retry_queue, or to the dead-letter queue once
+# queue_max_retries is exhausted). Register a "*" handler to take
+# explicit control.
 @consumer.on("*")
 def handle_unknown(msg: pgque.Message) -> None:
     print(f"unhandled type {msg.type!r}: {msg.payload}")
 
 consumer.start()  # blocks until SIGTERM / SIGINT
+```
+
+### Handling unknown event types
+
+By default the consumer **nacks** any message whose type has no
+registered handler and no `"*"` catch-all. The message is retried (or
+dead-lettered once `queue_max_retries` is exhausted) so unknown types
+are never silently dropped.
+
+To opt in to the legacy "warn + ack" behavior, pass
+`unknown_handler="ack"`:
+
+```python
+consumer = pgque.Consumer(
+    dsn="postgresql://localhost/mydb",
+    queue="orders",
+    name="order_worker",
+    unknown_handler="ack",  # log WARNING and ack; do not nack
+)
 ```
 
 ## Tests

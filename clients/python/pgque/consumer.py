@@ -9,7 +9,7 @@ import signal
 import select
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 import psycopg
 from psycopg import sql
@@ -47,9 +47,11 @@ class Consumer:
         - If the handler raises an exception, the message is nacked
           with the default retry_after.
         - If no handler is registered for a message type (and no
-          default ``"*"`` handler exists), a WARNING is logged and the
-          message is acked. Register a handler for that type or use a
-          ``"*"`` catch-all to handle it deliberately.
+          default ``"*"`` handler exists), the message is nacked
+          (sent to retry_queue, or to the dead-letter queue once
+          ``queue_max_retries`` is exhausted). To opt in to the
+          previous behavior of acking unknown types after a WARNING,
+          pass ``unknown_handler="ack"``.
 
     After all messages in a batch have been dispatched, the batch is
     acked automatically.
@@ -62,8 +64,9 @@ class Consumer:
         queue: str,
         name: str,
         poll_interval: int = 30,
-        max_messages: int = 100,
+        max_messages: int = 500,
         retry_after: int = 60,
+        unknown_handler: Literal["nack", "ack"] = "nack",
     ):
         self.dsn = dsn
         self.queue = queue
@@ -71,6 +74,12 @@ class Consumer:
         self.poll_interval = poll_interval
         self.max_messages = max_messages
         self.retry_after = retry_after
+        if unknown_handler not in ("nack", "ack"):
+            raise ValueError(
+                "unknown_handler must be 'nack' or 'ack', "
+                f"got {unknown_handler!r}"
+            )
+        self._unknown_handler = unknown_handler
 
         self._handlers: dict[str, Callable] = {}
         self._default_handler: Optional[Callable] = None
@@ -224,11 +233,30 @@ class Consumer:
             for msg in msgs:
                 handler = self._handlers.get(msg.type, self._default_handler)
                 if handler is None:
+                    if self._unknown_handler == "ack":
+                        self._log.warning(
+                            "no handler for event type=%s ev_id=%s; acking",
+                            msg.type,
+                            msg.msg_id,
+                        )
+                        continue
                     self._log.warning(
-                        "no handler for event type=%s ev_id=%s; acking",
+                        "no handler for event type=%s ev_id=%s; nacking",
                         msg.type,
                         msg.msg_id,
                     )
+                    try:
+                        client.nack(
+                            batch_id,
+                            msg,
+                            retry_after=self.retry_after,
+                            reason=f"no handler for type={msg.type}",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "nack failed for unhandled msg_id=%d",
+                            msg.msg_id,
+                        )
                     continue
 
                 try:
