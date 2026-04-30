@@ -435,7 +435,7 @@ Three roles, with inheritance `pgque_admin > pgque_writer > pgque_reader`. Sourc
 | `pgque_writer` | everything `pgque_reader` has, plus `insert_event` (3, 7), `register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` (int, timestamptz), all `send*`, `send_batch*`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`, `dlq_replay`, `dlq_replay_all` |
 | `pgque_admin`  | everything `pgque_writer` has, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` which is explicitly revoked                                                            |
 
-`pgque.uninstall()` is revoked from `pgque_admin`, but not from PUBLIC — any role that can connect can still call it and drop the schema. Tighten with `revoke execute on function pgque.uninstall() from public;` if stricter control is required. All other functions not in the table above default to deny-by-default as of v0.1 (`revoke execute … from public` is applied globally); use explicit `grant execute` to open them to additional roles.
+`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Only the schema/install owner (typically a superuser) can run it.
 
 ## Experimental (not in default install)
 
