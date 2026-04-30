@@ -148,6 +148,19 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     await env.client.ack(msgs[0]!.batchId);
   });
 
+  skipIfNoDb('coerces top-level undefined payload to JSON null', async () => {
+    // JSON.stringify(undefined) returns the string "undefined" (which is
+    // not valid JSON) — must be coerced to "null" so the jsonb cast
+    // stores the JSON null literal, matching the Python driver's
+    // handling of None.
+    await env.client.send(env.queue, { type: 'undef', payload: undefined });
+    await advanceQueue(env.client, env.queue);
+    const msgs = await env.client.receive(env.queue, env.consumer, 10);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.payload).toBe('null');
+    await env.client.ack(msgs[0]!.batchId);
+  });
+
   skipIfNoDb('preserves bigint batchId across the API surface', async () => {
     await env.client.send(env.queue, { payload: { x: 1 } });
     await advanceQueue(env.client, env.queue);

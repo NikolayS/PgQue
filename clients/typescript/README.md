@@ -33,7 +33,11 @@ try {
 
   // High-level consumer with per-event-type dispatch.
   // msg.payload is raw JSON text — call JSON.parse() to get the object back.
-  const consumer = client.newConsumer('orders', 'order_worker');
+  const consumer = client.newConsumer('orders', 'order_worker', {
+    // pollInterval: 30_000,                    // default
+    // maxMessages: 500,                        // default; keep >= ticker_max_count
+    // unknownHandlerPolicy: 'nack',            // default; 'ack' for filter semantics
+  });
   consumer.handle('order.created', async (msg) => {
     const data = JSON.parse(msg.payload) as { id: number };
     console.log('got', msg.type, data);
@@ -62,6 +66,22 @@ try {
 | `consumer.handle(eventType, fn)` | Register a handler. |
 | `consumer.start(signal?)` | Run; resolves when `AbortSignal` aborts. |
 | `client.close()` | Drain the pool. |
+
+### Consumer options
+
+| Option | Default | Notes |
+|---|---|---|
+| `pollInterval` | `30_000` ms | Time between polls when no messages are available. |
+| `maxMessages` | `500` | Max messages per `pgque.receive`. **Keep `>= ticker_max_count`** (default 500) so a single Receive drains the batch. |
+| `unknownHandlerPolicy` | `'nack'` | `'nack'` (data-safe default) routes unhandled types to retry/DLQ. `'ack'` logs + acks instead. |
+| `logger` | `console` | Pass a `{ warn, error }` shim to silence in tests. |
+
+### Payload encoding
+
+`event.payload` is JSON-stringified before being passed to `pgque.send`.
+A top-level `undefined` is coerced to JSON `null` (matches the Python
+driver's handling of `None`). Other JSON-compatible values
+(`null`, primitives, objects, arrays) round-trip unchanged.
 
 `Message.msgId`, `Message.batchId`, and the return value of `send()` are
 JS `bigint` to match PostgreSQL `bigint` losslessly.

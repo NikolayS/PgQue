@@ -23,6 +23,7 @@ export class Consumer {
   private readonly pollIntervalMs: number;
   private readonly maxMessages: number;
   private readonly logger: Pick<Console, 'warn' | 'error'>;
+  private readonly unknownHandlerPolicy: 'ack' | 'nack';
 
   /** @internal — use {@link Client.newConsumer}. */
   constructor(
@@ -32,8 +33,15 @@ export class Consumer {
     opts: ConsumerOptions = {},
   ) {
     this.pollIntervalMs = opts.pollInterval ?? 30_000;
-    this.maxMessages = opts.maxMessages ?? 100;
+    this.maxMessages = opts.maxMessages ?? 500;
     this.logger = opts.logger ?? console;
+    const policy = opts.unknownHandlerPolicy ?? 'nack';
+    if (policy !== 'ack' && policy !== 'nack') {
+      throw new Error(
+        `pgque: unknownHandlerPolicy must be 'ack' or 'nack', got ${String(policy)}`,
+      );
+    }
+    this.unknownHandlerPolicy = policy;
   }
 
   /** Register a handler for `eventType`. Replaces any previous handler. */
@@ -69,25 +77,42 @@ export class Consumer {
       }
 
       let batchId: bigint | null = null;
+      let nackFailed = false;
       for (const msg of msgs) {
         batchId = msg.batchId;
         const handler = this.handlers.get(msg.type);
         if (!handler) {
+          if (this.unknownHandlerPolicy === 'ack') {
+            this.logger.warn(
+              `pgque: no handler registered for event type "${msg.type}", acking msg ${msg.msgId} (ack policy)`,
+            );
+            continue;
+          }
           this.logger.warn(
             `pgque: no handler registered for event type "${msg.type}", nacking msg ${msg.msgId}`,
           );
-          await this.tryNack(batchId, msg);
+          if (!(await this.tryNack(batchId, msg, `no handler for type=${msg.type}`))) {
+            nackFailed = true;
+          }
           continue;
         }
         try {
           await handler(msg);
         } catch (err) {
           this.logger.error(`pgque: handler error for "${msg.type}": ${formatErr(err)}`);
-          await this.tryNack(batchId, msg);
+          if (!(await this.tryNack(batchId, msg))) {
+            nackFailed = true;
+          }
         }
       }
 
       if (batchId !== null) {
+        if (nackFailed) {
+          this.logger.error(
+            `pgque: skipping batch ${batchId.toString()} ack: one or more nacks failed; PgQ will redeliver`,
+          );
+          continue;
+        }
         try {
           await this.client.ack(batchId);
         } catch (err) {
@@ -97,11 +122,14 @@ export class Consumer {
     }
   }
 
-  private async tryNack(batchId: bigint, msg: Message): Promise<void> {
+  /** Returns true on success, false on error (logged). */
+  private async tryNack(batchId: bigint, msg: Message, reason?: string): Promise<boolean> {
     try {
-      await this.client.nack(batchId, msg);
+      await this.client.nack(batchId, msg, reason !== undefined ? { reason } : undefined);
+      return true;
     } catch (err) {
       this.logger.error(`pgque: nack error for "${msg.type}": ${formatErr(err)}`);
+      return false;
     }
   }
 }

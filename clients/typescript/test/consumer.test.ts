@@ -131,6 +131,40 @@ describe('Consumer (env-gated)', () => {
     );
     expect(retry.rows[0]!.count).toBe('1');
   });
+
+  skipIfNoDb('unknownHandlerPolicy="ack" warns and lets the batch ack', async () => {
+    await env.client.send(env.queue, { type: 'unknown', payload: { v: 1 } });
+    await advanceQueue(env.client, env.queue);
+
+    let warnCount = 0;
+    const consumer = env.client.newConsumer(env.queue, env.consumer, {
+      pollInterval: 50,
+      unknownHandlerPolicy: 'ack',
+      logger: {
+        warn: () => {
+          warnCount += 1;
+        },
+        error: () => undefined,
+      },
+    });
+
+    const ac = new AbortController();
+    const start = consumer.start(ac.signal);
+    await sleep(400);
+    ac.abort();
+    await start;
+
+    // No retry row: the batch was acked.
+    const retry = await env.client.rawPool.query<{ count: string }>(
+      `select count(*)::text as count
+         from pgque.retry_queue rq
+         join pgque.queue q on q.queue_id = rq.ev_queue
+        where q.queue_name = $1`,
+      [env.queue],
+    );
+    expect(retry.rows[0]!.count).toBe('0');
+    expect(warnCount).toBeGreaterThanOrEqual(1);
+  });
 });
 
 function sleep(ms: number): Promise<void> {

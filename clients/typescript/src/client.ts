@@ -84,7 +84,7 @@ export class Client {
       throw new PgqueSqlError('send', { cause: new Error('queue must be a non-empty string') });
     }
     const type = event.type && event.type.length > 0 ? event.type : 'default';
-    const payload = JSON.stringify(event.payload);
+    const payload = encodeJsonbPayload(event.payload);
     try {
       const result = await this.pool.query<{ send: bigint }>(
         'select pgque.send($1, $2, $3::jsonb) as send',
@@ -281,6 +281,18 @@ export async function connect(
   }
   probe.release();
   return new Client(pool);
+}
+
+/**
+ * Encode a JS value for the pgque `jsonb` payload column. Mirrors the
+ * Python driver: top-level `undefined` becomes JSON `'null'` (matches
+ * `None` in Python) instead of the SQL string "undefined" or a thrown
+ * error from `JSON.stringify`. Any other value goes through
+ * `JSON.stringify` unchanged.
+ */
+function encodeJsonbPayload(value: unknown): string {
+  if (value === undefined) return 'null';
+  return JSON.stringify(value);
 }
 
 function rowToMessage(row: RawMessageRow): Message {
