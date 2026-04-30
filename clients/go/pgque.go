@@ -66,6 +66,43 @@ func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error
 	return eid, nil
 }
 
+// SendBatch publishes a batch of events of the same Type and returns
+// the assigned event IDs in input order. Each payload is
+// JSON-marshalled. An empty typ defaults to "default". Wraps the SQL
+// pgque.send_batch(text, text, jsonb[]) function.
+func (c *Client) SendBatch(ctx context.Context, queue, typ string, payloads []any) ([]int64, error) {
+	if typ == "" {
+		typ = "default"
+	}
+	encoded := make([]string, len(payloads))
+	for i, p := range payloads {
+		raw, err := json.Marshal(p)
+		if err != nil {
+			return nil, fmt.Errorf("pgque: marshal payload[%d]: %w", i, err)
+		}
+		encoded[i] = string(raw)
+	}
+	rows, err := c.pool.Query(ctx,
+		"SELECT pgque.send_batch($1, $2, $3::jsonb[])", queue, typ, encoded)
+	if err != nil {
+		return nil, fmt.Errorf("pgque: send_batch: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var got []int64
+		if err := rows.Scan(&got); err != nil {
+			return nil, fmt.Errorf("pgque: send_batch scan: %w", err)
+		}
+		ids = append(ids, got...)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pgque: send_batch rows: %w", err)
+	}
+	return ids, nil
+}
+
 // Receive fetches up to maxMessages from the next batch for the named
 // consumer. Returns an empty slice when no batch is available; in that
 // case the caller should sleep before polling again. Each returned
@@ -111,15 +148,49 @@ func (c *Client) Ack(ctx context.Context, batchID int64) error {
 	return nil
 }
 
+// NackOption configures a single Nack call. See WithRetryAfter and
+// WithReason.
+type NackOption func(*nackConfig)
+
+type nackConfig struct {
+	retryAfter time.Duration
+	reason     *string
+}
+
+// WithRetryAfter sets the retry delay for this Nack. Default is 60s.
+// The interval is passed to PostgreSQL as a positive number of seconds.
+func WithRetryAfter(d time.Duration) NackOption {
+	return func(c *nackConfig) { c.retryAfter = d }
+}
+
+// WithReason sets the reason text recorded on the dead-letter row when
+// the retry limit is exceeded. Default is empty (NULL).
+func WithReason(reason string) NackOption {
+	return func(c *nackConfig) { c.reason = &reason }
+}
+
 // Nack negatively acknowledges a single message, routing it to retry or DLQ.
 // pgque.message has 10 fields: msg_id, batch_id, type, payload, retry_count,
 // created_at, extra1, extra2, extra3, extra4 — placeholders $2..$11.
-func (c *Client) Nack(ctx context.Context, batchID int64, msg Message) error {
+//
+// Defaults: retry_after = 60s, reason = NULL. Override via the variadic
+// options (WithRetryAfter, WithReason).
+func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts ...NackOption) error {
+	cfg := nackConfig{retryAfter: 60 * time.Second}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	interval := fmt.Sprintf("%d seconds", int64(cfg.retryAfter/time.Second))
+	var reason any
+	if cfg.reason != nil {
+		reason = *cfg.reason
+	}
 	_, err := c.pool.Exec(ctx,
-		"SELECT pgque.nack($1, ROW($2,$3,$4,$5,$6,$7,$8,$9,$10,$11)::pgque.message, '60 seconds'::interval, null)",
+		"SELECT pgque.nack($1, ROW($2,$3,$4,$5,$6,$7,$8,$9,$10,$11)::pgque.message, $12::interval, $13)",
 		batchID, msg.MsgID, msg.BatchID, msg.Type, msg.Payload,
 		msg.RetryCount, msg.CreatedAt,
-		msg.Extra1, msg.Extra2, msg.Extra3, msg.Extra4)
+		msg.Extra1, msg.Extra2, msg.Extra3, msg.Extra4,
+		interval, reason)
 	if err != nil {
 		return fmt.Errorf("pgque: nack: %w", err)
 	}
@@ -128,15 +199,24 @@ func (c *Client) Nack(ctx context.Context, batchID int64, msg Message) error {
 
 // NewConsumer creates a Consumer that polls the given queue under the
 // given consumer name. The consumer must already be registered in PgQue
-// (e.g. via pgque.register_consumer). Default poll interval is 30s; use
-// WithPollInterval to override.
+// (e.g. via pgque.register_consumer).
+//
+// Defaults:
+//   - pollInterval = 30s         (override with WithPollInterval)
+//   - maxMessages = 500          (override with WithMaxMessages; matches
+//     the default queue_ticker_max_count, so a single Receive can drain
+//     a full batch — keep maxMessages >= ticker_max_count to avoid
+//     skipping unreturned rows)
+//   - unknownPolicy = NackUnknown (override with WithUnknownHandlerPolicy)
 func (c *Client) NewConsumer(queue, name string, opts ...Option) *Consumer {
 	consumer := &Consumer{
-		client:       c,
-		queue:        queue,
-		name:         name,
-		pollInterval: 30 * time.Second,
-		handlers:     make(map[string]HandlerFunc),
+		client:        c,
+		queue:         queue,
+		name:          name,
+		pollInterval:  30 * time.Second,
+		maxMessages:   500,
+		handlers:      make(map[string]HandlerFunc),
+		unknownPolicy: NackUnknown,
 	}
 	for _, opt := range opts {
 		opt(consumer)

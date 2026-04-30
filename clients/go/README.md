@@ -48,7 +48,11 @@ func main() {
     }
 
     // Consumer side
-    consumer := client.NewConsumer("orders", "order_worker")
+    consumer := client.NewConsumer("orders", "order_worker",
+        // pgque.WithPollInterval(30 * time.Second),
+        // pgque.WithMaxMessages(500),                      // default
+        // pgque.WithUnknownHandlerPolicy(pgque.NackUnknown), // default
+    )
     consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) error {
         log.Printf("got %s: %s", msg.Type, msg.Payload)
         return nil
@@ -58,6 +62,40 @@ func main() {
     }
 }
 ```
+
+### Consumer configuration
+
+| Option | Default | Notes |
+|---|---|---|
+| `WithPollInterval(d)` | `30s` | Time between polls when LISTEN/NOTIFY is silent. |
+| `WithMaxMessages(n)` | `500` | Max messages requested per `pgque.receive`. **Keep `>= queue_ticker_max_count`** (default 500) so a single Receive drains the batch. |
+| `WithUnknownHandlerPolicy(p)` | `NackUnknown` | `NackUnknown` (data-safe default) routes unhandled types to retry/DLQ. `AckUnknown` logs + acks instead. |
+
+### Per-message Nack options
+
+`Client.Nack` accepts variadic options:
+
+```go
+client.Nack(ctx, batchID, msg,
+    pgque.WithRetryAfter(5 * time.Minute),
+    pgque.WithReason("payment.declined"),
+)
+```
+
+Defaults: `retry_after = 60s`, `reason = NULL`.
+
+### Batch send
+
+```go
+ids, err := client.SendBatch(ctx, "orders", "order.created",
+    []any{
+        map[string]any{"id": 1},
+        map[string]any{"id": 2},
+        map[string]any{"id": 3},
+    })
+```
+
+Wraps `pgque.send_batch(text, text, jsonb[])` 1:1.
 
 ## Tests
 
