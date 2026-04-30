@@ -80,6 +80,40 @@ try {
 `Message.msgId`, `Message.batchId`, and the return values of `send()` /
 `sendBatch()` are JS `bigint` to match PostgreSQL `bigint` losslessly.
 
+### Consumer options
+
+`client.newConsumer(queue, name, opts?)` accepts:
+
+| Option | Default | Notes |
+|---|---|---|
+| `pollInterval` | `30000` (ms) | Sleep between empty polls. |
+| `maxMessages` | `500` | Max messages requested per `pgque.receive` call. Default is `500` (raised from `100` in v0.2.0) so a single poll can drain a full batch — `500` matches PgQ's `ticker_max_count` ceiling, the upper bound on how many events end up in one batch. |
+| `unknownHandlerPolicy` | `'nack'` | What to do when a message arrives whose `type` has no registered handler. `'nack'` (default) routes to retry / DLQ via `pgque.nack`. `'ack'` logs a warning and lets the batch ack absorb it (silent discard). The default and the option name match the Python and Go drivers from v0.2.0 onward. |
+| `logger` | `console` | Receives `warn` / `error` lines. |
+
+### Payload coercion: `undefined` → JSON `null`
+
+`client.send()` JSON-encodes `event.payload` before binding it as
+`jsonb`. Because `JSON.stringify(undefined)` returns the JS literal
+`undefined` (not the string `"null"`), the driver substitutes the JSON
+literal `null` whenever the top-level `payload` is `undefined`:
+
+```ts
+// All three store the JSON value `null` in the queue:
+await client.send('q', { type: 't', payload: null });
+await client.send('q', { type: 't', payload: undefined });
+await client.send('q', { type: 't' });
+```
+
+Inside an object, properties whose value is `undefined` are dropped by
+`JSON.stringify` per the JSON spec. This is the standard JS behavior;
+the driver does not try to override it:
+
+```ts
+await client.send('q', { type: 't', payload: { a: 1, b: undefined } });
+// Stored as: {"a":1}
+```
+
 ## Errors
 
 All errors derive from `PgqueError`:
