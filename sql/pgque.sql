@@ -4269,6 +4269,9 @@ grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_wr
 -- pgque-api/, so API-layer grants cannot reference their functions from
 -- this file.
 
+-- Deny-by-default: revoke PUBLIC EXECUTE so role grants below are authoritative.
+revoke execute on all functions in schema pgque from public;
+
 -- ---------------------------------------------------------------------------
 -- Admin: full access to everything in the pgque schema
 -- ---------------------------------------------------------------------------
@@ -4278,9 +4281,7 @@ grant all on all sequences in schema pgque to pgque_admin;
 grant execute on all functions in schema pgque to pgque_admin;
 
 -- uninstall() drops the entire schema — only superuser / schema owner should run it.
--- SECURITY DEFINER functions default to PUBLIC execute; revoke both PUBLIC and
--- pgque_admin so the function really is superuser-only.
-revoke execute on function pgque.uninstall() from public;
+-- Revoke from pgque_admin (the "all functions" grant above would otherwise include it).
 revoke execute on function pgque.uninstall() from pgque_admin;
 
 -- pgque-additions/dlq.sql
@@ -4499,14 +4500,13 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- dlq_replay / dlq_replay_all re-insert events — writer-level.
 -- dlq_purge / event_dead: admin-level operations (purge = data loss,
 -- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
--- explicitly for the reason above. Left on PUBLIC default EXECUTE for now;
--- consider revoke-from-public if the codebase adopts that convention more
--- broadly.
-
+-- explicitly for the reason above.
+--
 grant select on pgque.dead_letter                           to pgque_reader;
 grant all    on pgque.dead_letter                           to pgque_admin;
 grant all    on sequence pgque.dead_letter_dl_id_seq        to pgque_admin;
 
+-- Grant to intended roles.
 grant execute on function pgque.dlq_inspect(text, int)      to pgque_reader;
 grant execute on function pgque.dlq_replay(bigint)          to pgque_writer;
 grant execute on function pgque.dlq_replay_all(text)        to pgque_writer;
@@ -4534,7 +4534,19 @@ declare
     f record;
     r integer;
     total integer := 0;
+    -- Owner of this function (the install owner / SECURITY DEFINER principal).
+    v_maint_owner name;
+    v_func_owner  name;
+    v_func_oid    oid;
 begin
+    -- Resolve install-owner name once per call (pg_get_userbyid avoids pg_authid).
+    select pg_catalog.pg_get_userbyid(p.proowner) into v_maint_owner
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'pgque'
+      and p.proname = 'maint'
+      and pg_catalog.pg_get_function_arguments(p.oid) = '';
+
     for f in select func_name, func_arg from pgque.maint_operations()
     loop
         if f.func_name = 'pgque.maint_rotate_tables_step2' then
@@ -4542,6 +4554,25 @@ begin
         elsif f.func_name = 'vacuum' then
             continue;
         elsif f.func_arg is not null then
+            -- Resolve to regprocedure; invalid names raise a catchable exception.
+            begin
+                execute format('select %L::regprocedure', f.func_name || '(text)')
+                into v_func_oid;
+            exception when others then
+                raise warning 'pgque.maint: skipping % — invalid regprocedure: %', f.func_name, sqlerrm;
+                continue;
+            end;
+
+            -- Ownership check: extra-maint function must be owned by the install owner.
+            select pg_catalog.pg_get_userbyid(p.proowner) into v_func_owner
+            from pg_proc p
+            where p.oid = v_func_oid;
+
+            if v_func_owner is distinct from v_maint_owner then
+                raise warning 'pgque.maint: skipping % — owner % is not maint() owner %', f.func_name, v_func_owner, v_maint_owner;
+                continue;
+            end if;
+
             execute 'select ' || f.func_name || '(' || quote_literal(f.func_arg) || ')' into r;
             total := total + r;
         else
@@ -4553,6 +4584,8 @@ begin
     return total;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+grant execute on function pgque.maint() to pgque_admin;
 
 -- pgque-api/receive.sql
 -- pgque.receive(), pgque.ack(), pgque.nack() -- modern consume API
@@ -4696,10 +4729,6 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
--- Colocated here (not in pgque-additions/roles.sql) because roles.sql is
--- assembled before pgque-api/, so these functions do not yet exist when
--- roles.sql runs. Same convention as sql/pgque-api/send.sql.
-
 grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
 grant execute on function pgque.ack(bigint)                                   to pgque_writer;
 grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;
@@ -4837,10 +4866,7 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- Explicit writer grants for the send* + subscribe/unsubscribe family.
--- Colocated here (not in pgque-additions/roles.sql) because roles.sql
--- runs before the pgque-api section during build, so API-layer grants
--- must live alongside the function definitions they apply to.
+-- Grants for the send* + subscribe/unsubscribe family.
 grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
@@ -4850,4 +4876,9 @@ grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
 grant execute on function pgque.subscribe(text, text)           to pgque_writer;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_writer;
 
+-- Re-apply deny-by-default after all API functions are defined.
+-- roles.sql's blanket revoke runs before pgque-api/ files are loaded, so
+-- functions created here would otherwise inherit PostgreSQL's default
+-- PUBLIC EXECUTE. This second pass covers everything.
+revoke execute on all functions in schema pgque from public;
 

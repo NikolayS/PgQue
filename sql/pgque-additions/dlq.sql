@@ -213,14 +213,13 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- dlq_replay / dlq_replay_all re-insert events — writer-level.
 -- dlq_purge / event_dead: admin-level operations (purge = data loss,
 -- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
--- explicitly for the reason above. Left on PUBLIC default EXECUTE for now;
--- consider revoke-from-public if the codebase adopts that convention more
--- broadly.
-
+-- explicitly for the reason above.
+--
 grant select on pgque.dead_letter                           to pgque_reader;
 grant all    on pgque.dead_letter                           to pgque_admin;
 grant all    on sequence pgque.dead_letter_dl_id_seq        to pgque_admin;
 
+-- Grant to intended roles.
 grant execute on function pgque.dlq_inspect(text, int)      to pgque_reader;
 grant execute on function pgque.dlq_replay(bigint)          to pgque_writer;
 grant execute on function pgque.dlq_replay_all(text)        to pgque_writer;

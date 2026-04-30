@@ -69,6 +69,9 @@ grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_wr
 -- pgque-api/, so API-layer grants cannot reference their functions from
 -- this file.
 
+-- Deny-by-default: revoke PUBLIC EXECUTE so role grants below are authoritative.
+revoke execute on all functions in schema pgque from public;
+
 -- ---------------------------------------------------------------------------
 -- Admin: full access to everything in the pgque schema
 -- ---------------------------------------------------------------------------
@@ -78,7 +81,5 @@ grant all on all sequences in schema pgque to pgque_admin;
 grant execute on all functions in schema pgque to pgque_admin;
 
 -- uninstall() drops the entire schema — only superuser / schema owner should run it.
--- SECURITY DEFINER functions default to PUBLIC execute; revoke both PUBLIC and
--- pgque_admin so the function really is superuser-only.
-revoke execute on function pgque.uninstall() from public;
+-- Revoke from pgque_admin (the "all functions" grant above would otherwise include it).
 revoke execute on function pgque.uninstall() from pgque_admin;
