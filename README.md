@@ -288,6 +288,11 @@ read rate, zero dead-tuple growth under a 30-minute sustained test. See
 [docs/benchmarks.md](docs/benchmarks.md) for the full table and methodology.
 Server-class numbers to follow.
 
+Preliminary cross-system measurements live in [`benchmark/`](benchmark/).
+Numbers there are for reference and exploration, not a final verdict —
+benchmarking Postgres queues is hard (cf. Brendan Gregg) and the
+methodology continues to evolve.
+
 ## Architecture
 
 PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, three-table TRUNCATE rotation on the hot path, separate retry / delayed / dead-letter tables, and independent per-consumer cursors — and adds a modern API layer on top. See [blueprints/SPECx.md](blueprints/SPECx.md) for the full specification and [docs/pgq-concepts.md](docs/pgq-concepts.md) for the batch/tick/rotation glossary.
