@@ -114,6 +114,8 @@ begin
     if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
         -- Move to dead letter queue using canonical event data (#98).
         -- event_dead() uses ON CONFLICT DO NOTHING for idempotency (#104).
+        -- ev_txid is bigint in get_batch_events (legacy PgQ signature); text
+        -- round-trip is the codebase convention to widen to xid8 without loss.
         perform pgque.event_dead(i_batch_id, v_ev.ev_id,
             coalesce(i_reason, 'max retries exceeded'),
             v_ev.ev_time, v_ev.ev_txid::text::xid8, v_ev.ev_retry,
