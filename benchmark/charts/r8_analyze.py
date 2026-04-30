@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""r8_analyze.py — primary R8 analysis chart (Solarized Dark).
+"""r8_analyze.py — primary analysis chart (Solarized Dark).
 
 6-panel per-system overlay (7 systems as colors):
   1) throughput (events consumed / s, 60s rolling mean)
@@ -11,10 +11,10 @@
 
 LINEAR y-axes everywhere. No log/symlog.
 
-Inputs:  /tmp/bench_r8_full/<sys>/{events_consumed_per_sec.csv,bloat.csv,
-                                   sys_metrics.csv,events_consumed_summary.txt,
-                                   producer.log}
-Output:  /tmp/r8_main_chart.png + /tmp/r8_summary.json + /tmp/r8_table.md
+Inputs:  /tmp/bench_full/<sys>/{events_consumed_per_sec.csv,bloat.csv,
+                                sys_metrics.csv,events_consumed_summary.txt,
+                                producer.log}
+Output:  /tmp/bench_main_chart.png + /tmp/bench_summary.json + /tmp/bench_table.md
 """
 from __future__ import annotations
 import csv, json, re, sys
@@ -183,7 +183,7 @@ def fmt_thousands(v, _):
 
 
 def main():
-    base = Path("/tmp/bench_r8_full")
+    base = Path("/tmp/bench_full")
 
     plt.rcParams.update({
         'figure.facecolor': BG, 'axes.facecolor': BG, 'savefig.facecolor': BG,
@@ -290,15 +290,15 @@ def main():
                    fontsize=9, frameon=False)
 
     fig.suptitle(
-        "R8 — 7 Postgres queue systems · 2h (30m clean + 60m held-xmin + 30m recovery) · R=2000/s",
+        "7 Postgres queue systems · 2h (30m clean + 60m held-xmin + 30m recovery) · R=2000/s",
         y=0.995, color=FG_EMPH, fontsize=13, fontweight='bold')
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    fig.savefig("/tmp/r8_main_chart.png", dpi=110, bbox_inches="tight", facecolor=BG)
+    fig.savefig("/tmp/bench_main_chart.png", dpi=110, bbox_inches="tight", facecolor=BG)
 
-    with open("/tmp/r8_summary.json", "w") as f:
+    with open("/tmp/bench_summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
 
-    with open("/tmp/r8_table.md", "w") as f:
+    with open("/tmp/bench_table.md", "w") as f:
         f.write("| system | producer total | consumer total | TX-avg ev/s | p50 lag ms | p99 lag ms | TX p99 lag ms | true backlog | peak CPU % | peak NVMe write MiB/s |\n")
         f.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
         for r in table_rows:
@@ -308,8 +308,8 @@ def main():
                 f"{r['tx_p99_lag_ms']} | {r['true_backlog']:,} | "
                 f"{r['peak_cpu']:.1f} | {r['peak_wmib']:.1f} |\n")
 
-    out = Path("/tmp/r8_main_chart.png")
-    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB) + /tmp/r8_summary.json + /tmp/r8_table.md")
+    out = Path("/tmp/bench_main_chart.png")
+    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB) + /tmp/bench_summary.json + /tmp/bench_table.md")
 
 
 if __name__ == "__main__":

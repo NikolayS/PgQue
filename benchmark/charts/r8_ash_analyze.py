@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""ash_analyze.py — R8 ASH post-processing (Solarized Dark).
+"""ash_analyze.py — ASH post-processing (Solarized Dark).
 
-Input:  /tmp/bench_r8_full/<sys>/ash.csv per system.
-Output: /tmp/r8_ash_chart.png + /tmp/r8_ash_summary.json
+Input:  /tmp/bench_full/<sys>/ash.csv per system.
+Output: /tmp/bench_ash_chart.png + /tmp/bench_ash_summary.json
 
 Per-system stacked-area of **active session count** by wait-event category
 over 2h bench, 1-min buckets. Each ash.csv row is one active-backend sample;
@@ -168,7 +168,7 @@ def bucket_stack(rows, bucket_s=60, total_s=TOTAL_MIN * 60):
 
 
 def main():
-    base = Path("/tmp/bench_r8_full")
+    base = Path("/tmp/bench_full")
 
     plt.rcParams.update({
         'figure.facecolor': BG, 'axes.facecolor': BG, 'savefig.facecolor': BG,
@@ -244,15 +244,15 @@ def main():
                         color=FG_EMPH)
     axes[-1].set_xticks([0, 15, 30, 45, 60, 75, 90, 105, 120])
 
-    fig.suptitle("R8 — ASH active sessions (count) by wait-event category, per system · 1-min buckets · linear y",
+    fig.suptitle("ASH active sessions (count) by wait-event category, per system · 1-min buckets · linear y",
                  y=0.998, color=FG_EMPH, fontsize=13, fontweight='bold')
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
     fig.legend(handles, CATEGORIES, loc="upper center",
                bbox_to_anchor=(0.5, 0.955), ncol=len(CATEGORIES),
                frameon=False, fontsize=9)
-    out = Path("/tmp/r8_ash_chart.png")
+    out = Path("/tmp/bench_ash_chart.png")
     fig.savefig(out, dpi=110, bbox_inches="tight", facecolor=BG)
-    with open("/tmp/r8_ash_summary.json", "w") as f:
+    with open("/tmp/bench_ash_summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
     print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB)")
 

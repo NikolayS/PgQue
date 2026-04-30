@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pgfr_analyze.py — R8 pgfr enriched post-processing (Solarized Dark).
+"""pgfr_analyze.py — pgfr enriched post-processing (Solarized Dark).
 
 Per-system row, 4 columns of pgfr-derived insights:
   Col 1: top-5 queries by cumulative total_exec_time (labelled with actual
@@ -12,17 +12,17 @@ Per-system row, 4 columns of pgfr-derived insights:
 LINEAR axes everywhere. No log/symlog.
 
 Fallbacks:
-- Systems without pgfr_record instrumentation (pgq/pgmq/river in R8) use pgss.csv
+- Systems without pgfr_record instrumentation (pgq/pgmq/river) use pgss.csv
   for top-query column only; other columns show "pgfr not installed".
 - If pgfr_statement_snapshots.csv exists but is empty, fall back to pgss.csv.
 
-Inputs under /tmp/bench_r8_full/<sys>/:
+Inputs under /tmp/bench_full/<sys>/:
   pgfr_statement_snapshots.csv   (per-snapshot pg_stat_statements)
   pgfr_table_snapshots.csv       (per-snapshot pg_stat_user_tables)
   pgfr_snapshots.csv             (global wal/io/bgwriter/ckpt)
   pgss.csv                       (point-in-time pg_stat_statements fallback)
 
-Output: /tmp/r8_pgfr_chart.png + /tmp/r8_pgfr_summary.json
+Output: /tmp/bench_pgfr_chart.png + /tmp/bench_pgfr_summary.json
 """
 from __future__ import annotations
 import csv, json, re, sys
@@ -261,7 +261,7 @@ def fmt_k(v, _):
 
 
 def main():
-    base = Path("/tmp/bench_r8_full")
+    base = Path("/tmp/bench_full")
 
     plt.rcParams.update({
         'figure.facecolor': BG, 'axes.facecolor': BG, 'savefig.facecolor': BG,
@@ -404,17 +404,17 @@ def main():
         axes[0][j].set_title(t, fontsize=10, color=FG_EMPH, pad=10, loc='center')
 
     fig.suptitle(
-        "R8 — pgfr deep dive: top queries (real text) · buffer hit rate · WAL/query · global WAL rate + active backends  "
+        "pgfr deep dive: top queries (real text) · buffer hit rate · WAL/query · global WAL rate + active backends  "
         "(pgq/pgmq/river: pgfr not installed, pgss fallback)",
         y=0.998, color=FG_EMPH, fontsize=11, fontweight='bold')
     fig.tight_layout(rect=[0.03, 0, 1, 0.965])
-    fig.savefig("/tmp/r8_pgfr_chart.png", dpi=110, bbox_inches="tight", facecolor=BG)
+    fig.savefig("/tmp/bench_pgfr_chart.png", dpi=110, bbox_inches="tight", facecolor=BG)
 
-    with open("/tmp/r8_pgfr_summary.json", "w") as f:
+    with open("/tmp/bench_pgfr_summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
 
-    out = Path("/tmp/r8_pgfr_chart.png")
-    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB) + /tmp/r8_pgfr_summary.json")
+    out = Path("/tmp/bench_pgfr_chart.png")
+    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB) + /tmp/bench_pgfr_summary.json")
 
 
 if __name__ == "__main__":
