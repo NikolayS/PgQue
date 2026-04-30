@@ -6,7 +6,7 @@ Every operational lesson accumulated while running the pgque-vs-pgq-vs-pgmq-vs-r
 
 ## 1. AWS i4i.2xlarge: NVMe instance store is NOT auto-mounted
 
-The Ubuntu 24.04 AMI boots with `/dev/nvme1n1` **present but not formatted, not mounted**. You MUST format and mount it BEFORE installing Postgres data dir, or the data goes to the 8 GB root EBS volume and the bench dies the moment you fill the page cache.
+The Ubuntu 24.04 AMI boots with `/dev/nvme1n1` **present but not formatted, not mounted**. You MUST format and mount it BEFORE installing Postgres data dir, or the data goes to the 8 GiB root EBS volume and the bench dies the moment you fill the page cache.
 
 ```bash
 sudo mkfs.xfs /dev/nvme1n1
@@ -15,7 +15,7 @@ sudo mount -o noatime,nodiratime /dev/nvme1n1 /mnt/pgdata
 sudo chown postgres:postgres /mnt/pgdata
 ```
 
-If PG is installed first (default path `/var/lib/postgresql/18/main`), data goes to the 8 GB root EBS → disaster under bench load.
+If PG is installed first (default path `/var/lib/postgresql/18/main`), data goes to the 8 GiB root EBS → disaster under bench load.
 
 **Symlink pattern** after moving data:
 
@@ -34,7 +34,7 @@ See [runners/fix_nvme_mount.sh](runners/fix_nvme_mount.sh) for the recovery proc
 
 Default `/tmp` is on the root disk. pgbench `--log-prefix=/tmp/bench/producer_agg` + `consumer.log` with 17 k NOTICE/s + `bloat.csv` + `sys_metrics.csv` all write there.
 
-At bench rates this is 1–5 MB/s of root-disk I/O. Not catastrophic but adds noise you can see in the sys_metrics disk panel of the non-subject VM.
+At bench rates this is 1–5 MiB/s of root-disk I/O. Not catastrophic but adds noise you can see in the sys_metrics disk panel of the non-subject VM.
 
 **Fix:**
 
@@ -57,7 +57,7 @@ If investigating slow queries later, enable `log_statement='all'` + `logging_col
 
 ## 4. Clean-slate reset without losing adjacent schemas
 
-`DROP SCHEMA pgque CASCADE` can cascade into objects it doesn't own if a function somewhere references pgque. R6 lost the `ash` schema this way on the pgque VM.
+`DROP SCHEMA pgque CASCADE` can cascade into objects it doesn't own if a function somewhere references pgque. This happened during testing — the `ash` schema was silently dropped on the pgque VM.
 
 **Safer pattern for pgque:** `TRUNCATE` all `pgque.*` tables instead of drop-and-recreate. If a reinstall is actually needed:
 
@@ -105,7 +105,7 @@ pg_partman is installed in schema `public` (not `partman` as the docs sometimes 
 
 Default `premake=4` works for bench (4 future 5-min partitions = 20 min buffer, enough for 1.5 h bench given 1-min maintenance cron cadence).
 
-R6 tried `premake=20` = 24 partitions steady-state, which killed pgmq-partitioned consumer perf (525 TPS vs 6621 with premake=4) due to planner cost across all partitions per query.
+`premake=20` (24 partitions steady-state) killed pgmq-partitioned consumer perf (525 TPS vs 6621 with premake=4) due to planner cost across all partitions per query.
 
 `infinite_time_partitions=true` is needed for the maintenance job to keep creating future partitions indefinitely:
 
@@ -190,8 +190,8 @@ If you see this on a VM that wasn't freshly installed from the PR #62 branch, re
 
 i4i.2xlarge spot price is ~$0.20–0.30/h vs on-demand $0.686/h. The us-east-2 spot market is reliable for short bench runs but DOES reclaim.
 
-- R4 lost `pgmq-partitioned` spot mid-run.
-- R6 lost `pgque` AND `que` spots between runs (hours-long windows).
+- `pgmq-partitioned` spot was reclaimed mid-run during one bench session.
+- `pgque` AND `que` spots were reclaimed between runs (hours-long windows) in another.
 
 **Mitigation:** on-demand for the primary subject under test (pgque for PR #62 work). Cost delta: ~$3–4 per 7-VM 1.5 h run. Worth it for the subject you're landing a PR on; leave the comparison set on spot.
 

@@ -1,4 +1,4 @@
--- R6 instrumented consumer for river (SKIP LOCKED + DELETE USING).
+-- Instrumented consumer for river (SKIP LOCKED + DELETE USING).
 -- Wrapped in DO block so NOTICE carries the count.
 -- Raw DELETE rowcount is ALSO visible in pg_stat_statements via the
 -- wrapped statement (total row count over the run — cross-check).

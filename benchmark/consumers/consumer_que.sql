@@ -1,5 +1,5 @@
--- R6 instrumented consumer for que (Ruby Que gem; SKIP LOCKED + DELETE).
--- Mirror R5 shape (que_jobs with default queue and priority ordering).
+-- Instrumented consumer for que (Ruby Que gem; SKIP LOCKED + DELETE).
+-- que_jobs with default queue and priority ordering.
 DO $$
 DECLARE
   n int := 0;

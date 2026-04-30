@@ -44,7 +44,7 @@ ASH and pgfr output (`ash.csv`, `pgfr_snapshots.csv`) land in `/tmp/bench/` post
 ```
 benchmark/
   README.md                          # this file
-  METHODOLOGY.md                     # full methodology (from GitLab #77)
+  METHODOLOGY.md                     # full methodology
   OPS_GOTCHAS.md                     # operational lessons
   HARDWARE.md                        # VM + PG tuning
   tooling/
@@ -85,8 +85,8 @@ benchmark/
     install_pgboss.sh
                                      # note: pgque + que driven from AMI userdata
   charts/
-    r5_analyze.py                    # R5 2-panel chart
-    r6_smoke_chart.py                # R6 smoke Solarized-Dark chart
+    r5_analyze.py                    # 2-panel chart (dead tuples + consumer latency)
+    r6_smoke_chart.py                # smoke Solarized-Dark chart (events/s + dead tuples)
   gifs/
     r4_gif_v17_solarized.py          # dead-tuples animated GIF
     r4_gif_tps_solarized.py          # TPS/latency animated GIF

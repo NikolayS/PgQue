@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R7 v2 sys metrics sampler: CPU + RAM + per-device NVMe IOPS / MiB/s / latency.
+"""sys_metrics_sampler.py v2: CPU + RAM + per-device NVMe IOPS / MiB/s / latency.
 
 Columns:
   ts_iso,

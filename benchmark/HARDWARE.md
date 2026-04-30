@@ -5,10 +5,10 @@
 | Spec | Value |
 |---|---|
 | vCPU | 8 (Intel Ice Lake Xeon 8375C, 2.9 GHz base / 3.5 GHz turbo) |
-| RAM | 64 GB |
-| NVMe instance store | 1 × 1.75 TB (physical attach, NVMe) |
+| RAM | 64 GiB |
+| NVMe instance store | 1 × 1.75 TiB (physical attach, NVMe) |
 | Network | Up to 12 Gbps |
-| EBS (root) | 8 GB gp3 (Ubuntu 24.04 AMI default) |
+| EBS (root) | 8 GiB gp3 (Ubuntu 24.04 AMI default) |
 | Spot price (us-east-2, 2026-04) | ~$0.20–0.30 / hour |
 | On-demand price | $0.686 / hour |
 
@@ -27,7 +27,7 @@ Run via [tooling/microbench.sh](tooling/microbench.sh). Expected order-of-magnit
 | fio 4 k randwrite, 99 p latency | ~100 µs |
 | fio 4 k randread, QD=32, on NVMe | ~400 k IOPS |
 
-*Actual R7 microbench numbers to be filled in from the R7 microbench pass.*
+*Actual numbers to be filled in after running [tooling/microbench.sh](tooling/microbench.sh) on a fresh VM.*
 
 ## Postgres tuning (shared across all 7 VMs)
 
@@ -66,6 +66,6 @@ listen_addresses = 'localhost'
 
 `synchronous_commit=off` is deliberate — queue workloads are almost always idempotent at the application layer, and the WAL-flush path is the dominant cost for low-latency producers. It's the only PG knob we touch that materially changes safety posture.
 
-`jit=off` because 5-s JIT warmups on `DO` blocks dominated our first-transaction latency in R4.
+`jit=off` because 5-s JIT warmups on `DO` blocks dominated first-transaction latency in early bench runs.
 
 `autovacuum_*_scale_factor=0.01` is aggressive on purpose — we want autovacuum attempting to clean every 1 % dead-tuple ratio so the held-xmin phase of the bench exposes the *inability* to vacuum, not a lazy autovacuum schedule.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R6 combined smoke chart — events consumed/s + pgque table dead tuples."""
+"""r6_smoke_chart — events consumed/s + pgque table dead tuples."""
 import csv, re
 from pathlib import Path
 from datetime import datetime
@@ -114,10 +114,10 @@ ax2.legend(loc="upper left", frameon=False, fontsize=8, ncol=3, labelcolor=FG)
 ax2.set_ylim(0, max(50, max([max(s[2]) for s in tbl_series.values() if s[2]], default=10)*1.15))
 
 # Titles
-fig.text(0.09, 0.965, "R6 combined smoke — pgque PR #62 rotation + events-consumed instrumentation",
+fig.text(0.09, 0.965, "pgque smoke — PR #62 rotation + events-consumed instrumentation",
          ha="left", fontsize=12, fontweight="bold", color=FG_EMPH)
 fig.text(0.09, 0.94, "20 min (5m clean + 10m held xmin + 5m recovery). Event-rate: producer was rate-capped at 1000 ev/s.",
          ha="left", fontsize=9, color=FG_DIM)
 
 fig.savefig(OUT, dpi=110, bbox_inches="tight", facecolor=BG)
-print(f"wrote {OUT}  ({OUT.stat().st_size/1024:.0f} KB)")
+print(f"wrote {OUT}  ({OUT.stat().st_size/1024:.0f} KiB)")

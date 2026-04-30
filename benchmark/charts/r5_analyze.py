@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R5 full — verdict table + 2-panel chart (dead tuples + consumer latency)."""
+"""r5_analyze — verdict table + 2-panel chart (dead tuples + consumer latency)."""
 import csv, re
 from pathlib import Path
 from datetime import datetime
@@ -128,10 +128,10 @@ def fmt_lat(v,_):
 ax2.yaxis.set_major_formatter(FuncFormatter(fmt_lat))
 ax2.set_ylabel("consumer latency (mean)", labelpad=8)
 
-fig.text(0.08, 0.97, "R5 full — 7 systems · 1.5 h · held xmin horizon for 30 min",
+fig.text(0.08, 0.97, "pgque bench — 7 systems · 1.5 h · held xmin horizon for 30 min",
          ha="left", fontsize=13, fontweight="bold")
 fig.text(0.08, 0.948, "producer -R 1000, pgbench --aggregate-interval=10 --log · consumer latency clipped at 2s",
          ha="left", fontsize=9, color="#666")
 
 fig.savefig("/tmp/r5_full_chart.png", dpi=110, bbox_inches="tight")
-print(f"\nwrote /tmp/r5_full_chart.png ({Path('/tmp/r5_full_chart.png').stat().st_size/1024:.0f} KB)")
+print(f"\nwrote /tmp/r5_full_chart.png ({Path('/tmp/r5_full_chart.png').stat().st_size/1024:.0f} KiB)")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""parse_events_consumed.py — turn R6 NOTICE-instrumented consumer.log into
+"""parse_events_consumed.py — turn NOTICE-instrumented consumer.log into
 an honest events-delivered-per-second time series.
 
 Inputs (by convention, --bench-dir):
@@ -109,7 +109,7 @@ def main() -> int:
                 f"method=NOTICE\n"
                 f"notice_lines_found=0\n"
                 "WARNING: no NOTICE events_consumed data — verify consumer.sql\n"
-                "         is the R6 instrumented version. Fallback: use\n"
+                "         uses NOTICE instrumentation. Fallback: use\n"
                 "         pg_stat_statements snapshot (pgss_timeseries.csv)\n"
                 "         or compute via producer_rate - queue_bloat_delta.\n"
             )

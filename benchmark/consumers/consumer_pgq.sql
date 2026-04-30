@@ -1,4 +1,4 @@
--- R6 instrumented consumer for pgq (identical to pgque; schema swap only).
+-- Instrumented consumer for pgq (identical to pgque; schema swap only).
 DO $$
 DECLARE
   b bigint;

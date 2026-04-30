@@ -1,4 +1,4 @@
--- R6 instrumented consumer for pgmq (read-then-delete).
+-- Instrumented consumer for pgmq (read-then-delete).
 -- pgmq.delete is a function body so pg_stat_statements can't see row counts;
 -- NOTICE is the authoritative source.
 DO $$

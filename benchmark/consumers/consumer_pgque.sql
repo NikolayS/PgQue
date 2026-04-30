@@ -1,4 +1,4 @@
--- R6 instrumented consumer for pgque (batch ticker model).
+-- Instrumented consumer for pgque (batch ticker model).
 -- Preserves original behavior; adds one NOTICE per call for honest-events/s.
 -- Format: NOTICE: ev ts=<epoch_s> n=<events>
 DO $$

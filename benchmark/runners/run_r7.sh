@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 # run_r7.sh <system> [duration_s]
-# R7: 1.5h bench (30m clean + 30m idle-in-tx + 30m recovery)
-# Adds over R6:
-#   * sys_metrics_sampler.py running alongside bloat_sampler.py
-#   * pg_ash ASH + pgfr snapshots copied to CSV at end (schemas preserved)
-#
-# Same instrumented consumer NOTICE format as R6 for honest ev/s parsing.
+# run_r7.sh: 1.5h bench (30m clean + 30m idle-in-tx + 30m recovery)
+# sys_metrics_sampler.py runs alongside bloat_sampler.py.
+# pg_ash ASH + pgfr snapshots copied to CSV at end (schemas preserved).
+# Consumer NOTICE format: NOTICE: ev ts=<epoch_s> n=<events>
 set -Eeuo pipefail
 SYS=${1:?system}
 DUR=${2:-5400}  # 1.5h = 5400s
 
 R7_DIR=${R7_DIR:-/tmp/r7}
 R6_DIR=${R6_DIR:-/tmp/r6}
-# Consumer SQL may be in either /tmp/consumer.sql (pushed), /tmp/r7/consumer_<sys>.sql, or /tmp/r6/consumer_<sys>.sql
+# Consumer SQL may be in either /tmp/consumer.sql (pushed), $R7_DIR/consumer_<sys>.sql, or $R6_DIR/consumer_<sys>.sql
 for c in "$R7_DIR/consumer_${SYS}.sql" "/tmp/consumer.sql" "$R6_DIR/consumer_${SYS}.sql"; do
   if [[ -f "$c" ]]; then CONSUMER_SQL="$c"; break; fi
 done
@@ -46,11 +44,11 @@ sudo -u postgres psql -d bench -c "SELECT pg_stat_statements_reset()" >/dev/null
 python3 /tmp/bloat_sampler.py --system "$SYS" --interval 30 --duration "$DUR" > /tmp/bench/bloat.csv &
 BLOAT_PID=$!
 
-# NEW in R7: sys_metrics_sampler.py — CPU/mem/disk every 10s, NVMe instance-store device
+# sys_metrics_sampler.py — CPU/mem/disk every 10s, NVMe instance-store device
 python3 "$R7_DIR/sys_metrics_sampler.py" --interval 10 --duration "$DUR" --device nvme1n1 --out /tmp/bench/sys_metrics.csv > /tmp/bench/sys_metrics.log 2>&1 &
 SYSM_PID=$!
 
-# pgss snapshot cross-check (carried over from R6)
+# pgss snapshot cross-check
 python3 "$R6_DIR/pg_stat_statements_snapshot.py" \
   --dsn "host=127.0.0.1 dbname=bench user=postgres" \
   --interval 10 --duration "$DUR" \
@@ -58,14 +56,14 @@ python3 "$R6_DIR/pg_stat_statements_snapshot.py" \
   > /tmp/bench/pgss_snapshotter.log 2>&1 &
 PGSS_PID=$!
 
-# Producer — R7 full: -R 5000 (was 1000 in smoke/R6)
+# Producer — full run: -R 5000
 pgbench -h 127.0.0.1 -U postgres -d bench -n -f /tmp/producer.sql \
   -c 1 -j 1 -R 5000 -T "$DUR" -P 30 \
   --aggregate-interval=10 --log --log-prefix=/tmp/bench/producer_agg \
   > /tmp/bench/producer.log 2>&1 &
 PROD_PID=$!
 
-# Consumer (R6 instrumented SQL)
+# Consumer (NOTICE-instrumented SQL)
 pgbench -h 127.0.0.1 -U postgres -d bench -n -f "$CONSUMER_SQL" \
   -c $CONS_C -j $CONS_C -T "$DUR" -P 30 \
   --aggregate-interval=10 --log --log-prefix=/tmp/bench/consumer_agg \
@@ -112,4 +110,4 @@ python3 "$R6_DIR/parse_events_consumed.py" \
   --system "$SYS" \
   > /tmp/bench/events_consumed_parse.log 2>&1 || true
 
-echo "=== R7 done: $SYS ==="
+echo "=== bench done: $SYS ==="

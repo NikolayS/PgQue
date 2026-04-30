@@ -1,4 +1,4 @@
--- R6 instrumented consumer for pgmq-partitioned (identical SQL to pgmq;
+-- Instrumented consumer for pgmq-partitioned (identical SQL to pgmq;
 -- the partitioning is on the schema side only).
 DO $$
 DECLARE

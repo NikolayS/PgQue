@@ -1,13 +1,10 @@
 # Bench methodology — the definitive reference
 
-Adapted from GitLab issue [postgres-ai/postgresql-consulting/tests-and-benchmarks#77, note 3263767264](https://gitlab.com/postgres-ai/postgresql-consulting/tests-and-benchmarks/-/issues/77#note_3263767264).
-
 This document is the single source of truth for how the PostgreSQL-queue bench is structured, what it measures, and every script/config that makes it work. It is written so a reviewer can reproduce the whole thing end-to-end.
 
 Cross-links:
 
 - Upstream fix: [pgque PR #62](https://github.com/NikolayS/pgque/pull/62) · issue [NikolayS/pgque#61](https://github.com/NikolayS/pgque/issues/61)
-- GitLab rounds: R4 final narrative — note 3262968456; R5 root — note 3263000815; R5 full writeup — note 3263438287; pgque rotation PoC under held xmin — note 3263417609.
 
 ---
 
@@ -31,7 +28,7 @@ The Go/Ruby/Node workers are installed end-to-end so the schema is authentic, bu
 
 Workload shape (all runs):
 
-- Producer: 1 client, pgbench `-R 1000` rate-cap (may move to `-R 5000` in R7/R8)
+- Producer: 1 client, pgbench `-R 1000` rate-cap (full runs use `-R 5000`)
 - Consumer: 1 client for pgque/pgq, 4 clients for everything else
 - Three 30-minute phases back-to-back = **1.5 h per run**:
   1. **Clean baseline** — no held xmin
@@ -42,20 +39,20 @@ Workload shape (all runs):
 
 ## 2. Infrastructure
 
-- AWS us-east-2, **i4i.2xlarge** (8 vCPU, 64 GB, NVMe instance store)
+- AWS us-east-2, **i4i.2xlarge** (8 vCPU, 64 GiB, NVMe instance store)
 - Spot where available; on-demand only as last resort (see Section 10)
 - Ubuntu 24.04, **PG18 from PGDG**, `pg_cron`, `pg_stat_statements`, pg_ash, pgfr
 - Data dir moved to NVMe: `/mnt/pgdata/postgresql/18/main` symlink (see [runners/fix_nvme_mount.sh](runners/fix_nvme_mount.sh) and [OPS_GOTCHAS.md §1](OPS_GOTCHAS.md))
 - One VM per system so any tuning / runtime / GC behaviour is contained
 - SSH key: `<your-ssh-key>` (us-east-2)
 
-Live R7 VMs (redacted): `<pgque-ip>`, `<pgq-ip>`, `<pgmq-ip>`, `<river-ip>`, `<pgboss-ip>`, `<que-ip>`, `<pgmq-partitioned-ip>`.
+VM IPs use placeholder form: `<pgque-ip>`, `<pgq-ip>`, `<pgmq-ip>`, `<river-ip>`, `<pgboss-ip>`, `<que-ip>`, `<pgmq-partitioned-ip>`.
 
 ---
 
 ## 3. Observability stack
 
-Seven parallel streams run during every bench. All CSVs land in `/tmp/bench/` and are rsynced to the local `/tmp/bench_r<N>/<system>/` tree every 30 min.
+Seven parallel streams run during every bench. All CSVs land in `/tmp/bench/` and are rsynced to the local `/tmp/bench/<system>/` tree every 30 min.
 
 ### (a) bloat_sampler.py — pg_stat_user_tables every 30 s
 
@@ -85,7 +82,7 @@ COPY (SELECT * FROM pgfr_record.statement_snapshots) TO '/tmp/bench/pgfr_stateme
 
 Full pgfr_record schema on every VM includes: `snapshots`/`snapshots_v2` (partitioned), `table_snapshots(_v2)`, `statement_snapshots(_v2)`, `index_snapshots(_v2)`, `replication_snapshots(_v2)`, `vacuum_progress_snapshots(_v2)`, `activity_samples(_archive_v2)`, `lock_samples(_archive_v2)`, `config_snapshots`, `db_role_config_snapshots`.
 
-### (d) sys_metrics_sampler.py — CPU / mem / disk every 10 s (R7+)
+### (d) sys_metrics_sampler.py — CPU / mem / disk every 10 s
 
 Reads `/proc/stat`, `/proc/meminfo`, `/proc/diskstats` directly (psutil-optional). NVMe device is `nvme1n1` (the instance store, which is what `/mnt/pgdata` sits on). v2 adds per-device IOPS and latency columns.
 
@@ -101,7 +98,7 @@ Source: [tooling/pg_stat_statements_snapshot.py](tooling/pg_stat_statements_snap
 
 Both producer and consumer run with per-10 s aggregate logs (min/max/sum/sumsq latency). Files: `producer_agg.<pid>` and `consumer_agg.<pid>.<worker>` under `/tmp/bench/`.
 
-### (g) Consumer NOTICE instrumentation (R6+)
+### (g) Consumer NOTICE instrumentation
 
 Each instrumented `consumer.sql` is wrapped in a DO block that emits exactly one `RAISE NOTICE 'ev ts=<epoch_s> n=<events>'` per call. This gives us an authoritative per-call consumed-events stream that is immune to the pgss DO-wrapper opacity problem.
 
@@ -165,28 +162,18 @@ All producers are in [producers/](producers/).
 
 ## 8. Analysis and chart generation
 
-- [charts/r5_analyze.py](charts/r5_analyze.py) — R5 full 2-panel chart (dead tuples + consumer latency, linear scale, no symlog — per [MEMORY rule](../CLAUDE.md) "Never use log/symlog on charts").
-- [charts/r6_smoke_chart.py](charts/r6_smoke_chart.py) — R6 smoke Solarized-Dark 2-panel chart (events/s + pgque per-table dead tuples).
-- [gifs/r4_gif_v17_solarized.py](gifs/r4_gif_v17_solarized.py) — R4 dead-tuples animated GIF (7 systems, Solarized-Dark).
-- [gifs/r4_gif_tps_solarized.py](gifs/r4_gif_tps_solarized.py) — R4 TPS/latency animated GIF.
+- [charts/r5_analyze.py](charts/r5_analyze.py) — full 2-panel chart (dead tuples + consumer latency, linear scale, no symlog).
+- [charts/r6_smoke_chart.py](charts/r6_smoke_chart.py) — smoke Solarized-Dark 2-panel chart (events/s + pgque per-table dead tuples).
+- [gifs/r4_gif_v17_solarized.py](gifs/r4_gif_v17_solarized.py) — dead-tuples animated GIF (7 systems, Solarized-Dark).
+- [gifs/r4_gif_tps_solarized.py](gifs/r4_gif_tps_solarized.py) — TPS/latency animated GIF.
 
 ---
 
-## 9. GitLab posting style
-
-- Threads open under `### header`; replies stay inside the same discussion.
-- Every `<details>` block has **one blank line** between the opening tag and the triple-backtick fence, and **one blank line** between the closing fence and `</details>` — and another blank line after `</details>`. This is what makes them render correctly on GitLab.
-- Every significant result embeds `![alt](/uploads/…)` — charts are first-class citizens. GIFs too.
-- Post bodies via `curl --data-urlencode "body@/tmp/path"` to the discussions endpoint — new thread, not a reply under an existing one.
-
----
-
-## 10. Cost discipline
+## 9. Cost discipline
 
 - us-east-2 spot preferred (~$0.22/h); when spot is exhausted we hop to another region before going on-demand.
-- At R7 time 2 VMs are on-demand (pgmq-partitioned and pgboss; pgque+que moved on-demand after R6 spot reclaim).
-- **~$15 per 1.5 h bench round** (7 VMs).
-- Total spend through R7 is ~$100.
+- On-demand for the primary subject under test when data integrity matters most.
+- **~$15 per 1.5 h bench run** (7 VMs).
 - Rsync every 30 min pulls `/tmp/bench/` to local, so a spot reclaim loses at most a partial phase.
 
 See [OPS_GOTCHAS.md §12](OPS_GOTCHAS.md) for spot-reclaim mitigations.
@@ -199,8 +186,7 @@ See [OPS_GOTCHAS.md §12](OPS_GOTCHAS.md) for spot-reclaim mitigations.
 2. `scp` per-system `install.sh`, `producer.sql`, instrumented `consumer.sql`, plus the samplers in [tooling/](tooling/).
 3. `bash clean_reinstall.sh <sys>` on each VM.
 4. `bash run_r7.sh <sys>` — 1.5 h, writes `/tmp/bench/*.csv` + `*.log`.
-5. Rsync everything back to `/tmp/bench_r7/<sys>/`.
-6. Run [charts/r5_analyze.py](charts/r5_analyze.py) (or R7 successor) for the verdict table + 2-panel PNG.
-7. Post results as a threaded reply with the `<details>`/blank-line style above.
+5. Rsync everything back to `/tmp/bench/<sys>/`.
+6. Run [charts/r5_analyze.py](charts/r5_analyze.py) for the verdict table + 2-panel PNG.
 
 That is the whole rig.

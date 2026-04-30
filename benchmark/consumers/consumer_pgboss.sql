@@ -1,4 +1,4 @@
--- R6 instrumented consumer for pg-boss (SKIP LOCKED + DELETE USING on partitioned job table).
+-- Instrumented consumer for pg-boss (SKIP LOCKED + DELETE USING on partitioned job table).
 -- pg-boss 'default' queue, state='created'.
 DO $$
 DECLARE
