@@ -72,11 +72,15 @@ create table if not exists pgque_test_sentinel (
 -- Sentinel function: bumps the sentinel and returns 1 so maint() accumulates it.
 -- Owned by the current role (install owner) so any ownership check passes.
 -- Table reference is schema-qualified so it resolves under maint()'s search_path.
+-- Note: language plpgsql so 'return' syntax is valid; language sql would need
+-- a bare 'select 1' as its final statement (no 'return' keyword).
 create or replace function pgque_test_extra_maint(i_queue text)
 returns int4 as $$
+begin
   insert into public.pgque_test_sentinel default values;
   return 1;
-$$ language sql;
+end;
+$$ language plpgsql;
 
 do $$
 declare
