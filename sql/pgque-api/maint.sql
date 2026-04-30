@@ -18,9 +18,10 @@ declare
     v_func_oid    oid;
 begin
     -- Resolve the owner of maint() itself once per call.
-    select rolname into v_maint_owner
+    -- pg_get_userbyid() reads proowner without requiring pg_authid access,
+    -- so this works on managed PostgreSQL (RDS, Aurora, Cloud SQL, etc.).
+    select pg_catalog.pg_get_userbyid(p.proowner) into v_maint_owner
     from pg_proc p
-    join pg_authid a on a.oid = p.proowner
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'pgque'
       and p.proname = 'maint'
@@ -48,9 +49,9 @@ begin
 
             -- 2. Check ownership: the extra-maint function must be owned by the
             --    same role that owns maint() (the install owner).
-            select rolname into v_func_owner
+            --    pg_get_userbyid() is used here too (no pg_authid access needed).
+            select pg_catalog.pg_get_userbyid(p.proowner) into v_func_owner
             from pg_proc p
-            join pg_authid a on a.oid = p.proowner
             where p.oid = v_func_oid;
 
             if v_func_owner is distinct from v_maint_owner then
