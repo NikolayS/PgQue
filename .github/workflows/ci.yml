@@ -77,8 +77,10 @@ jobs:
         if: always()
         run: docker rm -f pgque-test
 
-  client-smoke:
+  client-tests:
     runs-on: ubuntu-latest
+    env:
+      PGQUE_TEST_DSN: postgres://postgres:pgque_test@localhost/pgque_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,34 +102,43 @@ jobs:
       - name: Build pgque
         run: bash build/transform.sh
 
-      - name: Install pgque
+      - name: Install pgque schema
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f sql/pgque.sql
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -c "select pgque.create_queue('smoke_py'); select pgque.create_queue('smoke_go'); select pgque.create_queue('smoke_ts');"
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -c "select pgque.force_tick('smoke_py'); select pgque.force_tick('smoke_go'); select pgque.force_tick('smoke_ts'); select pgque.ticker();"
 
-      - name: Python smoke
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: clients/go/go.sum
+
+      - name: Go driver tests
+        run: |
+          cd clients/go
+          go test -race -v ./...
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python driver tests
         run: |
           python3 -m pip install -U pip
           python3 -m pip install -e clients/python[dev]
-          pytest -q clients/python/tests/test_smoke.py
+          pytest -v clients/python/tests/
 
-      - name: Go smoke
-        run: |
-          cd clients/go
-          go test -run TestSmoke ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: TypeScript smoke
+      - name: TypeScript driver tests
         run: |
           cd clients/typescript
-          npm install
-          npm run check
-          npx tsx src/smoke.ts
+          npm ci || npm install
+          npm run build
+          npx vitest --run
 
-      - name: Cleanup client smoke DB
+      - name: Cleanup client test DB
         if: always()
         run: docker rm -f pgque-client-test
 
