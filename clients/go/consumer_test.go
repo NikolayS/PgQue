@@ -39,12 +39,11 @@ func TestConsumer_StartStop_Clean(t *testing.T) {
 	}
 }
 
-// TestConsumer_PollIntervalRespected: with a 100ms interval and an empty
-// queue, Start should poll several times during a 600ms window. We can
-// observe polling indirectly via Receive errors when the consumer is not
-// registered — but the cleanest signal is that Start does not block forever
-// on an empty queue, which is what this test confirms.
-func TestConsumer_PollIntervalRespected(t *testing.T) {
+// TestConsumer_LivenessUnderEmptyQueue: with a 100ms poll interval, Start
+// must wake, poll, and honour context cancellation within a 600ms window.
+// This verifies liveness — that an empty queue does not cause the consumer
+// to block indefinitely between polls.
+func TestConsumer_LivenessUnderEmptyQueue(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
 	queue, consumer := setupFreshQueue(t, client)
@@ -68,7 +67,7 @@ func TestConsumer_PollIntervalRespected(t *testing.T) {
 }
 
 // TestConsumer_UnregisteredEventType_Nacks verifies the consumer nacks a
-// message whose Type has no registered handler (per PR #75 behavior).
+// message whose Type has no registered handler.
 func TestConsumer_UnregisteredEventType_Nacks(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
@@ -140,11 +139,10 @@ func TestConsumer_ContextPropagatedToHandler(t *testing.T) {
 	}
 }
 
-// TestConsumer_AckOnlyOnceForBatch: the consumer must call Ack at most once
-// per batch even when multiple messages are processed. Verified indirectly
-// by ensuring no error is logged from a second ack (which would surface as
-// the test failing on a strict backend).
-func TestConsumer_AckOnlyOnceForBatch(t *testing.T) {
+// TestConsumer_AllMessagesDispatched: all messages in a batch must be
+// delivered to their handler before the batch is acked. Verifies that the
+// consumer does not silently drop messages mid-batch.
+func TestConsumer_AllMessagesDispatched(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
 	queue, consumer := setupFreshQueue(t, client)

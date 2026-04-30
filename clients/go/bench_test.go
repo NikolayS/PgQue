@@ -4,6 +4,8 @@ package pgque_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -165,5 +167,9 @@ func benchSetup(b *testing.B, client *pgque.Client) (queue, consumer string) {
 
 func benchSuffix(b *testing.B) string {
 	b.Helper()
-	return time.Now().Format("150405") + "_" + b.Name()[len(b.Name())-4:]
+	buf := make([]byte, 4)
+	if _, err := rand.Read(buf); err != nil {
+		b.Fatal(err)
+	}
+	return hex.EncodeToString(buf)
 }

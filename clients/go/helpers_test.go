@@ -30,8 +30,8 @@ func connectOrSkip(t *testing.T) *pgque.Client {
 	if err != nil {
 		t.Skip("PGQUE_TEST_DSN not reachable:", err)
 	}
-	// Test that we can actually run a query — Connect is lazy and accepts
-	// unreachable hosts without erroring.
+	// Probe the connection: Connect pings the pool eagerly, but a second
+	// check guards against race conditions in test infrastructure.
 	if _, err := client.Pool().Exec(ctx, "select 1"); err != nil {
 		client.Close()
 		t.Skip("PGQUE_TEST_DSN not reachable:", err)
