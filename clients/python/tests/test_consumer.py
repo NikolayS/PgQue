@@ -128,9 +128,11 @@ def test_consumer_nacks_unhandled_event_type(dsn, conn, setup_queue):
 
     # Consumer with NO handler for "totally.unregistered.type"
     # and NO default handler either.
+    # retry_after=30 ensures the message cannot loop back within the
+    # 3-second test window and exhaust queue_max_retries.
     cons = pgque.Consumer(
         dsn=dsn, queue=queue, name=consumer_name,
-        poll_interval=1, retry_after=0,
+        poll_interval=1, retry_after=30,
     )
 
     t = _run_consumer_for(cons, 3.0)
