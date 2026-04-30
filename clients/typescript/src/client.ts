@@ -68,6 +68,16 @@ export class Client {
    * Publish an event to the named queue. Returns the new event ID as
    * `bigint`. Empty {@link Event.type} defaults to `"default"` (matches
    * the SQL `pgque.send` default).
+   *
+   * **Payload shape requirements:** `event.payload` is serialized with
+   * `JSON.stringify`. This means:
+   * - Values that are not JSON-serializable (`undefined`, functions,
+   *   symbols, `BigInt` literals) will be silently dropped or throw.
+   * - Circular references throw a `TypeError` from `JSON.stringify`.
+   * - `undefined` at the top level becomes the JSON string `"null"`.
+   *
+   * Pass plain JSON-compatible values (objects, arrays, strings, numbers,
+   * booleans, `null`) to avoid surprises.
    */
   async send(queue: string, event: Event): Promise<bigint> {
     if (!queue) {
