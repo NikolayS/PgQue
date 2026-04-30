@@ -246,11 +246,11 @@ def fmt_sec(v, _):
 
 def fmt_bytes(v, _):
     v = abs(v)
-    if v >= 1e12: return f"{v/1e12:.1f}T"
-    if v >= 1e9:  return f"{v/1e9:.1f}G"
-    if v >= 1e6:  return f"{v/1e6:.1f}M"
-    if v >= 1e3:  return f"{v/1e3:.0f}k"
-    return f"{v:.0f}"
+    if v >= 2**40: return f"{v/2**40:.1f}TiB"
+    if v >= 2**30: return f"{v/2**30:.1f}GiB"
+    if v >= 2**20: return f"{v/2**20:.1f}MiB"
+    if v >= 2**10: return f"{v/2**10:.0f}KiB"
+    return f"{v:.0f}B"
 
 
 def fmt_k(v, _):
@@ -414,7 +414,7 @@ def main():
         json.dump(summary, f, indent=2, default=str)
 
     out = Path("/tmp/bench_pgfr_chart.png")
-    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB) + /tmp/bench_pgfr_summary.json")
+    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KiB) + /tmp/bench_pgfr_summary.json")
 
 
 if __name__ == "__main__":

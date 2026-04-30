@@ -254,7 +254,7 @@ def main():
     fig.savefig(out, dpi=110, bbox_inches="tight", facecolor=BG)
     with open("/tmp/bench_ash_summary.json", "w") as f:
         json.dump(summary, f, indent=2, default=str)
-    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB)")
+    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KiB)")
 
 
 if __name__ == "__main__":

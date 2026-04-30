@@ -309,7 +309,7 @@ def main():
                 f"{r['peak_cpu']:.1f} | {r['peak_wmib']:.1f} |\n")
 
     out = Path("/tmp/bench_main_chart.png")
-    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KB) + /tmp/bench_summary.json + /tmp/bench_table.md")
+    print(f"wrote {out} ({out.stat().st_size/1024:.0f} KiB) + /tmp/bench_summary.json + /tmp/bench_table.md")
 
 
 if __name__ == "__main__":
