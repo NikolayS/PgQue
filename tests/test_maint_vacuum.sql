@@ -58,34 +58,61 @@ end $$;
 
 -- -------------------------------------------------------------------------
 -- Mixed-case assertion: non-VACUUM ops still execute when VACUUM rows are
--- present in maint_operations().  We verify this by running maint() while
--- the vacuum override is still active (so maint_operations() returns both
--- vacuum rows and real work rows), then checking that at least one real
--- maintenance operation was counted (returned integer > 0 is sufficient when
--- a queue exists, since rotation step1 always counts as at least 1 op).
+-- present in maint_operations().  We verify this by registering a
+-- queue_extra_maint hook that inserts a row into a sentinel table and returns
+-- 1, then asserting both v_result >= 1 (hook return accumulated) AND that the
+-- sentinel table received a row (hook actually ran).
 -- -------------------------------------------------------------------------
+
+-- Sentinel table: each call to pgque_test_extra_maint() appends a row here.
+create table if not exists pgque_test_sentinel (
+    called_at timestamptz default clock_timestamp()
+);
+
+-- Sentinel function: bumps the sentinel and returns 1 so maint() accumulates it.
+-- Owned by the current role (install owner) so any ownership check passes.
+-- Table reference is schema-qualified so it resolves under maint()'s search_path.
+create or replace function pgque_test_extra_maint(i_queue text)
+returns int4 as $$
+  insert into public.pgque_test_sentinel default values;
+  return 1;
+$$ language sql;
+
 do $$
 declare
   v_result integer;
+  v_sentinel_count integer;
 begin
-  -- Create a test queue to ensure maint_operations() returns real work rows.
+  -- Create a test queue and register the sentinel hook.
   perform pgque.create_queue('maint_vacuum_mixtest');
-  -- Force a tick so rotation step1 has something to do.
-  perform pgque.force_tick('maint_vacuum_mixtest');
 
+  update pgque.queue
+     set queue_extra_maint = array['public.pgque_test_extra_maint']
+   where queue_name = 'maint_vacuum_mixtest';
+
+  -- Run maint() while the vacuum override is still active (so maint_operations()
+  -- emits both vacuum rows and the extra_maint hook row).
   v_result := pgque.maint();
 
-  -- maint() must not error (covered by prior test) AND must have executed at
-  -- least one non-VACUUM operation.
-  assert v_result > 0,
-    'mixed-case FAIL: maint() returned 0 — non-VACUUM ops were not executed '
-    || '(got ' || v_result::text || ')';
+  -- Assert 1: the extra_maint hook returned 1, so total must be >= 1.
+  assert v_result >= 1,
+    format('mixed-case FAIL: expected v_result >= 1, got %', v_result);
 
-  raise notice 'PASS: maint_vacuum_mixed - maint() executed non-VACUUM ops (returned %)', v_result;
+  -- Assert 2: sentinel table must have at least one row (hook actually ran).
+  select count(*) into v_sentinel_count from public.pgque_test_sentinel;
+  assert v_sentinel_count >= 1,
+    format('mixed-case FAIL: sentinel not bumped, count = %', v_sentinel_count);
+
+  raise notice 'PASS: maint_vacuum_mixed - maint() ran extra_maint hook (v_result=%, sentinel=%)',
+    v_result, v_sentinel_count;
 
   -- Cleanup test queue.
   perform pgque.drop_queue('maint_vacuum_mixtest');
 end $$;
+
+-- Cleanup sentinel objects.
+drop function if exists pgque_test_extra_maint(text);
+drop table if exists pgque_test_sentinel;
 
 -- -------------------------------------------------------------------------
 -- Cleanup: restore original maint_tables_to_vacuum() from pgque.sql source.
