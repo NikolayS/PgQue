@@ -1,49 +1,122 @@
-import pytest
-from pgque import PgqueClient, Consumer, Message
+# Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-def test_receive_returns_messages(conn, setup_queue):
-    client = PgqueClient(conn)
-    client.send("pytest_queue", {"key": "value"})
-    conn.execute("SELECT pgque.ticker()")
+"""``Consumer`` end-to-end: dispatch, missing handler, error -> nack."""
+
+import threading
+import time
+
+import pgque
+
+
+def _run_consumer_for(consumer: pgque.Consumer, seconds: float) -> threading.Thread:
+    """Start a consumer in a background thread, stop it after `seconds`."""
+    t = threading.Thread(target=consumer.start, daemon=True)
+    t.start()
+
+    def _stopper():
+        time.sleep(seconds)
+        consumer.stop()
+
+    threading.Thread(target=_stopper, daemon=True).start()
+    return t
+
+
+def test_consumer_dispatches_by_event_type(dsn, conn, setup_queue):
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    client.send(queue, {"i": 1}, type="evt.a")
+    client.send(queue, {"i": 2}, type="evt.b")
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
     conn.commit()
 
-    msgs = client.receive("pytest_queue", "pytest_consumer", max_messages=10)
-    assert len(msgs) == 1
-    assert msgs[0].payload == '{"key": "value"}'
-    assert msgs[0].type == "default"
-    assert msgs[0].batch_id is not None
+    seen_a: list = []
+    seen_b: list = []
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=1
+    )
 
-def test_ack_advances_position(conn, setup_queue):
-    client = PgqueClient(conn)
-    client.send("pytest_queue", {"key": "value"})
-    conn.execute("SELECT pgque.ticker()")
+    @cons.on("evt.a")
+    def _a(m: pgque.Message):
+        seen_a.append(m.payload)
+
+    @cons.on("evt.b")
+    def _b(m: pgque.Message):
+        seen_b.append(m.payload)
+
+    t = _run_consumer_for(cons, 3.0)
+    t.join(timeout=5.0)
+
+    assert len(seen_a) == 1
+    assert len(seen_b) == 1
+
+
+def test_consumer_default_handler_catches_unknown(dsn, conn, setup_queue):
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    client.send(queue, {"x": 99}, type="never.registered.type")
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
     conn.commit()
 
-    msgs = client.receive("pytest_queue", "pytest_consumer", max_messages=10)
-    client.ack(msgs[0].batch_id)
+    fallback: list = []
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=1
+    )
+
+    @cons.on("*")
+    def _default(m: pgque.Message):
+        fallback.append(m)
+
+    t = _run_consumer_for(cons, 3.0)
+    t.join(timeout=5.0)
+
+    assert len(fallback) == 1
+    assert fallback[0].type == "never.registered.type"
+
+
+def test_consumer_nacks_on_handler_error(dsn, conn, setup_queue):
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    client.send(queue, {"i": 1}, type="evt.fail")
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
     conn.commit()
 
-    # Next receive should be empty
-    msgs2 = client.receive("pytest_queue", "pytest_consumer", max_messages=10)
-    assert len(msgs2) == 0
+    calls = {"n": 0}
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name,
+        poll_interval=1, retry_after=0,
+    )
 
-def test_nack_retries_event(conn, setup_queue):
-    client = PgqueClient(conn)
-    client.send("pytest_queue", {"key": "retry"})
-    conn.execute("SELECT pgque.ticker()")
-    conn.commit()
+    @cons.on("evt.fail")
+    def _boom(m: pgque.Message):
+        calls["n"] += 1
+        raise RuntimeError("simulated failure")
 
-    msgs = client.receive("pytest_queue", "pytest_consumer", max_messages=10)
-    client.nack(msgs[0].batch_id, msgs[0], retry_after=0)
-    client.ack(msgs[0].batch_id)
-    conn.commit()
+    t = _run_consumer_for(cons, 3.0)
+    t.join(timeout=5.0)
 
-    # Run maintenance and ticker
-    conn.execute("SELECT pgque.maint_retry_events('pytest_queue')")
-    conn.execute("SELECT pgque.force_tick('pytest_queue')")
-    conn.execute("SELECT pgque.ticker()")
-    conn.commit()
+    # The handler ran at least once, and the failing message landed in
+    # the retry queue (not silently dropped).
+    assert calls["n"] >= 1
+    cnt = conn.execute(
+        "select count(*) from pgque.retry_queue rq "
+        "join pgque.queue q on q.queue_id = rq.ev_queue "
+        "where q.queue_name = %s",
+        (queue,),
+    ).fetchone()[0]
+    assert cnt >= 1
 
-    # Should get the event again
-    msgs2 = client.receive("pytest_queue", "pytest_consumer", max_messages=10)
-    assert len(msgs2) >= 1
+
+def test_consumer_stop_returns_promptly(dsn, setup_queue):
+    queue, consumer_name = setup_queue
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=10
+    )
+    t = threading.Thread(target=cons.start, daemon=True)
+    t.start()
+    time.sleep(0.5)  # let it enter the loop
+    cons.stop()
+    t.join(timeout=15)
+    assert not t.is_alive(), "consumer did not stop after stop()"

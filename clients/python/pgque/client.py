@@ -2,31 +2,100 @@
 # PgQue includes code derived from PgQ (ISC license,
 # Marko Kreen / Skype Technologies OU).
 
-"""PgqueClient -- thin Python wrapper over pgque SQL API."""
+"""PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
 import json
-from typing import Optional
+from typing import Any, Optional, Union
 
 import psycopg
 
-from .types import Message
+from .errors import (
+    PgqueBatchNotFound,
+    PgqueConnectionError,
+    PgqueError,
+    PgqueQueueNotFound,
+)
+from .types import Event, Message
+
+
+def connect(dsn: str, *, autocommit: bool = False) -> "PgqueClient":
+    """Open a connection to PostgreSQL and return a ``PgqueClient``.
+
+    The returned client owns the connection and must be closed via
+    ``client.close()`` or used as a context manager.
+
+    Args:
+        dsn: libpq connection string (``postgresql://...``).
+        autocommit: If True, the connection runs in autocommit mode.
+            Useful for one-off scripts and consumers that prefer
+            implicit transactions per statement.
+
+    Raises:
+        PgqueConnectionError: Connection could not be established.
+    """
+    try:
+        conn = psycopg.connect(dsn, autocommit=autocommit)
+    except psycopg.OperationalError as e:
+        raise PgqueConnectionError(str(e)) from e
+    return PgqueClient(conn, _owns_conn=True)
+
+
+def _wrap_sql_error(e: Exception) -> PgqueError:
+    """Map a raw psycopg error to a pgque exception subclass."""
+    msg = str(e)
+    low = msg.lower()
+    if "queue not found" in low:
+        return PgqueQueueNotFound(msg)
+    if "batch not found" in low:
+        return PgqueBatchNotFound(msg)
+    return PgqueError(msg)
 
 
 class PgqueClient:
     """Thin wrapper around pgque SQL functions.
 
-    All methods execute SQL against the provided psycopg connection.
-    Transaction management (commit/rollback) is the caller's
-    responsibility unless autocommit is enabled on the connection.
+    By default, methods execute SQL against the wrapped connection
+    without managing transactions; the caller decides when to
+    ``commit()``/``rollback()``. If the connection is in autocommit
+    mode, each statement is its own transaction.
+
+    Use ``pgque.connect(dsn)`` to construct a client that owns its
+    connection. Pass an existing ``psycopg.Connection`` to share one
+    with application code.
     """
 
-    def __init__(self, conn: psycopg.Connection):
+    def __init__(
+        self,
+        conn: psycopg.Connection,
+        *,
+        _owns_conn: bool = False,
+    ):
         self.conn = conn
+        self._owns_conn = _owns_conn
+
+    # --- context manager / lifecycle ------------------------------------
+
+    def __enter__(self) -> "PgqueClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Close the underlying connection if owned by this client.
+
+        If the client was constructed with an externally-managed
+        connection, ``close()`` is a no-op.
+        """
+        if self._owns_conn and not self.conn.closed:
+            self.conn.close()
+
+    # --- producer -------------------------------------------------------
 
     def send(
         self,
         queue: str,
-        payload=None,
+        payload: Any = None,
         *,
         type: str = "default",
     ) -> int:
@@ -37,25 +106,36 @@ class PgqueClient:
 
         Args:
             queue: Target queue name.
-            payload: Message payload (dict serialized to JSON, or str).
-            type: Event type (default ``"default"``).
+            payload: Message payload (``dict``/``list`` is JSON-encoded;
+                ``str`` is sent as-is; ``Event`` is unpacked).
+            type: Event type (default ``"default"``). Ignored if
+                ``payload`` is an ``Event`` (its own ``type`` wins).
 
         Returns:
             The event ID assigned by pgque.
         """
-        if isinstance(payload, dict):
-            payload = json.dumps(payload)
+        if isinstance(payload, Event):
+            type = payload.type
+            payload = payload.payload
 
-        if type != "default":
-            row = self.conn.execute(
-                "select pgque.send(%s, %s, %s::jsonb)",
-                (queue, type, payload),
-            ).fetchone()
-        else:
-            row = self.conn.execute(
-                "select pgque.send(%s, %s::jsonb)",
-                (queue, payload),
-            ).fetchone()
+        if isinstance(payload, (dict, list)):
+            payload = json.dumps(payload)
+        elif payload is None:
+            payload = "null"
+
+        try:
+            if type != "default":
+                row = self.conn.execute(
+                    "select pgque.send(%s, %s, %s::jsonb)",
+                    (queue, type, payload),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "select pgque.send(%s, %s::jsonb)",
+                    (queue, payload),
+                ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
 
         return row[0]
 
@@ -65,26 +145,32 @@ class PgqueClient:
         type: str,
         payloads: list,
     ) -> list[int]:
-        """Send multiple messages in a single transaction.
+        """Send multiple messages in a single SQL call (one transaction).
 
         Maps to ``pgque.send_batch(queue, type, payloads[])``.
 
         Args:
             queue: Target queue name.
             type: Event type for all messages.
-            payloads: List of payloads (dicts or strings).
+            payloads: Each entry is JSON-encoded if dict/list, otherwise
+                used as-is.
 
         Returns:
-            List of event IDs.
+            List of event IDs in input order.
         """
         json_payloads = [
-            json.dumps(p) if isinstance(p, dict) else p for p in payloads
+            json.dumps(p) if isinstance(p, (dict, list)) else p for p in payloads
         ]
-        row = self.conn.execute(
-            "select pgque.send_batch(%s, %s, %s::jsonb[])",
-            (queue, type, json_payloads),
-        ).fetchone()
+        try:
+            row = self.conn.execute(
+                "select pgque.send_batch(%s, %s, %s::jsonb[])",
+                (queue, type, json_payloads),
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
         return list(row[0])
+
+    # --- consumer -------------------------------------------------------
 
     def receive(
         self,
@@ -92,26 +178,31 @@ class PgqueClient:
         consumer: str,
         max_messages: int = 100,
     ) -> list[Message]:
-        """Receive messages from a queue.
+        """Receive a batch of messages from a queue.
 
-        Maps to ``pgque.receive(queue, consumer, max_messages)``.
-        Opens a batch via ``next_batch()`` internally. The caller must
-        ``ack()`` the batch after processing to advance the consumer.
+        Maps to ``pgque.receive(queue, consumer, max_messages)``, which
+        opens a batch via ``next_batch`` internally. The caller must
+        ``ack()`` the batch (with the ``batch_id`` from any returned
+        message) to advance the consumer past it.
 
         Args:
             queue: Queue name.
-            consumer: Consumer name.
+            consumer: Consumer name (must be registered on the queue).
             max_messages: Maximum number of messages to return from the
                 current batch.
 
         Returns:
-            List of ``Message`` objects (may be empty if no batch is
-            available).
+            List of ``Message`` objects, possibly empty if no batch is
+            currently available (e.g. the ticker has not run since the
+            last enqueue).
         """
-        rows = self.conn.execute(
-            "select * from pgque.receive(%s, %s, %s)",
-            (queue, consumer, max_messages),
-        ).fetchall()
+        try:
+            rows = self.conn.execute(
+                "select * from pgque.receive(%s, %s, %s)",
+                (queue, consumer, max_messages),
+            ).fetchall()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
 
         return [
             Message(
@@ -130,67 +221,72 @@ class PgqueClient:
         ]
 
     def ack(self, batch_id: int) -> int:
-        """Acknowledge (finish) a batch.
-
-        Maps to ``pgque.ack(batch_id)`` which calls
-        ``pgque.finish_batch()``.  This advances the consumer past
-        the entire batch.
+        """Acknowledge (finish) a batch. Advances the consumer past it.
 
         Args:
-            batch_id: Batch ID returned in received messages.
+            batch_id: Batch ID from any ``Message`` in the batch.
 
         Returns:
-            Result from ``pgque.ack()``.
+            Result returned by ``pgque.ack`` (1 on success).
         """
-        row = self.conn.execute(
-            "select pgque.ack(%s)", (batch_id,)
-        ).fetchone()
+        try:
+            row = self.conn.execute(
+                "select pgque.ack(%s)", (batch_id,)
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
         return row[0]
 
     def nack(
         self,
         batch_id: int,
         msg: Message,
-        retry_after: int = 60,
+        retry_after: Union[int, float] = 60,
         reason: Optional[str] = None,
     ) -> None:
-        """Negatively acknowledge a single message for retry.
+        """Negatively acknowledge a single message.
 
-        Maps to ``pgque.nack(batch_id, msg, retry_after, reason)``.
-        The message is copied to the retry queue. If the retry count
-        exceeds ``queue_max_retries``, the message is moved to the
-        dead-letter table instead.
+        Routes the message to the retry queue with a ``retry_after``
+        delay. If the message's ``retry_count`` is at or above the
+        queue's ``queue_max_retries``, it is moved to the dead-letter
+        queue instead.
 
         After nacking individual messages, the caller should still
-        call ``ack()`` to finish the batch.
+        ``ack()`` the batch to finish it.
 
         Args:
             batch_id: Batch ID.
             msg: The ``Message`` to retry.
-            retry_after: Seconds before retry (default 60).
-            reason: Optional reason string (stored in DLQ if max
-                retries exceeded).
+            retry_after: Seconds before the message becomes available
+                again (default 60).
+            reason: Optional reason text (stored on the DLQ row when
+                max retries is exceeded).
         """
-        self.conn.execute(
-            "select pgque.nack("
-            "  %s,"
-            "  ROW(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)::pgque.message,"
-            "  %s::interval,"
-            "  %s"
-            ")",
-            (
-                batch_id,
-                msg.msg_id,
-                msg.batch_id,
-                msg.type,
-                msg.payload,
-                msg.retry_count,
-                msg.created_at,
-                msg.extra1,
-                msg.extra2,
-                msg.extra3,
-                msg.extra4,
-                f"{retry_after} seconds",
-                reason,
-            ),
-        )
+        try:
+            self.conn.execute(
+                "select pgque.nack("
+                "  %s,"
+                "  ROW(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)::pgque.message,"
+                "  %s::interval,"
+                "  %s"
+                ")",
+                (
+                    batch_id,
+                    msg.msg_id,
+                    msg.batch_id,
+                    msg.type,
+                    json.dumps(msg.payload)
+                    if isinstance(msg.payload, (dict, list))
+                    else msg.payload,
+                    msg.retry_count,
+                    msg.created_at,
+                    msg.extra1,
+                    msg.extra2,
+                    msg.extra3,
+                    msg.extra4,
+                    f"{retry_after} seconds",
+                    reason,
+                ),
+            )
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e

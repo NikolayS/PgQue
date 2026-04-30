@@ -1,9 +1,27 @@
 [project]
 name = "pgque"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python client for PgQue -- PgQ Universal Edition"
+readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+authors = [
+    {name = "Nikolay Samokhvalov", email = "nik@postgres.ai"},
+]
+keywords = ["postgres", "postgresql", "queue", "pgq", "pgque", "background-jobs"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "psycopg[binary]>=3.1",
 ]
@@ -14,6 +32,15 @@ dev = [
     "pytest-asyncio>=0.21",
 ]
 
+[project.urls]
+Homepage = "https://github.com/NikolayS/pgque"
+Repository = "https://github.com/NikolayS/pgque"
+Issues = "https://github.com/NikolayS/pgque/issues"
+Documentation = "https://github.com/NikolayS/pgque/blob/main/docs/reference.md"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pgque*"]
