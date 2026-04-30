@@ -56,24 +56,14 @@ begin;
   create temp table msgs as
     select * from pgque.receive('orders', 'processor', 100);
 
-  -- Guard: nothing to do if the batch was empty (no tick ready yet).
-  -- Without this guard, ack(NULL) returns 0 with a warning and is a no-op,
-  -- but it is cleaner to skip the work entirely.
-  do $$
-  declare
-    v_batch_id bigint;
-  begin
-    select batch_id into v_batch_id from msgs limit 1;
-    if v_batch_id is null then
-      return;  -- nothing received
-    end if;
+  -- When msgs is empty both statements below are no-ops: the insert
+  -- affects 0 rows, and the select ... limit 1 returns no rows so ack
+  -- is never called.  No DO block needed.
+  insert into processed_orders (order_id, status)
+  select (payload::jsonb->>'order_id')::int, 'done'
+  from msgs;
 
-    insert into processed_orders (order_id, status)
-    select (payload::jsonb->>'order_id')::int, 'done'
-    from msgs;
-
-    perform pgque.ack(v_batch_id);
-  end $$;
+  select pgque.ack(batch_id) from msgs limit 1;
 commit;
 ```
 
