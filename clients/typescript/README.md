@@ -73,13 +73,30 @@ All errors derive from `PgqueError`:
 - `PgqueConsumerNotFoundError` — consumer not subscribed
 - `PgqueSqlError` — generic SQL failure (with `cause`)
 
-## Side effect on import
+## Caveats
 
-Importing `pgque` registers a global `pg-types` parser for `bigint`
-(oid 20) that promotes the column to JS `bigint`. This avoids silent
-precision loss but also affects any other `pg`-using code in the same
-process. If you cannot accept that side effect, do not import this
-package.
+### Global BIGINT parser mutation
+
+Importing `pgque` calls `types.setTypeParser(20, ...)` at module load
+time. This mutates the process-global `pg-types` parser table so that
+**all** `pg.Pool` / `pg.Client` instances in the same Node.js process
+will return PostgreSQL `bigint` columns as JS `bigint` instead of the
+default string representation.
+
+Practical impact:
+
+- If other code in your process uses `pg` and relies on `bigint` coming
+  back as a string (the `pg` default), those columns will silently change
+  type after `pgque` is imported.
+- The change is intentional: JS `bigint` is the correct representation for
+  PostgreSQL `bigint` and avoids silent precision loss above
+  `Number.MAX_SAFE_INTEGER`. The Go and Python pgque drivers behave the
+  same way.
+- If you cannot accept this side effect, do not import this package.
+
+There is no opt-out once the module is loaded — Node.js module caches
+mean the parser is set exactly once, regardless of how many times the
+package is imported.
 
 ## Tests
 
