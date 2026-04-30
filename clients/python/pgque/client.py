@@ -163,13 +163,16 @@ class PgqueClient:
             type: Event type for all messages.
             payloads: Each entry is JSON-encoded automatically if
                 ``dict``/``list``; ``str`` entries must be valid JSON
-                text (cast to ``jsonb`` by PostgreSQL).
+                text (cast to ``jsonb`` by PostgreSQL); ``None`` is
+                stored as JSON ``null`` (same as ``send(None)``).
 
         Returns:
             List of event IDs in input order.
         """
         json_payloads = [
-            json.dumps(p) if isinstance(p, (dict, list)) else p for p in payloads
+            json.dumps(p) if isinstance(p, (dict, list))
+            else ("null" if p is None else p)
+            for p in payloads
         ]
         try:
             row = self.conn.execute(

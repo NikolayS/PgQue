@@ -174,7 +174,7 @@ class Consumer:
                 handler = self._handlers.get(msg.type, self._default_handler)
                 if handler is None:
                     logger.warning(
-                        "no handler for type=%r, nacking msg_id=%d",
+                        "no handler (and no '*' default) for type=%r, nacking msg_id=%d",
                         msg.type,
                         msg.msg_id,
                     )
