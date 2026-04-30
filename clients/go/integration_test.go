@@ -21,7 +21,7 @@ func TestSend_DefaultEventType(t *testing.T) {
 	if _, err := client.Send(ctx, queue, pgque.Event{Payload: map[string]any{"x": 1}}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestSend_MultipleEventsOneBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 100)
 	if err != nil {
@@ -90,7 +90,7 @@ func TestReceive_RespectsMaxBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -112,7 +112,7 @@ func TestReceive_EmptyQueue(t *testing.T) {
 	queue, consumer := setupFreshQueue(t, client)
 	ctx := context.Background()
 
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 		if _, err := client.Pool().Exec(ctx, "select pgque.maint_retry_events()"); err != nil {
 			t.Logf("maint_retry_events unavailable, using ticker fallback: %v", err)
 		}
-		tick(t, client)
+		tick(t, client, queue)
 
 		msgs, err := client.Receive(ctx, queue, consumer, 10)
 		if err != nil {
@@ -214,7 +214,7 @@ func TestSendReceive_PayloadRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {

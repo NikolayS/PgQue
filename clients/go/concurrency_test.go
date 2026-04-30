@@ -42,7 +42,7 @@ func TestRace_ConcurrentSend(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
-	tick(t, client)
+	tick(t, client, queue)
 
 	total := 0
 	for {
@@ -161,7 +161,7 @@ func TestRace_HandlerNackUnderLoad(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	rng := rand.New(rand.NewSource(1))
 	var rngMu sync.Mutex
@@ -217,7 +217,7 @@ func TestConcurrent_TwoConsumersDistinctNames(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	var countA, countB int64
 

@@ -21,7 +21,7 @@ func TestEvent_EmptyPayload(t *testing.T) {
 	if _, err := client.Send(ctx, queue, pgque.Event{Type: "empty.test", Payload: nil}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestEvent_LargePayload(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestEvent_UnicodeEverything(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestEvent_TypeWithSpecialChars(t *testing.T) {
 			t.Fatalf("send %q: %v", typ, err)
 		}
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 100)
 	if err != nil {
@@ -155,7 +155,7 @@ func TestMessage_TimestampSensible(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -187,7 +187,7 @@ func TestMessage_RetryCountInitiallyNilOrZero(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestEvent_PayloadIsString(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
@@ -241,7 +241,7 @@ func TestEvent_PayloadIsArray(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {

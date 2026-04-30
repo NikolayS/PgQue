@@ -79,7 +79,7 @@ func TestConsumer_UnregisteredEventType_Nacks(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	c := client.NewConsumer(queue, consumer, pgque.WithPollInterval(50*time.Millisecond))
 	// Register a handler for a *different* type so we exercise the
@@ -116,7 +116,7 @@ func TestConsumer_ContextPropagatedToHandler(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	gotCtx := make(chan context.Context, 1)
 	c := client.NewConsumer(queue, consumer, pgque.WithPollInterval(50*time.Millisecond))
@@ -156,7 +156,7 @@ func TestConsumer_AllMessagesDispatched(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	tick(t, client)
+	tick(t, client, queue)
 
 	var seen int32
 	c := client.NewConsumer(queue, consumer, pgque.WithPollInterval(50*time.Millisecond))
