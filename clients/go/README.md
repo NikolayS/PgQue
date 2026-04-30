@@ -77,7 +77,7 @@ func main() {
 | Option                                  | Default        | Notes                                                                 |
 | --------------------------------------- | -------------- | --------------------------------------------------------------------- |
 | `WithPollInterval(d time.Duration)`     | `30s`          | Idle backoff between polls when the queue is empty.                   |
-| `WithMaxMessages(n int)`                | `500`          | Per-Receive batch cap. Match `ticker_max_count` for full throughput.  |
+| `WithMaxMessages(n int)`                | `500`          | Per-Receive limit; matches default `ticker_max_count`. If a batch exceeds this, `Ack` still finishes it and unreturned rows are skipped — size `>=` the queue's `ticker_max_count`. |
 | `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` silently skips messages with no registered handler.      |
 
 ## Nack options
