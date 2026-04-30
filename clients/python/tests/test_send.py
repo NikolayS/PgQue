@@ -94,3 +94,29 @@ def test_send_to_missing_queue_raises(conn):
         client.send("does_not_exist_xyz_12345", {"x": 1})
         conn.commit()
     conn.rollback()
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"key": "val", "n": 1}, {"key": "val", "n": 1}),  # dict
+    ([1, "two", None], [1, "two", None]),               # list
+    ('"just a string"', "just a string"),               # JSON string literal
+    ("42", 42),                                         # JSON number
+    ("null", None),                                     # JSON null
+])
+def test_jsonb_payload_round_trip(conn, setup_queue, payload, expected):
+    """jsonb payloads decode to native Python types after send/receive."""
+    import json
+
+    queue, consumer = setup_queue
+    client = pgque.PgqueClient(conn)
+    client.send(queue, payload)
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+    msgs = client.receive(queue, consumer, max_messages=10)
+    assert len(msgs) == 1
+    raw = msgs[0].payload
+    got = raw if not isinstance(raw, str) else json.loads(raw)
+    assert got == expected
+    client.ack(msgs[0].batch_id)
+    conn.commit()
