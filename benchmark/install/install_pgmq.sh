@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 echo "=== install pgmq v1.11.0 (SQL-only) ==="
 
 curl -fsSL \

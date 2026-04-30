@@ -4,12 +4,17 @@
 # sys_metrics_sampler.py runs alongside bloat_sampler.py.
 # pg_ash ASH + pgfr snapshots copied to CSV at end (schemas preserved).
 # Consumer NOTICE format: NOTICE: ev ts=<epoch_s> n=<events>
+#
+# Tool resolution: scripts in benchmark/tooling/ are used by default.
+# Override with R7_DIR or R6_DIR env vars if you need /tmp/r7 or /tmp/r6 copies.
 set -Eeuo pipefail
 SYS=${1:?system}
 DUR=${2:-5400}  # 1.5h = 5400s
 
-R7_DIR=${R7_DIR:-/tmp/r7}
-R6_DIR=${R6_DIR:-/tmp/r6}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLING_DIR="${SCRIPT_DIR}/../tooling"
+R7_DIR=${R7_DIR:-"${TOOLING_DIR}"}
+R6_DIR=${R6_DIR:-"${TOOLING_DIR}"}
 # Consumer SQL may be in either /tmp/consumer.sql (pushed), $R7_DIR/consumer_<sys>.sql, or $R6_DIR/consumer_<sys>.sql
 for c in "$R7_DIR/consumer_${SYS}.sql" "/tmp/consumer.sql" "$R6_DIR/consumer_${SYS}.sql"; do
   if [[ -f "$c" ]]; then CONSUMER_SQL="$c"; break; fi

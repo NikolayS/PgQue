@@ -182,7 +182,7 @@ ERROR: cannot cast type xid8 to bigint
 
 **Fix:** `::text::bigint` as intermediate cast. Landed in [PR #62](https://github.com/NikolayS/pgque/pull/62).
 
-If you see this on a VM that wasn't freshly installed from the PR #62 branch, re-run [install/install_pgque.sh](install/install_pgque.sh).
+If you see this on a VM that wasn't freshly installed from the PR #62 branch, re-clone the branch and run `make USE_PGXS=1 install` followed by `psql -f build/pgque.sql` per [install/README.md](install/README.md).
 
 ---
 

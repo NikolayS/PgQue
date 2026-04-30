@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 echo "=== install river v0.34.0 + Go worker ==="
 
 # i4i.2xlarge is x86_64

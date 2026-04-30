@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# pgboss install with covering index for polling query (avoids 7.9 GB disk sort pathology).
-set -euo pipefail
+# pgboss install with covering index for polling query (avoids 7.9 GiB disk sort pathology).
+set -Eeuo pipefail
 echo "=== install pg-boss v12.15.0 + Node worker + covering index ==="
 
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash - >/dev/null 2>&1

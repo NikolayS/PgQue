@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 echo "=== [$(hostname)] bootstrap start $(date -u +%FT%TZ) ==="
@@ -38,10 +38,10 @@ sudo ln -sfn /tmp/pgfr/_analyze/sql /analyze_sql
 sudo mkdir -p /data
 sudo chown postgres:postgres /data
 
-# ── postgresql.conf tuning (same as issue #77) ───────────────────────────────
+# ── postgresql.conf tuning (see methodology notes) ───────────────────────────
 sudo tee -a /etc/postgresql/18/main/postgresql.conf >/dev/null <<'CONF'
 
-# ── pgq bench tuning (issue #77) ─────────────────────────────────────────────
+# ── pgq bench tuning (see methodology notes) ─────────────────────────────────
 shared_preload_libraries = 'pg_stat_statements,pg_cron'
 cron.database_name = 'bench'
 

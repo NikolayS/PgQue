@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Per-VM microbench: CPU (sysbench), memory (sysbench), disk (fio on NVMe)
-set -uo pipefail
+set -Eeuo pipefail
 HOST=$(hostname)
 
 # Ensure tools installed

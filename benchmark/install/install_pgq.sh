@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 echo "=== install pgq v3.5.1 ==="
 
 sudo rm -rf /tmp/pgq

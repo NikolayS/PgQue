@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Per-system clean reinstall + stats reset.
-set -uo pipefail
+set -Eeuo pipefail
 SYS=${1:?system}
 
 echo "=== [$(date -u +%FT%TZ)] clean reinstall: $SYS ==="
