@@ -44,8 +44,20 @@ export interface NackOptions {
 export interface ConsumerOptions {
   /** Interval between poll cycles when no messages are available. Default `30s`. */
   pollInterval?: number;
-  /** Max messages requested per `pgque.receive` call. Default `100`. */
+  /**
+   * Max messages requested per `pgque.receive` call. Default `500`, which
+   * matches the per-tick `ticker_max_count` ceiling so a single poll can
+   * drain a full batch in one round-trip.
+   */
   maxMessages?: number;
+  /**
+   * What to do with messages whose `type` has no registered handler:
+   * - `'nack'` (default) — nack each unknown message with a reason; PgQ
+   *   routes to the retry queue or DLQ per the queue's `queue_max_retries`.
+   * - `'ack'` — log a warning and let the batch ack absorb them (silent
+   *   discard). Use only when stray types are expected and benign.
+   */
+  unknownHandlerPolicy?: 'ack' | 'nack';
   /** Optional logger. Defaults to `console`. */
   logger?: Pick<Console, 'warn' | 'error'>;
 }

@@ -71,10 +71,14 @@ export class Client {
    *
    * **Payload shape requirements:** `event.payload` is serialized with
    * `JSON.stringify`. This means:
-   * - Values that are not JSON-serializable (`undefined`, functions,
-   *   symbols, `BigInt` literals) will be silently dropped or throw.
+   * - Top-level `undefined` (or an omitted `payload` field) is coerced to
+   *   the JSON literal `null` so the JSONB column receives a valid value.
+   * - `null` round-trips as JSON `null`.
+   * - Object properties whose values are `undefined` are dropped by
+   *   `JSON.stringify` per the JSON spec.
+   * - Functions, symbols, and `BigInt` literals are not JSON-serializable
+   *   and will throw or be dropped.
    * - Circular references throw a `TypeError` from `JSON.stringify`.
-   * - `undefined` at the top level becomes the JSON string `"null"`.
    *
    * Pass plain JSON-compatible values (objects, arrays, strings, numbers,
    * booleans, `null`) to avoid surprises.
@@ -84,7 +88,11 @@ export class Client {
       throw new PgqueSqlError('send', { cause: new Error('queue must be a non-empty string') });
     }
     const type = event.type && event.type.length > 0 ? event.type : 'default';
-    const payload = JSON.stringify(event.payload);
+    // JSON.stringify(undefined) returns the literal `undefined` (not the
+    // string "null"), which would coerce to a SQL NULL bind param. Coerce
+    // top-level undefined to JSON null instead so it round-trips as a
+    // valid JSONB value.
+    const payload = event.payload === undefined ? 'null' : JSON.stringify(event.payload);
     try {
       const result = await this.pool.query<{ send: bigint }>(
         'select pgque.send($1, $2, $3::jsonb) as send',
