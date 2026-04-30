@@ -1,24 +1,74 @@
-import os
-import pytest
-import psycopg
+# Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-DSN = os.environ.get("PGQUE_TEST_DSN", "postgresql://postgres:pgque_test@localhost/pgque_test")
+"""Shared pytest fixtures.
+
+Tests are env-gated: set ``PGQUE_TEST_DSN`` to a Postgres instance with
+the PgQue schema installed. Without it, every test that depends on a
+real database is skipped.
+"""
+
+import logging
+import os
+import secrets
+from typing import Iterator
+
+import pytest
+
+DSN = os.environ.get("PGQUE_TEST_DSN")
+
+
+def _require_dsn() -> str:
+    if not DSN:
+        pytest.skip("PGQUE_TEST_DSN not set")
+    return DSN
+
 
 @pytest.fixture
-def conn():
-    with psycopg.connect(DSN) as c:
+def dsn() -> str:
+    return _require_dsn()
+
+
+@pytest.fixture
+def conn(dsn):
+    """Raw psycopg connection (autocommit off)."""
+    import psycopg
+
+    with psycopg.connect(dsn) as c:
         yield c
 
+
 @pytest.fixture
-def setup_queue(conn):
-    """Create a test queue and clean up after."""
-    conn.execute("SELECT pgque.create_queue('pytest_queue')")
-    conn.execute("SELECT pgque.register_consumer('pytest_queue', 'pytest_consumer')")
+def queue_name(request) -> str:
+    """A unique queue name for each test, scoped by test name + random suffix."""
+    base = request.node.name.replace("[", "_").replace("]", "_")
+    return f"pyt_{base[:40]}_{secrets.token_hex(4)}"
+
+
+@pytest.fixture
+def consumer_name(request) -> str:
+    base = request.node.name.replace("[", "_").replace("]", "_")
+    return f"pyt_c_{base[:38]}_{secrets.token_hex(4)}"
+
+
+@pytest.fixture
+def setup_queue(conn, queue_name, consumer_name) -> Iterator[tuple[str, str]]:
+    """Create queue + register consumer; tear down after test."""
+    conn.execute("select pgque.create_queue(%s)", (queue_name,))
+    conn.execute(
+        "select pgque.register_consumer(%s, %s)", (queue_name, consumer_name)
+    )
     conn.commit()
-    yield
     try:
-        conn.execute("SELECT pgque.unregister_consumer('pytest_queue', 'pytest_consumer')")
-        conn.execute("SELECT pgque.drop_queue('pytest_queue')")
-        conn.commit()
-    except Exception:
-        conn.rollback()
+        yield (queue_name, consumer_name)
+    finally:
+        try:
+            conn.rollback()
+            conn.execute(
+                "select pgque.unregister_consumer(%s, %s)",
+                (queue_name, consumer_name),
+            )
+            conn.execute("select pgque.drop_queue(%s, true)", (queue_name,))
+            conn.commit()
+        except Exception as e:
+            logging.warning("setup_queue cleanup failed: %s", e)
+            conn.rollback()
