@@ -208,9 +208,16 @@ jobs:
       - name: TypeScript driver tests
         run: |
           cd clients/typescript
-          npm ci || npm install
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
           npm run build
-          npx vitest --run
+          # --passWithNoTests keeps the job green on branches that haven't
+          # added vitest specs yet (e.g. before PR #83 lands the test suite).
+          # Once test files exist, vitest picks them up automatically.
+          npx vitest --run --passWithNoTests
 
       - name: Cleanup
         if: always()
