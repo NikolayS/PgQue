@@ -279,6 +279,7 @@ def test_consumer_does_not_ack_when_unknown_type_nack_fails(
     def fake_init(self, c):
         real_client_init(self, c)
         original_ack = self.ack
+        original_nack = self.nack
 
         def spy_ack(batch_id):
             ack_calls.append(batch_id)
@@ -369,3 +370,79 @@ def test_consumer_does_not_ack_when_handler_error_nack_fails(
     if follow_up:
         client.ack(follow_up[0].batch_id)
         conn.commit()
+
+
+def test_consumer_stop_returns_within_2s_while_waiting(dsn, setup_queue):
+    """``stop()`` must unblock the LISTEN/NOTIFY wait promptly, even when
+    no notifications arrive and ``poll_interval`` is large.
+    """
+    queue, consumer_name = setup_queue
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=30
+    )
+    t = threading.Thread(target=cons.start, daemon=True)
+    t.start()
+    # Let the consumer enter the LISTEN wait (after the first empty poll).
+    time.sleep(1.0)
+
+    t0 = time.monotonic()
+    cons.stop()
+    t.join(timeout=5.0)
+    elapsed = time.monotonic() - t0
+
+    assert not t.is_alive(), "consumer thread did not stop"
+    assert elapsed < 2.0, (
+        f"stop() took {elapsed:.2f}s; expected prompt (<2s) shutdown"
+    )
+
+
+def test_consumer_wakes_on_pg_notify_before_poll_interval(
+    dsn, conn, setup_queue
+):
+    """A real ``pg_notify('pgque_<queue>', ...)`` from a producer thread
+    must wake the consumer well before ``poll_interval`` elapses.
+    """
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+
+    received: list[pgque.Message] = []
+    received_evt = threading.Event()
+
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=30
+    )
+
+    @cons.on("evt.wake")
+    def _on(m: pgque.Message):
+        received.append(m)
+        received_evt.set()
+
+    t = threading.Thread(target=cons.start, daemon=True)
+    t.start()
+    # Allow the consumer to drain its first (empty) poll and enter the wait.
+    time.sleep(1.5)
+
+    # Send + tick + NOTIFY from the test thread.
+    t_send = time.monotonic()
+    client.send(queue, {"i": 1}, type="evt.wake")
+    conn.commit()
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+    conn.execute(f"notify pgque_{queue}, 'go'")
+    conn.commit()
+
+    woke = received_evt.wait(timeout=5.0)
+    elapsed = time.monotonic() - t_send
+
+    cons.stop()
+    t.join(timeout=5.0)
+
+    assert woke, "consumer did not wake on pg_notify within 5s"
+    assert len(received) == 1
+    # poll_interval=30s, so anything well under that proves the wait woke
+    # on the notification rather than the polling timer.
+    assert elapsed < 5.0, (
+        f"consumer woke too slowly ({elapsed:.2f}s); LISTEN/NOTIFY did not "
+        f"unblock the wait"
+    )
