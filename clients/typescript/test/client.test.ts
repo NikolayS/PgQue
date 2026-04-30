@@ -180,6 +180,11 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
   // Concurrency
   // ---------------------------------------------------------------------------
 
+  // Pool size note (P1): pg.Pool defaults to 10 connections; 50 concurrent
+  // producers will queue 5-deep while waiting for a free connection. The test
+  // is intentionally not time-bound — it only asserts uniqueness and total
+  // count, so it passes correctly regardless of serialization depth. Keeping
+  // pool size at the default avoids inflating connection counts in CI.
   skipIfNoDb('handles concurrent producers via the pool', async () => {
     const N = 50;
     const ids = await Promise.all(
