@@ -24,6 +24,17 @@ exception when duplicate_object then null;
 end $$;
 
 -- pgque.receive() -- wraps next_batch + get_batch_events
+--
+-- Fix for issue #103 — empty-batch trap:
+-- next_batch() opens a batch even when the tick window contains zero visible
+-- events. Before this fix, receive() would return [] while leaving sub_batch
+-- set, permanently stranding the consumer: subsequent calls kept returning
+-- the same empty batch and could never see later events.
+--
+-- Fix: after iterating get_batch_events(), if no rows were yielded, call
+-- finish_batch() immediately to advance the consumer's cursor. The caller
+-- still receives [], but the consumer is no longer stranded; the next
+-- receive() call will pick up the following tick window normally.
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
 returns setof pgque.message as $$
@@ -36,7 +47,7 @@ begin
         raise exception 'pgque.receive: max_return must be >= 1, got %', i_max_return;
     end if;
 
-    -- Get next batch (may return NULL if no events)
+    -- Get next batch (may return NULL if no tick window is ready)
     v_batch_id := pgque.next_batch(i_queue, i_consumer);
     if v_batch_id is null then
         return;
@@ -56,6 +67,14 @@ begin
         cnt := cnt + 1;
         exit when cnt >= i_max_return;
     end loop;
+
+    -- Issue #103: if the batch had zero visible events, finish it now so the
+    -- consumer is not stranded. Callers receive [] either way; the difference
+    -- is that sub_batch is cleared here rather than being left open forever.
+    if cnt = 0 then
+        perform pgque.finish_batch(v_batch_id);
+    end if;
+
     return;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;

@@ -64,5 +64,8 @@
 \echo 'Running: test_nack_dlq_canonical'
 \i tests/test_nack_dlq_canonical.sql
 
+\echo 'Running: test_receive_empty_batch'
+\i tests/test_receive_empty_batch.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
