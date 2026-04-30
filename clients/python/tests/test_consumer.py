@@ -150,6 +150,54 @@ def test_consumer_nacks_unhandled_event_type(dsn, conn, setup_queue):
     )
 
 
+def test_consumer_warns_and_acks_unhandled_event_type(dsn, conn, setup_queue, caplog):
+    """Unhandled event type must emit a WARNING and be acked, not nacked.
+
+    The message must not appear in retry_queue; the WARNING log line must
+    contain the event type and message id.
+    """
+    import logging
+
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    # Consumer with NO handler for "totally.unregistered.type"
+    # and NO default handler either.
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=1
+    )
+
+    with caplog.at_level(logging.WARNING, logger="pgque"):
+        t = _run_consumer_for(cons, 3.0)
+        t.join(timeout=5.0)
+
+    # Must NOT be in retry_queue -- it was acked, not nacked.
+    cnt = conn.execute(
+        "select count(*) from pgque.retry_queue rq "
+        "join pgque.queue q on q.queue_id = rq.ev_queue "
+        "where q.queue_name = %s",
+        (queue,),
+    ).fetchone()[0]
+    assert cnt == 0, (
+        "unhandled event type was nacked (found in retry_queue); expected ack"
+    )
+
+    # A WARNING must have been logged containing the type and event id.
+    warning_lines = [
+        r.message for r in caplog.records if r.levelno == logging.WARNING
+    ]
+    assert any("totally.unregistered.type" in m for m in warning_lines), (
+        "expected a WARNING mentioning the unhandled event type"
+    )
+    assert any(str(msg_id) in m for m in warning_lines), (
+        "expected a WARNING mentioning the event id"
+    )
+
+
 def test_consumer_stop_returns_promptly(dsn, setup_queue):
     queue, consumer_name = setup_queue
     cons = pgque.Consumer(
