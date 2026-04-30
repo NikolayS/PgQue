@@ -439,6 +439,24 @@ Returned by `pgque.receive()` and consumed by `pgque.nack()`.
 
 Three roles, with inheritance `pgque_admin > pgque_writer > pgque_reader`. Source: `sql/pgque-additions/roles.sql` (plus colocated grants in `sql/pgque-api/*.sql` and `sql/pgque-additions/dlq.sql`).
 
+### Roles are global, not per-queue
+
+PgQue roles are coarse **database-level** roles. They are intended for trusted applications and operators sharing the same database, not as per-queue or per-tenant isolation for mutually untrusted applications.
+
+**What this means in practice:**
+
+- `pgque_reader` gets `select` on **all** tables in the `pgque` schema — it can read events from any queue.
+- `pgque_writer` can call `receive`, `ack`, and `nack` on **any** queue with **any** consumer name. A writer granted for queue A can call `pgque.ack(batch_id)` on a batch opened by a consumer on queue B.
+- There is **no per-queue ACL** and no per-tenant isolation built into PgQue. Queue names and consumer names are plain strings — any writer who knows them can interact with them.
+
+This is an intentional design decision for the current release. The batch-ID-based primitives (`ack`, `nack`, `event_retry`) operate on IDs and do not enforce ownership.
+
+**Recommended isolation patterns** if you need mutually untrusted tenants in one database:
+
+- Run separate PgQue installs in separate schemas per tenant (not yet officially supported — track the roadmap).
+- Use separate databases per tenant and connect each tenant's application to its own database.
+- Wrap the PgQue API in app-owned stored functions that enforce tenant ownership before delegating to `pgque.*`, and grant only those wrapper functions to tenant roles.
+
 | Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`                        |

@@ -187,6 +187,8 @@ grant pgque_reader to metrics;
 
 DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `ticker`, `force_tick`) are not granted to `pgque_writer` and should be performed by an admin / migration role. They currently default to PUBLIC; revoking from PUBLIC and granting only to `pgque_admin` is on the roadmap.
 
+**Roles are global, not per-queue.** `pgque_writer` can produce and consume on any queue and ack any consumer's batch. Do not grant `pgque_writer` to mutually untrusted applications sharing one database unless you add your own schema-level or database-level isolation. See [docs/reference.md — Roles scope](docs/reference.md#roles-are-global-not-per-queue) for details and recommended isolation patterns.
+
 ## Project status
 
 PgQue is **early-stage** as a product and API layer. PgQ itself has run at Skype scale for over a decade. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
