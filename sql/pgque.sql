@@ -2091,6 +2091,16 @@ declare
     sub_id          integer;
     cons_id         integer;
 begin
+    -- Lock the subscription row before reading sub_batch.
+    -- FOR UPDATE OF s serialises concurrent calls for the same (queue,
+    -- consumer) pair: the second session blocks here until the first
+    -- session commits.  When it unblocks it re-reads sub_batch as not
+    -- null (the first session set it) and returns via the early-return
+    -- guard below -- never reaching the UPDATE.  Without this lock, two
+    -- sessions can both read sub_batch = NULL, each allocate a distinct
+    -- batch_id from the sequence, and both UPDATE the subscription row.
+    -- The second UPDATE overwrites the first; both sessions then call
+    -- get_batch_events() for the same tick range: double-delivery (#97).
     select s.sub_queue, s.sub_consumer, s.sub_id, s.sub_batch,
             t1.tick_id, t1.tick_time, t1.tick_event_seq,
             t2.tick_id, t2.tick_time, t2.tick_event_seq
@@ -2109,7 +2119,8 @@ begin
         where q.queue_name = i_queue_name
           and c.co_name = i_consumer_name
           and s.sub_queue = q.queue_id
-          and s.sub_consumer = c.co_id;
+          and s.sub_consumer = c.co_id
+        for update of s;
     if not found then
         errmsg := 'Not subscriber to queue: '
             || coalesce(i_queue_name, 'NULL')
@@ -5339,6 +5350,14 @@ begin
 end $$;
 
 -- pgque.receive() -- wraps next_batch + get_batch_events
+--
+-- Single-worker-per-consumer contract:
+--   Each (queue, consumer) pair is a single cursor.  Concurrent calls for
+--   the same consumer are serialised by FOR UPDATE inside
+--   pgque.next_batch_custom() above.  The second caller blocks until the
+--   first commits, then observes the open batch_id and returns it without
+--   opening a new one.  Two workers under the same consumer name do not get
+--   parallelism; use distinct consumer names for fan-out.
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
 returns setof pgque.message as $$
