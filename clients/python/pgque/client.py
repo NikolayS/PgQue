@@ -124,7 +124,7 @@ class PgqueClient:
             payload = "null"
 
         try:
-            if type != "default":
+            if type and type != "default":
                 row = self.conn.execute(
                     "select pgque.send(%s, %s, %s::jsonb)",
                     (queue, type, payload),
