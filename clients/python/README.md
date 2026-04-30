@@ -39,6 +39,15 @@ consumer = pgque.Consumer(
 def handle_order(msg: pgque.Message) -> None:
     print(f"got {msg.type}: {msg.payload}")
 
+# Optional: catch-all handler for types with no specific handler.
+# Without it, messages with unhandled types are logged at WARNING and
+# acked. Register a handler for that type or use a "*" catch-all to
+# handle them deliberately.
+# Note: Unhandled event types are acknowledged after a warning. Register a `*` handler if you want to fail/nack/route unknown types yourself.
+@consumer.on("*")
+def handle_unknown(msg: pgque.Message) -> None:
+    print(f"unhandled type {msg.type!r}: {msg.payload}")
+
 consumer.start()  # blocks until SIGTERM / SIGINT
 ```
 

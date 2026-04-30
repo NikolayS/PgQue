@@ -157,3 +157,31 @@ def test_jsonb_payload_round_trip(conn, setup_queue, payload, expected):
     assert got == expected
     client.ack(msgs[0].batch_id)
     conn.commit()
+
+
+def test_send_batch_none_payload_produces_json_null(conn, setup_queue):
+    """send_batch([None]) must store JSON null, not SQL NULL.
+
+    Regression test for send/send_batch asymmetry: send(None) coerces to
+    JSON null via "null" string, but send_batch previously passed Python
+    None through psycopg as SQL NULL, bypassing the ::jsonb cast.
+    """
+    import json
+
+    queue, consumer = setup_queue
+    client = pgque.PgqueClient(conn)
+    client.send_batch(queue, "default", [None])
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+    msgs = client.receive(queue, consumer, max_messages=10)
+    assert len(msgs) == 1, "expected exactly 1 message from send_batch([None])"
+    raw = msgs[0].payload
+    # payload must be JSON null (Python None after psycopg decode), not a
+    # missing/SQL-NULL value that would cause a TypeError on json.dumps.
+    got = raw if not isinstance(raw, str) else json.loads(raw)
+    assert got is None, (
+        f"send_batch([None]) should store JSON null; got {raw!r}"
+    )
+    client.ack(msgs[0].batch_id)
+    conn.commit()

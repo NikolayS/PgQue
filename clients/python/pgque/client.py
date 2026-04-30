@@ -106,8 +106,18 @@ class PgqueClient:
 
         Args:
             queue: Target queue name.
-            payload: Message payload (``dict``/``list`` is JSON-encoded;
-                ``str`` is sent as-is; ``Event`` is unpacked).
+            payload: Message payload. Accepted forms:
+
+                - ``dict`` / ``list`` — JSON-serialised automatically.
+                - ``str`` — must be **valid JSON text** (e.g.
+                  ``'"hello"'``, ``'{"k": 1}'``, ``'42'``, ``'null'``).
+                  The value is cast to ``jsonb`` by PostgreSQL. The
+                  Python literal ``"hello"`` has content ``hello``,
+                  which is not valid JSON; pass ``'"hello"'`` or
+                  ``json.dumps("hello")`` instead.
+                - ``None`` — stored as JSON ``null``.
+                - :class:`Event` — ``type`` and ``payload`` are unpacked.
+
             type: Event type (default ``"default"``). Ignored if
                 ``payload`` is an ``Event`` (its own ``type`` wins).
 
@@ -152,14 +162,18 @@ class PgqueClient:
         Args:
             queue: Target queue name.
             type: Event type for all messages.
-            payloads: Each entry is JSON-encoded if dict/list, otherwise
-                used as-is.
+            payloads: Each entry is JSON-encoded automatically if
+                ``dict``/``list``; ``str`` entries must be valid JSON
+                text (cast to ``jsonb`` by PostgreSQL); ``None`` is
+                stored as JSON ``null`` (same as ``send(None)``).
 
         Returns:
             List of event IDs in input order.
         """
         json_payloads = [
-            json.dumps(p) if isinstance(p, (dict, list)) else p for p in payloads
+            json.dumps(p) if isinstance(p, (dict, list))
+            else ("null" if p is None else p)
+            for p in payloads
         ]
         try:
             row = self.conn.execute(
