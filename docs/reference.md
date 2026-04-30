@@ -85,7 +85,12 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
 
 #### `pgque.nack(batch_id bigint, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
 
-Negative-acknowledges one message. If `msg.retry_count` is below the queue's `max_retries`, re-queues after `retry_after`; otherwise routes the event to `pgque.dead_letter` via `pgque.event_dead`. Returns `1`.
+Negative-acknowledges one message. Only `msg.msg_id` (and the `batch_id` argument) are honored from the composite — `type`, `payload`, `retry_count`, `created_at`, and the `extra*` fields are **ignored**. `nack()` re-queries the canonical event from the active batch and uses those server-side values for all decisions and writes.
+
+- If the canonical `ev_retry` is below the queue's `max_retries`, re-queues after `retry_after` (via `pgque.event_retry`).
+- If `ev_retry >= max_retries`, routes the canonical event to `pgque.dead_letter` (via `pgque.event_dead`). This is idempotent: repeated calls for the same terminal message produce exactly one DLQ row (the second call does nothing).
+- If `msg.msg_id` is not present in the active batch — including a `NULL` msg_id or a msg_id from a different batch — raises `msg_id % not found in batch %`.
+
 Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql

@@ -41,7 +41,14 @@ create table if not exists pgque.dead_letter (
 create index if not exists dl_queue_time_idx
     on pgque.dead_letter (dl_queue_id, dl_time);
 
+-- Unique index: one DLQ row per (queue, consumer, original ev_id).
+-- Required for idempotent insert in event_dead() (#104).
+create unique index if not exists dl_queue_consumer_ev_idx
+    on pgque.dead_letter (dl_queue_id, dl_consumer_id, ev_id);
+
 -- pgque.event_dead() -- move event to DLQ (called by nack() when max retries exceeded)
+-- The insert uses ON CONFLICT DO NOTHING so that repeated nack() calls for
+-- the same terminal message are idempotent (fix for #104).
 create or replace function pgque.event_dead(
     i_batch_id bigint,
     i_event_id bigint,
@@ -66,7 +73,8 @@ begin
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
-    -- Insert into dead letter table (no re-query of batch events)
+    -- Idempotent insert: if the same (queue, consumer, ev_id) tuple already
+    -- exists (repeated nack() before ack()), silently skip the duplicate.
     insert into pgque.dead_letter (
         dl_queue_id, dl_consumer_id, dl_reason,
         ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
@@ -74,7 +82,8 @@ begin
     values (
         v_sub.sub_queue, v_sub.sub_consumer, i_reason,
         i_event_id, i_ev_time, i_ev_txid, i_ev_retry, i_ev_type, i_ev_data,
-        i_ev_extra1, i_ev_extra2, i_ev_extra3, i_ev_extra4);
+        i_ev_extra1, i_ev_extra2, i_ev_extra3, i_ev_extra4)
+    on conflict (dl_queue_id, dl_consumer_id, ev_id) do nothing;
 
     return 1;
 end;
