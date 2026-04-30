@@ -476,6 +476,7 @@ awk '
 /^    if i_queue_name is null then$/ {
   print
   in_null_check = 1
+  next
 }
 in_null_check && /^    end if;$/ {
   q = "\047"
