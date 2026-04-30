@@ -87,6 +87,9 @@ benchmark/
   charts/
     r5_analyze.py                    # 2-panel chart (dead tuples + consumer latency)
     r6_smoke_chart.py                # smoke Solarized-Dark chart (events/s + dead tuples)
+    r8_analyze.py                    # R8 main chart: throughput, lag, backlog, CPU per system
+    r8_ash_analyze.py                # R8 ASH chart: wait-event breakdown across systems
+    r8_pgfr_analyze.py               # R8 pgfr chart: pg-flight-recorder I/O and buffer metrics
   gifs/
     r4_gif_v17_solarized.py          # dead-tuples animated GIF
     r4_gif_tps_solarized.py          # TPS/latency animated GIF
