@@ -112,6 +112,42 @@ def test_consumer_nacks_on_handler_error(dsn, conn, setup_queue):
     assert cnt >= 1
 
 
+def test_consumer_nacks_unhandled_event_type(dsn, conn, setup_queue):
+    """Unhandled event type must be nacked, not silently acked/dropped.
+
+    Regression for #111: consumer previously called ack() for the whole
+    batch even when a message had no registered handler, causing silent
+    message loss.
+    """
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    client.send(queue, {"x": 1}, type="totally.unregistered.type")
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    # Consumer with NO handler for "totally.unregistered.type"
+    # and NO default handler either.
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name,
+        poll_interval=1, retry_after=0,
+    )
+
+    t = _run_consumer_for(cons, 3.0)
+    t.join(timeout=5.0)
+
+    # The message must NOT be silently acked: it should appear in retry_queue.
+    cnt = conn.execute(
+        "select count(*) from pgque.retry_queue rq "
+        "join pgque.queue q on q.queue_id = rq.ev_queue "
+        "where q.queue_name = %s",
+        (queue,),
+    ).fetchone()[0]
+    assert cnt >= 1, (
+        "unhandled event type was silently acked/dropped instead of nacked"
+    )
+
+
 def test_consumer_stop_returns_promptly(dsn, setup_queue):
     queue, consumer_name = setup_queue
     cons = pgque.Consumer(
