@@ -43,3 +43,10 @@ def test_external_conn_is_not_closed_by_close(dsn):
 def test_autocommit_flag(dsn):
     with pgque.connect(dsn, autocommit=True) as client:
         assert client.conn.autocommit is True
+
+
+def test_close_is_idempotent(dsn):
+    """Calling close() twice must not raise."""
+    client = pgque.connect(dsn)
+    client.close()
+    client.close()  # second call must be a no-op
