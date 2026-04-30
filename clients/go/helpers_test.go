@@ -77,17 +77,16 @@ func setupFreshQueue(t *testing.T, client *pgque.Client) (queue, consumer string
 	return queue, consumer
 }
 
-// tick forces a ticker run so events become visible to receive.
-// Calls pgque.force_tick(queue) + pgque.ticker() because freshly created
-// queues use the default thresholds (max_count=500, max_lag=3s) which do
-// not fire on the small event counts used in unit tests.
+// tick advances the queue past one tick so events become visible to receive.
+// Uses the per-queue pgque.ticker($1) overload to avoid cross-test side
+// effects (other test queues running in parallel are not ticked).
 func tick(t *testing.T, client *pgque.Client, queue string) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := client.Pool().Exec(ctx, "select pgque.force_tick($1)", queue); err != nil {
 		t.Fatal("force_tick:", err)
 	}
-	if _, err := client.Pool().Exec(ctx, "select pgque.ticker()"); err != nil {
+	if _, err := client.Pool().Exec(ctx, "select pgque.ticker($1)", queue); err != nil {
 		t.Fatal("ticker:", err)
 	}
 }
