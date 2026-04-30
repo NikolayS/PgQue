@@ -69,6 +69,15 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
+--
+-- Fix #98: re-query the canonical event row from the active batch using
+-- msg_id, instead of trusting caller-supplied pgque.message fields.
+-- A caller with an active batch could otherwise forge DLQ rows by
+-- supplying arbitrary ev_id / ev_type / ev_data in the composite.
+--
+-- Fix #104: DLQ insert is idempotent via ON CONFLICT in event_dead().
+-- Repeated nack() calls for the same terminal message produce exactly one
+-- dead_letter row.
 create or replace function pgque.nack(
     i_batch_id bigint,
     i_msg pgque.message,
@@ -77,8 +86,9 @@ create or replace function pgque.nack(
 returns integer as $$
 declare
     v_max_retries int4;
+    v_ev          record;
 begin
-    -- Single lookup: subscription -> queue config
+    -- Lookup: subscription -> queue config
     select coalesce(q.queue_max_retries, 5) into v_max_retries
     from pgque.subscription s
     join pgque.queue q on q.queue_id = s.sub_queue
@@ -88,16 +98,30 @@ begin
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
-    if coalesce(i_msg.retry_count, 0) >= v_max_retries then
-        -- Move to dead letter queue (pass event fields, no re-query)
-        perform pgque.event_dead(i_batch_id, i_msg.msg_id,
+    -- Re-query the canonical event from the active batch (#98).
+    -- This ignores caller-supplied payload/type/extras and uses the real
+    -- values stored in the queue data tables.
+    select ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
+           ev_extra1, ev_extra2, ev_extra3, ev_extra4
+    into v_ev
+    from pgque.get_batch_events(i_batch_id)
+    where ev_id = i_msg.msg_id;
+
+    if not found then
+        raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
+    end if;
+
+    if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
+        -- Move to dead letter queue using canonical event data (#98).
+        -- event_dead() uses ON CONFLICT DO NOTHING for idempotency (#104).
+        perform pgque.event_dead(i_batch_id, v_ev.ev_id,
             coalesce(i_reason, 'max retries exceeded'),
-            i_msg.created_at, null::xid8, i_msg.retry_count,
-            i_msg.type, i_msg.payload,
-            i_msg.extra1, i_msg.extra2, i_msg.extra3, i_msg.extra4);
+            v_ev.ev_time, v_ev.ev_txid::text::xid8, v_ev.ev_retry,
+            v_ev.ev_type, v_ev.ev_data,
+            v_ev.ev_extra1, v_ev.ev_extra2, v_ev.ev_extra3, v_ev.ev_extra4);
     else
         -- Retry after delay
-        perform pgque.event_retry(i_batch_id, i_msg.msg_id,
+        perform pgque.event_retry(i_batch_id, v_ev.ev_id,
             extract(epoch from i_retry_after)::integer);
     end if;
     return 1;

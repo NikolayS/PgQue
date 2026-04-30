@@ -61,6 +61,8 @@
 \echo 'Running: test_api_dlq'
 \i tests/test_api_dlq.sql
 
+\echo 'Running: test_nack_dlq_canonical'
+\i tests/test_nack_dlq_canonical.sql
 
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

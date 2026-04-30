@@ -55,14 +55,18 @@ begin
 end $$;
 
 -- ========================================
--- Test 2: nack with retry_count >= max_retries -> DLQ
+-- Test 2: nack with ev_retry >= max_retries -> DLQ
 -- ========================================
+-- Use max_retries=0 so the very first nack routes to DLQ without
+-- needing to forge retry_count in the caller composite. Forging
+-- retry_count was the #98 vulnerability; nack() now re-queries the
+-- canonical ev_retry from the active batch.
 
 -- Setup
 do $$
 begin
   perform pgque.create_queue('test_dlq2');
-  perform pgque.set_queue_config('test_dlq2', 'max_retries', '2');
+  perform pgque.set_queue_config('test_dlq2', 'max_retries', '0');
   perform pgque.register_consumer('test_dlq2', 'c1');
 end $$;
 
@@ -78,7 +82,7 @@ begin
   perform pgque.ticker();
 end $$;
 
--- Receive, forge retry_count, nack -> DLQ
+-- Receive, nack -> DLQ (max_retries=0, ev_retry=0, so 0 >= 0 -> DLQ)
 do $$
 declare
   v_msg pgque.message;
@@ -86,10 +90,7 @@ declare
 begin
   select * into v_msg from pgque.receive('test_dlq2', 'c1', 1) limit 1;
 
-  -- Forge retry_count to simulate prior retries (unit test approach)
-  v_msg.retry_count := 2;
-
-  -- Nack should route to DLQ (retry_count=2 >= max_retries=2)
+  -- Nack should route to DLQ: canonical ev_retry=0 >= max_retries=0
   perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds'::interval, 'max retries');
   perform pgque.ack(v_msg.batch_id);
 
