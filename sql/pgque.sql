@@ -4554,6 +4554,11 @@ grant execute on function pgque.dlq_purge(text, interval)   to pgque_admin;
 
 -- maint() runs rotation step1 and retry. Step2 needs its own transaction
 -- (PgQ design requirement) and is scheduled separately by pgque.start().
+--
+-- queue_extra_maint entries (user-supplied function names stored in pgque.queue)
+-- are validated before execution: the function must be owned by the same role
+-- that owns maint() (the install owner). pg_get_userbyid() is used instead of
+-- pg_authid, which is unreadable by non-superusers on managed PostgreSQL.
 create or replace function pgque.maint()
 returns integer as $$
 declare
@@ -4565,9 +4570,7 @@ declare
     v_func_owner  name;
     v_func_oid    oid;
 begin
-    -- Resolve the owner of maint() itself once per call.
-    -- pg_get_userbyid() reads proowner without requiring pg_authid access,
-    -- so this works on managed PostgreSQL (RDS, Aurora, Cloud SQL, etc.).
+    -- Resolve install-owner name once per call (pg_get_userbyid avoids pg_authid).
     select pg_catalog.pg_get_userbyid(p.proowner) into v_maint_owner
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
@@ -4582,10 +4585,7 @@ begin
         elsif f.func_name = 'vacuum' then
             continue;
         elsif f.func_arg is not null then
-            -- Validate queue_extra_maint entries before executing.
-            -- 1. Resolve the function name to a regprocedure (validates it exists
-            --    and is unambiguous). Use a text->regprocedure cast via dynamic SQL
-            --    so an invalid name raises an exception we can catch.
+            -- Resolve to regprocedure; invalid names raise a catchable exception.
             begin
                 execute format('select %L::regprocedure', f.func_name || '(text)')
                 into v_func_oid;
@@ -4595,9 +4595,7 @@ begin
                 continue;
             end;
 
-            -- 2. Check ownership: the extra-maint function must be owned by the
-            --    same role that owns maint() (the install owner).
-            --    pg_get_userbyid() is used here too (no pg_authid access needed).
+            -- Ownership check: extra-maint function must be owned by the install owner.
             select pg_catalog.pg_get_userbyid(p.proowner) into v_func_owner
             from pg_proc p
             where p.oid = v_func_oid;
