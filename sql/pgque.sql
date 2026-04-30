@@ -4876,6 +4876,9 @@ grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
 grant execute on function pgque.subscribe(text, text)           to pgque_writer;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_writer;
 
--- Re-revoke to catch functions created in pgque-api after roles.sql ran.
+-- Re-apply deny-by-default after all API functions are defined.
+-- roles.sql's blanket revoke runs before pgque-api/ files are loaded, so
+-- functions created here would otherwise inherit PostgreSQL's default
+-- PUBLIC EXECUTE. This second pass covers everything.
 revoke execute on all functions in schema pgque from public;
 
