@@ -171,7 +171,7 @@ Moves due rows from `pgque.retry_queue` back into queue event tables so they app
 
 ```sql
 select pgque.maint_retry_events(); -- every 30 seconds, for nack/retry redelivery
-select pgque.maint();              -- every 30 seconds, for rotation + vacuum
+select pgque.maint();              -- every 30 seconds, for rotation
 ```
 
 Grant: PUBLIC (default). Source: `sql/pgque.sql`.
