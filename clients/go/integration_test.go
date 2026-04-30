@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	pgque "github.com/NikolayS/pgque/clients/go"
 )
@@ -243,4 +244,113 @@ func TestSendReceive_PayloadRoundTrip(t *testing.T) {
 		t.Fatalf("payload missing expected fields: %s", msgs[0].Payload)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
+}
+
+// TestSendBatch_RoundTrip verifies that SendBatch publishes every payload
+// exactly once and returns one event ID per input in input order.
+func TestSendBatch_RoundTrip(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshQueue(t, client)
+	ctx := context.Background()
+
+	payloads := []any{
+		map[string]any{"i": 0, "k": "a"},
+		map[string]any{"i": 1, "k": "b"},
+		map[string]any{"i": 2, "k": "c"},
+	}
+	ids, err := client.SendBatch(ctx, queue, "batch.type", payloads)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != len(payloads) {
+		t.Fatalf("expected %d event ids, got %d", len(payloads), len(ids))
+	}
+	for i, id := range ids {
+		if id == 0 {
+			t.Fatalf("ids[%d] is 0", i)
+		}
+	}
+	tick(t, client, queue)
+
+	msgs, err := client.Receive(ctx, queue, consumer, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != len(payloads) {
+		t.Fatalf("expected %d messages, got %d", len(payloads), len(msgs))
+	}
+	for _, m := range msgs {
+		if m.Type != "batch.type" {
+			t.Fatalf("expected batch.type, got %q", m.Type)
+		}
+	}
+	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSendBatch_EmptySlice sends an empty payloads slice and expects an
+// empty id slice with no error — the SQL function returns an empty
+// bigint[] when no payloads are supplied.
+func TestSendBatch_EmptySlice(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, _ := setupFreshQueue(t, client)
+	ctx := context.Background()
+
+	ids, err := client.SendBatch(ctx, queue, "ignored", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected 0 ids for empty input, got %d", len(ids))
+	}
+}
+
+// TestNack_WithRetryAfter verifies the WithRetryAfter option threads
+// through to pgque.nack — a long retry delay must keep the message out
+// of redelivery via maint_retry_events for at least the configured
+// window. We cross-check by inspecting retry_queue.ev_retry_after.
+func TestNack_WithRetryAfter(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshQueue(t, client)
+	ctx := context.Background()
+
+	if _, err := client.Send(ctx, queue, pgque.Event{
+		Type: "retry.opts", Payload: map[string]any{"v": 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, client, queue)
+
+	msgs, err := client.Receive(ctx, queue, consumer, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+
+	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0],
+		pgque.WithRetryAfter(3600*time.Second),
+		pgque.WithReason("custom-reason-string")); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+		t.Fatal(err)
+	}
+
+	var seconds float64
+	if err := client.Pool().QueryRow(ctx, `
+		select extract(epoch from (rq.ev_retry_after - now()))
+		from pgque.retry_queue rq
+		join pgque.queue q on q.queue_id = rq.ev_queue
+		where q.queue_name = $1`, queue).Scan(&seconds); err != nil {
+		t.Fatal(err)
+	}
+	if seconds < 3000 {
+		t.Fatalf("expected retry delay >= 3000s, got %v", seconds)
+	}
 }

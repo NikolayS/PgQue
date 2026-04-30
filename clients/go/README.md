@@ -38,7 +38,7 @@ func main() {
     //   select pgque.create_queue('orders');
     //   select pgque.register_consumer('orders', 'order_worker');
 
-    // Producer side
+    // Producer side -- single event
     _, err = client.Send(ctx, "orders", pgque.Event{
         Type:    "order.created",
         Payload: map[string]any{"order_id": 42},
@@ -47,6 +47,7 @@ func main() {
         log.Fatal(err)
     }
 
+    // Producer side -- batch (one type, many payloads)
     ids, err := client.SendBatch(ctx, "orders", "order.created", []any{
         map[string]any{"order_id": 43},
         map[string]any{"order_id": 44},
@@ -57,7 +58,10 @@ func main() {
     log.Printf("published batch event IDs: %v", ids)
 
     // Consumer side
-    consumer := client.NewConsumer("orders", "order_worker")
+    consumer := client.NewConsumer("orders", "order_worker",
+        pgque.WithMaxMessages(500),                            // ticker_max_count default
+        pgque.WithUnknownHandlerPolicy(pgque.NackUnknown),     // also the default
+    )
     consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) error {
         log.Printf("got %s: %s", msg.Type, msg.Payload)
         return nil
@@ -67,6 +71,35 @@ func main() {
     }
 }
 ```
+
+## Consumer options
+
+| Option                                  | Default        | Notes                                                                 |
+| --------------------------------------- | -------------- | --------------------------------------------------------------------- |
+| `WithPollInterval(d time.Duration)`     | `30s`          | Idle backoff between polls when the queue is empty.                   |
+| `WithMaxMessages(n int)`                | `500`          | Per-Receive batch cap. Match `ticker_max_count` for full throughput.  |
+| `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` silently skips messages with no registered handler.      |
+
+## Nack options
+
+`Client.Nack` takes optional, variadic `NackOption`s:
+
+```go
+err := client.Nack(ctx, batchID, msg,
+    pgque.WithRetryAfter(5*time.Minute), // override 60s default
+    pgque.WithReason("payment-declined"), // recorded on the dead_letter row
+)
+```
+
+Calls without options preserve the historical defaults: 60-second retry
+delay, NULL reason.
+
+## At-least-once contract
+
+If a per-message Nack call fails, the Consumer leaves the batch unacked
+so PgQue redelivers it on the next Receive. Acking a batch whose Nack
+failed would silently drop the failure information — the Go consumer
+prefers redelivery and lets the at-least-once retry path do its job.
 
 ## Tests
 

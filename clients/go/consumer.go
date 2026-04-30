@@ -11,23 +11,40 @@ import (
 )
 
 // HandlerFunc processes a single message. Returning a non-nil error
-// causes the entire batch to be NOT acked, so PgQue redelivers it on
-// the next Receive.
+// causes the Consumer to issue a per-message Nack for that message
+// (routing it to retry_queue or, once max_retries is exceeded, to the
+// dead_letter table). Other messages in the same batch are still
+// dispatched to their handlers; the batch as a whole is acked only if
+// every required Nack succeeded.
 type HandlerFunc func(ctx context.Context, msg Message) error
+
+// consumerBackend is the subset of Client used by Consumer. Defining
+// it as an interface keeps the Consumer testable: a stub backend can
+// simulate Nack failures without a live database.
+type consumerBackend interface {
+	Receive(ctx context.Context, queue, consumer string, maxMessages int) ([]Message, error)
+	Ack(ctx context.Context, batchID int64) error
+	Nack(ctx context.Context, batchID int64, msg Message, opts ...NackOption) error
+}
 
 // Consumer polls a queue and dispatches messages to registered
 // handlers. Create one via Client.NewConsumer.
 type Consumer struct {
-	client       *Client
-	queue        string
-	name         string
-	pollInterval time.Duration
-	handlers     map[string]HandlerFunc
+	backend       consumerBackend
+	queue         string
+	name          string
+	pollInterval  time.Duration
+	maxMessages   int
+	handlers      map[string]HandlerFunc
+	unknownPolicy UnknownHandlerPolicy
 }
 
 // Handle registers fn as the handler for messages whose Type matches
-// eventType. Messages with no registered handler are silently skipped
-// for now; a future release will surface them via a default handler.
+// eventType. Messages with no registered handler are dispatched per
+// the consumer's UnknownHandlerPolicy: by default each is Nack'd
+// individually (routing it to retry_queue or eventually the DLQ);
+// with WithUnknownHandlerPolicy(AckUnknown) they are logged and
+// silently skipped instead.
 func (c *Consumer) Handle(eventType string, fn HandlerFunc) {
 	c.handlers[eventType] = fn
 }
@@ -45,8 +62,20 @@ func (c *Consumer) dispatchWithRecover(ctx context.Context, fn HandlerFunc, msg 
 
 // Start begins the poll loop and blocks until ctx is cancelled. On
 // receive errors it logs and retries after the configured poll
-// interval. A batch is acked only if every handled message in it
-// returned nil.
+// interval.
+//
+// Per-batch dispatch semantics:
+//
+//   - Each message is delivered to its registered handler. If the
+//     handler returns a non-nil error or panics, the message is
+//     individually Nack'd (routed to retry_queue, eventually the DLQ).
+//   - Messages with no registered handler are Nack'd or skipped
+//     depending on the configured UnknownHandlerPolicy (default: Nack).
+//   - If every required Nack call succeeded (or none were needed), the
+//     batch is Ack'd. If any Nack fails, the batch is left unacked so
+//     that PgQue redelivers it on the next Receive — losing the Nack
+//     would otherwise mean losing the failure information for that
+//     message.
 func (c *Consumer) Start(ctx context.Context) error {
 	for {
 		select {
@@ -55,7 +84,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		default:
 		}
 
-		msgs, err := c.client.Receive(ctx, c.queue, c.name, 100)
+		msgs, err := c.backend.Receive(ctx, c.queue, c.name, c.maxMessages)
 		if err != nil {
 			log.Printf("pgque: receive error: %v", err)
 			select {
@@ -76,27 +105,38 @@ func (c *Consumer) Start(ctx context.Context) error {
 		}
 
 		var batchID int64
+		nackFailed := false
 		for _, msg := range msgs {
 			batchID = msg.BatchID
 			handler, ok := c.handlers[msg.Type]
 			if !ok {
+				if c.unknownPolicy == AckUnknown {
+					log.Printf("pgque: no handler registered for event type %q, skipping message %d (AckUnknown policy)", msg.Type, msg.MsgID)
+					continue
+				}
 				log.Printf("pgque: no handler registered for event type %q, nacking message %d", msg.Type, msg.MsgID)
-				if nackErr := c.client.Nack(ctx, batchID, msg); nackErr != nil {
+				if nackErr := c.backend.Nack(ctx, batchID, msg); nackErr != nil {
 					log.Printf("pgque: nack error for unhandled type %s: %v", msg.Type, nackErr)
+					nackFailed = true
 				}
 				continue
 			}
 			if handlerErr := c.dispatchWithRecover(ctx, handler, msg); handlerErr != nil {
 				log.Printf("pgque: handler error for %s: %v", msg.Type, handlerErr)
-				if nackErr := c.client.Nack(ctx, batchID, msg); nackErr != nil {
+				if nackErr := c.backend.Nack(ctx, batchID, msg); nackErr != nil {
 					log.Printf("pgque: nack error for %s: %v", msg.Type, nackErr)
+					nackFailed = true
 				}
 				continue
 			}
 		}
 
 		if batchID != 0 {
-			if err := c.client.Ack(ctx, batchID); err != nil {
+			if nackFailed {
+				log.Printf("pgque: skipping ack for batch %d due to prior nack failures; PgQue will redeliver", batchID)
+				continue
+			}
+			if err := c.backend.Ack(ctx, batchID); err != nil {
 				log.Printf("pgque: ack error: %v", err)
 			}
 		}

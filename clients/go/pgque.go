@@ -141,29 +141,92 @@ func (c *Client) Ack(ctx context.Context, batchID int64) error {
 // Nack negatively acknowledges a single message, routing it to retry or DLQ.
 // pgque.message has 10 fields: msg_id, batch_id, type, payload, retry_count,
 // created_at, extra1, extra2, extra3, extra4 — placeholders $2..$11.
-func (c *Client) Nack(ctx context.Context, batchID int64, msg Message) error {
+//
+// Optional NackOptions tune the call:
+//
+//   - WithRetryAfter overrides the default 60s redelivery delay.
+//   - WithReason overrides the default NULL reason recorded on the
+//     dead_letter row when the retry budget is exhausted.
+//
+// Calls without options preserve the historical defaults (60s, NULL
+// reason) so existing callers do not need changes.
+func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts ...NackOption) error {
+	var no nackOptions
+	for _, opt := range opts {
+		opt(&no)
+	}
+	retryAfter := 60 * time.Second
+	if no.retryAfterSet {
+		retryAfter = no.retryAfter
+	}
+	var reason any
+	if no.reasonSet {
+		reason = no.reason
+	}
+	// pgx serialises a time.Duration through the interval-as-microseconds
+	// path; passing it explicitly cast to interval keeps the SQL prepared
+	// statement stable regardless of the driver default.
 	_, err := c.pool.Exec(ctx,
-		"SELECT pgque.nack($1, ROW($2,$3,$4,$5,$6,$7,$8,$9,$10,$11)::pgque.message, '60 seconds'::interval, null)",
+		"SELECT pgque.nack($1, ROW($2,$3,$4,$5,$6,$7,$8,$9,$10,$11)::pgque.message, $12::interval, $13)",
 		batchID, msg.MsgID, msg.BatchID, msg.Type, msg.Payload,
 		msg.RetryCount, msg.CreatedAt,
-		msg.Extra1, msg.Extra2, msg.Extra3, msg.Extra4)
+		msg.Extra1, msg.Extra2, msg.Extra3, msg.Extra4,
+		retryAfter, reason)
 	if err != nil {
 		return fmt.Errorf("pgque: nack: %w", err)
 	}
 	return nil
 }
 
+// SendBatch publishes a batch of events of the same type to the named
+// queue and returns the assigned event IDs in input order. Each payload
+// is JSON-marshalled before being passed to pgque.send_batch(text, text,
+// jsonb[]).
+//
+// SendBatch is a thin 1:1 wrapper around the SQL function: producer-side
+// transactional guarantees come from the underlying pgx pool, and
+// validation (queue exists, type non-null) is enforced by the SQL layer.
+func (c *Client) SendBatch(ctx context.Context, queue, eventType string, payloads []any) ([]int64, error) {
+	if eventType == "" {
+		eventType = "default"
+	}
+	encoded := make([]string, len(payloads))
+	for i, p := range payloads {
+		b, err := json.Marshal(p)
+		if err != nil {
+			return nil, fmt.Errorf("pgque: marshal payload %d: %w", i, err)
+		}
+		encoded[i] = string(b)
+	}
+	var ids []int64
+	err := c.pool.QueryRow(ctx,
+		"SELECT pgque.send_batch($1, $2, $3::jsonb[])",
+		queue, eventType, encoded,
+	).Scan(&ids)
+	if err != nil {
+		return nil, fmt.Errorf("pgque: send_batch: %w", err)
+	}
+	return ids, nil
+}
+
 // NewConsumer creates a Consumer that polls the given queue under the
 // given consumer name. The consumer must already be registered in PgQue
-// (e.g. via pgque.register_consumer). Default poll interval is 30s; use
-// WithPollInterval to override.
-func (c *Client) NewConsumer(queue, name string, opts ...Option) *Consumer {
+// (e.g. via pgque.register_consumer).
+//
+// Defaults — override with the matching ConsumerOption:
+//
+//   - poll interval: 30s   (WithPollInterval)
+//   - max messages:  500   (WithMaxMessages, matches ticker_max_count)
+//   - unknown type:  Nack  (WithUnknownHandlerPolicy)
+func (c *Client) NewConsumer(queue, name string, opts ...ConsumerOption) *Consumer {
 	consumer := &Consumer{
-		client:       c,
-		queue:        queue,
-		name:         name,
-		pollInterval: 30 * time.Second,
-		handlers:     make(map[string]HandlerFunc),
+		backend:       c,
+		queue:         queue,
+		name:          name,
+		pollInterval:  30 * time.Second,
+		maxMessages:   500,
+		handlers:      make(map[string]HandlerFunc),
+		unknownPolicy: NackUnknown,
 	}
 	for _, opt := range opts {
 		opt(consumer)

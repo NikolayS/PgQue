@@ -252,6 +252,52 @@ func TestConcurrent_TwoConsumersDistinctNames(t *testing.T) {
 	}
 }
 
+// TestConsumer_WithMaxMessages_FetchesEntireBatch: prior to WithMaxMessages
+// the Consumer hardcoded Receive(..., 100), capping every poll at 100 rows
+// and stranding any extras in the same tick window. Send 105 messages,
+// configure WithMaxMessages(500), and verify the handler is invoked for
+// every one in a single Receive cycle.
+func TestConsumer_WithMaxMessages_FetchesEntireBatch(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshQueue(t, client)
+	ctx := context.Background()
+
+	const total = 105
+	payloads := make([]any, total)
+	for i := 0; i < total; i++ {
+		payloads[i] = map[string]any{"i": i}
+	}
+	if _, err := client.SendBatch(ctx, queue, "wide.batch", payloads); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, client, queue)
+
+	var seen int32
+	c := client.NewConsumer(queue, consumer,
+		pgque.WithPollInterval(50*time.Millisecond),
+		pgque.WithMaxMessages(500))
+	c.Handle("wide.batch", func(ctx context.Context, m pgque.Message) error {
+		atomic.AddInt32(&seen, 1)
+		return nil
+	})
+
+	consumerCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	go c.Start(consumerCtx)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&seen) >= total {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&seen); got != total {
+		t.Fatalf("expected %d messages dispatched, got %d (max_messages plumbing broken?)", total, got)
+	}
+}
+
 // TestConsumer_DoubleStart_DoesNotPanic: calling Start twice concurrently on
 // the same Consumer instance must not panic. The semantics of concurrent
 // Start calls are otherwise undefined; this test only asserts absence of panic.
