@@ -8,7 +8,7 @@
 | 2 | Subscriber | `next_batch` + `get_batch_events` returning an already-built batch | sub-ms (snapshot SELECT, no SKIP LOCKED scan; ~2.4M ev/s consumer read) | how "next work" is located |
 | 3 | End-to-end | `send` → consumer visibility | ≈ tick period + consumer poll interval | ticker cadence (tunable) |
 
-#3 is the one application behavior depends on (SLAs, retries, perceived staleness). You can have #1 and #2 in microseconds and still have #3 in seconds — or vice versa. They are independent.
+#3 is what application behavior depends on (SLAs, retries, perceived staleness). The trap: #3 is bounded below by #1 + #2, but **the magnitude of #1 and #2 doesn't determine #3** — tick cadence and consumer poll interval do. You can drive #1 and #2 to microseconds and still have #3 in seconds because the ticker hasn't fired yet. The reverse — sub-ms #3 while #1 or #2 takes seconds — isn't possible: a message can't be visible to a consumer faster than it can be written and read.
 
 ## End-to-end is tunable, not floored
 
