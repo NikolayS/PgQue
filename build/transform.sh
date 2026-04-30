@@ -533,6 +533,16 @@ awk '
 
 echo "PASS: insert_event_raw raises clear error on unknown queue"
 
+# Fix batch_retry(): NULL::int8 cast into retry_queue.ev_txid which is xid8.
+# The ev_txid column was modernized to xid8 by the transform, but this explicit
+# NULL cast in the INSERT was not updated. Fix: NULL::xid8.
+# See: https://github.com/NikolayS/pgque/issues/107
+BATCH_RETRY_FILE="${OUTPUT_DIR}/functions/pgque.batch_retry.sql"
+sedi 's/b\.ev_id, b\.ev_time, NULL::int8, _s\.sub_id,/b.ev_id, b.ev_time, NULL::xid8, _s.sub_id,/' \
+  "${BATCH_RETRY_FILE}"
+
+echo "PASS: batch_retry NULL::int8 -> NULL::xid8 for ev_txid (xid8) column"
+
 # -- Assembly: build sql/pgque.sql ------------------------------------
 
 echo ""

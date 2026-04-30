@@ -50,11 +50,13 @@ declare
   v_batch_id bigint;
   v_retry_cnt integer;
 begin
-  -- Re-open same batch (still active)
-  select sub_batch into v_batch_id
-    from pgque.subscription
-   where sub_queue = 'test_batch_retry'
-     and sub_name  = 'c1';
+  -- Re-open same batch (still active): look up by queue name + consumer name
+  select s.sub_batch into v_batch_id
+    from pgque.subscription s
+    join pgque.queue       q  on q.queue_id  = s.sub_queue
+    join pgque.consumer    c  on c.co_id     = s.sub_consumer
+   where q.queue_name = 'test_batch_retry'
+     and c.co_name    = 'c1';
   assert v_batch_id is not null, 'batch should still be active';
 
   v_retry_cnt := pgque.batch_retry(v_batch_id, 0);
@@ -62,6 +64,20 @@ begin
     'second batch_retry call should be idempotent (0 rows), got '
     || coalesce(v_retry_cnt::text, 'NULL');
   raise notice 'PASS: batch_retry() idempotent on second call';
+end $$;
+
+-- Step 5b: finish the original batch (batch_retry does not finish it)
+do $$
+declare
+  v_batch_id bigint;
+begin
+  select s.sub_batch into v_batch_id
+    from pgque.subscription s
+    join pgque.queue       q  on q.queue_id  = s.sub_queue
+    join pgque.consumer    c  on c.co_id     = s.sub_consumer
+   where q.queue_name = 'test_batch_retry'
+     and c.co_name    = 'c1';
+  perform pgque.finish_batch(v_batch_id);
 end $$;
 
 -- Step 6: maintenance moves retried events back into the event table

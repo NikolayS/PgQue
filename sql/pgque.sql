@@ -2434,7 +2434,7 @@ begin
         ev_type, ev_data, ev_extra1, ev_extra2,
         ev_extra3, ev_extra4)
     select distinct _retry, _s.sub_queue,
-           b.ev_id, b.ev_time, NULL::int8, _s.sub_id, coalesce(b.ev_retry, 0) + 1,
+           b.ev_id, b.ev_time, NULL::xid8, _s.sub_id, coalesce(b.ev_retry, 0) + 1,
            b.ev_type, b.ev_data, b.ev_extra1, b.ev_extra2,
            b.ev_extra3, b.ev_extra4
       from pgque.get_batch_events(i_batch_id) b
