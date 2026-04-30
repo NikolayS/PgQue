@@ -12,6 +12,9 @@ Short docs for users, plus a contributor primer.
   batch send, recurring jobs, DLQ inspection.
 - **[Benchmarks](benchmarks.md)** — current throughput numbers and
   methodology.
+- **[Three latencies](three-latencies.md)** — producer latency, subscriber
+  latency, and end-to-end delivery explained; tick-cadence trade-off table;
+  comparison with UPDATE/DELETE-based designs.
 - **[PgQ concepts](pgq-concepts.md)** — glossary of the core vocabulary
   (event, batch, tick, rotation, ticker rule). Useful alongside the
   tutorial.

@@ -73,11 +73,13 @@ If your top priority is single-digit-millisecond dispatch, PgQue is the wrong to
 
 ## Three latencies
 
-"Queue latency" is three numbers, not one. PgQue makes #1 and #2 sub-ms and bounds #3 by whatever tick cadence you configure:
+"Queue latency" is three numbers, not one:
 
 1. **Producer latency** — `send` / `insert_event`. Sub-ms.
-2. **Subscriber latency** — `next_batch` + `get_batch_events`. Sub-ms.
-3. **End-to-end delivery** — `send` → consumer visibility. ≈ tick period. **Tunable, not floored.** Default `pg_cron` at 1 s → ~500 ms average; sub-ms e2e is achievable with aggressive ticking (staggered `pg_cron` jobs, in-tick `pg_sleep` loop — see [concept doc](docs/pgq-concepts.md#three-latencies)). Trade-off: more ticks mean more `tick`/`subscription` metadata churn, which at very high rates warrants rotating those metadata tables as well. Under sustained load the ticker keeps firing at its configured rate — batch size absorbs the load, e2e does not inflate.
+2. **Subscriber latency** — `next_batch` over a pre-built batch. Sub-ms.
+3. **End-to-end delivery** — `send` → consumer visibility. ≈ tick period. Tunable, not floored. Does not grow with load.
+
+See [docs/three-latencies.md](docs/three-latencies.md) for the breakdown, tick-cadence trade-off table, and comparison with UPDATE/DELETE-based designs.
 
 ## Comparison
 
