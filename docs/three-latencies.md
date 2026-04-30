@@ -36,11 +36,3 @@ Per-queue thresholds (`queue_ticker_max_lag` default `3 seconds`, `queue_ticker_
 The key property of the tick model: **e2e does not grow with load.** The ticker fires at its configured rate regardless of backlog, so under pressure batch size grows (up to `queue_ticker_max_count`) — not e2e.
 
 UPDATE/DELETE-based systems use a different model: a consumer call returns messages immediately, marking them consumed via UPDATE (claim) and DELETE (ack) rather than advancing a snapshot cursor. So e2e ≈ consumer poll interval — sub-ms when the consumer is actively polling, up to the poll interval otherwise. Drain rate is `batch_size / poll_interval`; if producers outrun that, queue depth grows and e2e grows with it until consumers scale out. Separately, those UPDATEs and DELETEs produce dead tuples that autovacuum cannot reclaim under MVCC pressure (long-running tx, idle-in-transaction, lagging logical replication slot, physical standby with `hot_standby_feedback=on`) — the bloat failure mode [PgQue avoids by construction](../README.md#why-pgque).
-
-## When to pick which
-
-Pick PgQue if you want batching efficiency and bloat immunity and can configure a tick cadence that meets your SLA (the default 1 s or a faster one). Pick an UPDATE/DELETE-based system if you need always-hot single-digit-ms delivery for synchronous request/response patterns, MVCC pressure is low in your environment, and that system's API fits better.
-
-## Provenance
-
-Recurring confusion (HN thread: <https://news.ycombinator.com/threads?id=samokhvalov>) about the apparent contradiction between PgQue's sub-ms consumer-path latency and the ~1-second end-to-end delivery bound prompted naming the three latencies explicitly. The bench numbers cited above are from [docs/benchmarks.md](benchmarks.md).
