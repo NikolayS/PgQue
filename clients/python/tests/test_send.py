@@ -171,6 +171,7 @@ def test_send_batch_none_payload_produces_json_null(conn, setup_queue):
     queue, consumer = setup_queue
     client = pgque.PgqueClient(conn)
     client.send_batch(queue, "default", [None])
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()

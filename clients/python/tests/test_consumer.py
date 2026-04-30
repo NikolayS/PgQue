@@ -123,6 +123,7 @@ def test_consumer_warns_and_acks_unhandled_event_type(dsn, conn, setup_queue, ca
     queue, consumer_name = setup_queue
     client = pgque.PgqueClient(conn)
     msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
