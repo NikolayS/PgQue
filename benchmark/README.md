@@ -1,8 +1,8 @@
 # pgque benchmark harness
 
-The whole bench rig: how we compared pgque (PR #62) against pgq, pgmq, pgmq-partitioned, river, que, and pg-boss under held-xmin pathology conditions on AWS i4i.2xlarge.
+The whole bench rig: how we compared pgque against pgq, pgmq, pgmq-partitioned, river, que, pg-boss, and **awa** (R10) under held-xmin pathology conditions on AWS i4i.2xlarge.
 
-Backs [NikolayS/pgque#61](https://github.com/NikolayS/pgque/issues/61) (the held-xmin bloat issue) and [PR #62](https://github.com/NikolayS/pgque/pull/62) (the subscription/tick rotation fix).
+Backs [NikolayS/pgque#61](https://github.com/NikolayS/pgque/issues/61) (the held-xmin bloat issue) and [PR #62](https://github.com/NikolayS/pgque/pull/62) (the subscription/tick rotation fix). Round-by-round results are tracked at GitLab issue [postgres-ai/postgresql-consulting/tests-and-benchmarks#77](https://gitlab.com/postgres-ai/postgresql-consulting/tests-and-benchmarks/-/issues/77).
 
 ## Start here
 
@@ -18,8 +18,9 @@ The pathology this bench exercises is the one Brandur Leach documented in [Postg
 
 ```bash
 # on the VM, after bootstrap:
-bash install/install_<sys>.sh            # system-specific install
-bash runners/run_r7.sh <sys>             # orchestrator; 1.5h per system
+bash install/install_<sys>.sh            # system-specific install (incl. install_awa.sh for R10)
+bash runners/run_r10.sh <sys>            # R10 orchestrator: 50m per system; dispatches Python workers for awa, pgbench for the others
+# (R7 orchestrator runners/run_r7.sh kept for the 90m bloat-saw-tooth schedule)
 
 # outputs (all under /tmp/bench/):
 #   producer_agg.*                       pgbench producer aggregate log
@@ -52,11 +53,13 @@ benchmark/
     sys_metrics_sampler.py           # /proc/{stat,meminfo,diskstats} sampler (v2)
     pg_stat_statements_snapshot.py   # pgss time-series
     parse_events_consumed.py         # NOTICE log → events_consumed_per_sec.csv
-    idle_in_tx.py                    # REPEATABLE READ xmin holder (the inducer)
+    idle_in_tx.py                    # REPEATABLE READ xmin holder (psycopg2-based, R7-R8)
+    idle_in_tx.sh                    # psql-based xmin holder (no Python deps, R9-R10 default)
     pgq_ticker_daemon.py             # tight ticker loop for pgq (no built-in daemon)
     microbench.sh                    # sysbench + fio baseline
   runners/
-    run_r7.sh                        # phase-scheduled orchestrator
+    run_r7.sh                        # 90m phase-scheduled orchestrator (clean+TX+recovery, sized for bloat-saw-tooth)
+    run_r10.sh                       # 50m phase-scheduled orchestrator (R9/R10), dispatches Python (awa) or pgbench
     clean_reinstall.sh               # reset between runs
     fix_nvme_mount.sh                # recover from NVMe-not-mounted boot
   consumers/
@@ -67,6 +70,7 @@ benchmark/
     consumer_river.sql
     consumer_que.sql
     consumer_pgboss.sql
+    consumer_awa.py                  # native awa worker (Python, R10)
   producers/
     producer_pgque.sql               # pgque.send()
     producer_pgq.sql                 # pgq.insert_event
@@ -75,6 +79,7 @@ benchmark/
     producer_que.sql                 # INSERT INTO que_jobs
     producer_pgboss.sql              # INSERT INTO pgboss.job
     producer_pgmq-partitioned.sql    # same as producer_pgmq
+    producer_awa.py                  # native awa async insert (Python, R10)
   install/
     README.md                        # which system uses which installer
     bootstrap.sh                     # shared PG18 + pg_cron + ash + pgfr base
@@ -83,6 +88,7 @@ benchmark/
     pgmq-partitioned_setup_5min.sql  # partman cron schedule
     install_river.sh
     install_pgboss.sh
+    install_awa.sh                   # pip install awa-pg awa-cli + awa migrate (R10)
                                      # note: pgque + que driven from AMI userdata
   charts/
     r5_analyze.py                    # 2-panel chart (dead tuples + consumer latency)
@@ -90,6 +96,11 @@ benchmark/
     r8_analyze.py                    # R8 main chart: throughput, lag, backlog, CPU per system
     r8_ash_analyze.py                # R8 ASH chart: wait-event breakdown across systems
     r8_pgfr_analyze.py               # R8 pgfr chart: pg-flight-recorder I/O and buffer metrics
+    r10_throughput_chart.py          # R10: 8-panel events/sec timeline
+    r10_sysmetrics_chart.py          # R10: CPU + NVMe write MiB/s + IOPS, all 8 systems
+    r10_ash_chart.py                 # R10: 8-panel ASH (incl. awa); pg_ash color convention
+    r10_summary_table.py             # R10: producer/consumer totals, true backlog, peaks
+    r10_ash_table.py                 # R10: per-phase wait-event mix table
   gifs/
     r4_gif_v17_solarized.py          # dead-tuples animated GIF
     r4_gif_tps_solarized.py          # TPS/latency animated GIF
