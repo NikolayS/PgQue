@@ -20,10 +20,16 @@ type Client struct {
 
 // Connect opens a pgx connection pool to the given DSN and returns a
 // ready-to-use Client. The DSN format is the standard libpq connection
-// string (postgres://user:pass@host/db?...).
+// string (postgres://user:pass@host/db?...). Connect validates
+// connectivity by pinging the pool before returning; a bad DSN or
+// unreachable host surfaces as an error here, not on the first query.
 func Connect(ctx context.Context, dsn string) (*Client, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
+		return nil, fmt.Errorf("pgque: connect: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("pgque: connect: %w", err)
 	}
 	return &Client{pool: pool}, nil
