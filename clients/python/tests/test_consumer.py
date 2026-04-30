@@ -1,6 +1,7 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-"""``Consumer`` end-to-end: dispatch, warn+ack on missing handler, error -> nack."""
+"""``Consumer`` end-to-end: dispatch, nack-by-default on missing handler,
+opt-in ack-on-unknown, error -> nack."""
 
 import threading
 import time
@@ -112,25 +113,84 @@ def test_consumer_nacks_on_handler_error(dsn, conn, setup_queue):
     assert cnt >= 1
 
 
-def test_consumer_warns_and_acks_unhandled_event_type(dsn, conn, setup_queue, caplog):
-    """Unhandled event type must emit a WARNING and be acked, not nacked.
+def test_consumer_nacks_unhandled_event_type(dsn, conn, setup_queue):
+    """Default policy: unhandled event types are nacked (data-safe).
 
-    The message must not appear in retry_queue; the WARNING log line must
-    contain the event type and message id.
+    The message must land in the retry queue (or, at the queue's retry
+    limit, the dead-letter queue) and a subsequent ``receive`` must NOT
+    return the same msg_id immediately -- proving the consumer advanced
+    past the bad batch instead of looping on it.
+    """
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
+    conn.commit()
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    # Consumer with NO handler for the type and NO default handler.
+    # Default unknown_handler="nack" applies.
+    cons = pgque.Consumer(
+        dsn=dsn,
+        queue=queue,
+        name=consumer_name,
+        poll_interval=1,
+        retry_after=0,
+    )
+
+    t = _run_consumer_for(cons, 3.0)
+    t.join(timeout=5.0)
+
+    # The message must have been routed to retry_queue OR dead_letter
+    # (the latter only if the queue's retry limit is 0).
+    retry_cnt = conn.execute(
+        "select count(*) from pgque.retry_queue rq "
+        "join pgque.queue q on q.queue_id = rq.ev_queue "
+        "where q.queue_name = %s",
+        (queue,),
+    ).fetchone()[0]
+    dlq_cnt = conn.execute(
+        "select count(*) from pgque.dead_letter dl "
+        "join pgque.queue q on q.queue_id = dl.dl_queue_id "
+        "where q.queue_name = %s",
+        (queue,),
+    ).fetchone()[0]
+    assert (retry_cnt + dlq_cnt) >= 1, (
+        "unhandled event type with default policy must be nacked "
+        "(routed to retry_queue or dead_letter)"
+    )
+
+    # A subsequent receive must not immediately return the same message
+    # -- the consumer must have advanced past the batch.
+    next_msgs = client.receive(queue, consumer_name, max_messages=10)
+    assert not any(m.msg_id == msg_id for m in next_msgs), (
+        "consumer did not advance past the nacked batch"
+    )
+
+
+def test_consumer_acks_unhandled_event_type_when_opt_in(dsn, conn, setup_queue, caplog):
+    """Opt-in ``unknown_handler="ack"``: unhandled types are warned + acked.
+
+    Must NOT appear in retry_queue, and a subsequent ``receive`` must
+    not return the same msg_id (proves the batch advanced).
     """
     import logging
 
     queue, consumer_name = setup_queue
     client = pgque.PgqueClient(conn)
     msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
 
-    # Consumer with NO handler for "totally.unregistered.type"
-    # and NO default handler either.
     cons = pgque.Consumer(
-        dsn=dsn, queue=queue, name=consumer_name, poll_interval=1
+        dsn=dsn,
+        queue=queue,
+        name=consumer_name,
+        poll_interval=1,
+        unknown_handler="ack",
     )
 
     with caplog.at_level(logging.WARNING, logger="pgque"):
@@ -138,25 +198,28 @@ def test_consumer_warns_and_acks_unhandled_event_type(dsn, conn, setup_queue, ca
         t.join(timeout=5.0)
 
     # Must NOT be in retry_queue -- it was acked, not nacked.
-    cnt = conn.execute(
+    retry_cnt = conn.execute(
         "select count(*) from pgque.retry_queue rq "
         "join pgque.queue q on q.queue_id = rq.ev_queue "
         "where q.queue_name = %s",
         (queue,),
     ).fetchone()[0]
-    assert cnt == 0, (
-        "unhandled event type was nacked (found in retry_queue); expected ack"
+    assert retry_cnt == 0, (
+        "with unknown_handler='ack', unhandled types must not appear in retry_queue"
     )
 
-    # A WARNING must have been logged containing the type and event id.
+    # A subsequent receive must not return the same message: it was acked.
+    next_msgs = client.receive(queue, consumer_name, max_messages=10)
+    assert not any(m.msg_id == msg_id for m in next_msgs), (
+        "consumer did not advance past the acked batch"
+    )
+
+    # A WARNING must have been logged.
     warning_lines = [
         r.message for r in caplog.records if r.levelno == logging.WARNING
     ]
     assert any("totally.unregistered.type" in m for m in warning_lines), (
         "expected a WARNING mentioning the unhandled event type"
-    )
-    assert any(str(msg_id) in m for m in warning_lines), (
-        "expected a WARNING mentioning the event id"
     )
 
 

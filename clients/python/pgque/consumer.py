@@ -8,7 +8,7 @@ import logging
 import signal
 import select
 import threading
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 import psycopg
 from psycopg import sql
@@ -42,12 +42,22 @@ class Consumer:
         - If the handler raises an exception, the message is nacked
           with the default retry_after.
         - If no handler is registered for a message type (and no
-          default ``"*"`` handler exists), a WARNING is logged and the
-          message is acked. Register a handler for that type or use a
-          ``"*"`` catch-all to handle it deliberately.
+          default ``"*"`` handler exists) the behaviour is controlled
+          by the ``unknown_handler`` constructor argument:
+
+          * ``"nack"`` (default) -- nack with reason
+            ``"no handler for type=X"``. This is the data-safe default:
+            messages with no handler are routed to the retry queue (and
+            eventually the dead-letter queue), never silently dropped.
+          * ``"ack"`` -- log a WARNING and let the batch ack consume the
+            message. Choose this when handler registration acts as an
+            allow-list filter and unhandled types should be discarded
+            on purpose.
 
     After all messages in a batch have been dispatched, the batch is
-    acked automatically.
+    acked automatically -- but only if every required nack call
+    succeeded. If any nack fails, the batch is left unfinished so PgQ
+    redelivers it on the next cycle.
     """
 
     def __init__(
@@ -57,15 +67,21 @@ class Consumer:
         queue: str,
         name: str,
         poll_interval: int = 30,
-        max_messages: int = 100,
+        max_messages: int = 500,
         retry_after: int = 60,
+        unknown_handler: Literal["ack", "nack"] = "nack",
     ):
+        if unknown_handler not in ("ack", "nack"):
+            raise ValueError(
+                f"unknown_handler must be 'ack' or 'nack', got {unknown_handler!r}"
+            )
         self.dsn = dsn
         self.queue = queue
         self.name = name
         self.poll_interval = poll_interval
         self.max_messages = max_messages
         self.retry_after = retry_after
+        self.unknown_handler = unknown_handler
 
         self._handlers: dict[str, Callable] = {}
         self._default_handler: Optional[Callable] = None
@@ -175,10 +191,25 @@ class Consumer:
             for msg in msgs:
                 handler = self._handlers.get(msg.type, self._default_handler)
                 if handler is None:
+                    if self.unknown_handler == "ack":
+                        self._log.warning(
+                            "no handler for event type=%s ev_id=%s; acking",
+                            msg.type,
+                            msg.msg_id,
+                        )
+                        continue
+                    # Default: nack so the message is retried / DLQ'd
+                    # rather than silently dropped.
                     self._log.warning(
-                        "no handler for event type=%s ev_id=%s; acking",
+                        "no handler for event type=%s ev_id=%s; nacking",
                         msg.type,
                         msg.msg_id,
+                    )
+                    client.nack(
+                        batch_id,
+                        msg,
+                        retry_after=self.retry_after,
+                        reason=f"no handler for type={msg.type}",
                     )
                     continue
 
