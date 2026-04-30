@@ -478,15 +478,16 @@ awk '
   in_null_check = 1
 }
 in_null_check && /^    end if;$/ {
+  q = "\047"
   print
   print ""
   print "    -- pg_notify channel names are limited to 63 bytes by PostgreSQL."
-  print "    -- PgQue prefixes them with '\''pgque_'\'' (6 bytes), leaving 57 bytes for"
+  print "    -- PgQue prefixes them with " q "pgque_" q " (6 bytes), leaving 57 bytes for"
   print "    -- the queue name.  Reject names that would overflow the channel name"
   print "    -- before any state is written, so callers get a clear error."
   print "    if octet_length(i_queue_name) > 57 then"
-  print "        raise exception '\''queue name too long: % bytes (max 57). '\"'\"'"
-  print "            '\''pg_notify channel '\''pgque_<queue_name>'\'' must fit in 63 bytes.'\'','\"'\"'"
+  print "        raise exception " q "queue name too long: % bytes (max 57). " q
+  print "            " q "pg_notify channel " q q "pgque_<queue_name>" q q " must fit in 63 bytes." q ","
   print "            octet_length(i_queue_name);"
   print "    end if;"
   in_null_check = 0

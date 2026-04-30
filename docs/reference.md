@@ -106,7 +106,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.create_queue(queue text) → integer`
 
-Creates a queue with default settings (3 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists.
+Creates a queue with default settings (3 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists. Queue names are limited to 57 bytes (UTF-8); the `pgque_<name>` LISTEN/NOTIFY channel must fit within PostgreSQL's 63-byte identifier limit.
 Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 
 #### `pgque.drop_queue(queue text) → integer`
@@ -474,7 +474,7 @@ OTel-compatible metric export rows.
 
 #### `pgque.create_queue(queue text, options jsonb) → integer`
 
-Sugar overload: calls `create_queue(queue)` then applies each key in `options` via `set_queue_config`. Recognized keys include `max_retries`, `rotation_period`, `ticker_max_count`, `ticker_max_lag`, `ticker_idle_period`, `ticker_paused`.
+Sugar overload: calls `create_queue(queue)` then applies each key in `options` via `set_queue_config`. Recognized keys include `max_retries`, `rotation_period`, `ticker_max_count`, `ticker_max_lag`, `ticker_idle_period`, `ticker_paused`. The 57-byte queue name limit applies here too (see the 1-arg overload above).
 
 #### `pgque.pause_queue(queue text) → void`
 

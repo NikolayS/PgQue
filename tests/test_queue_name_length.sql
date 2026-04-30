@@ -56,3 +56,52 @@ begin
 
   raise notice 'PASS: 63-byte queue name rejected';
 end $$;
+
+-- Multi-byte UTF-8 boundary: octet_length vs length differ for non-ASCII chars.
+-- 19 × 3-byte char (日) = 57 bytes → accept (locks in octet_length semantics).
+do $$
+begin
+  perform pgque.create_queue(repeat('日', 19));
+  assert exists (
+    select 1 from pgque.get_queue_info()
+    where queue_name = repeat('日', 19)
+  ), '57-byte UTF-8 queue name (19 × 3-byte char) should be created successfully';
+  perform pgque.drop_queue(repeat('日', 19));
+
+  raise notice 'PASS: 57-byte UTF-8 queue name (19 × 3-byte char) accepted';
+end $$;
+
+-- 20 × 3-byte char (日) = 60 bytes → reject.
+do $$
+declare
+  v_caught bool := false;
+begin
+  begin
+    perform pgque.create_queue(repeat('日', 20));
+  exception when others then
+    v_caught := true;
+  end;
+
+  assert v_caught, '60-byte UTF-8 queue name (20 × 3-byte char) should raise an error';
+
+  raise notice 'PASS: 60-byte UTF-8 queue name (20 × 3-byte char) rejected';
+end $$;
+
+-- No partial state: a rejected create_queue must not insert into pgque.queue.
+do $$
+declare
+  v_caught bool := false;
+begin
+  begin
+    perform pgque.create_queue(repeat('q', 58));
+  exception when others then
+    v_caught := true;
+  end;
+
+  assert v_caught, '58-byte queue name should raise an error';
+  assert not exists (
+    select 1 from pgque.queue where queue_name = repeat('q', 58)
+  ), 'rejected queue must not leave partial state in pgque.queue';
+
+  raise notice 'PASS: rejected create_queue leaves no partial state';
+end $$;
