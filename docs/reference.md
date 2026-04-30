@@ -90,7 +90,6 @@ Negative-acknowledges one message. Only `msg.msg_id` (and the `batch_id` argumen
 - If the canonical `ev_retry` is below the queue's `max_retries`, re-queues after `retry_after` (via `pgque.event_retry`).
 - If `ev_retry >= max_retries`, routes the canonical event to `pgque.dead_letter` (via `pgque.event_dead`). This is idempotent: repeated calls for the same terminal message produce exactly one DLQ row (the second call does nothing).
 - If `msg.msg_id` is not present in the active batch — including a `NULL` msg_id or a msg_id from a different batch — raises `msg_id % not found in batch %`.
-
 Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql
@@ -135,11 +134,11 @@ select pgque.set_queue_config('orders', 'max_retries', '10');
 
 ## Lifecycle
 
-Most functions in this section are left on PUBLIC by default — tighten with `revoke execute … from public` if your policy demands it. `uninstall()` is explicitly revoked from `pgque_admin`, but PUBLIC execute is not revoked by default (see its entry below).
+Most functions in this section are left on PUBLIC by default — tighten with `revoke execute … from public` if your policy demands it. `uninstall()` is explicitly revoked from both `pgque_admin` and PUBLIC — it can only be called by a superuser or the schema owner.
 
 #### `pgque.start() → void`
 
-Schedules three pg_cron jobs in the current database: `pgque_ticker` (every 1 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — errors if missing. Idempotent: calls `stop()` first.
+Schedules four pg_cron jobs in the current database: `pgque_ticker` (every 1 s), `pgque_retry_events` (every 30 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — errors if missing. Idempotent: calls `stop()` first.
 Grant: PUBLIC (default). Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.stop() → void`
@@ -166,6 +165,17 @@ Grant: `pgque_reader`. Source: `sql/pgque-additions/lifecycle.sql`.
 Runs one maintenance cycle: rotation step 1 and retry-queue processing. Rotation step 2 is intentionally skipped — it must run in its own transaction and is scheduled separately by `start()`. Returns the total number of operations performed.
 Grant: `pgque_admin`. Source: `sql/pgque-api/maint.sql`.
 
+#### `pgque.maint_retry_events() → integer`
+
+Moves due rows from `pgque.retry_queue` back into queue event tables so they appear in the next tick. Must be called periodically when using `nack()` with retry — `pgque.start()` schedules it as `pgque_retry_events` every 30 s. When driving the scheduler manually, call this alongside `pgque.maint()`:
+
+```sql
+select pgque.maint_retry_events(); -- every 30 seconds, for nack/retry redelivery
+select pgque.maint();              -- every 30 seconds, for rotation + vacuum
+```
+
+Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+
 #### `pgque.ticker() → bigint`
 
 Issues ticks for all unpaused, non-external queues. Returns the number of queues ticked. Call this from your scheduler (every 1 s by default) when not using pg_cron.
@@ -180,13 +190,13 @@ Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 
 #### `pgque.force_tick(queue text) → bigint`
 
-Bypasses the tick thresholds for one queue and forces a tick immediately. Useful in tests and demos; not for production hot paths. Returns the current last tick id.
+Simulates a burst of events on `queue` by advancing the queue's event sequence counter past the `ticker_max_count` threshold, causing the next `pgque.ticker()` call to insert a tick. Does not insert a tick itself — call `pgque.ticker()` (or `pgque.ticker(queue)`) after `force_tick()` to materialise the tick. Returns the current last tick id (from the most recent existing tick, not a new one). Useful in tests and demos; not for production hot paths.
 Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 
 #### `pgque.uninstall() → void`
 
-Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired.
-Grant: `execute` is revoked from both `pgque_admin` and `PUBLIC` — superuser / schema owner only. Source: `sql/pgque-additions/lifecycle.sql`.
+Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired. `execute` is revoked from both `pgque_admin` and PUBLIC — superuser / schema owner only.
+Grant: superuser / schema owner only (both `pgque_admin` and PUBLIC `execute` are explicitly revoked). Source: `sql/pgque-additions/lifecycle.sql`.
 
 ## Observability
 
@@ -435,7 +445,7 @@ Three roles, with inheritance `pgque_admin > pgque_writer > pgque_reader`. Sourc
 | `pgque_writer` | everything `pgque_reader` has, plus `insert_event` (3, 7), `register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` (int, timestamptz), all `send*`, `send_batch*`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`, `dlq_replay`, `dlq_replay_all` |
 | `pgque_admin`  | everything `pgque_writer` has, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` which is explicitly revoked                                                            |
 
-`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Only the schema/install owner (typically a superuser) can run it.
+`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Only the schema/install owner (typically a superuser) can run it. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
 
 ## Experimental (not in default install)
 
