@@ -179,6 +179,29 @@ begin
   raise notice 'PASS: send(text) preserves payload byte-for-byte (incl. untyped literal)';
 end $$;
 
+-- Step 8: max_return < 1 must raise an error
+do $$
+begin
+  perform pgque.create_queue('test_recv_maxzero');
+  perform pgque.register_consumer('test_recv_maxzero', 'c1');
+end $$;
+
+do $$
+declare
+  v_raised boolean := false;
+begin
+  begin
+    perform * from pgque.receive('test_recv_maxzero', 'c1', 0);
+  exception
+    when others then
+      v_raised := true;
+      assert sqlerrm like '%max_return must be >= 1%',
+        'expected max_return validation error, got: ' || sqlerrm;
+  end;
+  assert v_raised, 'receive(..., 0) must raise an error';
+  raise notice 'PASS: receive rejects max_return < 1';
+end $$;
+
 -- Cleanup
 do $$
 begin
@@ -188,5 +211,7 @@ begin
   perform pgque.drop_queue('test_recv_partial');
   perform pgque.unregister_consumer('test_recv_text', 'c1');
   perform pgque.drop_queue('test_recv_text');
+  perform pgque.unregister_consumer('test_recv_maxzero', 'c1');
+  perform pgque.drop_queue('test_recv_maxzero');
   raise notice 'PASS: receive + ack semantics';
 end $$;

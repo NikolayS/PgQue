@@ -69,12 +69,14 @@ The consume API wraps `pgque.next_batch`, `pgque.get_batch_events`, `pgque.finis
 
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
-Pulls the next batch for `consumer` on `queue` and streams up to `max_return` messages. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
+Pulls the next batch for `consumer` on `queue` and streams up to `max_return` messages. `max_return` must be >= 1; passing 0 or a negative value raises an error. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
 Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql
 select * from pgque.receive('orders', 'processor', 100);
 ```
+
+**Batch-ownership caveat.** `max_return` limits the number of rows returned to the caller, but `ack(batch_id)` advances the consumer cursor past the entire underlying batch. If `max_return < ticker_max_count`, calling `ack()` after a partial receive will drop the unreturned rows from the consumer's perspective. Either consume the full batch before acking, or use `max_return >= ticker_max_count` for safe pagination.
 
 #### `pgque.ack(batch_id bigint) → integer`
 
