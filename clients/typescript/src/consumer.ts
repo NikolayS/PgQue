@@ -45,6 +45,12 @@ export class Consumer {
    * Start the poll loop. Resolves when `signal` is aborted; rejects only
    * on terminal errors that should bubble up (the routine `Receive`/`Ack`
    * errors are logged and the loop continues).
+   *
+   * **Abort granularity:** aborting the signal interrupts the inter-poll
+   * `sleep()` immediately, but does **not** cancel an in-flight
+   * `client.receive()` call. If a `receive()` round-trip is in progress
+   * when the signal fires, the loop will drain that call to completion
+   * before exiting.
    */
   async start(signal?: AbortSignal): Promise<void> {
     while (!signal?.aborted) {
