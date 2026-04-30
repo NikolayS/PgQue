@@ -143,6 +143,12 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- assembled before pgque-api/, so these functions do not yet exist when
 -- roles.sql runs. Same convention as sql/pgque-api/send.sql.
 
+-- Step 1: deny PUBLIC (PostgreSQL grants EXECUTE to PUBLIC by default).
+revoke execute on function pgque.receive(text, text, int)                    from public;
+revoke execute on function pgque.ack(bigint)                                 from public;
+revoke execute on function pgque.nack(bigint, pgque.message, interval, text) from public;
+
+-- Step 2: grant to intended roles.
 grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
 grant execute on function pgque.ack(bigint)                                   to pgque_writer;
 grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;

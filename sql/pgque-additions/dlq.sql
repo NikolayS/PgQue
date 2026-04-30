@@ -213,14 +213,28 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- dlq_replay / dlq_replay_all re-insert events — writer-level.
 -- dlq_purge / event_dead: admin-level operations (purge = data loss,
 -- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
--- explicitly for the reason above. Left on PUBLIC default EXECUTE for now;
--- consider revoke-from-public if the codebase adopts that convention more
--- broadly.
+-- explicitly for the reason above.
+--
+-- PUBLIC EXECUTE is revoked from all DLQ functions: the blanket revoke in
+-- roles.sql covers functions that exist at roles.sql run time (which includes
+-- functions defined earlier in the additions layer). dlq.sql runs after
+-- roles.sql in the assembly order, so these functions are created AFTER the
+-- blanket revoke. Explicit per-function revokes below close that gap.
 
 grant select on pgque.dead_letter                           to pgque_reader;
 grant all    on pgque.dead_letter                           to pgque_admin;
 grant all    on sequence pgque.dead_letter_dl_id_seq        to pgque_admin;
 
+-- Revoke PUBLIC EXECUTE (PostgreSQL default) from each DLQ function.
+revoke execute on function pgque.dlq_inspect(text, int)     from public;
+revoke execute on function pgque.dlq_replay(bigint)         from public;
+revoke execute on function pgque.dlq_replay_all(text)       from public;
+revoke execute on function pgque.event_dead(
+    bigint, bigint, text, timestamptz, xid8, int4,
+    text, text, text, text, text, text)                     from public;
+revoke execute on function pgque.dlq_purge(text, interval)  from public;
+
+-- Grant to intended roles.
 grant execute on function pgque.dlq_inspect(text, int)      to pgque_reader;
 grant execute on function pgque.dlq_replay(bigint)          to pgque_writer;
 grant execute on function pgque.dlq_replay_all(text)        to pgque_writer;

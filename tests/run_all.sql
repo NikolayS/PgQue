@@ -22,6 +22,12 @@
 \echo 'Running: test_security_definer'
 \i tests/test_security_definer.sql
 
+\echo 'Running: test_security_public_execute'
+\i tests/test_security_public_execute.sql
+
+\echo 'Running: test_security_extra_maint'
+\i tests/test_security_extra_maint.sql
+
 \echo 'Running: test_core_lifecycle'
 \i tests/test_core_lifecycle.sql
 

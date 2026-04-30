@@ -70,6 +70,20 @@ grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_wr
 -- this file.
 
 -- ---------------------------------------------------------------------------
+-- Deny by default: revoke PUBLIC EXECUTE from all functions in the schema.
+--
+-- PostgreSQL grants EXECUTE to PUBLIC for every new function by default.
+-- This blanket revoke enforces a deny-by-default posture: only the explicit
+-- role grants below (pgque_reader / pgque_writer / pgque_admin) determine
+-- who can call each function.
+--
+-- Note: functions created AFTER this point (pgque-api/*.sql, Section 7) carry
+-- their own colocated "revoke execute ... from public;" statements so they are
+-- also covered without depending on assembly order.
+-- ---------------------------------------------------------------------------
+revoke execute on all functions in schema pgque from public;
+
+-- ---------------------------------------------------------------------------
 -- Admin: full access to everything in the pgque schema
 -- ---------------------------------------------------------------------------
 grant all on schema pgque to pgque_admin;
@@ -78,7 +92,5 @@ grant all on all sequences in schema pgque to pgque_admin;
 grant execute on all functions in schema pgque to pgque_admin;
 
 -- uninstall() drops the entire schema — only superuser / schema owner should run it.
--- SECURITY DEFINER functions default to PUBLIC execute; revoke both PUBLIC and
--- pgque_admin so the function really is superuser-only.
-revoke execute on function pgque.uninstall() from public;
+-- Revoke from pgque_admin (the "all functions" grant above would otherwise include it).
 revoke execute on function pgque.uninstall() from pgque_admin;
