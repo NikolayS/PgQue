@@ -200,6 +200,41 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     await env.client.ack(msgs[0]!.batchId);
   });
 
+  skipIfNoDb('top-level undefined payload becomes JSON null (explicit)', async () => {
+    // `payload: undefined` must round-trip as the JSON literal `null`, not
+    // as a SQL NULL bind (which would fail the JSONB cast) and not as the
+    // JS `undefined` (which JSON.parse would reject).
+    await env.client.send(env.queue, { type: 'undef.explicit', payload: undefined });
+    await advanceQueue(env.client, env.queue);
+    const [m] = await env.client.receive(env.queue, env.consumer, 10);
+    expect(m).toBeDefined();
+    expect(m!.type).toBe('undef.explicit');
+    // Strong assertion: the stored value is the JSON literal `null`.
+    expect(m!.payload).toBe('null');
+    expect(JSON.parse(m!.payload)).toBeNull();
+    await env.client.ack(m!.batchId);
+  });
+
+  skipIfNoDb('omitted payload field becomes JSON null', async () => {
+    // Same coercion when `payload` is absent from the Event object.
+    // Object properties whose value is `undefined` are dropped by
+    // JSON.stringify per spec — that is the documented behavior.
+    // `payload` is required in the Event type, but the runtime explicitly
+    // handles the omitted case by coercing to JSON null. Cast the literal
+    // to exercise that path without weakening the public type signature.
+    await env.client.send(
+      env.queue,
+      { type: 'undef.omitted' } as unknown as Parameters<typeof env.client.send>[1],
+    );
+    await advanceQueue(env.client, env.queue);
+    const [m] = await env.client.receive(env.queue, env.consumer, 10);
+    expect(m).toBeDefined();
+    expect(m!.type).toBe('undef.omitted');
+    expect(m!.payload).toBe('null');
+    expect(JSON.parse(m!.payload)).toBeNull();
+    await env.client.ack(m!.batchId);
+  });
+
   skipIfNoDb('preserves bigint batchId across the API surface', async () => {
     await env.client.send(env.queue, { payload: { x: 1 } });
     await advanceQueue(env.client, env.queue);
