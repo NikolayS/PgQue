@@ -106,8 +106,17 @@ class PgqueClient:
 
         Args:
             queue: Target queue name.
-            payload: Message payload (``dict``/``list`` is JSON-encoded;
-                ``str`` is sent as-is; ``Event`` is unpacked).
+            payload: Message payload. Accepted forms:
+
+                - ``dict`` / ``list`` — JSON-serialised automatically.
+                - ``str`` — must be **valid JSON text** (e.g.
+                  ``'"hello"'``, ``'{"k": 1}'``, ``'42'``, ``'null'``).
+                  The value is cast to ``jsonb`` by PostgreSQL; a bare
+                  Python string like ``"hello"`` (without surrounding
+                  double-quotes) will raise a ``PgqueError``.
+                - ``None`` — stored as JSON ``null``.
+                - :class:`Event` — ``type`` and ``payload`` are unpacked.
+
             type: Event type (default ``"default"``). Ignored if
                 ``payload`` is an ``Event`` (its own ``type`` wins).
 
@@ -152,8 +161,9 @@ class PgqueClient:
         Args:
             queue: Target queue name.
             type: Event type for all messages.
-            payloads: Each entry is JSON-encoded if dict/list, otherwise
-                used as-is.
+            payloads: Each entry is JSON-encoded automatically if
+                ``dict``/``list``; ``str`` entries must be valid JSON
+                text (cast to ``jsonb`` by PostgreSQL).
 
         Returns:
             List of event IDs in input order.
