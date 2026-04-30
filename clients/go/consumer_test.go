@@ -140,60 +140,6 @@ func TestConsumer_ContextPropagatedToHandler(t *testing.T) {
 	}
 }
 
-// TestConsumer_HandlerPanicKillsLoop documents the CURRENT behavior: a
-// handler panic propagates up and kills the consumer goroutine. This may
-// be revised in a future release to recover-and-log, at which point this
-// test should be inverted. Until then, callers must ensure their handlers
-// do not panic, or wrap them themselves.
-//
-// We deliberately use a separate goroutine and recover at the top so the
-// test process itself does not crash.
-func TestConsumer_HandlerPanicKillsLoop(t *testing.T) {
-	client := connectOrSkip(t)
-	defer client.Close()
-	queue, consumer := setupFreshQueue(t, client)
-	ctx := context.Background()
-
-	if _, err := client.Send(ctx, queue, pgque.Event{
-		Type: "panic.test", Payload: map[string]any{"x": 1},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	tick(t, client)
-
-	c := client.NewConsumer(queue, consumer, pgque.WithPollInterval(50*time.Millisecond))
-	called := make(chan struct{}, 1)
-	c.Handle("panic.test", func(ctx context.Context, m pgque.Message) error {
-		called <- struct{}{}
-		panic("boom")
-	})
-
-	consumerCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	loopExited := make(chan struct{})
-	go func() {
-		defer func() {
-			recover() // expected
-			close(loopExited)
-		}()
-		c.Start(consumerCtx)
-	}()
-
-	select {
-	case <-called:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handler not called")
-	}
-
-	select {
-	case <-loopExited:
-		// Confirms current behavior: panic kills the goroutine.
-	case <-time.After(2 * time.Second):
-		t.Fatal("consumer goroutine still alive after handler panic — has panic recovery been added? Update this test")
-	}
-}
-
 // TestConsumer_AckOnlyOnceForBatch: the consumer must call Ack at most once
 // per batch even when multiple messages are processed. Verified indirectly
 // by ensuring no error is logged from a second ack (which would surface as

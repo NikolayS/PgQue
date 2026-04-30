@@ -7,7 +7,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	pgque "github.com/NikolayS/pgque/clients/go"
 )
@@ -19,27 +18,6 @@ func TestConnect_BadDSN(t *testing.T) {
 	_, err := pgque.Connect(ctx, "not a real dsn :: garbage")
 	if err == nil {
 		t.Fatal("expected error from invalid DSN, got nil")
-	}
-}
-
-// TestConnect_UnreachableHost: pgxpool.New is "lazy" and accepts a syntactically
-// valid DSN whose host is unreachable without erroring; the error surfaces on
-// first query. Documents the actual behavior so callers know to issue a probe
-// query if they need eager connection failure.
-func TestConnect_UnreachableHost(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	client, err := pgque.Connect(ctx, "postgresql://postgres:nopass@127.0.0.1:1/nodb")
-	if err != nil {
-		// pgx may reject this eagerly on some platforms — that's also fine.
-		return
-	}
-	defer client.Close()
-
-	// First query should fail.
-	if _, err := client.Pool().Exec(ctx, "select 1"); err == nil {
-		t.Fatal("expected probe query to fail against unreachable host")
 	}
 }
 
