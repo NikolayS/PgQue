@@ -5,6 +5,7 @@ package pgque
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
@@ -29,6 +30,17 @@ type Consumer struct {
 // for now; a future release will surface them via a default handler.
 func (c *Consumer) Handle(eventType string, fn HandlerFunc) {
 	c.handlers[eventType] = fn
+}
+
+// dispatchWithRecover calls fn and converts any panic into a non-nil
+// error so that the caller can nack the message and keep polling.
+func (c *Consumer) dispatchWithRecover(ctx context.Context, fn HandlerFunc, msg Message) (retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("handler panic: %v", r)
+		}
+	}()
+	return fn(ctx, msg)
 }
 
 // Start begins the poll loop and blocks until ctx is cancelled. On
@@ -74,8 +86,8 @@ func (c *Consumer) Start(ctx context.Context) error {
 				}
 				continue
 			}
-			if err := handler(ctx, msg); err != nil {
-				log.Printf("pgque: handler error for %s: %v", msg.Type, err)
+			if handlerErr := c.dispatchWithRecover(ctx, handler, msg); handlerErr != nil {
+				log.Printf("pgque: handler error for %s: %v", msg.Type, handlerErr)
 				if nackErr := c.client.Nack(ctx, batchID, msg); nackErr != nil {
 					log.Printf("pgque: nack error for %s: %v", msg.Type, nackErr)
 				}
