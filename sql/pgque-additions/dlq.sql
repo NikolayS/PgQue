@@ -42,13 +42,10 @@ create index if not exists dl_queue_time_idx
     on pgque.dead_letter (dl_queue_id, dl_time);
 
 -- Unique index: one DLQ row per (queue, consumer, original ev_id).
--- Required for idempotent insert in event_dead() (#104).
 create unique index if not exists dl_queue_consumer_ev_idx
     on pgque.dead_letter (dl_queue_id, dl_consumer_id, ev_id);
 
 -- pgque.event_dead() -- move event to DLQ (called by nack() when max retries exceeded)
--- The insert uses ON CONFLICT DO NOTHING so that repeated nack() calls for
--- the same terminal message are idempotent (fix for #104).
 create or replace function pgque.event_dead(
     i_batch_id bigint,
     i_event_id bigint,
@@ -73,8 +70,6 @@ begin
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
-    -- Idempotent insert: if the same (queue, consumer, ev_id) tuple already
-    -- exists (repeated nack() before ack()), silently skip the duplicate.
     insert into pgque.dead_letter (
         dl_queue_id, dl_consumer_id, dl_reason,
         ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
@@ -213,9 +208,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- dlq_replay / dlq_replay_all re-insert events — writer-level.
 -- dlq_purge / event_dead: admin-level operations (purge = data loss,
 -- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
--- explicitly for the reason above. Left on PUBLIC default EXECUTE for now;
--- consider revoke-from-public if the codebase adopts that convention more
--- broadly.
+-- explicitly for the reason above.
 
 grant select on pgque.dead_letter                           to pgque_reader;
 grant all    on pgque.dead_letter                           to pgque_admin;

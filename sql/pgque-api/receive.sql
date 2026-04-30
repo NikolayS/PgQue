@@ -69,15 +69,6 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
---
--- Fix #98: re-query the canonical event row from the active batch using
--- msg_id, instead of trusting caller-supplied pgque.message fields.
--- A caller with an active batch could otherwise forge DLQ rows by
--- supplying arbitrary ev_id / ev_type / ev_data in the composite.
---
--- Fix #104: DLQ insert is idempotent via ON CONFLICT in event_dead().
--- Repeated nack() calls for the same terminal message produce exactly one
--- dead_letter row.
 create or replace function pgque.nack(
     i_batch_id bigint,
     i_msg pgque.message,
@@ -98,9 +89,6 @@ begin
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
-    -- Re-query the canonical event from the active batch (#98).
-    -- This ignores caller-supplied payload/type/extras and uses the real
-    -- values stored in the queue data tables.
     select ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
            ev_extra1, ev_extra2, ev_extra3, ev_extra4
     into v_ev
@@ -112,10 +100,8 @@ begin
     end if;
 
     if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
-        -- Move to dead letter queue using canonical event data (#98).
-        -- event_dead() uses ON CONFLICT DO NOTHING for idempotency (#104).
         -- ev_txid is bigint in get_batch_events (legacy PgQ signature); text
-        -- round-trip is the codebase convention to widen to xid8 without loss.
+        -- round-trip widens to xid8 without loss.
         perform pgque.event_dead(i_batch_id, v_ev.ev_id,
             coalesce(i_reason, 'max retries exceeded'),
             v_ev.ev_time, v_ev.ev_txid::text::xid8, v_ev.ev_retry,

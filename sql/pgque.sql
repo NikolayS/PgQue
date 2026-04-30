@@ -4317,13 +4317,10 @@ create index if not exists dl_queue_time_idx
     on pgque.dead_letter (dl_queue_id, dl_time);
 
 -- Unique index: one DLQ row per (queue, consumer, original ev_id).
--- Required for idempotent insert in event_dead() (#104).
 create unique index if not exists dl_queue_consumer_ev_idx
     on pgque.dead_letter (dl_queue_id, dl_consumer_id, ev_id);
 
 -- pgque.event_dead() -- move event to DLQ (called by nack() when max retries exceeded)
--- The insert uses ON CONFLICT DO NOTHING so that repeated nack() calls for
--- the same terminal message are idempotent (fix for #104).
 create or replace function pgque.event_dead(
     i_batch_id bigint,
     i_event_id bigint,
@@ -4348,8 +4345,6 @@ begin
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
-    -- Idempotent insert: if the same (queue, consumer, ev_id) tuple already
-    -- exists (repeated nack() before ack()), silently skip the duplicate.
     insert into pgque.dead_letter (
         dl_queue_id, dl_consumer_id, dl_reason,
         ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
@@ -4488,9 +4483,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- dlq_replay / dlq_replay_all re-insert events — writer-level.
 -- dlq_purge / event_dead: admin-level operations (purge = data loss,
 -- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
--- explicitly for the reason above. Left on PUBLIC default EXECUTE for now;
--- consider revoke-from-public if the codebase adopts that convention more
--- broadly.
+-- explicitly for the reason above.
 
 grant select on pgque.dead_letter                           to pgque_reader;
 grant all    on pgque.dead_letter                           to pgque_admin;
@@ -4626,15 +4619,6 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
---
--- Fix #98: re-query the canonical event row from the active batch using
--- msg_id, instead of trusting caller-supplied pgque.message fields.
--- A caller with an active batch could otherwise forge DLQ rows by
--- supplying arbitrary ev_id / ev_type / ev_data in the composite.
---
--- Fix #104: DLQ insert is idempotent via ON CONFLICT in event_dead().
--- Repeated nack() calls for the same terminal message produce exactly one
--- dead_letter row.
 create or replace function pgque.nack(
     i_batch_id bigint,
     i_msg pgque.message,
@@ -4655,9 +4639,6 @@ begin
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
-    -- Re-query the canonical event from the active batch (#98).
-    -- This ignores caller-supplied payload/type/extras and uses the real
-    -- values stored in the queue data tables.
     select ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
            ev_extra1, ev_extra2, ev_extra3, ev_extra4
     into v_ev
@@ -4669,10 +4650,8 @@ begin
     end if;
 
     if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
-        -- Move to dead letter queue using canonical event data (#98).
-        -- event_dead() uses ON CONFLICT DO NOTHING for idempotency (#104).
         -- ev_txid is bigint in get_batch_events (legacy PgQ signature); text
-        -- round-trip is the codebase convention to widen to xid8 without loss.
+        -- round-trip widens to xid8 without loss.
         perform pgque.event_dead(i_batch_id, v_ev.ev_id,
             coalesce(i_reason, 'max retries exceeded'),
             v_ev.ev_time, v_ev.ev_txid::text::xid8, v_ev.ev_retry,
