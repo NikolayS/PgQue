@@ -49,7 +49,7 @@ Now observability output lands on NVMe alongside PG data.
 
 ## 3. `logging_collector=off` means server logs go to systemd journal
 
-With `logging_collector=off` (our default), server logs go to the systemd journal, not a file on disk. Means zero PG log I/O during bench — good for the throughput numbers.
+We run with `logging_collector=off`, so server logs go to systemd-journald (and from there to disk) rather than a PG-managed log file. Log I/O is small relative to WAL + queue table writes at the bench's TPS, but it is not zero — quantifying its share is a follow-up (#123).
 
 If investigating slow queries later, enable `log_statement='all'` + `logging_collector=on` with `log_directory` inside the NVMe data dir (relative path `'log'` resolves correctly since `data_dir` is symlinked to NVMe).
 
@@ -105,7 +105,7 @@ pg_partman is installed in schema `public` (not `partman` as the docs sometimes 
 
 Default `premake=4` works for bench (4 future 5-min partitions = 20 min buffer, enough for 1.5 h bench given 1-min maintenance cron cadence).
 
-`premake=20` (24 partitions steady-state) killed pgmq-partitioned consumer perf (525 TPS vs 6621 with premake=4) due to planner cost across all partitions per query.
+`premake=20` (24 partitions steady-state) collapsed pgmq-partitioned consumer perf to 525 TPS vs 6621 with premake=4. The dominant cost in PG's per-partition planning is the first-query-in-session penalty (Postgres caches the plan for subsequent queries in the same connection). Why this still hurt the consumer at steady state is a follow-up (#124) — likely short-lived connections (or PgBouncer transaction-mode recycling) paying the penalty repeatedly.
 
 `infinite_time_partitions=true` is needed for the maintenance job to keep creating future partitions indefinitely:
 
@@ -240,6 +240,8 @@ At 17 k calls/sec: ~40 % CPU overhead on the **consumer client** (the pgbench pr
 pgbench faithfully prints NOTICE lines to stdout (captured as `consumer.log`). Parser: [tooling/parse_events_consumed.py](tooling/parse_events_consumed.py). Output: `events_consumed_per_sec.csv` + `events_consumed_summary.txt`.
 
 Why NOTICE rather than pgss: DO-wrappers hide per-statement rows from `pg_stat_statements`, so the pgss queryid reported for a consumer is the DO wrapper as a whole — not the SELECT/DELETE inside it — which makes it useless for counting consumed events when the internal shape differs across systems. NOTICE is schema-neutral and authoritative.
+
+Caveat: `RAISE NOTICE` itself has observer effect (server→client protocol message + log subsystem write per fire). The choice was pragmatic for boundary events; high-frequency measurements would benefit from named functions + `pg_stat_statements` instead of DO-wrappers (#127).
 
 ---
 
