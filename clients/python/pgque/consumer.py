@@ -7,6 +7,7 @@
 import logging
 import signal
 import select
+import threading
 from typing import Callable, Optional
 
 import psycopg
@@ -92,16 +93,23 @@ class Consumer:
         """
         self._running = True
 
-        # Graceful shutdown on signals
-        original_sigterm = signal.getsignal(signal.SIGTERM)
-        original_sigint = signal.getsignal(signal.SIGINT)
+        # Graceful shutdown on signals; only main-thread invocations can
+        # install signal handlers. When the consumer is run from a worker
+        # thread (tests, embedded use), skip registration -- callers stop
+        # via Consumer.stop().
+        in_main_thread = threading.current_thread() is threading.main_thread()
+        original_sigterm = None
+        original_sigint = None
 
         def _stop(signum, frame):
             logger.info("received signal %s, shutting down", signum)
             self._running = False
 
-        signal.signal(signal.SIGTERM, _stop)
-        signal.signal(signal.SIGINT, _stop)
+        if in_main_thread:
+            original_sigterm = signal.getsignal(signal.SIGTERM)
+            original_sigint = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGTERM, _stop)
+            signal.signal(signal.SIGINT, _stop)
 
         try:
             with psycopg.connect(self.dsn, autocommit=True) as conn:
@@ -132,8 +140,9 @@ class Consumer:
                         pass
 
         finally:
-            signal.signal(signal.SIGTERM, original_sigterm)
-            signal.signal(signal.SIGINT, original_sigint)
+            if in_main_thread:
+                signal.signal(signal.SIGTERM, original_sigterm)
+                signal.signal(signal.SIGINT, original_sigint)
 
         logger.info("consumer %s stopped", self.name)
 

@@ -9,6 +9,7 @@ import pgque
 
 def _enqueue_and_receive(client, queue, consumer, payload):
     client.send(queue, payload)
+    client.conn.commit()
     client.conn.execute("select pgque.force_tick(%s)", (queue,))
     client.conn.execute("select pgque.ticker()")
     client.conn.commit()
@@ -48,16 +49,17 @@ def test_nack_routes_to_dlq_at_max_retries(conn, setup_queue):
     queue, consumer = setup_queue
     client = pgque.PgqueClient(conn)
 
-    # Set a tiny max_retries=1 so the second attempt routes to DLQ.
+    # Set max_retries=0 so the first nack routes straight to the DLQ.
+    # nack() reads ev_retry from the canonical event row, ignoring any
+    # client-supplied retry_count, so synthesising a retried message in
+    # Python alone has no effect on routing.
     conn.execute(
-        "update pgque.queue set queue_max_retries = 1 where queue_name = %s",
+        "update pgque.queue set queue_max_retries = 0 where queue_name = %s",
         (queue,),
     )
     conn.commit()
 
     msg = _enqueue_and_receive(client, queue, consumer, {"k": "doomed"})
-    # Synthesize "this is already a retry" by setting retry_count=1
-    msg.retry_count = 1
     client.nack(msg.batch_id, msg, retry_after=0, reason="poison pill")
     client.ack(msg.batch_id)
     conn.commit()

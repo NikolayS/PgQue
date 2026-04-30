@@ -7,6 +7,7 @@ import pgque
 
 def test_smoke_send_receive_ack(dsn, queue_name, consumer_name):
     with pgque.connect(dsn) as client:
+        client.conn.execute("select pgque.create_queue(%s)", (queue_name,))
         client.conn.execute("select pgque.subscribe(%s, %s)",
                              (queue_name, consumer_name))
         client.conn.commit()

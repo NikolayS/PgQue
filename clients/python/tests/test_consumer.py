@@ -26,6 +26,7 @@ def test_consumer_dispatches_by_event_type(dsn, conn, setup_queue):
     client = pgque.PgqueClient(conn)
     client.send(queue, {"i": 1}, type="evt.a")
     client.send(queue, {"i": 2}, type="evt.b")
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -55,6 +56,7 @@ def test_consumer_default_handler_catches_unknown(dsn, conn, setup_queue):
     queue, consumer_name = setup_queue
     client = pgque.PgqueClient(conn)
     client.send(queue, {"x": 99}, type="never.registered.type")
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -79,6 +81,7 @@ def test_consumer_nacks_on_handler_error(dsn, conn, setup_queue):
     queue, consumer_name = setup_queue
     client = pgque.PgqueClient(conn)
     client.send(queue, {"i": 1}, type="evt.fail")
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()

@@ -19,6 +19,7 @@ def test_receive_returns_messages_after_tick(conn, setup_queue):
     queue, consumer = setup_queue
     client = pgque.PgqueClient(conn)
     client.send(queue, {"key": "value"})
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -38,6 +39,7 @@ def test_ack_advances_position(conn, setup_queue):
     queue, consumer = setup_queue
     client = pgque.PgqueClient(conn)
     client.send(queue, {"k": 1})
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -55,6 +57,7 @@ def test_receive_returns_at_most_max_messages(conn, setup_queue):
     client = pgque.PgqueClient(conn)
     for i in range(5):
         client.send(queue, {"i": i})
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -69,6 +72,7 @@ def test_receive_preserves_event_type(conn, setup_queue):
     client = pgque.PgqueClient(conn)
     client.send(queue, {"a": 1}, type="evt.alpha")
     client.send(queue, {"b": 2}, type="evt.beta")
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -87,6 +91,7 @@ def test_message_timestamp_round_trip(conn, setup_queue):
     client = pgque.PgqueClient(conn)
     before = dt.datetime.now(dt.timezone.utc)
     client.send(queue, {"x": 1})
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()

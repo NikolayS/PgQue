@@ -50,6 +50,7 @@ def test_send_unicode_payload(conn, setup_queue):
     client = pgque.PgqueClient(conn)
     payload = {"text": "héllo wörld 🎉 — ünicode тест"}
     client.send(queue, payload)
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -67,6 +68,7 @@ def test_send_large_payload(conn, setup_queue):
     client = pgque.PgqueClient(conn)
     big = {"data": "x" * 100_000}
     client.send(queue, big)
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
@@ -144,6 +146,7 @@ def test_jsonb_payload_round_trip(conn, setup_queue, payload, expected):
     queue, consumer = setup_queue
     client = pgque.PgqueClient(conn)
     client.send(queue, payload)
+    conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
     conn.execute("select pgque.ticker()")
     conn.commit()
