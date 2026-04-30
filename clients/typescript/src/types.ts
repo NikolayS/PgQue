@@ -45,9 +45,20 @@ export interface ConsumerOptions {
   /** Interval between poll cycles when no messages are available. Default `30s`. */
   pollInterval?: number;
   /**
-   * Max messages requested per `pgque.receive` call. Default `500`, which
-   * matches the per-tick `ticker_max_count` ceiling so a single poll can
-   * drain a full batch in one round-trip.
+   * Maximum messages returned per `receive()` call. Default `500`, which
+   * matches PgQue's default `ticker_max_count` (the threshold at which
+   * the ticker fires, not a hard ceiling on batch size).
+   *
+   * WARNING: `pgque.ack(batch_id)` finishes the entire underlying batch,
+   * including rows the client never returned. If a batch exceeds
+   * `maxMessages` — which can happen when `ticker_max_lag` fires after
+   * more than `ticker_max_count` events have accumulated, or when the
+   * operator raises `ticker_max_count` — the unreturned rows are skipped
+   * after ack. See https://github.com/NikolayS/pgque/issues/134.
+   *
+   * Set `maxMessages` to at least the queue's `ticker_max_count` for your
+   * workload to make the data-loss window unlikely; a SQL-side
+   * partial-ack fix is tracked in #134.
    */
   maxMessages?: number;
   /**
