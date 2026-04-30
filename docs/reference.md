@@ -163,7 +163,9 @@ Grant: `pgque_reader`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.maint() → integer`
 
-Runs one maintenance cycle: rotation step 1, retry-queue processing, and vacuum of expired tables. Rotation step 2 is intentionally skipped — it must run in its own transaction and is scheduled separately by `start()`. Returns the total number of operations performed.
+Runs one maintenance cycle: rotation step 1 and retry-queue processing. Rotation step 2 is intentionally skipped — it must run in its own transaction and is scheduled separately by `start()`. Returns the total number of operations performed.
+
+PostgreSQL forbids `VACUUM` inside any function or transaction block, so `maint()` does **not** run VACUUM. Autovacuum handles pgque metadata tables by default. For installations with autovacuum disabled, schedule a separate pg_cron job — see the example in the function comment in `sql/pgque-api/maint.sql`.
 Grant: PUBLIC (default). Source: `sql/pgque-api/maint.sql`.
 
 #### `pgque.ticker() → bigint`
