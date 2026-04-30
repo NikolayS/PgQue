@@ -18,7 +18,7 @@ The default 1-second tick is a `pg_cron` schedule, not a design floor. PgQue's e
 - **In-tick sleep loop.** Single cron callout that internally does `pg_sleep(0.01)` ×100 inside one invocation — same effective cadence, fewer scheduler wakeups.
 - **Native sub-second cron.** Future `pg_cron` may support sub-second schedules directly, removing the workaround.
 
-Trade-off at very high tick rates: every tick UPDATEs `pgque.tick` and `pgque.subscription`, so more ticks = more dead tuples on those metadata tables under held-xmin conditions. The event tables stay bloat-free (TRUNCATE rotation); the metadata-table bloat is a separate story and is addressed by extending the same rotation pattern to those tables — at sufficiently high tick rates that mitigation becomes necessary.
+Trade-off at very high tick rates: every tick UPDATEs `pgque.tick` and `pgque.subscription`, so more ticks = more dead tuples on those metadata tables under held-xmin conditions. The event tables stay bloat-free (TRUNCATE rotation); the metadata-table bloat is a separate story. PgQue v0.2.0 has the same UPDATE pattern on the small subscription/tick tables as upstream PgQ — the bloat shape is bounded but real under sustained held-xmin. Extending TRUNCATE-style rotation to those tables is tracked in [#61](https://github.com/NikolayS/pgque/issues/61) / [#62](https://github.com/NikolayS/pgque/pull/62) and will land in a later release.
 
 Rough guidance:
 
