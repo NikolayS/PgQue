@@ -56,9 +56,6 @@ begin;
   create temp table msgs as
     select * from pgque.receive('orders', 'processor', 100);
 
-  -- When msgs is empty both statements below are no-ops: the insert
-  -- affects 0 rows, and the select ... limit 1 returns no rows so ack
-  -- is never called.  No DO block needed.
   insert into processed_orders (order_id, status)
   select (payload::jsonb->>'order_id')::int, 'done'
   from msgs;
