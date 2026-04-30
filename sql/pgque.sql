@@ -4269,18 +4269,7 @@ grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_wr
 -- pgque-api/, so API-layer grants cannot reference their functions from
 -- this file.
 
--- ---------------------------------------------------------------------------
--- Deny by default: revoke PUBLIC EXECUTE from all functions in the schema.
---
--- PostgreSQL grants EXECUTE to PUBLIC for every new function by default.
--- This blanket revoke enforces a deny-by-default posture: only the explicit
--- role grants below (pgque_reader / pgque_writer / pgque_admin) determine
--- who can call each function.
---
--- Note: functions created AFTER this point (pgque-api/*.sql, Section 7) carry
--- their own colocated "revoke execute ... from public;" statements so they are
--- also covered without depending on assembly order.
--- ---------------------------------------------------------------------------
+-- Deny-by-default: revoke PUBLIC EXECUTE so role grants below are authoritative.
 revoke execute on all functions in schema pgque from public;
 
 -- ---------------------------------------------------------------------------
@@ -4513,24 +4502,9 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
 -- explicitly for the reason above.
 --
--- PUBLIC EXECUTE is revoked from all DLQ functions: the blanket revoke in
--- roles.sql covers functions that exist at roles.sql run time (which includes
--- functions defined earlier in the additions layer). dlq.sql runs after
--- roles.sql in the assembly order, so these functions are created AFTER the
--- blanket revoke. Explicit per-function revokes below close that gap.
-
 grant select on pgque.dead_letter                           to pgque_reader;
 grant all    on pgque.dead_letter                           to pgque_admin;
 grant all    on sequence pgque.dead_letter_dl_id_seq        to pgque_admin;
-
--- Revoke PUBLIC EXECUTE (PostgreSQL default) from each DLQ function.
-revoke execute on function pgque.dlq_inspect(text, int)     from public;
-revoke execute on function pgque.dlq_replay(bigint)         from public;
-revoke execute on function pgque.dlq_replay_all(text)       from public;
-revoke execute on function pgque.event_dead(
-    bigint, bigint, text, timestamptz, xid8, int4,
-    text, text, text, text, text, text)                     from public;
-revoke execute on function pgque.dlq_purge(text, interval)  from public;
 
 -- Grant to intended roles.
 grant execute on function pgque.dlq_inspect(text, int)      to pgque_reader;
@@ -4554,11 +4528,6 @@ grant execute on function pgque.dlq_purge(text, interval)   to pgque_admin;
 
 -- maint() runs rotation step1 and retry. Step2 needs its own transaction
 -- (PgQ design requirement) and is scheduled separately by pgque.start().
---
--- queue_extra_maint entries (user-supplied function names stored in pgque.queue)
--- are validated before execution: the function must be owned by the same role
--- that owns maint() (the install owner). pg_get_userbyid() is used instead of
--- pg_authid, which is unreadable by non-superusers on managed PostgreSQL.
 create or replace function pgque.maint()
 returns integer as $$
 declare
@@ -4590,8 +4559,7 @@ begin
                 execute format('select %L::regprocedure', f.func_name || '(text)')
                 into v_func_oid;
             exception when others then
-                raise warning 'pgque.maint: skipping queue_extra_maint entry % '
-                    '— cannot resolve to regprocedure: %', f.func_name, sqlerrm;
+                raise warning 'pgque.maint: skipping % — invalid regprocedure: %', f.func_name, sqlerrm;
                 continue;
             end;
 
@@ -4601,9 +4569,7 @@ begin
             where p.oid = v_func_oid;
 
             if v_func_owner is distinct from v_maint_owner then
-                raise warning 'pgque.maint: skipping queue_extra_maint entry % '
-                    '— owner (%) does not match maint() owner (%), refusing to '
-                    'execute under SECURITY DEFINER', f.func_name, v_func_owner, v_maint_owner;
+                raise warning 'pgque.maint: skipping % — owner % is not maint() owner %', f.func_name, v_func_owner, v_maint_owner;
                 continue;
             end if;
 
@@ -4619,10 +4585,7 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- maint() is admin-level; revoke PUBLIC EXECUTE (PostgreSQL default) and
--- grant only to pgque_admin.
-revoke execute on function pgque.maint() from public;
-grant  execute on function pgque.maint() to pgque_admin;
+grant execute on function pgque.maint() to pgque_admin;
 
 -- pgque-api/receive.sql
 -- pgque.receive(), pgque.ack(), pgque.nack() -- modern consume API
@@ -4766,16 +4729,6 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
--- Colocated here (not in pgque-additions/roles.sql) because roles.sql is
--- assembled before pgque-api/, so these functions do not yet exist when
--- roles.sql runs. Same convention as sql/pgque-api/send.sql.
-
--- Step 1: deny PUBLIC (PostgreSQL grants EXECUTE to PUBLIC by default).
-revoke execute on function pgque.receive(text, text, int)                    from public;
-revoke execute on function pgque.ack(bigint)                                 from public;
-revoke execute on function pgque.nack(bigint, pgque.message, interval, text) from public;
-
--- Step 2: grant to intended roles.
 grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
 grant execute on function pgque.ack(bigint)                                   to pgque_writer;
 grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;
@@ -4913,22 +4866,7 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- Explicit writer grants for the send* + subscribe/unsubscribe family.
--- Colocated here (not in pgque-additions/roles.sql) because roles.sql
--- runs before the pgque-api section during build, so API-layer grants
--- must live alongside the function definitions they apply to.
---
--- Step 1: deny PUBLIC (PostgreSQL grants EXECUTE to PUBLIC by default).
-revoke execute on function pgque.send(text, jsonb)               from public;
-revoke execute on function pgque.send(text, text)                from public;
-revoke execute on function pgque.send(text, text, jsonb)         from public;
-revoke execute on function pgque.send(text, text, text)          from public;
-revoke execute on function pgque.send_batch(text, text, jsonb[]) from public;
-revoke execute on function pgque.send_batch(text, text, text[])  from public;
-revoke execute on function pgque.subscribe(text, text)           from public;
-revoke execute on function pgque.unsubscribe(text, text)         from public;
-
--- Step 2: grant to intended roles.
+-- Grants for the send* + subscribe/unsubscribe family.
 grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
@@ -4938,9 +4876,6 @@ grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
 grant execute on function pgque.subscribe(text, text)           to pgque_writer;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_writer;
 
--- Defense-in-depth: catch any function added above without an explicit revoke.
--- PostgreSQL grants EXECUTE to PUBLIC by default; this sweeps up stragglers.
--- Individual grants (to pgque_reader / pgque_writer / pgque_admin) above this
--- line are not affected — REVOKE FROM PUBLIC does not touch role-specific grants.
+-- Re-revoke to catch functions created in pgque-api after roles.sql ran.
 revoke execute on all functions in schema pgque from public;
 

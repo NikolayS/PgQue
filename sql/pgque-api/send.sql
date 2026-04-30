@@ -130,22 +130,7 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- Explicit writer grants for the send* + subscribe/unsubscribe family.
--- Colocated here (not in pgque-additions/roles.sql) because roles.sql
--- runs before the pgque-api section during build, so API-layer grants
--- must live alongside the function definitions they apply to.
---
--- Step 1: deny PUBLIC (PostgreSQL grants EXECUTE to PUBLIC by default).
-revoke execute on function pgque.send(text, jsonb)               from public;
-revoke execute on function pgque.send(text, text)                from public;
-revoke execute on function pgque.send(text, text, jsonb)         from public;
-revoke execute on function pgque.send(text, text, text)          from public;
-revoke execute on function pgque.send_batch(text, text, jsonb[]) from public;
-revoke execute on function pgque.send_batch(text, text, text[])  from public;
-revoke execute on function pgque.subscribe(text, text)           from public;
-revoke execute on function pgque.unsubscribe(text, text)         from public;
-
--- Step 2: grant to intended roles.
+-- Grants for the send* + subscribe/unsubscribe family.
 grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;

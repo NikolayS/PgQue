@@ -69,18 +69,7 @@ grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_wr
 -- pgque-api/, so API-layer grants cannot reference their functions from
 -- this file.
 
--- ---------------------------------------------------------------------------
--- Deny by default: revoke PUBLIC EXECUTE from all functions in the schema.
---
--- PostgreSQL grants EXECUTE to PUBLIC for every new function by default.
--- This blanket revoke enforces a deny-by-default posture: only the explicit
--- role grants below (pgque_reader / pgque_writer / pgque_admin) determine
--- who can call each function.
---
--- Note: functions created AFTER this point (pgque-api/*.sql, Section 7) carry
--- their own colocated "revoke execute ... from public;" statements so they are
--- also covered without depending on assembly order.
--- ---------------------------------------------------------------------------
+-- Deny-by-default: revoke PUBLIC EXECUTE so role grants below are authoritative.
 revoke execute on all functions in schema pgque from public;
 
 -- ---------------------------------------------------------------------------

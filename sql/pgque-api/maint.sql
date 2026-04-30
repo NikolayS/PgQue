@@ -6,11 +6,6 @@
 
 -- maint() runs rotation step1 and retry. Step2 needs its own transaction
 -- (PgQ design requirement) and is scheduled separately by pgque.start().
---
--- queue_extra_maint entries (user-supplied function names stored in pgque.queue)
--- are validated before execution: the function must be owned by the same role
--- that owns maint() (the install owner). pg_get_userbyid() is used instead of
--- pg_authid, which is unreadable by non-superusers on managed PostgreSQL.
 create or replace function pgque.maint()
 returns integer as $$
 declare
@@ -42,8 +37,7 @@ begin
                 execute format('select %L::regprocedure', f.func_name || '(text)')
                 into v_func_oid;
             exception when others then
-                raise warning 'pgque.maint: skipping queue_extra_maint entry % '
-                    '— cannot resolve to regprocedure: %', f.func_name, sqlerrm;
+                raise warning 'pgque.maint: skipping % — invalid regprocedure: %', f.func_name, sqlerrm;
                 continue;
             end;
 
@@ -53,9 +47,7 @@ begin
             where p.oid = v_func_oid;
 
             if v_func_owner is distinct from v_maint_owner then
-                raise warning 'pgque.maint: skipping queue_extra_maint entry % '
-                    '— owner (%) does not match maint() owner (%), refusing to '
-                    'execute under SECURITY DEFINER', f.func_name, v_func_owner, v_maint_owner;
+                raise warning 'pgque.maint: skipping % — owner % is not maint() owner %', f.func_name, v_func_owner, v_maint_owner;
                 continue;
             end if;
 
@@ -71,7 +63,4 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- maint() is admin-level; revoke PUBLIC EXECUTE (PostgreSQL default) and
--- grant only to pgque_admin.
-revoke execute on function pgque.maint() from public;
-grant  execute on function pgque.maint() to pgque_admin;
+grant execute on function pgque.maint() to pgque_admin;

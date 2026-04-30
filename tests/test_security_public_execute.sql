@@ -18,55 +18,19 @@ end $$;
 
 do $$
 declare
-  v_func text;
-  v_has_execute bool;
-  v_violations text[] := '{}';
-  -- Functions that must NOT be executable by PUBLIC / ungranted roles.
-  -- This list covers all mutating and admin-level APIs.
-  funcs text[] := ARRAY[
-    'pgque.create_queue(text)',
-    'pgque.drop_queue(text)',
-    'pgque.drop_queue(text, boolean)',
-    'pgque.set_queue_config(text, text, text)',
-    'pgque.insert_event(text, text, text)',
-    'pgque.insert_event(text, text, text, text, text, text, text)',
-    'pgque.send(text, text)',
-    'pgque.send(text, jsonb)',
-    'pgque.send(text, text, text)',
-    'pgque.send(text, text, jsonb)',
-    'pgque.send_batch(text, text, text[])',
-    'pgque.send_batch(text, text, jsonb[])',
-    'pgque.receive(text, text, integer)',
-    'pgque.ack(bigint)',
-    'pgque.nack(bigint, pgque.message, interval, text)',
-    'pgque.subscribe(text, text)',
-    'pgque.unsubscribe(text, text)',
-    'pgque.register_consumer(text, text)',
-    'pgque.unregister_consumer(text, text)',
-    'pgque.next_batch(text, text)',
-    'pgque.finish_batch(bigint)',
-    'pgque.dlq_replay(bigint)',
-    'pgque.dlq_replay_all(text)',
-    'pgque.dlq_purge(text, interval)',
-    'pgque.start()',
-    'pgque.stop()',
-    'pgque.maint()',
-    'pgque.ticker()',
-    'pgque.force_tick(text)'
-  ];
+  v_violations int;
+  v_names text;
 begin
-  foreach v_func in array funcs loop
-    select has_function_privilege('pgque_none_role', v_func, 'EXECUTE')
-    into v_has_execute;
+  select count(*),
+         string_agg(p.proname || '(' || pg_catalog.pg_get_function_arguments(p.oid) || ')', ', ')
+    into v_violations, v_names
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'pgque'
+     and has_function_privilege('pgque_none_role', p.oid, 'EXECUTE');
 
-    if v_has_execute then
-      v_violations := array_append(v_violations, v_func);
-    end if;
-  end loop;
+  assert v_violations = 0,
+    'PUBLIC EXECUTE not revoked from ' || v_violations::text || ' pgque function(s): ' || v_names;
 
-  assert array_length(v_violations, 1) is null,
-    'PUBLIC EXECUTE not revoked from ' || array_length(v_violations, 1)::text
-    || ' function(s): ' || array_to_string(v_violations, ', ');
-
-  raise notice 'PASS: security_public_execute - PUBLIC EXECUTE revoked from all mutating functions';
+  raise notice 'PASS: security_public_execute - PUBLIC EXECUTE revoked from all pgque functions';
 end $$;
