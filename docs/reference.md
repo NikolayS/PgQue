@@ -91,8 +91,6 @@ Negative-acknowledges one message. Only `msg.msg_id` (and the `batch_id` argumen
 - If `ev_retry >= max_retries`, routes the canonical event to `pgque.dead_letter` (via `pgque.event_dead`). This is idempotent: repeated calls for the same terminal message produce exactly one DLQ row (the second call does nothing).
 - If `msg.msg_id` is not present in the active batch — including a `NULL` msg_id or a msg_id from a different batch — raises `msg_id % not found in batch %`.
 
-**v0.2 hardening note:** Prior versions trusted the caller-supplied `retry_count` to decide DLQ routing, which was a forge vector. Configure `max_retries` via `set_queue_config` to control DLQ promotion; do not forge `retry_count` in the composite.
-
 Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql
