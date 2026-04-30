@@ -111,9 +111,10 @@ class PgqueClient:
                 - ``dict`` / ``list`` — JSON-serialised automatically.
                 - ``str`` — must be **valid JSON text** (e.g.
                   ``'"hello"'``, ``'{"k": 1}'``, ``'42'``, ``'null'``).
-                  The value is cast to ``jsonb`` by PostgreSQL; a bare
-                  Python string like ``"hello"`` (without surrounding
-                  double-quotes) will raise a ``PgqueError``.
+                  The value is cast to ``jsonb`` by PostgreSQL. The
+                  Python literal ``"hello"`` has content ``hello``,
+                  which is not valid JSON; pass ``'"hello"'`` or
+                  ``json.dumps("hello")`` instead.
                 - ``None`` — stored as JSON ``null``.
                 - :class:`Event` — ``type`` and ``payload`` are unpacked.
 
