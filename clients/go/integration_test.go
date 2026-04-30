@@ -132,9 +132,10 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 	ctx := context.Background()
 
 	// Lower the retry limit for this queue so the test is fast.
+	// set_queue_config prepends "queue_" internally, so pass "max_retries".
 	if _, err := client.Pool().Exec(ctx,
-		"select pgque.set_queue_max_retries($1, 2)", queue); err != nil {
-		t.Skipf("set_queue_max_retries not available: %v", err)
+		"select pgque.set_queue_config($1, 'max_retries', '2')", queue); err != nil {
+		t.Fatalf("set_queue_config max_retries: %v", err)
 	}
 
 	if _, err := client.Send(ctx, queue, pgque.Event{
@@ -145,9 +146,17 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 
 	// Drive the message through nack cycles. After max_retries nacks the
 	// backend routes the message to the DLQ instead of retry_queue.
-	// Do not call Ack after Nack — they are mutually exclusive per-batch.
+	// Ack is required after all Nack calls to close the batch; nack routes
+	// individual events (to retry_queue or dead_letter) but does not finish
+	// the batch itself — that is always done via Ack / finish_batch.
 	const maxCycles = 5
 	for i := 0; i < maxCycles; i++ {
+		// Expire any pending retry delays so maint_retry_events picks them up
+		// immediately; in production these would expire naturally.
+		if _, err := client.Pool().Exec(ctx,
+			"update pgque.retry_queue set ev_retry_after = now() - interval '1 second'"); err != nil {
+			t.Logf("retry_queue update unavailable: %v", err)
+		}
 		// Re-queue retry_queue rows for redelivery.
 		if _, err := client.Pool().Exec(ctx, "select pgque.maint_retry_events()"); err != nil {
 			t.Logf("maint_retry_events unavailable, using ticker fallback: %v", err)
@@ -162,10 +171,17 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 			// No more messages in active queue; they may be in DLQ already.
 			break
 		}
+		var batchID int64
 		for _, m := range msgs {
+			batchID = m.BatchID
 			if err := client.Nack(ctx, m.BatchID, m); err != nil {
 				t.Fatal(err)
 			}
+		}
+		// Close the batch so PgQ advances the consumer cursor and the
+		// retry_queue rows become eligible for redelivery on the next cycle.
+		if err := client.Ack(ctx, batchID); err != nil {
+			t.Fatalf("ack after nack: %v", err)
 		}
 	}
 
