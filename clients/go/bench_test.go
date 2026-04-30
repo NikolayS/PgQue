@@ -39,7 +39,7 @@ func BenchmarkReceive_Empty(b *testing.B) {
 	queue, consumer := benchSetup(b, client)
 	ctx := context.Background()
 
-	if _, err := client.Pool().Exec(ctx, "select pgque.ticker()"); err != nil {
+	if _, err := client.Pool().Exec(ctx, "select pgque.ticker($1)", queue); err != nil {
 		b.Fatal(err)
 	}
 
@@ -66,7 +66,7 @@ func BenchmarkSendReceiveAck(b *testing.B) {
 		}); err != nil {
 			b.Fatal(err)
 		}
-		if _, err := client.Pool().Exec(ctx, "select pgque.ticker()"); err != nil {
+		if _, err := client.Pool().Exec(ctx, "select pgque.ticker($1)", queue); err != nil {
 			b.Fatal(err)
 		}
 		msgs, err := client.Receive(ctx, queue, consumer, 100)
@@ -97,7 +97,7 @@ func BenchmarkConsumer_DispatchThroughput(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	if _, err := client.Pool().Exec(ctx, "select pgque.ticker()"); err != nil {
+	if _, err := client.Pool().Exec(ctx, "select pgque.ticker($1)", queue); err != nil {
 		b.Fatal(err)
 	}
 

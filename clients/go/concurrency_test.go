@@ -117,7 +117,7 @@ func TestRace_SendReceiveLoop(t *testing.T) {
 				return
 			default:
 			}
-			if _, err := client.Pool().Exec(ctx, "select pgque.ticker()"); err != nil {
+			if _, err := client.Pool().Exec(ctx, "select pgque.ticker($1)", queue); err != nil {
 				if ctx.Err() != nil {
 					return
 				}

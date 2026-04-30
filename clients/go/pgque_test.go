@@ -113,7 +113,7 @@ func TestSendAndReceive(t *testing.T) {
 	}
 
 	// Ticker
-	_, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()")
+	_, err = client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestNack(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()"); err != nil {
+	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -218,7 +218,7 @@ func TestNackPlaceholderCount(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()"); err != nil {
+	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -293,7 +293,7 @@ func TestConsumer_HandlerPanicRecoversAndContinues(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()"); err != nil {
+	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -367,7 +367,7 @@ func TestConsumerHandlerNacksOnError(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()"); err != nil {
+	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -432,7 +432,7 @@ func TestConsumerHandlerDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.Pool().Exec(ctx, "SELECT pgque.ticker()")
+	client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')")
 
 	received := make(chan pgque.Message, 1)
 	consumer := client.NewConsumer("gotest_queue", "gotest_consumer",
