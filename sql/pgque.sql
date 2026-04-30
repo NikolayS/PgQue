@@ -4520,16 +4520,12 @@ grant execute on function pgque.dlq_purge(text, interval)   to pgque_admin;
 -- transaction from step1 (PgQ design requirement). pgque.start() schedules
 -- step2 as its own pg_cron job.
 --
--- VACUUM note (issue #110): PostgreSQL forbids VACUUM inside any function or
--- transaction block.  The 'vacuum' rows emitted by maint_operations() are
--- skipped here with a NOTICE logged.  When autovacuum is enabled (the default)
--- it handles pgque metadata tables automatically.  Installations with
+-- PostgreSQL forbids VACUUM inside any function or transaction block.
+-- 'vacuum' rows from maint_operations() are skipped with a NOTICE.
+-- Autovacuum handles pgque metadata tables by default; installations with
 -- autovacuum disabled should schedule a separate pg_cron job, e.g.:
 --   select cron.schedule('pgque-vacuum', '0 * * * *',
 --     'vacuum pgque.queue, pgque.tick, pgque.subscription, pgque.consumer');
---
--- NOTE: any user-supplied queue_extra_maint function that itself issues VACUUM
--- is also subject to the no-VACUUM-in-PL/pgSQL rule and will fail at runtime.
 create or replace function pgque.maint()
 returns integer as $$
 declare
@@ -4543,9 +4539,7 @@ begin
         if f.func_name = 'pgque.maint_rotate_tables_step2' then
             continue;
         elsif f.func_name = 'vacuum' then
-            -- VACUUM cannot be executed from a function (PostgreSQL restriction).
-            -- Emit a notice so operators can diagnose why VACUUM did not run.
-            -- Autovacuum handles pgque metadata tables by default; see issue #110.
+            -- VACUUM cannot run inside a function; notify so operators can diagnose.
             raise notice 'pgque.maint: skipping VACUUM (%) — schedule via pg_cron if autovacuum is off', f.func_arg;
             continue;
         elsif f.func_arg is not null then
