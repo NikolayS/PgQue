@@ -39,9 +39,10 @@ consumer = pgque.Consumer(
 def handle_order(msg: pgque.Message) -> None:
     print(f"got {msg.type}: {msg.payload}")
 
-# Optional: register a catch-all handler for any unregistered type.
-# Without it, messages whose type has no handler are nacked automatically
-# (moved to retry_queue) rather than silently dropped.
+# Optional: catch-all handler for types with no specific handler.
+# Without it, messages with unhandled types are logged at WARNING and
+# acked. Register a handler for that type or use a "*" catch-all to
+# handle them deliberately.
 @consumer.on("*")
 def handle_unknown(msg: pgque.Message) -> None:
     print(f"unhandled type {msg.type!r}: {msg.payload}")

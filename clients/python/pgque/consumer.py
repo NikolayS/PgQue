@@ -42,8 +42,9 @@ class Consumer:
         - If the handler raises an exception, the message is nacked
           with the default retry_after.
         - If no handler is registered for a message type (and no
-          default ``"*"`` handler exists), the message is nacked with
-          reason ``"unhandled event type"`` rather than silently dropped.
+          default ``"*"`` handler exists), a WARNING is logged and the
+          message is acked. Register a handler for that type or use a
+          ``"*"`` catch-all to handle it deliberately.
 
     After all messages in a batch have been dispatched, the batch is
     acked automatically.
@@ -69,6 +70,7 @@ class Consumer:
         self._handlers: dict[str, Callable] = {}
         self._default_handler: Optional[Callable] = None
         self._running = False
+        self._log = logging.getLogger(f"pgque.consumer.{name}")
 
     def on(self, event_type: str):
         """Decorator to register a handler for a given event type.
@@ -173,15 +175,10 @@ class Consumer:
             for msg in msgs:
                 handler = self._handlers.get(msg.type, self._default_handler)
                 if handler is None:
-                    logger.warning(
-                        "no handler (and no '*' default) for type=%r, nacking msg_id=%d",
+                    self._log.warning(
+                        "no handler for event type=%s ev_id=%s; acking",
                         msg.type,
                         msg.msg_id,
-                    )
-                    client.nack(
-                        batch_id, msg,
-                        retry_after=self.retry_after,
-                        reason="unhandled event type",
                     )
                     continue
 
