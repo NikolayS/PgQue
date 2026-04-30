@@ -106,9 +106,11 @@ func (c *Client) Ack(ctx context.Context, batchID int64) error {
 }
 
 // Nack negatively acknowledges a single message, routing it to retry or DLQ.
+// pgque.message has 10 fields: msg_id, batch_id, type, payload, retry_count,
+// created_at, extra1, extra2, extra3, extra4 — placeholders $2..$11.
 func (c *Client) Nack(ctx context.Context, batchID int64, msg Message) error {
 	_, err := c.pool.Exec(ctx,
-		"SELECT pgque.nack($1, ROW($2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)::pgque.message, '60 seconds'::interval, null)",
+		"SELECT pgque.nack($1, ROW($2,$3,$4,$5,$6,$7,$8,$9,$10,$11)::pgque.message, '60 seconds'::interval, null)",
 		batchID, msg.MsgID, msg.BatchID, msg.Type, msg.Payload,
 		msg.RetryCount, msg.CreatedAt,
 		msg.Extra1, msg.Extra2, msg.Extra3, msg.Extra4)
