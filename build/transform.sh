@@ -466,11 +466,6 @@ awk '
 
 echo "PASS: pg_notify injected into ticker function"
 
-# Patch create_queue: validate queue name length before any state is written.
-# pg_notify channel names are limited to 63 bytes by PostgreSQL.  PgQue
-# prefixes them with 'pgque_' (6 bytes), so queue names > 57 bytes would
-# overflow the channel name and produce a cryptic PG error in ticker().
-# Inject the length check right after the existing NULL guard.
 CREATE_QUEUE_FILE="${OUTPUT_DIR}/functions/pgque.create_queue.sql"
 awk '
 /^    if i_queue_name is null then$/ {
