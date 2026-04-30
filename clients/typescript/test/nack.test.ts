@@ -21,7 +21,7 @@ describe('nack routing (env-gated)', () => {
 
   skipIfNoDb('first nack lands in retry_queue, not dead_letter', async () => {
     await env.client.send(env.queue, { type: 'nack.test', payload: { v: 1 } });
-    await env.client.forceTick(env.queue);
+    await env.client.flush(env.queue);
     const msgs = await env.client.receive(env.queue, env.consumer, 10);
     expect(msgs).toHaveLength(1);
     const m = msgs[0]!;
@@ -50,7 +50,7 @@ describe('nack routing (env-gated)', () => {
 
   skipIfNoDb('nack honors custom retryAfter and reason', async () => {
     await env.client.send(env.queue, { type: 'nack.custom', payload: { v: 1 } });
-    await env.client.forceTick(env.queue);
+    await env.client.flush(env.queue);
     const [m] = await env.client.receive(env.queue, env.consumer, 10);
     expect(m).toBeDefined();
 
@@ -82,7 +82,7 @@ describe('nack routing (env-gated)', () => {
     );
 
     await env.client.send(env.queue, { type: 'nack.dlq', payload: { v: 1 } });
-    await env.client.forceTick(env.queue);
+    await env.client.flush(env.queue);
     const [m] = await env.client.receive(env.queue, env.consumer, 10);
     expect(m).toBeDefined();
 

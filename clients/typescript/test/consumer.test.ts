@@ -23,7 +23,7 @@ describe('Consumer (env-gated)', () => {
     await env.client.send(env.queue, { type: 'a', payload: { v: 1 } });
     await env.client.send(env.queue, { type: 'b', payload: { v: 2 } });
     await env.client.send(env.queue, { type: 'a', payload: { v: 3 } });
-    await env.client.forceTick(env.queue);
+    await env.client.flush(env.queue);
 
     const consumer = env.client.newConsumer(env.queue, env.consumer, {
       pollInterval: 50,
@@ -56,7 +56,7 @@ describe('Consumer (env-gated)', () => {
   skipIfNoDb('handler error nacks just that message; batch still acks', async () => {
     await env.client.send(env.queue, { type: 'fail', payload: { i: 0 } });
     await env.client.send(env.queue, { type: 'fail', payload: { i: 1 } });
-    await env.client.forceTick(env.queue);
+    await env.client.flush(env.queue);
 
     const consumer = env.client.newConsumer(env.queue, env.consumer, {
       pollInterval: 50,
@@ -107,7 +107,7 @@ describe('Consumer (env-gated)', () => {
 
   skipIfNoDb('unhandled message types are nacked, not silently consumed', async () => {
     await env.client.send(env.queue, { type: 'unknown', payload: { v: 1 } });
-    await env.client.forceTick(env.queue);
+    await env.client.flush(env.queue);
 
     const consumer = env.client.newConsumer(env.queue, env.consumer, {
       pollInterval: 50,
