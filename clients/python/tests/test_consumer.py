@@ -5,6 +5,7 @@
 import logging
 import threading
 import time
+from unittest import mock
 
 import pgque
 
@@ -251,3 +252,120 @@ def test_consumer_stop_returns_promptly(dsn, setup_queue):
     cons.stop()
     t.join(timeout=15)
     assert not t.is_alive(), "consumer did not stop after stop()"
+
+
+def test_consumer_does_not_ack_when_unknown_type_nack_fails(
+    dsn, conn, setup_queue
+):
+    """If ``nack()`` raises in the unknown-handler path, the batch must
+    NOT be acked. PgQ must redeliver the whole batch on the next poll.
+    """
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
+    conn.commit()
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=1
+    )
+
+    real_client_init = pgque.PgqueClient.__init__
+    ack_calls: list[int] = []
+    nack_calls: list[int] = []
+
+    def fake_init(self, c):
+        real_client_init(self, c)
+        original_ack = self.ack
+
+        def spy_ack(batch_id):
+            ack_calls.append(batch_id)
+            return original_ack(batch_id)
+
+        def explode_nack(batch_id, msg, retry_after=60, reason=None):
+            nack_calls.append(msg.msg_id)
+            raise RuntimeError("simulated nack failure")
+
+        self.ack = spy_ack  # type: ignore[method-assign]
+        self.nack = explode_nack  # type: ignore[method-assign]
+
+    with mock.patch.object(pgque.PgqueClient, "__init__", fake_init):
+        t = _run_consumer_for(cons, 3.0)
+        t.join(timeout=5.0)
+
+    assert nack_calls, "nack was never called for the unhandled message"
+    assert ack_calls == [], (
+        f"ack must not be called when nack raised; got ack_calls={ack_calls}"
+    )
+
+    # Message must still be visible: re-receive returns the same msg_id.
+    follow_up = client.receive(queue, consumer_name, max_messages=10)
+    assert any(m.msg_id == msg_id for m in follow_up), (
+        "batch advanced even though nack failed; data was lost"
+    )
+    # Cleanup: ack the redelivered batch so the queue tear-down is clean.
+    if follow_up:
+        client.ack(follow_up[0].batch_id)
+        conn.commit()
+
+
+def test_consumer_does_not_ack_when_handler_error_nack_fails(
+    dsn, conn, setup_queue
+):
+    """If ``nack()`` raises in the handler-error path, the batch must
+    NOT be acked.
+    """
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    msg_id = client.send(queue, {"i": 1}, type="evt.fail")
+    conn.commit()
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name,
+        poll_interval=1, retry_after=0,
+    )
+
+    @cons.on("evt.fail")
+    def _boom(m: pgque.Message):
+        raise RuntimeError("handler boom")
+
+    real_client_init = pgque.PgqueClient.__init__
+    ack_calls: list[int] = []
+    nack_calls: list[int] = []
+
+    def fake_init(self, c):
+        real_client_init(self, c)
+        original_ack = self.ack
+
+        def spy_ack(batch_id):
+            ack_calls.append(batch_id)
+            return original_ack(batch_id)
+
+        def explode_nack(batch_id, msg, retry_after=60, reason=None):
+            nack_calls.append(msg.msg_id)
+            raise RuntimeError("simulated nack failure")
+
+        self.ack = spy_ack  # type: ignore[method-assign]
+        self.nack = explode_nack  # type: ignore[method-assign]
+
+    with mock.patch.object(pgque.PgqueClient, "__init__", fake_init):
+        t = _run_consumer_for(cons, 3.0)
+        t.join(timeout=5.0)
+
+    assert nack_calls, "nack was never called after handler raised"
+    assert ack_calls == [], (
+        f"ack must not be called when nack raised; got ack_calls={ack_calls}"
+    )
+
+    follow_up = client.receive(queue, consumer_name, max_messages=10)
+    assert any(m.msg_id == msg_id for m in follow_up), (
+        "batch advanced even though nack failed; data was lost"
+    )
+    if follow_up:
+        client.ack(follow_up[0].batch_id)
+        conn.commit()
