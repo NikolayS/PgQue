@@ -191,7 +191,7 @@ DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `t
 
 PgQue is **early-stage** as a product and API layer. PgQ itself has run at Skype scale for over a decade. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
 
-The default install stays small in v0.1; additional APIs live under `sql/experimental/` until they are worth promoting. See [blueprints/PHASES.md](blueprints/PHASES.md).
+The default install stays small; additional APIs live under `sql/experimental/` until they are worth promoting. See [blueprints/PHASES.md](blueprints/PHASES.md).
 
 ## Docs
 
@@ -213,18 +213,23 @@ select pgque.subscribe('orders', 'processor');
 select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
 
 -- tx 3: advance the queue if you are not using pg_cron
--- (force_tick bypasses lag/count thresholds — handy in demos/tests)
+-- (force_tick bumps the event-seq threshold; ticker() then inserts the tick)
 select pgque.force_tick('orders');
 select pgque.ticker();
 
--- tx 4: receive (batch_id is the same for every returned row)
-select * from pgque.receive('orders', 'processor', 100);
+-- tx 4: receive (all returned rows share the same batch_id)
+select * from pgque.receive('orders', 'processor', 100) \gset
+-- or capture into a temp table: create temp table msgs as select * from ...
 
--- tx 5: acknowledge
+-- tx 5: acknowledge — pass the batch_id captured above
+-- with \gset the column is named "batch_id" from the first row:
+-- select pgque.ack(:batch_id);
+-- or with a temp table:
+-- select pgque.ack((select batch_id from msgs limit 1));
 select pgque.ack(:batch_id);
 ```
 
-Send, tick, and receive should be separate transactions — that's PgQ's snapshot-based design working as intended. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `force_tick()` is mainly for demos, tests, and manual operation.
+Send, tick, and receive should be separate transactions — that's PgQ's snapshot-based design working as intended. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `force_tick()` is mainly for demos, tests, and manual operation. The `\gset` trick works in psql — for application code, store the `batch_id` from any returned row.
 
 Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, exactly-once, and recurring jobs in [examples](docs/examples.md).
 
@@ -238,7 +243,8 @@ PgQue is SQL-first, so any Postgres driver works. Example client libraries exist
 from pgque import PgqueClient, Consumer
 
 client = PgqueClient(conn)
-client.send("orders", {"order_id": 42})
+# type= must match the event type the consumer listens on
+client.send("orders", {"order_id": 42}, type="order.created")
 
 consumer = Consumer(dsn, queue="orders", name="processor", poll_interval=30)
 
@@ -278,14 +284,21 @@ if (messages.length > 0) await client.ack(messages[0].batch_id);
 
 ```sql
 select pgque.send('orders', '{"order_id": 42}'::jsonb);
-select * from pgque.receive('orders', 'processor', 100);
-select pgque.ack(batch_id);
+
+-- receive returns rows; each row carries the batch_id
+create temp table msgs as
+  select * from pgque.receive('orders', 'processor', 100);
+
+-- ack uses the batch_id from any row (all rows share the same batch_id)
+select pgque.ack((select batch_id from msgs limit 1));
 ```
 
 ## Benchmarks
 
-Preliminary laptop numbers: ~86k ev/s PL/pgSQL insert, ~2.4M ev/s consumer
-read rate, zero dead-tuple growth under a 30-minute sustained test. See
+Preliminary laptop numbers: ~86k ev/s PL/pgSQL insert, ~2.4M ev/s primitive
+batch read rate (`get_batch_events`), zero dead-tuple growth under a 30-minute
+sustained test. The batch read figure reflects raw PgQ primitive throughput,
+not end-to-end `receive()`/`ack()` consumer throughput. See
 [docs/benchmarks.md](docs/benchmarks.md) for the full table and methodology.
 Server-class numbers to follow.
 
