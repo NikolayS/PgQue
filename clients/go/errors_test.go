@@ -22,8 +22,7 @@ func TestConnect_BadDSN(t *testing.T) {
 }
 
 // TestSend_MissingQueue: sending to a queue that does not exist must surface
-// a clear error. PR #79 added an explicit "queue not found" check in
-// pgque.insert_event_raw.
+// an error that mentions the queue or a "not found" / "does not exist" condition.
 func TestSend_MissingQueue(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
@@ -36,23 +35,44 @@ func TestSend_MissingQueue(t *testing.T) {
 		t.Fatal("expected error sending to missing queue")
 	}
 	if !strings.Contains(err.Error(), "queue") && !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "does not exist") {
-		t.Logf("error string: %v (passes; just confirming it's not a panic)", err)
+		t.Errorf("error does not mention queue or not-found condition: %v", err)
 	}
 }
 
 // TestSend_AfterClose verifies Send returns an error (not a panic) after the
-// client has been closed.
+// client has been closed. A second live client handles cleanup so that
+// dropping the queue does not run on a closed pool.
 func TestSend_AfterClose(t *testing.T) {
-	client := connectOrSkip(t)
-	queue, _ := setupFreshQueue(t, client)
-	client.Close()
+	// cleaner stays open for t.Cleanup; testClient is closed mid-test.
+	cleaner := connectOrSkip(t)
+	defer cleaner.Close()
+	testClient := connectOrSkip(t)
+
+	ctx := context.Background()
+	suffix := randSuffix(t)
+	queue := "gotest_q_" + suffix
+	consumer := "gotest_c_" + suffix
+	if _, err := cleaner.Pool().Exec(ctx, "select pgque.create_queue($1)", queue); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleaner.Pool().Exec(ctx, "select pgque.register_consumer($1, $2)", queue, consumer); err != nil {
+		cleaner.Pool().Exec(ctx, "select pgque.drop_queue($1)", queue)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		cleaner.Pool().Exec(ctx, "select pgque.unregister_consumer($1, $2)", queue, consumer)
+		cleaner.Pool().Exec(ctx, "select pgque.drop_queue($1)", queue)
+	})
+
+	testClient.Close()
 
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("Send after Close panicked: %v", r)
 		}
 	}()
-	_, err := client.Send(context.Background(), queue, pgque.Event{Type: "x", Payload: nil})
+	_, err := testClient.Send(context.Background(), queue, pgque.Event{Type: "x", Payload: nil})
 	if err == nil {
 		t.Fatal("expected error from Send after Close")
 	}
@@ -72,22 +92,27 @@ func TestSend_ContextCancelled(t *testing.T) {
 		t.Fatal("expected error from cancelled context")
 	}
 	if !errors.Is(err, context.Canceled) {
-		t.Logf("note: error does not wrap context.Canceled directly: %v (acceptable)", err)
+		t.Errorf("expected error to wrap context.Canceled, got: %v", err)
 	}
 }
 
 // TestReceive_AfterClose: Receive on a closed client must error, not panic.
+// A second live client handles cleanup so that dropping the queue does not
+// run on a closed pool.
 func TestReceive_AfterClose(t *testing.T) {
-	client := connectOrSkip(t)
-	queue, consumer := setupFreshQueue(t, client)
-	client.Close()
+	cleaner := connectOrSkip(t)
+	defer cleaner.Close()
+	testClient := connectOrSkip(t)
+
+	queue, consumer := setupFreshQueue(t, cleaner)
+	testClient.Close()
 
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("Receive after Close panicked: %v", r)
 		}
 	}()
-	_, err := client.Receive(context.Background(), queue, consumer, 10)
+	_, err := testClient.Receive(context.Background(), queue, consumer, 10)
 	if err == nil {
 		t.Fatal("expected error from Receive after Close")
 	}

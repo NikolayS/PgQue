@@ -181,21 +181,33 @@ func TestRace_HandlerNackUnderLoad(t *testing.T) {
 
 	<-ctx.Done()
 
-	// The retry_queue should have a non-zero number of failed messages.
+	// The retry_queue must have accumulated at least one failed message.
+	// With a fixed RNG seed (source=1) and 30 messages at ~1/3 failure
+	// rate, at least one nack is guaranteed deterministically.
 	failed := retryQueueCount(t, client, queue)
 	if failed == 0 {
-		t.Logf("note: zero retry_queue rows after run (may be timing-related; not a race failure)")
+		t.Errorf("expected retry_queue to contain failed messages, got 0")
 	}
 }
 
-// TestConcurrent_TwoConsumersSameQueue: two consumer goroutines on the same
-// (queue, consumer-name) — must not double-process. PgQ's batch semantics
-// guarantee at-most-one delivery per batch per consumer.
-func TestConcurrent_TwoConsumersSameQueue(t *testing.T) {
+// TestConcurrent_TwoConsumersDistinctNames: two independent consumers
+// (different registration names) on the same queue each receive a
+// full copy of every message. PgQ delivers one batch per consumer name,
+// so each consumer must see all total messages exactly once.
+func TestConcurrent_TwoConsumersDistinctNames(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
-	queue, consumer := setupFreshQueue(t, client)
+	queue, consumerA := setupFreshQueue(t, client)
 	ctx := context.Background()
+
+	// Register a second independent consumer on the same queue.
+	consumerB := "gotest_c_" + randSuffix(t)
+	if _, err := client.Pool().Exec(ctx, "select pgque.register_consumer($1, $2)", queue, consumerB); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		client.Pool().Exec(context.Background(), "select pgque.unregister_consumer($1, $2)", queue, consumerB)
+	})
 
 	const total = 10
 	for i := 0; i < total; i++ {
@@ -207,43 +219,39 @@ func TestConcurrent_TwoConsumersSameQueue(t *testing.T) {
 	}
 	tick(t, client)
 
-	processed := make(map[int64]int)
-	var mu sync.Mutex
+	var countA, countB int64
 
-	consumerCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	consumerCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	mkConsumer := func() *pgque.Consumer {
-		c := client.NewConsumer(queue, consumer, pgque.WithPollInterval(50*time.Millisecond))
+	mkConsumer := func(name string, counter *int64) *pgque.Consumer {
+		c := client.NewConsumer(queue, name, pgque.WithPollInterval(50*time.Millisecond))
 		c.Handle("twin.test", func(ctx context.Context, m pgque.Message) error {
-			mu.Lock()
-			processed[m.MsgID]++
-			mu.Unlock()
+			atomic.AddInt64(counter, 1)
 			return nil
 		})
 		return c
 	}
 
-	go mkConsumer().Start(consumerCtx)
-	go mkConsumer().Start(consumerCtx)
+	go mkConsumer(consumerA, &countA).Start(consumerCtx)
+	go mkConsumer(consumerB, &countB).Start(consumerCtx)
 
 	<-consumerCtx.Done()
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	for id, count := range processed {
-		if count > 1 {
-			t.Errorf("message %d processed %d times — expected at most once per consumer goroutine in a single batch window", id, count)
-		}
+	gotA := atomic.LoadInt64(&countA)
+	gotB := atomic.LoadInt64(&countB)
+	if gotA != total {
+		t.Errorf("consumer A: expected %d messages, got %d", total, gotA)
+	}
+	if gotB != total {
+		t.Errorf("consumer B: expected %d messages, got %d", total, gotB)
 	}
 }
 
-// TestConsumer_StartTwiceFromSameInstance: calling Start twice on the same
-// Consumer (concurrently) is undefined / not recommended; this test
-// documents that no panic occurs (the second Start should run alongside
-// the first; both compete for batches via the SQL backend).
-func TestConsumer_StartTwiceFromSameInstance(t *testing.T) {
+// TestConsumer_DoubleStart_DoesNotPanic: calling Start twice concurrently on
+// the same Consumer instance must not panic. The semantics of concurrent
+// Start calls are otherwise undefined; this test only asserts absence of panic.
+func TestConsumer_DoubleStart_DoesNotPanic(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
 	queue, consumer := setupFreshQueue(t, client)

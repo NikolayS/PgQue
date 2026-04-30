@@ -143,13 +143,14 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Drive the message through 3 nack/ack cycles. After 2 retries the
-	// 3rd nack should route to the DLQ instead of retry_queue.
-	for i := 0; i < 3; i++ {
-		// Move retry_queue rows back into the active table for redelivery.
+	// Drive the message through nack cycles. After max_retries nacks the
+	// backend routes the message to the DLQ instead of retry_queue.
+	// Do not call Ack after Nack — they are mutually exclusive per-batch.
+	const maxCycles = 5
+	for i := 0; i < maxCycles; i++ {
+		// Re-queue retry_queue rows for redelivery.
 		if _, err := client.Pool().Exec(ctx, "select pgque.maint_retry_events()"); err != nil {
-			// Earlier pgque versions may not have this; fall back to ticker.
-			t.Logf("maint_retry_events: %v", err)
+			t.Logf("maint_retry_events unavailable, using ticker fallback: %v", err)
 		}
 		tick(t, client)
 
@@ -158,6 +159,7 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(msgs) == 0 {
+			// No more messages in active queue; they may be in DLQ already.
 			break
 		}
 		for _, m := range msgs {
@@ -165,13 +167,10 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
-			t.Fatal(err)
-		}
 	}
 
 	if got := dlqCount(t, client, queue); got == 0 {
-		t.Skipf("DLQ row not produced after 3 cycles (got %d) — retry routing may differ in this build", got)
+		t.Fatalf("expected DLQ to contain the exhausted message after %d nack cycles, got 0", maxCycles)
 	}
 }
 
