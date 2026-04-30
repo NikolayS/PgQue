@@ -159,6 +159,155 @@ func TestNack(t *testing.T) {
 	}
 }
 
+// TestNackPlaceholderCount is a red/green regression for a bug where the
+// Nack() SQL string had 12 placeholders but only 11 args were passed,
+// because the ROW(...) cast targeting pgque.message (10 fields) included
+// a trailing $12 typo. pgx fails the query with "expected 12 arguments,
+// got 11". Pre-fix this test fails on the call to client.Nack(); post-fix
+// it passes. The bug shipped because client-smoke ran `go test -run
+// TestSmoke` which matched no tests, so TestNack never executed in CI.
+func TestNackPlaceholderCount(t *testing.T) {
+	ctx := context.Background()
+	client, err := pgque.Connect(ctx, getDSN())
+	if err != nil {
+		t.Skip("Cannot connect to PG:", err)
+	}
+	defer client.Close()
+	setupQueue(t, client)
+
+	if _, err = client.Send(ctx, "gotest_queue", pgque.Event{
+		Type:    "nack.placeholder",
+		Payload: map[string]any{"v": 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()"); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, err := client.Receive(ctx, "gotest_queue", "gotest_consumer", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+
+	// The whole point: this call must succeed against a live DB.
+	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0]); err != nil {
+		t.Fatalf("Nack() returned error (placeholder/arg mismatch?): %v", err)
+	}
+}
+
+// TestConnect_UnreachableHostFailsImmediately is a red/green regression
+// for Connect() accepting unreachable hosts because pgxpool.New is lazy.
+// Pre-fix Connect returns nil error; the failure surfaces only on the
+// first query, far from the call site. Post-fix Connect eagerly pings
+// the pool and returns an error within ~3s.
+func TestConnect_UnreachableHostFailsImmediately(t *testing.T) {
+	// Port 1 is reserved/unassigned and reliably refuses connections.
+	dsn := "postgres://nobody:nobody@127.0.0.1:1/none?sslmode=disable&connect_timeout=2"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	client, err := pgque.Connect(ctx, dsn)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		if client != nil {
+			client.Close()
+		}
+		t.Fatalf("expected Connect to fail for unreachable host, got nil error after %s", elapsed)
+	}
+	if elapsed > 4*time.Second {
+		t.Fatalf("Connect took %s; should fail within ~3s with eager ping", elapsed)
+	}
+}
+
+// TestConsumer_HandlerPanicRecoversAndContinues is a red/green regression
+// for Consumer.Start letting handler panics propagate, killing the poll
+// goroutine and stalling the queue. Pre-fix: the panic on the first
+// message kills the consumer goroutine; the second message never reaches
+// its handler; the test fails with "got 1, expected 2". Post-fix: the
+// consumer recovers, treats the panic as a handler error (nack), and
+// continues processing.
+//
+// The goroutine's defer recover() in this test is purely a safety net so
+// that pre-fix runs do not crash the test process — it does not mask the
+// failure mode (which is "consumer never sees the second message").
+func TestConsumer_HandlerPanicRecoversAndContinues(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client, err := pgque.Connect(ctx, getDSN())
+	if err != nil {
+		t.Skip("Cannot connect to PG:", err)
+	}
+	defer client.Close()
+	setupQueue(t, client)
+
+	for i := 0; i < 2; i++ {
+		if _, err = client.Send(ctx, "gotest_queue", pgque.Event{
+			Type:    "panic.test",
+			Payload: map[string]any{"i": i},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker()"); err != nil {
+		t.Fatal(err)
+	}
+
+	var seen int32
+	consumer := client.NewConsumer("gotest_queue", "gotest_consumer",
+		pgque.WithPollInterval(100*time.Millisecond),
+	)
+	consumer.Handle("panic.test", func(ctx context.Context, msg pgque.Message) error {
+		n := atomic.AddInt32(&seen, 1)
+		if n == 1 {
+			panic("simulated handler panic")
+		}
+		return nil
+	})
+
+	consumerCtx, consumerCancel := context.WithCancel(ctx)
+	defer consumerCancel()
+	go func() {
+		// Test-side safety net: contain the panic so the test process
+		// survives pre-fix (when production code does not recover).
+		// Survival of the goroutine itself is what we are testing —
+		// detected by whether the second message gets handled.
+		defer func() { _ = recover() }()
+		_ = consumer.Start(consumerCtx)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&seen) >= 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&seen) < 2 {
+		t.Fatalf("expected handler to be called for both messages (panic recovered), got %d", seen)
+	}
+	consumerCancel()
+
+	// The panicking message should have been nack'd, not silently dropped.
+	var retryCount int
+	if err := client.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM pgque.retry_queue rq
+		JOIN pgque.queue q ON q.queue_id = rq.ev_queue
+		WHERE q.queue_name = $1`, "gotest_queue").Scan(&retryCount); err != nil {
+		t.Fatal(err)
+	}
+	if retryCount != 1 {
+		t.Fatalf("expected 1 retry_queue entry (panicking message), got %d", retryCount)
+	}
+}
+
 func TestConsumerHandlerNacksOnError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
