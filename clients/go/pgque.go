@@ -12,12 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Client is the main PgQue client backed by a pgx connection pool.
+// Client is the PgQue client. It is safe for concurrent use; the
+// underlying pgx pool handles connection multiplexing.
 type Client struct {
 	pool *pgxpool.Pool
 }
 
-// Connect creates a new Client connected to the given DSN.
+// Connect opens a pgx connection pool to the given DSN and returns a
+// ready-to-use Client. The DSN format is the standard libpq connection
+// string (postgres://user:pass@host/db?...).
 func Connect(ctx context.Context, dsn string) (*Client, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -26,13 +29,18 @@ func Connect(ctx context.Context, dsn string) (*Client, error) {
 	return &Client{pool: pool}, nil
 }
 
-// Close releases the connection pool.
+// Close releases the connection pool. After Close, the Client must not
+// be used.
 func (c *Client) Close() { c.pool.Close() }
 
-// Pool returns the underlying pgxpool for direct SQL access.
+// Pool returns the underlying pgxpool. Use this for transactional
+// enqueueing (call pgque.send inside your own pgx.Tx) or to invoke
+// pgque-api functions that the Client does not yet wrap directly.
 func (c *Client) Pool() *pgxpool.Pool { return c.pool }
 
-// Send publishes an event to the named queue and returns the event ID.
+// Send publishes an event to the named queue and returns the assigned
+// event ID. Payload is JSON-marshalled; an empty Type defaults to
+// "default".
 func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error) {
 	payload, err := json.Marshal(ev.Payload)
 	if err != nil {
@@ -52,7 +60,11 @@ func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error
 	return eid, nil
 }
 
-// Receive fetches up to maxMessages from the next batch for the consumer.
+// Receive fetches up to maxMessages from the next batch for the named
+// consumer. Returns an empty slice when no batch is available; in that
+// case the caller should sleep before polling again. Each returned
+// Message carries a BatchID that must be passed to Ack once all
+// messages in the batch have been processed.
 func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessages int) ([]Message, error) {
 	rows, err := c.pool.Query(ctx,
 		"SELECT * FROM pgque.receive($1, $2, $3)", queue, consumer, maxMessages)
@@ -82,7 +94,9 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 	return msgs, nil
 }
 
-// Ack acknowledges (finishes) a batch, advancing the consumer position.
+// Ack finishes a batch, advancing the consumer's position past it. PgQue
+// delivers at-least-once: failing to Ack a batch causes redelivery on
+// the next Receive.
 func (c *Client) Ack(ctx context.Context, batchID int64) error {
 	_, err := c.pool.Exec(ctx, "SELECT pgque.ack($1)", batchID)
 	if err != nil {
@@ -104,7 +118,10 @@ func (c *Client) Nack(ctx context.Context, batchID int64, msg Message) error {
 	return nil
 }
 
-// NewConsumer creates a Consumer for the given queue and consumer name.
+// NewConsumer creates a Consumer that polls the given queue under the
+// given consumer name. The consumer must already be registered in PgQue
+// (e.g. via pgque.register_consumer). Default poll interval is 30s; use
+// WithPollInterval to override.
 func (c *Client) NewConsumer(queue, name string, opts ...Option) *Consumer {
 	consumer := &Consumer{
 		client:       c,
