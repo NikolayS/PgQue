@@ -250,8 +250,8 @@ func TestEvent_PayloadIsArray(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].Payload != "[1,2,3]" {
-		t.Fatalf("expected [1,2,3], got %q", msgs[0].Payload)
+	if msgs[0].Payload != "[1, 2, 3]" {
+		t.Fatalf("expected [1, 2, 3], got %q", msgs[0].Payload)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
 }
