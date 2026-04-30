@@ -225,12 +225,20 @@ export class Client {
     return new Consumer(this, queue, name, opts);
   }
 
-  /** Run `pgque.ticker()` once. Mostly useful for tests + manual rotation. */
-  async ticker(): Promise<void> {
+  /**
+   * Wrapper for pgque.ticker(): if `queue` is given, runs the per-queue
+   * overload (`pgque.ticker(queue text)`); otherwise runs the no-arg global
+   * overload. Returns the underlying tick result count.
+   */
+  async ticker(queue?: string): Promise<void> {
     try {
-      await this.pool.query('select pgque.ticker()');
+      if (queue !== undefined) {
+        await this.pool.query('select pgque.ticker($1)', [queue]);
+      } else {
+        await this.pool.query('select pgque.ticker()');
+      }
     } catch (err) {
-      throw mapPgError('ticker', err);
+      throw mapPgError('ticker', err, queue !== undefined ? { queue } : undefined);
     }
   }
 
@@ -241,12 +249,6 @@ export class Client {
     } catch (err) {
       throw mapPgError('force_tick', err, { queue });
     }
-  }
-
-  /** Test/demo helper: force the tick threshold for `queue`, then run the per-queue ticker. */
-  async flush(queue: string): Promise<void> {
-    await this.pool.query('select pgque.force_tick($1)', [queue]);
-    await this.pool.query('select pgque.ticker($1)', [queue]);
   }
 }
 

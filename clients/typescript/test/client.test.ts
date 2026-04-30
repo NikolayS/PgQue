@@ -8,7 +8,7 @@ import {
   PgqueSqlError,
   connect,
 } from '../src/index.js';
-import { TEST_DSN, setupTestQueue, teardownTestQueue, type TestEnv } from './helpers.js';
+import { TEST_DSN, setupTestQueue, teardownTestQueue, advanceQueue, type TestEnv } from './helpers.js';
 
 const skipIfNoDb = TEST_DSN ? it : it.skip;
 
@@ -47,7 +47,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     expect(typeof eid).toBe('bigint');
     expect(eid).toBeGreaterThan(0n);
 
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
 
     const msgs = await env.client.receive(env.queue, env.consumer, 10);
     expect(msgs).toHaveLength(1);
@@ -68,7 +68,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
 
   skipIfNoDb('defaults event type to "default" when omitted', async () => {
     await env.client.send(env.queue, { payload: { x: 1 } });
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
     const [msg] = await env.client.receive(env.queue, env.consumer, 10);
     expect(msg).toBeDefined();
     expect(msg!.type).toBe('default');
@@ -135,7 +135,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     for (const [type, payload] of cases) {
       await env.client.send(env.queue, { type, payload });
     }
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
 
     const msgs = await env.client.receive(env.queue, env.consumer, 100);
     expect(msgs).toHaveLength(cases.length);
@@ -150,7 +150,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
 
   skipIfNoDb('preserves bigint batchId across the API surface', async () => {
     await env.client.send(env.queue, { payload: { x: 1 } });
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
     const [m] = await env.client.receive(env.queue, env.consumer, 10);
     expect(m).toBeDefined();
     // bigint should round-trip without precision loss.
@@ -193,7 +193,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
       ),
     );
     expect(new Set(ids).size).toBe(N); // all unique event ids
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
 
     let total = 0;
     while (total < N) {

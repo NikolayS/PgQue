@@ -2,7 +2,7 @@
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { TEST_DSN, setupTestQueue, teardownTestQueue, type TestEnv } from './helpers.js';
+import { TEST_DSN, setupTestQueue, teardownTestQueue, advanceQueue, type TestEnv } from './helpers.js';
 
 const skipIfNoDb = TEST_DSN ? it : it.skip;
 
@@ -23,7 +23,7 @@ describe('Consumer (env-gated)', () => {
     await env.client.send(env.queue, { type: 'a', payload: { v: 1 } });
     await env.client.send(env.queue, { type: 'b', payload: { v: 2 } });
     await env.client.send(env.queue, { type: 'a', payload: { v: 3 } });
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
 
     const consumer = env.client.newConsumer(env.queue, env.consumer, {
       pollInterval: 50,
@@ -56,7 +56,7 @@ describe('Consumer (env-gated)', () => {
   skipIfNoDb('handler error nacks just that message; batch still acks', async () => {
     await env.client.send(env.queue, { type: 'fail', payload: { i: 0 } });
     await env.client.send(env.queue, { type: 'fail', payload: { i: 1 } });
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
 
     const consumer = env.client.newConsumer(env.queue, env.consumer, {
       pollInterval: 50,
@@ -107,7 +107,7 @@ describe('Consumer (env-gated)', () => {
 
   skipIfNoDb('unhandled message types are nacked, not silently consumed', async () => {
     await env.client.send(env.queue, { type: 'unknown', payload: { v: 1 } });
-    await env.client.flush(env.queue);
+    await advanceQueue(env.client, env.queue);
 
     const consumer = env.client.newConsumer(env.queue, env.consumer, {
       pollInterval: 50,

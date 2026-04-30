@@ -35,3 +35,9 @@ export async function teardownTestQueue(env: TestEnv): Promise<void> {
     await env.client.close();
   }
 }
+
+/** Test helper: force the tick threshold, then run the per-queue ticker. Composes two driver primitives — not a public Client API. */
+export async function advanceQueue(client: Client, queue: string): Promise<void> {
+  await client.forceTick(queue);
+  await client.ticker(queue);
+}
