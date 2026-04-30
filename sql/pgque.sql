@@ -254,6 +254,7 @@ create index if not exists rq_retry_idx on pgque.retry_queue (ev_retry_after);
 --   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog
 --   6. pgq_node/Londiste hooks removed from maint_operations
 --   7. pg_notify() injected into ticker for LISTEN/NOTIFY wakeup
+--   8. create_queue() rejects queue names > 57 bytes (pg_notify limit)
 -- ======================================================================
 
 
@@ -1450,6 +1451,16 @@ declare
 begin
     if i_queue_name is null then
         raise exception 'Invalid NULL value';
+    end if;
+
+    -- pg_notify channel names are limited to 63 bytes by PostgreSQL.
+    -- PgQue prefixes them with 'pgque_' (6 bytes), leaving 57 bytes for
+    -- the queue name.  Reject names that would overflow the channel name
+    -- before any state is written, so callers get a clear error.
+    if octet_length(i_queue_name) > 57 then
+        raise exception 'queue name too long: % bytes (max 57). '
+            'pg_notify channel ''pgque_<queue_name>'' must fit in 63 bytes.',
+            octet_length(i_queue_name);
     end if;
 
     -- check if exists
