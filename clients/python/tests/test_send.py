@@ -2,6 +2,8 @@
 
 """Producer-side tests for ``Client.send`` / ``Client.send_batch``."""
 
+from unittest.mock import MagicMock, call
+
 import pytest
 
 import pgque
@@ -94,6 +96,38 @@ def test_send_to_missing_queue_raises(conn):
         client.send("does_not_exist_xyz_12345", {"x": 1})
         conn.commit()
     conn.rollback()
+
+
+@pytest.mark.parametrize("type_val,expect_3arg", [
+    (None, False),       # None → 2-arg (default type)
+    ("", False),         # "" → 2-arg (empty = default)
+    ("default", False),  # "default" → 2-arg
+    ("custom", True),    # non-default → 3-arg
+])
+def test_send_sql_form_selection(type_val, expect_3arg):
+    """send() picks 2-arg SQL when type is empty/None/default; 3-arg otherwise."""
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = (999,)
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+
+    client = pgque.PgqueClient(mock_conn)
+    if type_val is None:
+        eid = client.send("q", {"x": 1}, type=None)
+    else:
+        eid = client.send("q", {"x": 1}, type=type_val)
+
+    assert eid == 999
+    sql_used = mock_conn.execute.call_args[0][0]
+    if expect_3arg:
+        assert "send(%s, %s, %s::jsonb)" in sql_used, (
+            f"expected 3-arg form for type={type_val!r}, got: {sql_used!r}"
+        )
+    else:
+        assert "send(%s, %s::jsonb)" in sql_used, (
+            f"expected 2-arg form for type={type_val!r}, got: {sql_used!r}"
+        )
+        assert "send(%s, %s, %s::jsonb)" not in sql_used
 
 
 @pytest.mark.parametrize("payload,expected", [
