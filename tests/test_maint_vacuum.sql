@@ -57,6 +57,37 @@ begin
 end $$;
 
 -- -------------------------------------------------------------------------
+-- Mixed-case assertion: non-VACUUM ops still execute when VACUUM rows are
+-- present in maint_operations().  We verify this by running maint() while
+-- the vacuum override is still active (so maint_operations() returns both
+-- vacuum rows and real work rows), then checking that at least one real
+-- maintenance operation was counted (returned integer > 0 is sufficient when
+-- a queue exists, since rotation step1 always counts as at least 1 op).
+-- -------------------------------------------------------------------------
+do $$
+declare
+  v_result integer;
+begin
+  -- Create a test queue to ensure maint_operations() returns real work rows.
+  perform pgque.create_queue('maint_vacuum_mixtest');
+  -- Force a tick so rotation step1 has something to do.
+  perform pgque.force_tick('maint_vacuum_mixtest');
+
+  v_result := pgque.maint();
+
+  -- maint() must not error (covered by prior test) AND must have executed at
+  -- least one non-VACUUM operation.
+  assert v_result > 0,
+    'mixed-case FAIL: maint() returned 0 — non-VACUUM ops were not executed '
+    || '(got ' || v_result::text || ')';
+
+  raise notice 'PASS: maint_vacuum_mixed - maint() executed non-VACUUM ops (returned %)', v_result;
+
+  -- Cleanup test queue.
+  perform pgque.drop_queue('maint_vacuum_mixtest');
+end $$;
+
+-- -------------------------------------------------------------------------
 -- Cleanup: restore original maint_tables_to_vacuum() from pgque.sql source.
 -- -------------------------------------------------------------------------
 create or replace function pgque.maint_tables_to_vacuum()
