@@ -1,22 +1,60 @@
 {
-  "name": "pgque-ts-example",
-  "private": true,
-  "version": "0.0.1",
-  "description": "Example TypeScript client for PgQue",
+  "name": "pgque",
+  "version": "0.2.0",
+  "description": "TypeScript client for PgQue — the PgQ-based universal PostgreSQL queue",
+  "license": "Apache-2.0",
+  "author": "Nikolay Samokhvalov",
+  "homepage": "https://github.com/NikolayS/pgque",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NikolayS/pgque.git",
+    "directory": "clients/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/NikolayS/pgque/issues"
+  },
+  "keywords": [
+    "postgres",
+    "postgresql",
+    "queue",
+    "pgq",
+    "pgque",
+    "skip-locked",
+    "job-queue"
+  ],
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit -p tsconfig.json"
+    "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "pg": "^8.16.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "tsx": "^4.19.3",
     "@types/node": "^22.15.3",
-    "@types/pg": "^8.15.2"
+    "@types/pg": "^8.15.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.9"
   }
 }
