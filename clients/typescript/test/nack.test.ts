@@ -60,12 +60,12 @@ describe('nack routing (env-gated)', () => {
     });
     await env.client.ack(m!.batchId);
 
-    const retry = await env.client.rawPool.query<{ ev_retry_after_ts: Date }>(
-      `select rq.ev_retry_after_ts
+    const retry = await env.client.rawPool.query<{ ev_retry_after: Date }>(
+      `select rq.ev_retry_after
          from pgque.retry_queue rq
          join pgque.queue q on q.queue_id = rq.ev_queue
         where q.queue_name = $1
-        order by rq.ev_retry_after_ts desc
+        order by rq.ev_retry_after desc
         limit 1`,
       [env.queue],
     );

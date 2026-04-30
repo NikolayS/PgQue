@@ -234,10 +234,20 @@ export class Client {
     }
   }
 
-  /** Run `pgque.force_tick(queue)`. Mostly useful for tests. */
+  /**
+   * Force a tick on `queue` and immediately rotate the ticker so any
+   * pending events become visible in a new batch. Mostly useful for tests
+   * that need deterministic rotation without waiting for pg_cron.
+   *
+   * Calls `pgque.force_tick(queue)` (bumps the event sequence) and then
+   * `pgque.ticker()` (performs the rotation). Each runs on a separate pool
+   * connection, ensuring the producing transaction's events are visible
+   * to the ticker's snapshot.
+   */
   async forceTick(queue: string): Promise<void> {
     try {
       await this.pool.query('select pgque.force_tick($1)', [queue]);
+      await this.pool.query('select pgque.ticker()');
     } catch (err) {
       throw mapPgError('force_tick', err, { queue });
     }
