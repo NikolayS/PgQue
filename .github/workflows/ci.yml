@@ -163,13 +163,7 @@ jobs:
         run: |
           python3 -m pip install -U pip
           python3 -m pip install -e clients/python[dev]
-          # test_consumer.py and test_smoke.py are the red phase for PR #82
-          # (receive/subscribe bugs not yet fixed on this branch).  Skip them
-          # so the CI job stays green; producer tests run unconditionally.
-          pytest -v \
-            --ignore=clients/python/tests/test_consumer.py \
-            --ignore=clients/python/tests/test_smoke.py \
-            clients/python/tests/
+          pytest -v clients/python/tests/
 
       - name: Cleanup
         if: always()
@@ -220,10 +214,7 @@ jobs:
             npm install
           fi
           npm run build
-          # --passWithNoTests keeps the job green on branches that haven't
-          # added vitest specs yet (e.g. before PR #83 lands the test suite).
-          # Once test files exist, vitest picks them up automatically.
-          npx vitest --run --passWithNoTests
+          npx vitest --run
 
       - name: Cleanup
         if: always()
