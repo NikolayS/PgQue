@@ -26,13 +26,50 @@ func setupQueue(t *testing.T, client *pgque.Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Lower the ticker thresholds so tests don't have to wait 3 s for a tick.
+	// Parameter names are the column name suffix: queue_ticker_max_count →
+	// "ticker_max_count". Setting count=1 means one event is enough; lag=1ms.
+	_, err = client.Pool().Exec(ctx,
+		"SELECT pgque.set_queue_config('gotest_queue', 'ticker_max_count', '1')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Pool().Exec(ctx,
+		"SELECT pgque.set_queue_config('gotest_queue', 'ticker_max_lag', '1ms')")
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = client.Pool().Exec(ctx, "SELECT pgque.register_consumer('gotest_queue', 'gotest_consumer')")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		client.Pool().Exec(ctx, "SELECT pgque.unregister_consumer('gotest_queue', 'gotest_consumer')")
-		client.Pool().Exec(ctx, "SELECT pgque.drop_queue('gotest_queue')")
+		// Open a fresh connection for cleanup: the test's defer client.Close()
+		// runs before t.Cleanup fires (defer is in the test body scope),
+		// so the outer client pool is already closed at this point.
+		cleanDSN := getDSN()
+		cleanClient, cleanErr := pgque.Connect(ctx, cleanDSN)
+		if cleanErr != nil {
+			t.Logf("setupQueue cleanup: cannot connect for teardown: %v", cleanErr)
+			return
+		}
+		defer cleanClient.Close()
+
+		// Remove retry_queue / dead_letter entries before dropping the queue
+		// so stale rows don't leak into a subsequent test that gets the same
+		// queue_id from the sequence.
+		cleanClient.Pool().Exec(ctx, `
+			DELETE FROM pgque.retry_queue rq
+			USING pgque.queue q
+			WHERE q.queue_id = rq.ev_queue
+			  AND q.queue_name = 'gotest_queue'`)
+		cleanClient.Pool().Exec(ctx, `
+			DELETE FROM pgque.dead_letter dl
+			USING pgque.queue q
+			WHERE q.queue_id = dl.dl_queue_id
+			  AND q.queue_name = 'gotest_queue'`)
+		cleanClient.Pool().Exec(ctx, "SELECT pgque.unregister_consumer('gotest_queue', 'gotest_consumer')")
+		cleanClient.Pool().Exec(ctx, "SELECT pgque.drop_queue('gotest_queue')")
 	})
 }
 
