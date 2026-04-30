@@ -28,13 +28,13 @@ case $SYS in
   pgque)
     sudo -u postgres psql -d bench -c "DROP SCHEMA IF EXISTS pgque CASCADE" >/dev/null
     # Also unschedule any leftover pg_cron jobs named pgque_*
-    sudo -u postgres psql -d bench -Atc "SELECT jobname FROM cron.job WHERE jobname LIKE 'pgque%'" | while read j; do
+    sudo -u postgres psql -d bench -Atc "SELECT jobname FROM cron.job WHERE jobname LIKE 'pgque%'" | while read -r j; do
       [ -n "$j" ] && sudo -u postgres psql -d bench -c "SELECT cron.unschedule('$j')" >/dev/null
     done
     ;;
   pgq)
     sudo -u postgres psql -d bench -c "DROP EXTENSION IF EXISTS pgq CASCADE; DROP SCHEMA IF EXISTS pgq CASCADE" >/dev/null
-    sudo -u postgres psql -d bench -Atc "SELECT jobname FROM cron.job WHERE jobname LIKE 'pgq%'" | while read j; do
+    sudo -u postgres psql -d bench -Atc "SELECT jobname FROM cron.job WHERE jobname LIKE 'pgq%'" | while read -r j; do
       [ -n "$j" ] && sudo -u postgres psql -d bench -c "SELECT cron.unschedule('$j')" >/dev/null
     done
     ;;

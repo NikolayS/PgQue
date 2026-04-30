@@ -6,7 +6,7 @@
 #   * pg_ash ASH + pgfr snapshots copied to CSV at end (schemas preserved)
 #
 # Same instrumented consumer NOTICE format as R6 for honest ev/s parsing.
-set -uo pipefail
+set -Eeuo pipefail
 SYS=${1:?system}
 DUR=${2:-5400}  # 1.5h = 5400s
 

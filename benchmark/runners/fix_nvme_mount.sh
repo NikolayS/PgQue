@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Format + mount NVMe instance store, move PG data dir to NVMe, re-setup symlink.
-set -euo pipefail
+set -Eeuo pipefail
 DEV=/dev/nvme1n1
 MNT=/mnt/pgdata
 PG_DATA_SRC=/var/lib/postgresql/18/main
