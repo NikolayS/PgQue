@@ -7,6 +7,7 @@ the PgQue schema installed. Without it, every test that depends on a
 real database is skipped.
 """
 
+import logging
 import os
 import secrets
 from typing import Iterator
@@ -68,5 +69,6 @@ def setup_queue(conn, queue_name, consumer_name) -> Iterator[tuple[str, str]]:
             )
             conn.execute("select pgque.drop_queue(%s, true)", (queue_name,))
             conn.commit()
-        except Exception:
+        except Exception as e:
+            logging.warning("setup_queue cleanup failed: %s", e)
             conn.rollback()
