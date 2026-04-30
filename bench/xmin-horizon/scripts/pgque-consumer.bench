@@ -1,0 +1,1 @@
+select public.bench_consume_one();

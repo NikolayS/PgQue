@@ -1,0 +1,57 @@
+pgbench (18.3, server 17.9 (Debian 17.9-1.pgdg13+1))
+starting vacuum...pgbench: error: ERROR:  relation "pgbench_branches" does not exist
+pgbench: detail: (ignoring this error and continuing anyway)
+pgbench: error: ERROR:  relation "pgbench_tellers" does not exist
+pgbench: detail: (ignoring this error and continuing anyway)
+pgbench: error: ERROR:  relation "pgbench_history" does not exist
+pgbench: detail: (ignoring this error and continuing anyway)
+end.
+progress: 5.0 s, 810.8 tps, lat 1.845 ms stddev 4.200, 0 failed, lag 0.940 ms
+progress: 10.0 s, 793.1 tps, lat 1.256 ms stddev 0.890, 0 failed, lag 0.472 ms
+progress: 15.0 s, 803.3 tps, lat 1.797 ms stddev 3.931, 0 failed, lag 0.933 ms
+progress: 20.0 s, 791.1 tps, lat 1.534 ms stddev 2.977, 0 failed, lag 0.681 ms
+progress: 25.0 s, 794.1 tps, lat 1.556 ms stddev 2.190, 0 failed, lag 0.672 ms
+progress: 30.0 s, 757.7 tps, lat 1.155 ms stddev 0.815, 0 failed, lag 0.443 ms
+progress: 35.0 s, 795.8 tps, lat 1.429 ms stddev 1.482, 0 failed, lag 0.578 ms
+progress: 40.0 s, 806.7 tps, lat 1.300 ms stddev 0.925, 0 failed, lag 0.485 ms
+progress: 45.0 s, 790.2 tps, lat 1.684 ms stddev 2.830, 0 failed, lag 0.753 ms
+progress: 50.0 s, 805.2 tps, lat 1.285 ms stddev 0.869, 0 failed, lag 0.496 ms
+progress: 55.0 s, 813.8 tps, lat 1.375 ms stddev 1.108, 0 failed, lag 0.522 ms
+progress: 60.0 s, 786.3 tps, lat 1.305 ms stddev 0.841, 0 failed, lag 0.497 ms
+progress: 65.0 s, 786.7 tps, lat 1.681 ms stddev 2.880, 0 failed, lag 0.762 ms
+progress: 70.0 s, 800.6 tps, lat 1.203 ms stddev 0.820, 0 failed, lag 0.439 ms
+progress: 75.0 s, 782.8 tps, lat 2.546 ms stddev 5.971, 0 failed, lag 1.480 ms
+progress: 80.0 s, 798.2 tps, lat 2.173 ms stddev 5.068, 0 failed, lag 1.150 ms
+progress: 85.0 s, 771.4 tps, lat 1.875 ms stddev 3.255, 0 failed, lag 0.868 ms
+progress: 90.0 s, 811.8 tps, lat 1.436 ms stddev 1.517, 0 failed, lag 0.595 ms
+progress: 95.0 s, 767.6 tps, lat 1.414 ms stddev 0.978, 0 failed, lag 0.531 ms
+progress: 100.0 s, 805.9 tps, lat 1.417 ms stddev 0.992, 0 failed, lag 0.520 ms
+progress: 105.0 s, 796.5 tps, lat 1.406 ms stddev 1.056, 0 failed, lag 0.547 ms
+progress: 110.0 s, 812.8 tps, lat 11.633 ms stddev 41.433, 0 failed, lag 10.381 ms
+progress: 115.0 s, 805.7 tps, lat 1.214 ms stddev 0.926, 0 failed, lag 0.455 ms
+progress: 120.0 s, 802.0 tps, lat 2.051 ms stddev 5.212, 0 failed, lag 1.107 ms
+progress: 125.0 s, 825.4 tps, lat 1.573 ms stddev 1.564, 0 failed, lag 0.636 ms
+progress: 130.0 s, 792.0 tps, lat 1.210 ms stddev 0.787, 0 failed, lag 0.451 ms
+progress: 135.0 s, 800.1 tps, lat 1.523 ms stddev 1.766, 0 failed, lag 0.628 ms
+progress: 140.0 s, 794.6 tps, lat 1.393 ms stddev 0.909, 0 failed, lag 0.540 ms
+progress: 145.0 s, 780.2 tps, lat 2.526 ms stddev 6.660, 0 failed, lag 1.419 ms
+progress: 150.0 s, 780.9 tps, lat 1.931 ms stddev 3.974, 0 failed, lag 0.995 ms
+progress: 155.0 s, 789.9 tps, lat 1.327 ms stddev 0.989, 0 failed, lag 0.520 ms
+progress: 160.0 s, 818.0 tps, lat 1.266 ms stddev 0.856, 0 failed, lag 0.466 ms
+progress: 165.0 s, 801.0 tps, lat 1.511 ms stddev 3.006, 0 failed, lag 0.677 ms
+progress: 170.0 s, 814.6 tps, lat 1.185 ms stddev 0.778, 0 failed, lag 0.440 ms
+progress: 175.0 s, 789.6 tps, lat 1.260 ms stddev 0.884, 0 failed, lag 0.473 ms
+transaction type: /Users/nik/github/pgque/.claude/worktrees/agent-a48559ba7fdb1315c/bench/xmin-horizon/scripts/skiplocked-producer.bench
+scaling factor: 1
+query mode: simple
+number of clients: 4
+number of threads: 4
+maximum number of tries: 1
+duration: 180 s
+number of transactions actually processed: 143329
+number of failed transactions: 0 (0.000%)
+latency average = 1.835 ms
+latency stddev = 7.679 ms
+rate limit schedule lag: avg 0.959 (max 284.568) ms
+initial connection time = 13.171 ms
+tps = 796.322966 (without initial connection time)

@@ -1,0 +1,24 @@
+services:
+  pg:
+    image: postgres:17
+    container_name: pgque-bench-pg
+    environment:
+      POSTGRES_PASSWORD: bench
+      POSTGRES_DB: bench
+      POSTGRES_USER: bench
+    ports:
+      - "55435:5432"
+    volumes:
+      - ./config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ../../sql:/pgque-sql:ro
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench -d bench"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
