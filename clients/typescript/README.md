@@ -31,10 +31,12 @@ try {
     payload: { id: 42 },
   });
 
-  // High-level consumer with per-event-type dispatch
+  // High-level consumer with per-event-type dispatch.
+  // msg.payload is raw JSON text — call JSON.parse() to get the object back.
   const consumer = client.newConsumer('orders', 'order_worker');
   consumer.handle('order.created', async (msg) => {
-    console.log('got', msg.type, msg.payload);
+    const data = JSON.parse(msg.payload) as { id: number };
+    console.log('got', msg.type, data);
   });
 
   const ac = new AbortController();
