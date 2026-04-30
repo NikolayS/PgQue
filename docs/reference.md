@@ -10,7 +10,7 @@ Each entry takes this form:
 #### `pgque.<name>(arg text, …) → returntype`
 
 One-line description. Optional second line with a caveat.
-Grant: `role_name` or `PUBLIC (default)`. Source: `sql/<path>`.
+Grant: `role_name`. Source: `sql/<path>`.
 
 
 
@@ -111,22 +111,22 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 #### `pgque.create_queue(queue text) → integer`
 
 Creates a queue with default settings (3 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists. Queue names are limited to 57 bytes (UTF-8); the `pgque_<name>` LISTEN/NOTIFY channel must fit within PostgreSQL's 63-byte identifier limit.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.drop_queue(queue text) → integer`
 
 Drops `queue`. Fails if consumers are still attached.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.drop_queue(queue text, force bool) → integer`
 
 Drops `queue`. When `force` is true, unregisters all attached consumers first.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.set_queue_config(queue text, param text, value text) → integer`
 
 Sets one queue parameter. Accepted `param` values (without the `queue_` prefix): `ticker_max_count`, `ticker_max_lag`, `ticker_idle_period`, `ticker_paused`, `rotation_period`, `external_ticker`, `max_retries`.
-Grant: PUBLIC (default). Source: `sql/pgque.sql` (extended in `sql/pgque-additions/queue_max_retries.sql`).
+Grant: `pgque_admin`. Source: `sql/pgque.sql` (extended in `sql/pgque-additions/queue_max_retries.sql`).
 
 ```sql
 select pgque.set_queue_config('orders', 'max_retries', '10');
@@ -134,22 +134,22 @@ select pgque.set_queue_config('orders', 'max_retries', '10');
 
 ## Lifecycle
 
-Most functions in this section are left on PUBLIC by default — tighten with `revoke execute … from public` if your policy demands it. `uninstall()` is explicitly revoked from `pgque_admin`, but PUBLIC EXECUTE remains by default — tighten with `revoke execute on function pgque.uninstall() from public` if stricter control is required.
+Functions in this section are deny-by-default: the schema-wide blanket `revoke execute … from public` in `sql/pgque-additions/roles.sql` strips PUBLIC, and only `pgque_admin` retains `execute on all functions`. Grant explicitly to additional roles if your policy needs broader access. `uninstall()` is doubly locked down — also explicitly revoked from `pgque_admin` — so only the schema/install owner (typically a superuser) can run it.
 
 #### `pgque.start() → void`
 
 Schedules four pg_cron jobs in the current database: `pgque_ticker` (every 1 s), `pgque_retry_events` (every 30 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — errors if missing. Idempotent: calls `stop()` first.
-Grant: PUBLIC (default). Source: `sql/pgque-additions/lifecycle.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.stop() → void`
 
 Unschedules the pg_cron jobs set up by `start()` and clears the stored job IDs. Safe to call if `pg_cron` is absent.
-Grant: PUBLIC (default). Source: `sql/pgque-additions/lifecycle.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.status() → table(component text, status text, detail text)`
 
 Returns a diagnostic report with one row per component: Postgres version, PgQue version, ticker/maintenance job status, queue count, and consumer count.
-Grant: PUBLIC (default). Source: `sql/pgque-additions/lifecycle.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 ```sql
 select * from pgque.status();
@@ -162,7 +162,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.maint() → integer`
 
-Runs one maintenance cycle: rotation step 1 and retry-queue processing. Rotation step 2 is intentionally skipped — it must run in its own transaction and is scheduled separately by `start()`. Returns the total number of operations performed.
+Runs one maintenance cycle: rotation step 1 plus any queue extra-maint hooks registered via `pgque.queue_extra_maint`. Rotation step 2 is intentionally skipped (it must run in its own transaction and is scheduled separately by `start()`); retry-queue processing is **not** performed here — call `pgque.maint_retry_events()` as a separate scheduled job. Returns the total number of operations performed.
 Grant: `pgque_admin`. Source: `sql/pgque-api/maint.sql`.
 
 #### `pgque.maint_retry_events() → integer`
@@ -174,29 +174,29 @@ select pgque.maint_retry_events(); -- every 30 seconds, for nack/retry redeliver
 select pgque.maint();              -- every 30 seconds, for rotation
 ```
 
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.ticker() → bigint`
 
 Issues ticks for all unpaused, non-external queues. Returns the number of queues ticked. Call this from your scheduler (every 1 s by default) when not using pg_cron.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.ticker(queue text) → bigint`
 
 Checks whether a tick is due for `queue` and inserts one if so. Returns the tick id (or `NULL` if no tick was created).
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 > Note: a 4-argument `ticker(queue, tick_id, timestamp, event_seq)` overload exists for queues configured with `external_ticker = true` (pushing ticks from an external clock source). Not covered here.
 
 #### `pgque.force_tick(queue text) → bigint`
 
 Simulates a burst of events on `queue` by advancing the queue's event sequence counter past the `ticker_max_count` threshold, causing the next `pgque.ticker()` call to insert a tick. Does not insert a tick itself — call `pgque.ticker()` (or `pgque.ticker(queue)`) after `force_tick()` to materialise the tick. Returns the current last tick id (from the most recent existing tick, not a new one). Useful in tests and demos; not for production hot paths.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.uninstall() → void`
 
-Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired. `execute` is revoked from `pgque_admin`; PUBLIC EXECUTE remains by default — revoke explicitly if stricter control is required.
-Grant: `execute` revoked from `pgque_admin`, but not from PUBLIC. Source: `sql/pgque-additions/lifecycle.sql`.
+Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired. `execute` is revoked from both `pgque_admin` (explicit) and PUBLIC (via the schema-wide blanket revoke), so only the schema/install owner (typically a superuser) can run it.
+Grant: superuser / schema owner only (revoked from both `pgque_admin` and PUBLIC). Source: `sql/pgque-additions/lifecycle.sql`.
 
 ## Observability
 
@@ -373,12 +373,12 @@ Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4) → setof record`
 
 Declares a server-side cursor over the batch and returns the first `quick_limit` events. Remaining events can be fetched with `fetch … from <cursor_name>`.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4, extra_where text) → setof record`
 
 Same as above with an additional `where` filter applied inside the cursor.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.finish_batch(batch_id bigint) → integer`
 
@@ -398,11 +398,11 @@ Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 #### `pgque.batch_retry(batch_id bigint, retry_seconds integer) → integer`
 
 Re-queues every event in the batch after `retry_seconds`. Returns the number of events enqueued for retry.
-Grant: PUBLIC (default). Source: `sql/pgque.sql`.
+Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 ## Trigger helpers (change-data-capture)
 
-Table triggers that enqueue a PgQue event for every INSERT / UPDATE / DELETE. All three return `trigger`; attach them via `CREATE TRIGGER … EXECUTE PROCEDURE pgque.<name>('queue_name', …)`. Grant: PUBLIC (default). Source: `sql/pgque.sql` (inherited from PgQ).
+Table triggers that enqueue a PgQue event for every INSERT / UPDATE / DELETE. All three return `trigger`; attach them via `CREATE TRIGGER … EXECUTE PROCEDURE pgque.<name>('queue_name', …)`. Grant: `pgque_admin`. Source: `sql/pgque.sql` (inherited from PgQ).
 
 #### `pgque.jsontriga() → trigger`
 

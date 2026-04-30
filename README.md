@@ -185,7 +185,7 @@ create user metrics with password '...';              -- replace with a real pas
 grant pgque_reader to metrics;
 ```
 
-DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `ticker`, `force_tick`) are not granted to `pgque_writer` and should be performed by an admin / migration role. They currently default to PUBLIC; revoking from PUBLIC and granting only to `pgque_admin` is on the roadmap.
+DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, `set_queue_config`) are not granted to `pgque_writer`. The schema-wide blanket `revoke execute … from public` strips PUBLIC, and `pgque_admin` is the only role that retains `execute` on these helpers — perform them as an admin / migration role.
 
 **Roles are global, not per-queue.** `pgque_writer` can produce and consume on any queue and ack any consumer's batch. Do not grant `pgque_writer` to mutually untrusted applications sharing one database unless you add your own schema-level or database-level isolation. See [docs/reference.md — Roles scope](docs/reference.md#roles-are-global-not-per-queue) for details and recommended isolation patterns.
 
@@ -220,18 +220,14 @@ select pgque.force_tick('orders');
 select pgque.ticker();
 
 -- tx 4: receive (all returned rows share the same batch_id)
-select * from pgque.receive('orders', 'processor', 100) \gset
--- or capture into a temp table: create temp table msgs as select * from ...
+create temp table msgs as
+  select * from pgque.receive('orders', 'processor', 100);
 
--- tx 5: acknowledge — pass the batch_id captured above
--- with \gset the column is named "batch_id" from the first row:
--- select pgque.ack(:batch_id);
--- or with a temp table:
--- select pgque.ack((select batch_id from msgs limit 1));
-select pgque.ack(:batch_id);
+-- tx 5: acknowledge — pull the batch_id from any returned row
+select pgque.ack((select batch_id from msgs limit 1));
 ```
 
-Send, tick, and receive should be separate transactions — that's PgQ's snapshot-based design working as intended. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `force_tick()` is mainly for demos, tests, and manual operation. The `\gset` trick works in psql — for application code, store the `batch_id` from any returned row.
+Send, tick, and receive should be separate transactions — that's PgQ's snapshot-based design working as intended. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `force_tick()` is mainly for demos, tests, and manual operation. The temp-table capture above is the safe psql pattern when `receive` returns more than one row; for application code, store the `batch_id` from any returned row.
 
 Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, exactly-once, and recurring jobs in [examples](docs/examples.md).
 
