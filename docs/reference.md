@@ -163,7 +163,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.maint() → integer`
 
-Runs one maintenance cycle: rotation step 1, retry-queue processing, and vacuum of expired tables. Rotation step 2 is intentionally skipped — it must run in its own transaction and is scheduled separately by `start()`. Returns the total number of operations performed.
+Runs one maintenance cycle: rotation step 1 and retry-queue processing. Rotation step 2 is intentionally skipped — it must run in its own transaction and is scheduled separately by `start()`. Returns the total number of operations performed.
 Grant: PUBLIC (default). Source: `sql/pgque-api/maint.sql`.
 
 #### `pgque.ticker() → bigint`
