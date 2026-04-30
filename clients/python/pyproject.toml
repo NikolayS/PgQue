@@ -12,7 +12,6 @@ keywords = ["postgres", "postgresql", "queue", "pgq", "pgque", "background-jobs"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -29,7 +28,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
-    "pytest-asyncio>=0.21",
 ]
 
 [project.urls]
