@@ -134,7 +134,7 @@ select pgque.set_queue_config('orders', 'max_retries', '10');
 
 ## Lifecycle
 
-Most functions in this section are left on PUBLIC by default — tighten with `revoke execute … from public` if your policy demands it. `uninstall()` is explicitly revoked from both `pgque_admin` and PUBLIC — it can only be called by a superuser or the schema owner.
+Most functions in this section are left on PUBLIC by default — tighten with `revoke execute … from public` if your policy demands it. `uninstall()` is explicitly revoked from `pgque_admin`, but PUBLIC EXECUTE remains by default — tighten with `revoke execute on function pgque.uninstall() from public` if stricter control is required.
 
 #### `pgque.start() → void`
 
@@ -195,8 +195,8 @@ Grant: PUBLIC (default). Source: `sql/pgque.sql`.
 
 #### `pgque.uninstall() → void`
 
-Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired. `execute` is revoked from both `pgque_admin` and PUBLIC — superuser / schema owner only.
-Grant: superuser / schema owner only (both `pgque_admin` and PUBLIC `execute` are explicitly revoked). Source: `sql/pgque-additions/lifecycle.sql`.
+Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired. `execute` is revoked from `pgque_admin`; PUBLIC EXECUTE remains by default — revoke explicitly if stricter control is required.
+Grant: `execute` revoked from `pgque_admin`, but not from PUBLIC. Source: `sql/pgque-additions/lifecycle.sql`.
 
 ## Observability
 
