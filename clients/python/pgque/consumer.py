@@ -41,6 +41,9 @@ class Consumer:
           considered processed.
         - If the handler raises an exception, the message is nacked
           with the default retry_after.
+        - If no handler is registered for a message type (and no
+          default ``"*"`` handler exists), the message is nacked with
+          reason ``"unhandled event type"`` rather than silently dropped.
 
     After all messages in a batch have been dispatched, the batch is
     acked automatically.
@@ -171,9 +174,14 @@ class Consumer:
                 handler = self._handlers.get(msg.type, self._default_handler)
                 if handler is None:
                     logger.warning(
-                        "no handler for type=%r, skipping msg_id=%d",
+                        "no handler for type=%r, nacking msg_id=%d",
                         msg.type,
                         msg.msg_id,
+                    )
+                    client.nack(
+                        batch_id, msg,
+                        retry_after=self.retry_after,
+                        reason="unhandled event type",
                     )
                     continue
 
