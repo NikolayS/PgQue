@@ -37,6 +37,9 @@
 \echo 'Running: test_core_retry'
 \i tests/test_core_retry.sql
 
+\echo 'Running: test_core_batch_retry'
+\i tests/test_core_batch_retry.sql
+
 \echo 'Running: test_core_rotation'
 \i tests/test_core_rotation.sql
 
