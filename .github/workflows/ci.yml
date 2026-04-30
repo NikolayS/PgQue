@@ -77,8 +77,10 @@ jobs:
         if: always()
         run: docker rm -f pgque-test
 
-  client-tests:
+  go-client-tests:
+    name: Go client tests
     runs-on: ubuntu-latest
+    needs: verify
     env:
       PGQUE_TEST_DSN: postgres://postgres:pgque_test@localhost/pgque_test?sslmode=disable
     steps:
@@ -88,14 +90,14 @@ jobs:
 
       - name: Start PostgreSQL 18
         run: |
-          docker run -d --name pgque-client-test \
+          docker run -d --name pgque-go-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
             postgres:18
 
           for i in $(seq 1 30); do
-            docker exec pgque-client-test pg_isready -U postgres && break
+            docker exec pgque-go-test pg_isready -U postgres && break
             sleep 1
           done || { echo "PG not ready after 30 seconds"; exit 1; }
 
@@ -117,6 +119,42 @@ jobs:
           cd clients/go
           go test -race -v ./...
 
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pgque-go-test
+
+  python-client-tests:
+    name: Python client tests
+    runs-on: ubuntu-latest
+    needs: verify
+    env:
+      PGQUE_TEST_DSN: postgres://postgres:pgque_test@localhost/pgque_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Start PostgreSQL 18
+        run: |
+          docker run -d --name pgque-python-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            postgres:18
+
+          for i in $(seq 1 30); do
+            docker exec pgque-python-test pg_isready -U postgres && break
+            sleep 1
+          done || { echo "PG not ready after 30 seconds"; exit 1; }
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Install pgque schema
+        run: |
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -126,6 +164,42 @@ jobs:
           python3 -m pip install -U pip
           python3 -m pip install -e clients/python[dev]
           pytest -v clients/python/tests/
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pgque-python-test
+
+  typescript-client-tests:
+    name: TypeScript client tests
+    runs-on: ubuntu-latest
+    needs: verify
+    env:
+      PGQUE_TEST_DSN: postgres://postgres:pgque_test@localhost/pgque_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Start PostgreSQL 18
+        run: |
+          docker run -d --name pgque-ts-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            postgres:18
+
+          for i in $(seq 1 30); do
+            docker exec pgque-ts-test pg_isready -U postgres && break
+            sleep 1
+          done || { echo "PG not ready after 30 seconds"; exit 1; }
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Install pgque schema
+        run: |
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
 
       - uses: actions/setup-node@v4
         with:
@@ -138,9 +212,9 @@ jobs:
           npm run build
           npx vitest --run
 
-      - name: Cleanup client test DB
+      - name: Cleanup
         if: always()
-        run: docker rm -f pgque-client-test
+        run: docker rm -f pgque-ts-test
 
   verify:
     runs-on: ubuntu-latest
