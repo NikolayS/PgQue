@@ -105,7 +105,7 @@ pg_partman is installed in schema `public` (not `partman` as the docs sometimes 
 
 Default `premake=4` works for bench (4 future 5-min partitions = 20 min buffer, enough for 1.5 h bench given 1-min maintenance cron cadence).
 
-`premake=20` (24 partitions steady-state) collapsed pgmq-partitioned consumer perf to 525 TPS vs 6621 with premake=4. The dominant cost in PG's per-partition planning is the first-query-in-session penalty (Postgres caches the plan for subsequent queries in the same connection). Why this still hurt the consumer at steady state is a follow-up (#124) — likely short-lived connections (or PgBouncer transaction-mode recycling) paying the penalty repeatedly.
+`premake=20` (24 partitions steady-state) collapsed pgmq-partitioned consumer perf to 525 TPS vs 6621 with premake=4. The dominant cost in PG's per-partition planning is the first-query-in-session penalty (Postgres caches the plan for subsequent queries in the same connection). Why this still hurt the consumer at steady state is a follow-up (#124) — the bench used direct connections, so the actual cause needs measurement (e.g., consumer reconnect frequency, cached-plan invalidation, or per-query overhead distinct from initial planning).
 
 `infinite_time_partitions=true` is needed for the maintenance job to keep creating future partitions indefinitely:
 
