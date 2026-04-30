@@ -67,5 +67,8 @@
 \echo 'Running: test_receive_empty_batch'
 \i tests/test_receive_empty_batch.sql
 
+\echo 'Running: test_maint_vacuum'
+\i tests/test_maint_vacuum.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
