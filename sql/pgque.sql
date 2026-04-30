@@ -4580,6 +4580,10 @@ declare
     ev record;
     cnt int := 0;
 begin
+    if i_max_return < 1 then
+        raise exception 'pgque.receive: max_return must be >= 1, got %', i_max_return;
+    end if;
+
     -- Get next batch (may return NULL if no events)
     v_batch_id := pgque.next_batch(i_queue, i_consumer);
     if v_batch_id is null then
