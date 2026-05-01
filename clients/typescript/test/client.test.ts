@@ -85,6 +85,21 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     await env.client.ack(msgs[0]!.batchId);
   });
 
+  skipIfNoDb('sendBatch accepts an empty array without inserting messages', async () => {
+    await expect(env.client.sendBatch(env.queue, 'batch.empty', [])).resolves.toEqual([]);
+    await advanceQueue(env.client, env.queue);
+    await expect(env.client.receive(env.queue, env.consumer, 10)).resolves.toEqual([]);
+  });
+
+  skipIfNoDb('sendBatch defaults empty event type to "default"', async () => {
+    await env.client.sendBatch(env.queue, '', [{ x: 1 }]);
+    await advanceQueue(env.client, env.queue);
+    const [msg] = await env.client.receive(env.queue, env.consumer, 10);
+    expect(msg).toBeDefined();
+    expect(msg!.type).toBe('default');
+    await env.client.ack(msg!.batchId);
+  });
+
   skipIfNoDb('defaults event type to "default" when omitted', async () => {
     await env.client.send(env.queue, { payload: { x: 1 } });
     await advanceQueue(env.client, env.queue);
@@ -105,6 +120,10 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
 
   skipIfNoDb('rejects empty queue name on send', async () => {
     await expect(env.client.send('', { payload: {} })).rejects.toBeInstanceOf(PgqueSqlError);
+  });
+
+  skipIfNoDb('rejects empty queue name on sendBatch', async () => {
+    await expect(env.client.sendBatch('', 'x', [{}])).rejects.toBeInstanceOf(PgqueSqlError);
   });
 
   skipIfNoDb('rejects empty queue name on receive', async () => {
@@ -136,6 +155,20 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     await expect(
       env.client.send('does_not_exist_xyz', { payload: {} }),
     ).rejects.toBeInstanceOf(PgqueQueueNotFoundError);
+  });
+
+  skipIfNoDb('sendBatch to nonexistent queue raises PgqueQueueNotFoundError', async () => {
+    await expect(
+      env.client.sendBatch('does_not_exist_xyz', 'x', [{}]),
+    ).rejects.toBeInstanceOf(PgqueQueueNotFoundError);
+  });
+
+  skipIfNoDb('sendBatch rejects non-serializable payloads', async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    await expect(env.client.sendBatch(env.queue, 'x', [circular])).rejects.toBeInstanceOf(
+      PgqueSqlError,
+    );
   });
 
   // ---------------------------------------------------------------------------

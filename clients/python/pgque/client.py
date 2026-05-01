@@ -155,7 +155,7 @@ class PgqueClient:
         type: str,
         payloads: list,
     ) -> list[int]:
-        """Send same-type payloads atomically and return event IDs in input order."""
+        """Send same-type payloads atomically; str must be JSON text, None stores JSON null."""
         json_payloads = [
             json.dumps(p) if isinstance(p, (dict, list))
             else ("null" if p is None else p)

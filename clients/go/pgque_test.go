@@ -138,6 +138,80 @@ func TestSendBatch(t *testing.T) {
 	}
 }
 
+func TestSendBatchEmptySlice(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshQueue(t, client)
+	ids, err := client.SendBatch(context.Background(), queue, "batch.empty", []any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected no IDs, got %v", ids)
+	}
+	tick(t, client, queue)
+	msgs, err := client.Receive(context.Background(), queue, consumer, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no messages, got %d", len(msgs))
+	}
+}
+
+func TestSendBatchEmptyTypeDefaults(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshQueue(t, client)
+	if _, err := client.SendBatch(context.Background(), queue, "", []any{map[string]any{"x": 1}}); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, client, queue)
+	msgs, err := client.Receive(context.Background(), queue, consumer, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || msgs[0].Type != "default" {
+		t.Fatalf("expected one default message, got %#v", msgs)
+	}
+}
+
+func TestSendBatchNilPayloadProducesJSONNull(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshQueue(t, client)
+	if _, err := client.SendBatch(context.Background(), queue, "batch.null", []any{nil}); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, client, queue)
+	msgs, err := client.Receive(context.Background(), queue, consumer, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || msgs[0].Payload != "null" {
+		t.Fatalf("expected JSON null payload, got %#v", msgs)
+	}
+}
+
+func TestSendBatchMissingQueue(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	_, err := client.SendBatch(context.Background(), "missing_"+randSuffix(t), "x", []any{map[string]any{"x": 1}})
+	if err == nil {
+		t.Fatal("expected missing queue error")
+	}
+}
+
+func TestSendBatchUnmarshalablePayload(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, _ := setupFreshQueue(t, client)
+	_, err := client.SendBatch(context.Background(), queue, "x", []any{make(chan int)})
+	if err == nil {
+		t.Fatal("expected marshal error")
+	}
+}
+
 func TestSendAndReceive(t *testing.T) {
 	ctx := context.Background()
 	client, err := pgque.Connect(ctx, getDSN())

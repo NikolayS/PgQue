@@ -82,7 +82,7 @@ func (c *Client) SendBatch(ctx context.Context, queue, typ string, payloads []an
 
 	var ids []int64
 	err := c.pool.QueryRow(ctx,
-		"SELECT pgque.send_batch($1, $2, $3::jsonb[])", queue, typ, jsonPayloads,
+		"select pgque.send_batch($1, $2, $3::jsonb[])", queue, typ, jsonPayloads,
 	).Scan(&ids)
 	if err != nil {
 		return nil, fmt.Errorf("pgque: send batch: %w", err)
