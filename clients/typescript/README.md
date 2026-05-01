@@ -7,12 +7,19 @@ PgQ-based universal PostgreSQL queue. Thin, idiomatic wrapper over the
 
 ## Install
 
+For application code, install the published package with any npm-compatible
+package manager:
+
 ```bash
-bun add pgque
+npm install pgque
+# or: bun add pgque
+# or: pnpm add pgque
+# or: yarn add pgque
 ```
 
-Requires Node.js 20+ and PostgreSQL 14+ with the PgQue schema installed
-(`\i pgque.sql` — no extension required).
+Runtime requirements: Node.js 20+ and PostgreSQL 14+ with the PgQue schema
+installed (`\i pgque.sql` — no extension required). This repository uses Bun
+for TypeScript client development and CI commands.
 
 ## Quickstart
 
