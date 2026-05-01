@@ -79,8 +79,19 @@ func measureProducer(t *testing.T, client *pgque.Client, method string, n, repea
 	median := medianDuration(durations)
 	medianMs := float64(median) / float64(time.Millisecond)
 	eps := float64(n) / median.Seconds()
-	t.Logf("| %s | %d | %.3f | %.0f | %d |", method, n, medianMs, eps, repeats)
+	t.Logf("| %s | %d | %.3f | %.0f | %d |", displayProducerMethod(method), n, medianMs, eps, repeats)
 	t.Logf("csv:go,%s,%d,%.3f,%.0f,%d", method, n, medianMs, eps, repeats)
+}
+
+func displayProducerMethod(method string) string {
+	switch method {
+	case "send_loop":
+		return "loop over Send()"
+	case "send_batch":
+		return "SendBatch()"
+	default:
+		return method
+	}
 }
 
 func sendLoopGo(ctx context.Context, client *pgque.Client, queue string, payloads []any) error {

@@ -55,7 +55,7 @@ async function main(): Promise<void> {
     console.log('| method | batch_size | median_ms | events_per_sec | repeats |');
     console.log('|---|---:|---:|---:|---:|');
     for (const r of results) {
-      console.log(`| ${r.method} | ${r.batchSize} | ${r.medianMs.toFixed(3)} | ${r.eventsPerSec.toFixed(0)} | ${r.repeats} |`);
+      console.log(`| ${displayMethod(r.method)} | ${r.batchSize} | ${r.medianMs.toFixed(3)} | ${r.eventsPerSec.toFixed(0)} | ${r.repeats} |`);
     }
 
     console.log();
@@ -101,6 +101,10 @@ async function measure(
     eventsPerSec: medianMs > 0 ? n / (medianMs / 1000) : Number.POSITIVE_INFINITY,
     repeats,
   };
+}
+
+function displayMethod(method: Method): string {
+  return method === 'send_loop' ? 'loop over send()' : 'sendBatch()';
 }
 
 async function sendLoop(client: Client, queue: string, payloads: Payload[]): Promise<void> {

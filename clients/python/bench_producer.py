@@ -59,7 +59,7 @@ def main() -> int:
     print("| method | batch_size | median_ms | events_per_sec | repeats |")
     print("|---|---:|---:|---:|---:|")
     for r in results:
-        print(f"| {r.method} | {r.batch_size} | {r.median_ms:.3f} | {r.events_per_sec:.0f} | {r.repeats} |")
+        print(f"| {display_method(r.method)} | {r.batch_size} | {r.median_ms:.3f} | {r.events_per_sec:.0f} | {r.repeats} |")
 
     print()
     print("```csv")
@@ -98,6 +98,10 @@ def measure(client: pgque.PgqueClient, method: str, n: int, fn: Callable[[str, l
         events_per_sec=n / median_s if median_s > 0 else float("inf"),
         repeats=REPEATS,
     )
+
+
+def display_method(method: str) -> str:
+    return "loop over send()" if method == "send_loop" else "send_batch()"
 
 
 def send_loop(client: pgque.PgqueClient, queue: str, payloads: list[dict]) -> None:
