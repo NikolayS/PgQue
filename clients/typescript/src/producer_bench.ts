@@ -13,7 +13,7 @@
  * queue. Output is Markdown plus CSV-friendly rows.
  *
  * Usage:
- *   PGQUE_TEST_DSN=postgres://... npx tsx src/producer_bench.ts
+ *   PGQUE_TEST_DSN=postgresql://... bun src/producer_bench.ts
  */
 
 import { randomBytes } from 'node:crypto';
