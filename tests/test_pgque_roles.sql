@@ -59,7 +59,17 @@ begin
   assert not has_function_privilege('pgque_writer', 'pgque.register_consumer_at(text, text, bigint)', 'EXECUTE'),
     'pgque_writer must NOT have execute on register_consumer_at(...) (#106)';
   assert not has_function_privilege('pgque_writer', 'pgque.event_retry(bigint, bigint, integer)', 'EXECUTE'),
-    'pgque_writer must NOT have execute on event_retry(...) (#106)';
+    'pgque_writer must NOT have execute on event_retry(int) (#106)';
+  assert not has_function_privilege('pgque_writer', 'pgque.event_retry(bigint, bigint, timestamptz)', 'EXECUTE'),
+    'pgque_writer must NOT have execute on event_retry(timestamptz) (#106)';
+  assert not has_function_privilege('pgque_writer', 'pgque.next_batch_info(text, text)', 'EXECUTE'),
+    'pgque_writer must NOT have execute on next_batch_info(text, text) (#106)';
+  assert not has_function_privilege('pgque_writer', 'pgque.next_batch_custom(text, text, interval, int4, interval)', 'EXECUTE'),
+    'pgque_writer must NOT have execute on next_batch_custom(...) (#106)';
+  assert not has_function_privilege('pgque_writer', 'pgque.register_consumer(text, text)', 'EXECUTE'),
+    'pgque_writer must NOT have execute on register_consumer(text, text) (#106)';
+  assert not has_function_privilege('pgque_writer', 'pgque.unregister_consumer(text, text)', 'EXECUTE'),
+    'pgque_writer must NOT have execute on unregister_consumer(text, text) (#106)';
   assert not has_function_privilege('pgque_writer', 'pgque.subscribe(text, text)', 'EXECUTE'),
     'pgque_writer must NOT have execute on subscribe(text, text) (#106)';
 

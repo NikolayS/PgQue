@@ -60,8 +60,10 @@ Available but most users should prefer the modern API above. See
 - `pgque.jsontriga()`, `pgque.logutriga()`, `pgque.sqltriga()`
 
 ### Roles
-- `pgque_reader`, `pgque_writer`, `pgque_admin` (with inheritance
-  `admin > writer > reader`)
+- `pgque_reader` (consume) and `pgque_writer` (produce) are siblings —
+  neither inherits the other, mirroring upstream PgQ.
+- `pgque_admin` is a member of both `pgque_reader` and `pgque_writer`.
+- Apps that produce **and** consume must be granted both roles explicitly.
 
 ## Experimental SQL (`sql/experimental/`)
 

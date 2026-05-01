@@ -143,7 +143,15 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- failed events to retry/DLQ. They go to pgque_reader, not pgque_writer.
 -- Apps that both produce and consume must hold both roles. See
 -- sql/pgque-additions/roles.sql for the producer/consumer split rationale
--- (closes #102, #106).
+-- (refs #102, #106; producer→consumer half. Consumer→consumer ownership
+-- is tracked separately in #164.)
+--
+-- Upgrade path: pre-#163 installs granted these to pgque_writer. Postgres
+-- preserves function-level grants across `create or replace function`, so
+-- explicitly revoke before re-granting on the new role.
+revoke execute on function pgque.receive(text, text, int)                    from pgque_writer;
+revoke execute on function pgque.ack(bigint)                                 from pgque_writer;
+revoke execute on function pgque.nack(bigint, pgque.message, interval, text) from pgque_writer;
 grant execute on function pgque.receive(text, text, int)                      to pgque_reader;
 grant execute on function pgque.ack(bigint)                                   to pgque_reader;
 grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_reader;

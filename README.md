@@ -171,7 +171,7 @@ PgQue mirrors upstream PgQ's split: `pgque_reader` (consume) and `pgque_writer` 
 | Role | Purpose | Granted access |
 |---|---|---|
 | `pgque_reader` | Consumers, dashboards, metrics, debugging | Read-only info (`get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, `select` on all tables) **and** the consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) plus the underlying PgQ primitives (`next_batch*`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer*`, `unregister_consumer`). |
-| `pgque_writer` | Producers | The produce API (`send`, `send_batch`) and the underlying primitive (`insert_event`). Does **not** inherit `pgque_reader` — a producer-only role cannot ack/finish/inspect consumer batches (closes #102, #106). |
+| `pgque_writer` | Producers | The produce API (`send`, `send_batch`) and the underlying primitive (`insert_event`). Does **not** inherit `pgque_reader` — a producer-only role cannot ack/finish/inspect consumer batches (refs #102, #106). |
 | `pgque_admin`  | Operators, migrations | Member of both `pgque_reader` and `pgque_writer`, plus full schema/table/sequence access. `uninstall()` is revoked from both `pgque_admin` and PUBLIC (superuser-only — it drops the schema). |
 
 Typical app setup:
@@ -193,6 +193,31 @@ grant pgque_writer to app_webhook;
 create user metrics with password '...';              -- replace with a real password
 grant pgque_reader to metrics;
 ```
+
+### Upgrading from a pre-#163 install
+
+Pre-#163 PgQue granted `pgque_reader` to `pgque_writer` (writer inherited reader). #163 reverses that: the two are now siblings. **Existing deployments must take two manual steps after re-running `\i sql/pgque.sql`:**
+
+1. The re-install **does** revoke the old `pgque_reader → pgque_writer` membership for you (idempotent `revoke` in `roles.sql`). No action needed for that part.
+2. Any application role that previously held `pgque_writer` and called `receive`/`ack`/`nack`/`subscribe`/`unsubscribe` will start failing with `permission denied`. Grant `pgque_reader` to those roles:
+
+```sql
+-- Apps that produce AND consume:
+grant pgque_reader to app_orders;
+-- (pgque_writer is already granted; nothing to revoke from it.)
+```
+
+If you previously assumed a single role for both, audit which apps still need it:
+
+```sql
+-- Find roles holding pgque_writer that are missing pgque_reader.
+select rolname from pg_roles r
+ where pg_has_role(rolname, 'pgque_writer', 'MEMBER')
+   and not pg_has_role(rolname, 'pgque_reader', 'MEMBER')
+   and rolname not in ('pgque_writer','pgque_admin','postgres');
+```
+
+Then `grant pgque_reader to <each_role>;` per the audit. Pure producers (e.g. webhook ingesters that only `send()`) need no change.
 
 DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, `set_queue_config`) are not granted to either `pgque_reader` or `pgque_writer`. The schema-wide blanket `revoke execute … from public` strips PUBLIC, and `pgque_admin` is the only role that retains `execute` on these helpers — perform them as an admin / migration role.
 

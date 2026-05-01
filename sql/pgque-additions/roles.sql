@@ -18,6 +18,15 @@ do $$ begin create role pgque_admin;  exception when duplicate_object then null;
 -- (issue #106). Apps that both produce and consume must be granted BOTH
 -- pgque_reader and pgque_writer explicitly.
 --
+-- Upgrade path (CRITICAL): pre-#163 installs granted pgque_reader to
+-- pgque_writer. Postgres does NOT revoke prior role grants on re-install,
+-- so we must do it explicitly. Without this, in-place upgrades silently
+-- retain the vulnerable inheritance and the security fix is a no-op.
+do $$ begin
+    revoke pgque_reader from pgque_writer;
+exception when undefined_object then null;
+end $$;
+
 -- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
 -- for role grants until PG16).
 do $$ begin
@@ -51,6 +60,23 @@ grant execute on function pgque.get_batch_info(bigint) to pgque_reader;
 
 -- version
 grant execute on function pgque.version() to pgque_reader;
+
+-- Upgrade path (CRITICAL): the consumer-side primitives below moved from
+-- pgque_writer to pgque_reader in #163. Postgres preserves function-level
+-- grants across `create or replace function`, so a re-install on a pre-#163
+-- database silently keeps the old pgque_writer grants. Explicitly revoke
+-- before re-granting. Each revoke is idempotent (no-op if the grant doesn't
+-- exist).
+revoke execute on function pgque.register_consumer(text, text) from pgque_writer;
+revoke execute on function pgque.register_consumer_at(text, text, bigint) from pgque_writer;
+revoke execute on function pgque.unregister_consumer(text, text) from pgque_writer;
+revoke execute on function pgque.next_batch(text, text) from pgque_writer;
+revoke execute on function pgque.next_batch_info(text, text) from pgque_writer;
+revoke execute on function pgque.next_batch_custom(text, text, interval, int4, interval) from pgque_writer;
+revoke execute on function pgque.get_batch_events(bigint) from pgque_writer;
+revoke execute on function pgque.finish_batch(bigint) from pgque_writer;
+revoke execute on function pgque.event_retry(bigint, bigint, timestamptz) from pgque_writer;
+revoke execute on function pgque.event_retry(bigint, bigint, integer) from pgque_writer;
 
 -- consumer registration (consumer side: create/move/drop a subscription cursor)
 grant execute on function pgque.register_consumer(text, text) to pgque_reader;

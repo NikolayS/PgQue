@@ -141,6 +141,12 @@ grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
 grant execute on function pgque.send(text, text, text)          to pgque_writer;
 grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
 grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
+-- Upgrade path: pre-#163 installs granted subscribe/unsubscribe to
+-- pgque_writer. Revoke explicitly before re-granting on pgque_reader so
+-- in-place upgrades clear the old grants (create or replace function
+-- preserves function-level grants).
+revoke execute on function pgque.subscribe(text, text)         from pgque_writer;
+revoke execute on function pgque.unsubscribe(text, text)       from pgque_writer;
 grant execute on function pgque.subscribe(text, text)           to pgque_reader;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 

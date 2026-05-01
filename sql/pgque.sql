@@ -4218,6 +4218,15 @@ do $$ begin create role pgque_admin;  exception when duplicate_object then null;
 -- (issue #106). Apps that both produce and consume must be granted BOTH
 -- pgque_reader and pgque_writer explicitly.
 --
+-- Upgrade path (CRITICAL): pre-#163 installs granted pgque_reader to
+-- pgque_writer. Postgres does NOT revoke prior role grants on re-install,
+-- so we must do it explicitly. Without this, in-place upgrades silently
+-- retain the vulnerable inheritance and the security fix is a no-op.
+do $$ begin
+    revoke pgque_reader from pgque_writer;
+exception when undefined_object then null;
+end $$;
+
 -- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
 -- for role grants until PG16).
 do $$ begin
@@ -4251,6 +4260,23 @@ grant execute on function pgque.get_batch_info(bigint) to pgque_reader;
 
 -- version
 grant execute on function pgque.version() to pgque_reader;
+
+-- Upgrade path (CRITICAL): the consumer-side primitives below moved from
+-- pgque_writer to pgque_reader in #163. Postgres preserves function-level
+-- grants across `create or replace function`, so a re-install on a pre-#163
+-- database silently keeps the old pgque_writer grants. Explicitly revoke
+-- before re-granting. Each revoke is idempotent (no-op if the grant doesn't
+-- exist).
+revoke execute on function pgque.register_consumer(text, text) from pgque_writer;
+revoke execute on function pgque.register_consumer_at(text, text, bigint) from pgque_writer;
+revoke execute on function pgque.unregister_consumer(text, text) from pgque_writer;
+revoke execute on function pgque.next_batch(text, text) from pgque_writer;
+revoke execute on function pgque.next_batch_info(text, text) from pgque_writer;
+revoke execute on function pgque.next_batch_custom(text, text, interval, int4, interval) from pgque_writer;
+revoke execute on function pgque.get_batch_events(bigint) from pgque_writer;
+revoke execute on function pgque.finish_batch(bigint) from pgque_writer;
+revoke execute on function pgque.event_retry(bigint, bigint, timestamptz) from pgque_writer;
+revoke execute on function pgque.event_retry(bigint, bigint, integer) from pgque_writer;
 
 -- consumer registration (consumer side: create/move/drop a subscription cursor)
 grant execute on function pgque.register_consumer(text, text) to pgque_reader;
@@ -4747,7 +4773,15 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- failed events to retry/DLQ. They go to pgque_reader, not pgque_writer.
 -- Apps that both produce and consume must hold both roles. See
 -- sql/pgque-additions/roles.sql for the producer/consumer split rationale
--- (closes #102, #106).
+-- (refs #102, #106; producer→consumer half. Consumer→consumer ownership
+-- is tracked separately in #164.)
+--
+-- Upgrade path: pre-#163 installs granted these to pgque_writer. Postgres
+-- preserves function-level grants across `create or replace function`, so
+-- explicitly revoke before re-granting on the new role.
+revoke execute on function pgque.receive(text, text, int)                    from pgque_writer;
+revoke execute on function pgque.ack(bigint)                                 from pgque_writer;
+revoke execute on function pgque.nack(bigint, pgque.message, interval, text) from pgque_writer;
 grant execute on function pgque.receive(text, text, int)                      to pgque_reader;
 grant execute on function pgque.ack(bigint)                                   to pgque_reader;
 grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_reader;
@@ -4896,6 +4930,12 @@ grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
 grant execute on function pgque.send(text, text, text)          to pgque_writer;
 grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
 grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
+-- Upgrade path: pre-#163 installs granted subscribe/unsubscribe to
+-- pgque_writer. Revoke explicitly before re-granting on pgque_reader so
+-- in-place upgrades clear the old grants (create or replace function
+-- preserves function-level grants).
+revoke execute on function pgque.subscribe(text, text)         from pgque_writer;
+revoke execute on function pgque.unsubscribe(text, text)       from pgque_writer;
 grant execute on function pgque.subscribe(text, text)           to pgque_reader;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 
