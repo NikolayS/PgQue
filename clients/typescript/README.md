@@ -108,9 +108,9 @@ package is imported.
 
 ## Tests
 
-The repository standardizes on Bun 1.3.8 for TypeScript client development and
-CI commands. The integration tests need a running PostgreSQL with the PgQue
-schema installed and `pgque_admin`-equivalent privileges:
+The repository standardizes on Bun for TypeScript client development and CI
+commands. The integration tests need a running PostgreSQL with the PgQue schema
+installed and `pgque_admin`-equivalent privileges:
 
 ```bash
 bun install --frozen-lockfile
