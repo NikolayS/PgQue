@@ -228,7 +228,7 @@ export class Client {
   /**
    * Wrapper for pgque.ticker(): if `queue` is given, runs the per-queue
    * overload (`pgque.ticker(queue text)`); otherwise runs the no-arg global
-   * overload. Returns the underlying tick result count.
+   * overload. Resolves after the ticker call completes.
    */
   async ticker(queue?: string): Promise<void> {
     try {
