@@ -18,8 +18,7 @@ npm install pgque
 ```
 
 Runtime requirements: Node.js 20+ and PostgreSQL 14+ with the PgQue schema
-installed (`\i pgque.sql` — no extension required). This repository uses Bun
-for TypeScript client development and CI commands.
+installed (`\i pgque.sql` — no extension required).
 
 ## Quickstart
 
@@ -109,9 +108,9 @@ package is imported.
 
 ## Tests
 
-The repository standardizes on Bun 1.3.8 for TypeScript client development.
-The integration tests need a running PostgreSQL with the PgQue schema installed
-and `pgque_admin`-equivalent privileges:
+The repository standardizes on Bun 1.3.8 for TypeScript client development and
+CI commands. The integration tests need a running PostgreSQL with the PgQue
+schema installed and `pgque_admin`-equivalent privileges:
 
 ```bash
 bun install --frozen-lockfile
