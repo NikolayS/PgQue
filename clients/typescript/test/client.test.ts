@@ -66,6 +66,25 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     expect(after).toEqual([]);
   });
 
+  skipIfNoDb('sendBatch publishes multiple payloads atomically', async () => {
+    const ids = await env.client.sendBatch(env.queue, 'batch.test', [
+      { n: 1 },
+      { n: 2 },
+      { n: 3 },
+    ]);
+    expect(ids).toHaveLength(3);
+    expect(ids[0]).toBeLessThan(ids[1]!);
+    expect(ids[1]).toBeLessThan(ids[2]!);
+
+    await advanceQueue(env.client, env.queue);
+
+    const msgs = await env.client.receive(env.queue, env.consumer, 10);
+    expect(msgs).toHaveLength(3);
+    expect(msgs.map((m) => m.type)).toEqual(['batch.test', 'batch.test', 'batch.test']);
+    expect(msgs.map((m) => JSON.parse(m.payload))).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+    await env.client.ack(msgs[0]!.batchId);
+  });
+
   skipIfNoDb('defaults event type to "default" when omitted', async () => {
     await env.client.send(env.queue, { payload: { x: 1 } });
     await advanceQueue(env.client, env.queue);

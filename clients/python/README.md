@@ -26,6 +26,10 @@ with pgque.connect("postgresql://localhost/mydb") as client:
 
     # producer
     client.send("orders", {"order_id": 42}, type="order.created")
+    client.send_batch("orders", "order.created", [
+        {"order_id": 43},
+        {"order_id": 44},
+    ])
     client.conn.commit()
 
 # consumer (separate process / thread)

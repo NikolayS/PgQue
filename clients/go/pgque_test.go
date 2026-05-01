@@ -94,6 +94,47 @@ func TestSend(t *testing.T) {
 	}
 }
 
+func TestSendBatch(t *testing.T) {
+	ctx := context.Background()
+	client, err := pgque.Connect(ctx, getDSN())
+	if err != nil {
+		t.Skip("Cannot connect to PG:", err)
+	}
+	defer client.Close()
+	setupQueue(t, client)
+
+	ids, err := client.SendBatch(ctx, "gotest_queue", "batch.test", []any{
+		map[string]any{"n": 1},
+		map[string]any{"n": 2},
+		map[string]any{"n": 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 IDs, got %d", len(ids))
+	}
+	if ids[0] >= ids[1] || ids[1] >= ids[2] {
+		t.Fatalf("expected IDs in input order, got %v", ids)
+	}
+
+	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')"); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := client.Receive(ctx, "gotest_queue", "gotest_consumer", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+	for _, msg := range msgs {
+		if msg.Type != "batch.test" {
+			t.Fatalf("expected type batch.test, got %s", msg.Type)
+		}
+	}
+}
+
 func TestSendAndReceive(t *testing.T) {
 	ctx := context.Background()
 	client, err := pgque.Connect(ctx, getDSN())

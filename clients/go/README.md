@@ -47,6 +47,15 @@ func main() {
         log.Fatal(err)
     }
 
+    ids, err := client.SendBatch(ctx, "orders", "order.created", []any{
+        map[string]any{"order_id": 43},
+        map[string]any{"order_id": 44},
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    _ = ids
+
     // Consumer side
     consumer := client.NewConsumer("orders", "order_worker")
     consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) error {

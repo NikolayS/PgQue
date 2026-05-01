@@ -66,6 +66,33 @@ func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error
 	return eid, nil
 }
 
+// SendBatch publishes multiple payloads with the same event type in one SQL
+// call and returns event IDs in input order. PostgreSQL executes the call
+// atomically inside the caller's transaction: if any payload is rejected, no
+// message from the batch is inserted. An empty typ defaults to "default".
+func (c *Client) SendBatch(ctx context.Context, queue, typ string, payloads []any) ([]int64, error) {
+	jsonPayloads := make([]string, len(payloads))
+	for i, payload := range payloads {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("pgque: marshal batch payload %d: %w", i, err)
+		}
+		jsonPayloads[i] = string(encoded)
+	}
+	if typ == "" {
+		typ = "default"
+	}
+
+	var ids []int64
+	err := c.pool.QueryRow(ctx,
+		"SELECT pgque.send_batch($1, $2, $3::jsonb[])", queue, typ, jsonPayloads,
+	).Scan(&ids)
+	if err != nil {
+		return nil, fmt.Errorf("pgque: send batch: %w", err)
+	}
+	return ids, nil
+}
+
 // Receive fetches up to maxMessages from the next batch for the named
 // consumer. Returns an empty slice when no batch is available; in that
 // case the caller should sleep before polling again. Each returned

@@ -36,6 +36,10 @@ try {
     type: 'order.created',
     payload: { id: 42 },
   });
+  await client.sendBatch('orders', 'order.created', [
+    { id: 43 },
+    { id: 44 },
+  ]);
 
   // High-level consumer with per-event-type dispatch.
   // msg.payload is raw JSON text — call JSON.parse() to get the object back.
@@ -59,6 +63,7 @@ try {
 |---|---|
 | `connect(dsn, poolOptions?)` | Connect via `pg.Pool`. Eagerly probes the connection. |
 | `client.send(queue, event)` | Publish; returns event id (`bigint`). |
+| `client.sendBatch(queue, type, payloads)` | Publish a same-type batch atomically; returns event ids (`bigint[]`). |
 | `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. |
 | `client.ack(batchId)` | Finish the batch. |
 | `client.nack(batchId, msg, opts?)` | Single-message retry/DLQ. |
