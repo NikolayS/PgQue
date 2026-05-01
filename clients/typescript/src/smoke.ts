@@ -34,6 +34,7 @@ async function run(): Promise<void> {
     }
 
     await client.forceTick(queue);
+    await client.ticker(queue);
 
     const msgs = await client.receive(queue, consumer, 1);
     if (msgs.length !== 1) {
