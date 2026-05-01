@@ -50,7 +50,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.send_batch(queue text, type text, payloads jsonb[]) → bigint[]`
 
-Inserts each element of `payloads` into `queue` within a single transaction. Returns the array of event ids in the same order.
+Set-based batch send: inserts all elements of `payloads` into `queue` in one SQL statement / transaction. Returns the array of event ids in the same order.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 ```sql
@@ -60,7 +60,7 @@ select pgque.send_batch('orders', 'order.created',
 
 #### `pgque.send_batch(queue text, type text, payloads text[]) → bigint[]`
 
-Fast-path batch send. Returns the array of event ids.
+Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 ## Consuming

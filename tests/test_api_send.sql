@@ -99,6 +99,75 @@ begin
   raise notice 'PASS: send_batch() on empty input returns empty array';
 end $$;
 
+-- Test 3e: send_batch() implementation is set-based, not a PL/pgSQL loop
+-- over pgque.insert_event(). This protects producer throughput: batching should
+-- reduce client round trips *and* avoid per-row function calls inside Postgres.
+do $$
+declare
+  v_def text;
+begin
+  select pg_get_functiondef('pgque.send_batch(text, text, jsonb[])'::regprocedure)
+    into v_def;
+  assert v_def !~* '\mforeach\M',
+    'send_batch(jsonb[]) must not loop with FOREACH';
+  assert v_def !~* 'pgque\.insert_event\s*\(',
+    'send_batch(jsonb[]) must not call insert_event per row';
+
+  select pg_get_functiondef('pgque.send_batch(text, text, text[])'::regprocedure)
+    into v_def;
+  assert v_def !~* '\mforeach\M',
+    'send_batch(text[]) must not loop with FOREACH';
+  assert v_def !~* 'pgque\.insert_event\s*\(',
+    'send_batch(text[]) must not call insert_event per row';
+
+  raise notice 'PASS: send_batch() implementation is set-based';
+end $$;
+
+-- Test 3f: send_batch() preserves input order and payloads at larger batch sizes
+do $$
+declare
+  v_ids bigint[];
+  v_count int;
+  v_bad_order int;
+  v_table text;
+begin
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.large',
+    array(select jsonb_build_object('n', g) from generate_series(1, 1000) g)
+  );
+
+  assert cardinality(v_ids) = 1000,
+    'send_batch(jsonb[]) should return 1000 ids, got ' || cardinality(v_ids)::text;
+
+  select pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+    into v_table
+    from pgque.queue
+   where queue_name = 'test_send';
+
+  execute format(
+    'select count(*) from %s where ev_id = any($1) and ev_type = $2',
+    v_table
+  ) into v_count using v_ids, 'batch.large';
+  assert v_count = 1000,
+    'send_batch(jsonb[]) should insert 1000 rows, got ' || v_count;
+
+  execute format($sql$
+    with expected as (
+      select ord, $1[ord] as ev_id
+        from generate_subscripts($1, 1) as ord
+    )
+    select count(*)
+      from expected e
+      join %s ev using (ev_id)
+     where (ev.ev_data::jsonb->>'n')::int <> e.ord
+  $sql$, v_table) into v_bad_order using v_ids;
+  assert v_bad_order = 0,
+    'send_batch(jsonb[]) should preserve payload order, mismatches=' || v_bad_order;
+
+  raise notice 'PASS: send_batch() preserves order and payloads for large JSON batches';
+end $$;
+
 -- Test 4: subscribe/unsubscribe
 do $$
 declare

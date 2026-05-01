@@ -4871,35 +4871,109 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.send_batch(queue, type, payloads jsonb[]) -- batch send, JSON payloads
+-- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
 create or replace function pgque.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
 declare
-    ids bigint[] := '{}';
-    p jsonb;
+    qstate record;
+    v_ids bigint[];
 begin
-    foreach p in array i_payloads loop
-        ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p::text));
-    end loop;
-    return ids;
+    select q.queue_id,
+           pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
+           q.queue_event_seq,
+           q.queue_disable_insert
+      into qstate
+      from pgque.queue q
+     where q.queue_name = i_queue;
+
+    if not found then
+        raise exception 'queue not found: %', i_queue;
+    end if;
+
+    if qstate.queue_disable_insert then
+        if current_setting('session_replication_role') <> 'replica' then
+            raise exception 'Insert into queue disallowed';
+        end if;
+    end if;
+
+    execute format($sql$
+        with input as (
+            select u.ord,
+                   nextval($1::regclass) as ev_id,
+                   u.payload::text as ev_data
+              from unnest($2::jsonb[]) with ordinality as u(payload, ord)
+        ), ins as (
+            insert into %s
+                (ev_id, ev_time, ev_owner, ev_retry,
+                 ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4)
+            select ev_id, $3, null, null,
+                   $4, ev_data, null, null, null, null
+              from input
+             order by ord
+            returning ev_id
+        )
+        select coalesce(array_agg(input.ev_id order by input.ord), '{}'::bigint[])
+          from input
+          join ins using (ev_id)
+    $sql$, qstate.cur_table_name)
+    into v_ids
+    using qstate.queue_event_seq, i_payloads, now(), i_type;
+
+    return v_ids;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.send_batch(queue, type, payloads text[]) -- fast-path batch send
+-- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
 create or replace function pgque.send_batch(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
 declare
-    ids bigint[] := '{}';
-    p text;
+    qstate record;
+    v_ids bigint[];
 begin
-    foreach p in array i_payloads loop
-        ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p));
-    end loop;
-    return ids;
+    select q.queue_id,
+           pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
+           q.queue_event_seq,
+           q.queue_disable_insert
+      into qstate
+      from pgque.queue q
+     where q.queue_name = i_queue;
+
+    if not found then
+        raise exception 'queue not found: %', i_queue;
+    end if;
+
+    if qstate.queue_disable_insert then
+        if current_setting('session_replication_role') <> 'replica' then
+            raise exception 'Insert into queue disallowed';
+        end if;
+    end if;
+
+    execute format($sql$
+        with input as (
+            select u.ord,
+                   nextval($1::regclass) as ev_id,
+                   u.payload as ev_data
+              from unnest($2::text[]) with ordinality as u(payload, ord)
+        ), ins as (
+            insert into %s
+                (ev_id, ev_time, ev_owner, ev_retry,
+                 ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4)
+            select ev_id, $3, null, null,
+                   $4, ev_data, null, null, null, null
+              from input
+             order by ord
+            returning ev_id
+        )
+        select coalesce(array_agg(input.ev_id order by input.ord), '{}'::bigint[])
+          from input
+          join ins using (ev_id)
+    $sql$, qstate.cur_table_name)
+    into v_ids
+    using qstate.queue_event_seq, i_payloads, now(), i_type;
+
+    return v_ids;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
