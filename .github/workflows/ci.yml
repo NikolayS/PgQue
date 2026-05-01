@@ -120,12 +120,17 @@ jobs:
           cd clients/go
           go test -run TestSmoke ./...
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.8
+
       - name: TypeScript smoke
         run: |
           cd clients/typescript
-          npm install
-          npm run check
-          npx tsx src/smoke.ts
+          bun install --frozen-lockfile
+          bun run check
+          bunx tsx src/smoke.ts
 
       - name: Cleanup client smoke DB
         if: always()

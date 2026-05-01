@@ -5,7 +5,7 @@
 // smoke.ts — env-gated end-to-end smoke test.
 //
 // Usage (from clients/typescript/):
-//   npx tsx src/smoke.ts
+//   bunx tsx src/smoke.ts
 //
 // If PGQUE_TEST_DSN is unset the script exits 0 immediately. When the var is
 // set it runs a minimal send → tick → receive → ack round-trip and exits 0 on

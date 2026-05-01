@@ -8,7 +8,7 @@ PgQ-based universal PostgreSQL queue. Thin, idiomatic wrapper over the
 ## Install
 
 ```bash
-npm install pgque
+bun add pgque
 ```
 
 Requires Node.js 20+ and PostgreSQL 14+ with the PgQue schema installed
@@ -107,7 +107,7 @@ installed and `pgque_admin`-equivalent privileges:
 
 ```bash
 PGQUE_TEST_DSN=postgres://postgres:pgque_test@localhost/pgque_test \
-  npm test
+  bun run test
 ```
 
 Without `PGQUE_TEST_DSN` the integration tests skip.
