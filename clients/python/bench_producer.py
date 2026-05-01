@@ -1,20 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-"""Producer microbenchmarks for pgque-py.
-
-Compares the default client API paths:
-
-- loop over ``client.send(queue, payload, type=...)``
-- one ``client.send_batch(queue, type, payloads)`` call
-
-Batch sizes are fixed at 1, 100, and 1000. Each measurement creates a fresh
-queue, publishes N events, commits, verifies the inserted row count, and drops
-the queue. Output is Markdown plus CSV-friendly rows.
-
-Usage:
-    PGQUE_TEST_DSN=postgresql://... python clients/python/bench_producer.py
-"""
+"""Producer microbenchmarks for pgque-py send-loop vs send_batch."""
 
 from __future__ import annotations
 

@@ -24,13 +24,14 @@ with pgque.connect("postgresql://localhost/mydb") as client:
     client.conn.execute("select pgque.subscribe('orders', 'order_worker')")
     client.conn.commit()
 
-    # producer
-    client.send("orders", {"order_id": 42}, type="order.created")
-    client.send_batch("orders", "order.created", [
+    # producer: commit once to publish both calls atomically
+    event_id = client.send("orders", {"order_id": 42}, type="order.created")
+    batch_ids = client.send_batch("orders", "order.created", [
         {"order_id": 43},
         {"order_id": 44},
     ])
     client.conn.commit()
+    print(event_id, batch_ids)
 
 # consumer (separate process / thread)
 consumer = pgque.Consumer(

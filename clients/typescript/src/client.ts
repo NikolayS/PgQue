@@ -101,12 +101,7 @@ export class Client {
     }
   }
 
-  /**
-   * Publish multiple payloads with the same event type in one SQL call. Returns
-   * event IDs in input order. PostgreSQL executes the call atomically inside
-   * the caller's transaction: if any payload is rejected, no message from the
-   * batch is inserted.
-   */
+  /** Publish same-type payloads atomically; empty type defaults to `default`. */
   async sendBatch(queue: string, type: string, payloads: unknown[]): Promise<bigint[]> {
     if (!queue) {
       throw new PgqueSqlError('sendBatch', {

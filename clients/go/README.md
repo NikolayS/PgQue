@@ -54,7 +54,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    _ = ids
+    log.Printf("published batch event IDs: %v", ids)
 
     // Consumer side
     consumer := client.NewConsumer("orders", "order_worker")

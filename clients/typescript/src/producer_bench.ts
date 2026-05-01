@@ -1,20 +1,8 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // pgque -- TypeScript client for PgQue
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-/** Producer microbenchmarks for the TypeScript client.
- *
- * Compares the default client API paths:
- * - loop over client.send(queue, event)
- * - one client.sendBatch(queue, type, payloads) call
- *
- * Batch sizes are fixed at 1, 100, and 1000. Each measurement creates a fresh
- * queue, publishes N events, verifies the inserted row count, and drops the
- * queue. Output is Markdown plus CSV-friendly rows.
- *
- * Usage:
- *   PGQUE_TEST_DSN=postgresql://... bun src/producer_bench.ts
- */
+// Producer microbenchmarks for pgque TypeScript send-loop vs sendBatch.
 
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';

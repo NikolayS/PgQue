@@ -2,6 +2,7 @@ package pgque_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sync/atomic"
@@ -96,14 +97,11 @@ func TestSend(t *testing.T) {
 
 func TestSendBatch(t *testing.T) {
 	ctx := context.Background()
-	client, err := pgque.Connect(ctx, getDSN())
-	if err != nil {
-		t.Skip("Cannot connect to PG:", err)
-	}
+	client := connectOrSkip(t)
 	defer client.Close()
-	setupQueue(t, client)
+	queue, consumer := setupFreshQueue(t, client)
 
-	ids, err := client.SendBatch(ctx, "gotest_queue", "batch.test", []any{
+	ids, err := client.SendBatch(ctx, queue, "batch.test", []any{
 		map[string]any{"n": 1},
 		map[string]any{"n": 2},
 		map[string]any{"n": 3},
@@ -118,19 +116,24 @@ func TestSendBatch(t *testing.T) {
 		t.Fatalf("expected IDs in input order, got %v", ids)
 	}
 
-	if _, err = client.Pool().Exec(ctx, "SELECT pgque.ticker('gotest_queue')"); err != nil {
-		t.Fatal(err)
-	}
-	msgs, err := client.Receive(ctx, "gotest_queue", "gotest_consumer", 10)
+	tick(t, client, queue)
+	msgs, err := client.Receive(ctx, queue, consumer, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
-	for _, msg := range msgs {
+	for i, msg := range msgs {
 		if msg.Type != "batch.test" {
 			t.Fatalf("expected type batch.test, got %s", msg.Type)
+		}
+		var payload map[string]int
+		if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["n"] != i+1 {
+			t.Fatalf("expected payload n=%d, got %v", i+1, payload)
 		}
 	}
 }

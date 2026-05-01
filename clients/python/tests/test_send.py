@@ -160,12 +160,7 @@ def test_jsonb_payload_round_trip(conn, setup_queue, payload, expected):
 
 
 def test_send_batch_none_payload_produces_json_null(conn, setup_queue):
-    """send_batch([None]) must store JSON null, not SQL NULL.
-
-    Regression test for send/send_batch asymmetry: send(None) coerces to
-    JSON null via "null" string, but send_batch previously passed Python
-    None through psycopg as SQL NULL, bypassing the ::jsonb cast.
-    """
+    """send_batch([None]) must store JSON null, not SQL NULL."""
     import json
 
     queue, consumer = setup_queue

@@ -155,21 +155,7 @@ class PgqueClient:
         type: str,
         payloads: list,
     ) -> list[int]:
-        """Send multiple messages in a single SQL call (one transaction).
-
-        Maps to ``pgque.send_batch(queue, type, payloads[])``.
-
-        Args:
-            queue: Target queue name.
-            type: Event type for all messages.
-            payloads: Each entry is JSON-encoded automatically if
-                ``dict``/``list``; ``str`` entries must be valid JSON
-                text (cast to ``jsonb`` by PostgreSQL); ``None`` is
-                stored as JSON ``null`` (same as ``send(None)``).
-
-        Returns:
-            List of event IDs in input order.
-        """
+        """Send same-type payloads atomically and return event IDs in input order."""
         json_payloads = [
             json.dumps(p) if isinstance(p, (dict, list))
             else ("null" if p is None else p)

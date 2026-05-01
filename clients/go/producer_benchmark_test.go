@@ -13,14 +13,7 @@ import (
 	pgque "github.com/NikolayS/pgque/clients/go"
 )
 
-// TestProducerBenchmarks compares producer latency/throughput for the default
-// Go client API paths:
-//   - loop over Client.Send(...)
-//   - one Client.SendBatch(...) call
-//
-// It is opt-in because it is a microbenchmark-style integration test:
-//
-//	PGQUE_RUN_PRODUCER_BENCH=1 PGQUE_TEST_DSN=postgres://... go test -run TestProducerBenchmarks -v
+// TestProducerBenchmarks compares send-loop and SendBatch producer paths.
 func TestProducerBenchmarks(t *testing.T) {
 	if os.Getenv("PGQUE_RUN_PRODUCER_BENCH") != "1" {
 		t.Skip("PGQUE_RUN_PRODUCER_BENCH=1 not set")
