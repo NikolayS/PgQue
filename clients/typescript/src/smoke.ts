@@ -1,11 +1,11 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // pgque -- TypeScript client for PgQue
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 //
 // smoke.ts — env-gated end-to-end smoke test.
 //
 // Usage (from clients/typescript/):
-//   npx tsx src/smoke.ts
+//   bun src/smoke.ts
 //
 // If PGQUE_TEST_DSN is unset the script exits 0 immediately. When the var is
 // set it runs a minimal send → tick → receive → ack round-trip and exits 0 on
@@ -33,7 +33,11 @@ async function run(): Promise<void> {
       throw new Error(`send returned unexpected id: ${id}`);
     }
 
+    // forceTick bumps the event-seq threshold; ticker actually creates the tick
+    // that makes newly sent events visible to receive(). Both calls are required
+    // in manual/demo mode.
     await client.forceTick(queue);
+    await client.ticker(queue);
 
     const msgs = await client.receive(queue, consumer, 1);
     if (msgs.length !== 1) {

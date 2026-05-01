@@ -7,12 +7,18 @@ PgQ-based universal PostgreSQL queue. Thin, idiomatic wrapper over the
 
 ## Install
 
+For application code, install the published package with any npm-compatible
+package manager:
+
 ```bash
 npm install pgque
+# or: bun add pgque
+# or: pnpm add pgque
+# or: yarn add pgque
 ```
 
-Requires Node.js 20+ and PostgreSQL 14+ with the PgQue schema installed
-(`\i pgque.sql` — no extension required).
+Runtime requirements: Node.js 20+ and PostgreSQL 14+ with the PgQue schema
+installed (`\i pgque.sql` — no extension required).
 
 ## Quickstart
 
@@ -58,6 +64,8 @@ try {
 | `client.nack(batchId, msg, opts?)` | Single-message retry/DLQ. |
 | `client.subscribe(queue, consumer)` | Wraps `pgque.register_consumer`. |
 | `client.unsubscribe(queue, consumer)` | Wraps `pgque.unregister_consumer`. |
+| `client.forceTick(queue)` | Bump the event-seq threshold so the next ticker run produces a tick. |
+| `client.ticker(queue?)` | Run pgque ticker globally or for one queue; makes eligible events visible to consumers. |
 | `client.newConsumer(queue, name, opts?)` | High-level poll loop. |
 | `consumer.handle(eventType, fn)` | Register a handler. |
 | `consumer.start(signal?)` | Run; resolves when `AbortSignal` aborts. |
@@ -102,12 +110,14 @@ package is imported.
 
 ## Tests
 
-The integration tests need a running PostgreSQL with the PgQue schema
+The repository standardizes on Bun for TypeScript client development and CI
+commands. The integration tests need a running PostgreSQL with the PgQue schema
 installed and `pgque_admin`-equivalent privileges:
 
 ```bash
-PGQUE_TEST_DSN=postgres://postgres:pgque_test@localhost/pgque_test \
-  npm test
+bun install --frozen-lockfile
+PGQUE_TEST_DSN=postgresql://postgres:pgque_test@localhost/pgque_test \
+  bun run test
 ```
 
 Without `PGQUE_TEST_DSN` the integration tests skip.
