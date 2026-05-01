@@ -109,11 +109,13 @@ package is imported.
 
 ## Tests
 
-The integration tests need a running PostgreSQL with the PgQue schema
-installed and `pgque_admin`-equivalent privileges:
+The repository standardizes on Bun 1.3.8 for TypeScript client development.
+The integration tests need a running PostgreSQL with the PgQue schema installed
+and `pgque_admin`-equivalent privileges:
 
 ```bash
-PGQUE_TEST_DSN=postgres://postgres:pgque_test@localhost/pgque_test \
+bun install --frozen-lockfile
+PGQUE_TEST_DSN=postgresql://postgres:pgque_test@localhost/pgque_test \
   bun run test
 ```
 
