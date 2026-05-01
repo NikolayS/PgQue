@@ -132,6 +132,7 @@ jobs:
           cd clients/typescript
           bun install --frozen-lockfile
           bun run check
+          bun run test
           bunx tsx src/smoke.ts
 
       - name: Cleanup client smoke DB

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // pgque -- TypeScript client for PgQue
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 //
@@ -33,6 +33,9 @@ async function run(): Promise<void> {
       throw new Error(`send returned unexpected id: ${id}`);
     }
 
+    // forceTick lowers the per-queue threshold; ticker actually creates the
+    // tick that makes newly sent events visible to receive(). Both calls are
+    // required in manual/demo mode.
     await client.forceTick(queue);
     await client.ticker(queue);
 
