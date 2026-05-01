@@ -45,6 +45,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
+    "bench:producer": "bun src/producer_bench.ts",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },

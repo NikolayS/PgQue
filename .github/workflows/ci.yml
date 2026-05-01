@@ -117,10 +117,19 @@ jobs:
           python3 -m pip install -e clients/python[dev]
           pytest -q clients/python/tests/test_smoke.py
 
+      - name: Python producer benchmark
+        run: |
+          python3 clients/python/bench_producer.py
+
       - name: Go smoke
         run: |
           cd clients/go
           go test -run TestSmoke ./...
+
+      - name: Go producer benchmark
+        run: |
+          cd clients/go
+          PGQUE_RUN_PRODUCER_BENCH=1 go test -run TestProducerBenchmarks -v ./...
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -134,6 +143,11 @@ jobs:
           bun run check
           bun run test
           bun src/smoke.ts
+
+      - name: TypeScript producer benchmark
+        run: |
+          cd clients/typescript
+          bun run bench:producer
 
       - name: Cleanup client smoke DB
         if: always()
