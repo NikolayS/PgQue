@@ -67,10 +67,12 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 The consume API wraps `pgque.next_batch`, `pgque.get_batch_events`, `pgque.finish_batch`, and `pgque.event_retry`. Typical loop: `receive` → process → `ack` (or `nack` on failure).
 
+All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`) are granted to `pgque_reader`, mirroring upstream PgQ's producer/consumer role split. Apps that both produce and consume must hold both `pgque_reader` and `pgque_writer` — `pgque_writer` does not inherit `pgque_reader` (see issues #102, #106).
+
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
 Pulls the next batch for `consumer` on `queue` and streams up to `max_return` messages. `max_return` must be >= 1; passing 0 or a negative value raises an error. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
-Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql
 select * from pgque.receive('orders', 'processor', 100);
@@ -81,7 +83,7 @@ select * from pgque.receive('orders', 'processor', 100);
 #### `pgque.ack(batch_id bigint) → integer`
 
 Closes the batch and advances the consumer position. Modern alias for `pgque.finish_batch`. Returns `1` on success, `0` if the batch was not found.
-Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 #### `pgque.nack(batch_id bigint, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
 
@@ -90,7 +92,7 @@ Negative-acknowledges one message. Only `msg.msg_id` (and the `batch_id` argumen
 - If the canonical `ev_retry` is below the queue's `max_retries`, re-queues after `retry_after` (via `pgque.event_retry`).
 - If `ev_retry >= max_retries`, routes the canonical event to `pgque.dead_letter` (via `pgque.event_dead`). This is idempotent: repeated calls for the same terminal message produce exactly one DLQ row (the second call does nothing).
 - If `msg.msg_id` is not present in the active batch — including a `NULL` msg_id or a msg_id from a different batch — raises `msg_id % not found in batch %`.
-Grant: `pgque_writer`. Source: `sql/pgque-api/receive.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql
 perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed');
@@ -99,12 +101,12 @@ perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed')
 #### `pgque.subscribe(queue text, consumer text) → integer`
 
 Registers `consumer` on `queue`. Modern alias for `pgque.register_consumer`. Returns `1` on new registration, `0` if already registered.
-Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.unsubscribe(queue text, consumer text) → integer`
 
 Removes the consumer (and its retry-queue entries) from `queue`. Modern alias for `pgque.unregister_consumer`.
-Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql`.
 
 ## Queue management
 
@@ -200,7 +202,7 @@ Grant: superuser / schema owner only (revoked from both `pgque_admin` and PUBLIC
 
 ## Observability
 
-All observability functions here are granted to `pgque_reader` and flow up to `pgque_writer` and `pgque_admin` via role inheritance.
+All observability functions here are granted to `pgque_reader`. They flow up to `pgque_admin` (which is a member of both `pgque_reader` and `pgque_writer`) but do **not** flow to `pgque_writer` — that role is producer-only and does not inherit reader privileges. Apps that produce + consume must hold both roles.
 
 #### `pgque.get_queue_info() → setof record`
 
@@ -437,7 +439,9 @@ Returned by `pgque.receive()` and consumed by `pgque.nack()`.
 
 ## Roles and grants
 
-Three roles, with inheritance `pgque_admin > pgque_writer > pgque_reader`. Source: `sql/pgque-additions/roles.sql` (plus colocated grants in `sql/pgque-api/*.sql` and `sql/pgque-additions/dlq.sql`).
+Three roles. `pgque_reader` (consume) and `pgque_writer` (produce) are **siblings**, not parent/child — this mirrors upstream PgQ's role model and prevents a producer-only role from acking another consumer's batch (#102, #106). `pgque_admin` is a member of both. Source: `sql/pgque-additions/roles.sql` (plus colocated grants in `sql/pgque-api/*.sql` and `sql/pgque-additions/dlq.sql`).
+
+Apps that produce **and** consume must be granted both `pgque_reader` and `pgque_writer` explicitly.
 
 ### Roles are global, not per-queue
 
@@ -445,11 +449,11 @@ PgQue roles are coarse **database-level** roles. They are intended for trusted a
 
 **What this means in practice:**
 
-- `pgque_reader` gets `select` on **all** tables in the `pgque` schema — it can read events from any queue.
-- `pgque_writer` can call `receive`, `ack`, and `nack` on **any** queue with **any** consumer name. A writer granted for queue A can call `pgque.ack(batch_id)` on a batch opened by a consumer on queue B.
-- There is **no per-queue ACL** and no per-tenant isolation built into PgQue. Queue names and consumer names are plain strings — any writer who knows them can interact with them.
+- `pgque_reader` gets `select` on **all** tables in the `pgque` schema — it can read events from any queue. It can also call `receive`, `ack`, and `nack` on **any** queue with **any** consumer name. A reader granted for queue A can call `pgque.ack(batch_id)` on a batch opened by a consumer on queue B.
+- `pgque_writer` can produce to **any** queue (`pgque.send`, `pgque.send_batch`, `pgque.insert_event`).
+- There is **no per-queue ACL** and no per-tenant isolation built into PgQue. Queue names and consumer names are plain strings — any role with the matching grant can interact with them.
 
-This is an intentional design decision for the current release. The batch-ID-based primitives (`ack`, `nack`, `event_retry`) operate on IDs and do not enforce ownership.
+This is an intentional design decision for the current release. The batch-ID-based primitives (`ack`, `nack`, `event_retry`) operate on IDs and do not enforce ownership; the producer/consumer split closes only the producer-vs-consumer boundary, not the consumer-vs-consumer one.
 
 **Recommended isolation patterns** if you need mutually untrusted tenants in one database:
 
@@ -459,9 +463,9 @@ This is an intentional design decision for the current release. The batch-ID-bas
 
 | Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`                        |
-| `pgque_writer` | everything `pgque_reader` has, plus `insert_event` (3, 7), `register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` (int, timestamptz), all `send*`, `send_batch*`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`, `dlq_replay`, `dlq_replay_all` |
-| `pgque_admin`  | everything `pgque_writer` has, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` which is explicitly revoked                                                            |
+| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`)                        |
+| `pgque_writer` | `insert_event` (3, 7), all `send*`, `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
+| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` which is explicitly revoked                                                            |
 
 `pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Only the schema/install owner (typically a superuser) can run it. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
 

@@ -139,6 +139,11 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
-grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
-grant execute on function pgque.ack(bigint)                                   to pgque_writer;
-grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;
+-- receive/ack/nack are consumer-side: they open/close batches and route
+-- failed events to retry/DLQ. They go to pgque_reader, not pgque_writer.
+-- Apps that both produce and consume must hold both roles. See
+-- sql/pgque-additions/roles.sql for the producer/consumer split rationale
+-- (closes #102, #106).
+grant execute on function pgque.receive(text, text, int)                      to pgque_reader;
+grant execute on function pgque.ack(bigint)                                   to pgque_reader;
+grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_reader;

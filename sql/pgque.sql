@@ -4206,11 +4206,22 @@ do $$ begin create role pgque_reader; exception when duplicate_object then null;
 do $$ begin create role pgque_writer; exception when duplicate_object then null; end $$;
 do $$ begin create role pgque_admin;  exception when duplicate_object then null; end $$;
 
--- Inheritance: admin > writer > reader
+-- Role hierarchy: pgque_admin inherits both pgque_reader and pgque_writer.
+-- pgque_reader and pgque_writer are SIBLINGS, not parent/child — this matches
+-- upstream PgQ's `create role pgq_admin in role pgq_reader, pgq_writer;`
+-- model.
+--
+-- Why siblings, not writer-inherits-reader: a producer-only role MUST NOT be
+-- able to call consumer-side primitives like finish_batch / ack / next_batch.
+-- Otherwise any role that can pgque.send() can also ack any consumer's batch
+-- by id (issue #102) and read/mutate other consumers' active batches
+-- (issue #106). Apps that both produce and consume must be granted BOTH
+-- pgque_reader and pgque_writer explicitly.
+--
 -- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
 -- for role grants until PG16).
 do $$ begin
-    grant pgque_reader to pgque_writer;
+    grant pgque_reader to pgque_admin;
 exception when duplicate_object then null;
 end $$;
 do $$ begin
@@ -4219,7 +4230,9 @@ exception when duplicate_object then null;
 end $$;
 
 -- ---------------------------------------------------------------------------
--- Reader: read-only access to schema and information functions
+-- Reader: consume events. Includes batch processing primitives — registering
+-- consumers, opening/closing batches, retrying events. Mirrors PgQ's
+-- pgq_reader role.
 -- ---------------------------------------------------------------------------
 grant usage on schema pgque to pgque_reader;
 grant select on all tables in schema pgque to pgque_reader;
@@ -4239,35 +4252,36 @@ grant execute on function pgque.get_batch_info(bigint) to pgque_reader;
 -- version
 grant execute on function pgque.version() to pgque_reader;
 
+-- consumer registration (consumer side: create/move/drop a subscription cursor)
+grant execute on function pgque.register_consumer(text, text) to pgque_reader;
+grant execute on function pgque.register_consumer_at(text, text, bigint) to pgque_reader;
+grant execute on function pgque.unregister_consumer(text, text) to pgque_reader;
+
+-- batch processing
+grant execute on function pgque.next_batch(text, text) to pgque_reader;
+grant execute on function pgque.next_batch_info(text, text) to pgque_reader;
+grant execute on function pgque.next_batch_custom(text, text, interval, int4, interval) to pgque_reader;
+grant execute on function pgque.get_batch_events(bigint) to pgque_reader;
+grant execute on function pgque.finish_batch(bigint) to pgque_reader;
+
+-- event retry — timestamptz and integer overloads
+grant execute on function pgque.event_retry(bigint, bigint, timestamptz) to pgque_reader;
+grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_reader;
+
 -- ---------------------------------------------------------------------------
--- Writer: can produce events and manage consumer lifecycle
+-- Writer: produce events. Strictly producer-side primitives.
 -- ---------------------------------------------------------------------------
 
 -- insert_event — 3-arg and 7-arg overloads
 grant execute on function pgque.insert_event(text, text, text) to pgque_writer;
 grant execute on function pgque.insert_event(text, text, text, text, text, text, text) to pgque_writer;
 
--- consumer registration
-grant execute on function pgque.register_consumer(text, text) to pgque_writer;
-grant execute on function pgque.register_consumer_at(text, text, bigint) to pgque_writer;
-grant execute on function pgque.unregister_consumer(text, text) to pgque_writer;
-
--- batch processing
-grant execute on function pgque.next_batch(text, text) to pgque_writer;
-grant execute on function pgque.next_batch_info(text, text) to pgque_writer;
-grant execute on function pgque.next_batch_custom(text, text, interval, int4, interval) to pgque_writer;
-grant execute on function pgque.get_batch_events(bigint) to pgque_writer;
-grant execute on function pgque.finish_batch(bigint) to pgque_writer;
-
--- event retry — timestamptz and integer overloads
-grant execute on function pgque.event_retry(bigint, bigint, timestamptz) to pgque_writer;
-grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_writer;
-
 -- Note: grants for the modern API wrappers (send*, subscribe, unsubscribe,
 -- receive, ack, nack) live colocated with their definitions in
 -- sql/pgque-api/*.sql. transform.sh appends pgque-additions/ before
 -- pgque-api/, so API-layer grants cannot reference their functions from
--- this file.
+-- this file. send* go to pgque_writer; subscribe/unsubscribe/receive/ack/nack
+-- go to pgque_reader.
 
 -- Deny-by-default: revoke PUBLIC EXECUTE so role grants below are authoritative.
 revoke execute on all functions in schema pgque from public;
@@ -4729,9 +4743,14 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
-grant execute on function pgque.receive(text, text, int)                      to pgque_writer;
-grant execute on function pgque.ack(bigint)                                   to pgque_writer;
-grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_writer;
+-- receive/ack/nack are consumer-side: they open/close batches and route
+-- failed events to retry/DLQ. They go to pgque_reader, not pgque_writer.
+-- Apps that both produce and consume must hold both roles. See
+-- sql/pgque-additions/roles.sql for the producer/consumer split rationale
+-- (closes #102, #106).
+grant execute on function pgque.receive(text, text, int)                      to pgque_reader;
+grant execute on function pgque.ack(bigint)                                   to pgque_reader;
+grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_reader;
 
 -- pgque-api/send.sql
 -- pgque-api/send.sql -- Modern send/subscribe API layer
@@ -4867,18 +4886,23 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- Grants for the send* + subscribe/unsubscribe family.
+-- send* are producer-side (insert events) -> pgque_writer.
+-- subscribe/unsubscribe are consumer-side (manage subscription cursor) ->
+-- pgque_reader. See sql/pgque-additions/roles.sql for the producer/consumer
+-- split rationale.
 grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
 grant execute on function pgque.send(text, text, text)          to pgque_writer;
 grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
 grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
-grant execute on function pgque.subscribe(text, text)           to pgque_writer;
-grant execute on function pgque.unsubscribe(text, text)         to pgque_writer;
+grant execute on function pgque.subscribe(text, text)           to pgque_reader;
+grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 
 -- Re-apply deny-by-default after all API functions are defined.
 -- roles.sql's blanket revoke runs before pgque-api/ files are loaded, so
 -- functions created here would otherwise inherit PostgreSQL's default
 -- PUBLIC EXECUTE. This second pass covers everything.
 revoke execute on all functions in schema pgque from public;
+
 

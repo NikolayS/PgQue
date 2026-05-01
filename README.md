@@ -166,11 +166,13 @@ Treat installation as one-way for now — upgrade and reinstall paths are still 
 
 The install creates three roles. Application users do not need superuser — grant them whichever role matches their access pattern.
 
+PgQue mirrors upstream PgQ's split: `pgque_reader` (consume) and `pgque_writer` (produce) are **siblings**, not parent/child. `pgque_admin` is a member of both. Apps that produce **and** consume must be granted both roles explicitly.
+
 | Role | Purpose | Granted access |
 |---|---|---|
-| `pgque_reader` | Dashboards, metrics, debugging | `get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, plus `select` on all tables |
-| `pgque_writer` | Producers and consumers (most apps) | inherits `pgque_reader` + the modern API (`send`, `send_batch`, `subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) and the underlying PgQ primitives (`insert_event`, `next_batch`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer`, `unregister_consumer`) |
-| `pgque_admin`  | Operators, migrations | inherits `pgque_writer` + full schema/table/sequence access. `uninstall()` is revoked from both `pgque_admin` and PUBLIC (superuser-only — it drops the schema). |
+| `pgque_reader` | Consumers, dashboards, metrics, debugging | Read-only info (`get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, `select` on all tables) **and** the consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) plus the underlying PgQ primitives (`next_batch*`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer*`, `unregister_consumer`). |
+| `pgque_writer` | Producers | The produce API (`send`, `send_batch`) and the underlying primitive (`insert_event`). Does **not** inherit `pgque_reader` — a producer-only role cannot ack/finish/inspect consumer batches (closes #102, #106). |
+| `pgque_admin`  | Operators, migrations | Member of both `pgque_reader` and `pgque_writer`, plus full schema/table/sequence access. `uninstall()` is revoked from both `pgque_admin` and PUBLIC (superuser-only — it drops the schema). |
 
 Typical app setup:
 
@@ -178,16 +180,23 @@ Typical app setup:
 \i sql/pgque.sql
 select pgque.start();                     -- optional pg_cron ticker + maint
 
+-- Produce + consume in the same app: grant BOTH roles.
 create user app_orders with password '...';          -- replace with a real password
+grant pgque_reader to app_orders;
 grant pgque_writer to app_orders;
 
+-- Pure producer (e.g. a webhook ingester that only sends).
+create user app_webhook with password '...';
+grant pgque_writer to app_webhook;
+
+-- Pure consumer / dashboard / metrics.
 create user metrics with password '...';              -- replace with a real password
 grant pgque_reader to metrics;
 ```
 
-DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, `set_queue_config`) are not granted to `pgque_writer`. The schema-wide blanket `revoke execute … from public` strips PUBLIC, and `pgque_admin` is the only role that retains `execute` on these helpers — perform them as an admin / migration role.
+DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, `set_queue_config`) are not granted to either `pgque_reader` or `pgque_writer`. The schema-wide blanket `revoke execute … from public` strips PUBLIC, and `pgque_admin` is the only role that retains `execute` on these helpers — perform them as an admin / migration role.
 
-**Roles are global, not per-queue.** `pgque_writer` can produce and consume on any queue and ack any consumer's batch. Do not grant `pgque_writer` to mutually untrusted applications sharing one database unless you add your own schema-level or database-level isolation. See [docs/reference.md — Roles scope](docs/reference.md#roles-are-global-not-per-queue) for details and recommended isolation patterns.
+**Roles are global, not per-queue.** A `pgque_reader` granted to an app can ack any consumer's batch and read any other consumer's active batch payloads. Do not grant `pgque_reader` to mutually untrusted applications sharing one database unless you add your own schema-level or database-level isolation. See [docs/reference.md — Roles scope](docs/reference.md#roles-are-global-not-per-queue) for details and recommended isolation patterns.
 
 ## Project status
 
