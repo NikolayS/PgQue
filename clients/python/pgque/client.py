@@ -155,7 +155,15 @@ class PgqueClient:
         type: str,
         payloads: list,
     ) -> list[int]:
-        """Send same-type payloads atomically; str must be JSON text, None stores JSON null."""
+        """Send multiple messages in one SQL call.
+
+        Maps to ``pgque.send_batch(queue, type, payloads[])`` and returns event
+        IDs in input order. The call is atomic inside the current transaction.
+
+        Payload encoding matches ``send``: ``dict``/``list`` values are JSON
+        encoded, ``str`` values must already be valid JSON text, and ``None`` is
+        stored as JSON ``null`` rather than SQL NULL.
+        """
         json_payloads = [
             json.dumps(p) if isinstance(p, (dict, list))
             else ("null" if p is None else p)
