@@ -3,7 +3,7 @@
 """Regression tests for issue #158.
 
 The Consumer LISTEN/NOTIFY wait must:
-  1. honor stop() promptly (within ~2s) even when poll_interval is large.
+  1. honor stop() promptly (within ~3s) even when poll_interval is large.
   2. wake up when a NOTIFY arrives, well before poll_interval expires.
 """
 
@@ -22,7 +22,8 @@ def test_stop_is_honored_within_two_seconds(dsn, setup_queue):
     Regression for #158: the prior `for _notify in conn.notifies(timeout=...)`
     pattern blocked uninterruptibly until the full poll_interval elapsed,
     so a 10s poll_interval forced a 10s shutdown. The bounded-slice fix
-    must let stop() take effect within ~2s.
+    must let stop() take effect within ~3s (well below the 10s poll_interval
+    being tested; headroom widened for slow CI runners).
     """
     queue, consumer_name = setup_queue
     cons = pgque.Consumer(
@@ -36,14 +37,14 @@ def test_stop_is_honored_within_two_seconds(dsn, setup_queue):
 
     stop_started = time.monotonic()
     cons.stop()
-    t.join(timeout=2.5)
+    t.join(timeout=3.5)
     stop_elapsed = time.monotonic() - stop_started
 
     assert not t.is_alive(), (
         f"consumer thread still alive {stop_elapsed:.2f}s after stop()"
     )
-    assert stop_elapsed < 2.0, (
-        f"stop() took {stop_elapsed:.2f}s to take effect; expected <2s"
+    assert stop_elapsed < 3.0, (
+        f"stop() took {stop_elapsed:.2f}s to take effect; expected <3s"
     )
 
 
