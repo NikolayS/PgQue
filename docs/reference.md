@@ -42,6 +42,8 @@ Available publishing overloads:
 
 Use explicit casts (`::jsonb`, `::jsonb[]`, `::text[]`) when overload resolution would otherwise be ambiguous. Untyped string literals choose the `text` fast path.
 
+**Named-argument note:** PR #159 standardized modern publishing argument names to `queue_name`, `type_name`, `payload`, and `payloads`. Positional calls are unchanged. Named calls using the previous implementation-only names (`i_queue`, `i_type`, `i_payload`, `i_payloads`) must switch to the documented names.
+
 #### `pgque.send(queue_name text, payload jsonb) → bigint`
 
 Inserts `payload` into `queue` with event type `'default'`. Returns the event id.
@@ -102,7 +104,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 Set-based fast-path batch send for opaque text payloads. Returns event ids aligned to input order. Do not rely on the numeric ids being monotonically increasing inside one batch; use array position for input/result correlation. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
-#### `pgque.insert_event_bulk(queue_name text, type_name text, ev_data_list text[]) → bigint[]`
+#### `pgque.insert_event_bulk(queue_name text, type_name text, payloads text[]) → bigint[]`
 
 **Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids from the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids aligned to input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on the stable `send_batch` surface. The schema owner/superuser can still call it for install/debug work.
 Grant: none (internal). Source: `sql/pgque-api/send.sql`.
@@ -335,7 +337,7 @@ PgQ has a retry queue but no dead letter queue; PgQue adds one. Messages land he
 
 Grant: `select` to `pgque_reader`, `all` to `pgque_admin`.
 
-#### `pgque.event_dead(batch_id bigint, event_id bigint, reason text, ev_time timestamptz, ev_txid xid8, ev_retry int4, type_name text, ev_data text, ev_extra1 text default null, ev_extra2 text default null, ev_extra3 text default null, ev_extra4 text default null) → integer`
+#### `pgque.event_dead(batch_id bigint, event_id bigint, reason text, ev_time timestamptz, ev_txid xid8, ev_retry int4, ev_type text, ev_data text, ev_extra1 text default null, ev_extra2 text default null, ev_extra3 text default null, ev_extra4 text default null) → integer`
 
 Inserts one row into `pgque.dead_letter`. Called internally by `pgque.nack()` when retries are exhausted — direct calls are rarely needed.
 Grant: `pgque_admin`. Source: `sql/pgque-additions/dlq.sql`.
@@ -371,12 +373,12 @@ Grant: `pgque_admin`. Source: `sql/pgque-additions/dlq.sql`.
 
 Available but most users should prefer the modern API above. These are the raw PgQ primitives — the modern API wraps them 1:1.
 
-#### `pgque.insert_event(queue_name text, type_name text, ev_data text) → bigint`
+#### `pgque.insert_event(queue_name text, ev_type text, ev_data text) → bigint`
 
 Inserts one event with no extra columns. Returns the event id.
 Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 
-#### `pgque.insert_event(queue_name text, type_name text, ev_data text, ev_extra1 text, ev_extra2 text, ev_extra3 text, ev_extra4 text) → bigint`
+#### `pgque.insert_event(queue_name text, ev_type text, ev_data text, ev_extra1 text, ev_extra2 text, ev_extra3 text, ev_extra4 text) → bigint`
 
 Inserts one event with the four `ev_extra*` columns populated.
 Grant: `pgque_writer`. Source: `sql/pgque.sql`.
@@ -413,7 +415,7 @@ Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_events(batch_id bigint) → setof record`
 
-Streams the events in a batch. Out columns: `ev_id bigint`, `ev_time timestamptz`, `ev_txid bigint`, `ev_retry int4`, `type_name text`, `ev_data text`, `ev_extra1..4 text`.
+Streams the events in a batch. Out columns: `ev_id bigint`, `ev_time timestamptz`, `ev_txid bigint`, `ev_retry int4`, `ev_type text`, `ev_data text`, `ev_extra1..4 text`.
 Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4) → setof record`

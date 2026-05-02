@@ -142,6 +142,7 @@ revoke execute on function pgque.uninstall() from pgque_admin;
 do $$
 begin
     if to_regprocedure('pgque.insert_event_bulk(text, text, text[])') is not null then
-        revoke execute on function pgque.insert_event_bulk(text, text, text[]) from pgque_admin;
+        revoke execute on function pgque.insert_event_bulk(text, text, text[])
+            from public, pgque_reader, pgque_writer, pgque_admin;
     end if;
 end $$;

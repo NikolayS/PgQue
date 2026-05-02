@@ -4342,7 +4342,8 @@ revoke execute on function pgque.uninstall() from pgque_admin;
 do $$
 begin
     if to_regprocedure('pgque.insert_event_bulk(text, text, text[])') is not null then
-        revoke execute on function pgque.insert_event_bulk(text, text, text[]) from pgque_admin;
+        revoke execute on function pgque.insert_event_bulk(text, text, text[])
+            from public, pgque_reader, pgque_writer, pgque_admin;
     end if;
 end $$;
 
@@ -4906,6 +4907,8 @@ create or replace function pgque.insert_event_bulk(
     queue_name text, type_name text, payloads text[])
 returns bigint[] as $$
 declare
+    -- Public argument names are intentionally friendly for named calls, but
+    -- local aliases avoid ambiguity with table columns inside SQL statements.
     _queue_name alias for $1;
     _type_name alias for $2;
     _payloads alias for $3;

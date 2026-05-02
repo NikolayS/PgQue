@@ -1028,7 +1028,7 @@ create function pgque.event_dead(
     i_ev_time timestamptz,
     i_ev_txid xid8,
     i_ev_retry int4,
-    i_type_name text,
+    i_ev_type text,
     i_ev_data text,
     i_ev_extra1 text default null,
     i_ev_extra2 text default null,
