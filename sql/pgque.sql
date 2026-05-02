@@ -4959,6 +4959,8 @@ begin
                 ev_id, $3, null, null,
                 $4, ev_data, null, null, null, null
             from numbered
+            -- Return order is handled below by array_agg(... order by ord);
+            -- this keeps physical insertion broadly aligned with input order.
             order by ord
             returning ev_id
         )
