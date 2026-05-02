@@ -101,7 +101,12 @@ begin
 
   assert v_payload = 'bulk-one',
     'insert_event_bulk(text[]) single input should preserve payload';
-  raise notice 'PASS: insert_event_bulk(text[]) direct single-element call';
+
+  v_ids := pgque.insert_event_bulk('test_send', 'batch.bulk_empty', '{}'::text[]);
+  assert v_ids = '{}'::bigint[],
+    'insert_event_bulk(text[]) direct empty input must return empty array';
+
+  raise notice 'PASS: insert_event_bulk(text[]) direct single-element/empty calls';
 end $$;
 
 -- Test 3c.2: insert_event_bulk() preserves NULL array elements
@@ -134,6 +139,37 @@ begin
   assert v_payload = 'after',
     'insert_event_bulk(text[]) should preserve array order around NULL payloads';
   raise notice 'PASS: insert_event_bulk(text[]) preserves NULL elements';
+end $$;
+
+-- Test 3c.3: pgque_writer can use send_batch() wrappers but not internals
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_count int;
+begin
+  set role pgque_writer;
+  v_ids := pgque.send_batch('test_send', 'batch.writer_smoke', array['writer-payload']::text[]);
+  reset role;
+
+  assert cardinality(v_ids) = 1,
+    'pgque_writer send_batch(text[]) must return 1 id';
+
+  select pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+    into v_table
+    from pgque.queue
+   where queue_name = 'test_send';
+
+  execute format('select count(*) from %s where ev_id = $1 and ev_data = $2', v_table)
+    into v_count
+    using v_ids[1], 'writer-payload';
+
+  assert v_count = 1,
+    'pgque_writer send_batch(text[]) should insert through SECURITY DEFINER wrapper';
+  raise notice 'PASS: pgque_writer send_batch() wrapper smoke test';
+exception when others then
+  reset role;
+  raise;
 end $$;
 
 -- Test 3d: send_batch() on empty input returns empty array, not NULL

@@ -63,9 +63,11 @@ select pgque.send_batch('orders', 'order.created',
 Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to a write-disabled queue raise `Insert into queue disallowed`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
+##### Internal primitives
+
 #### `pgque.insert_event_bulk(queue text, type text, payloads text[]) → bigint[]`
 
-Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids with the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids in input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on `send_batch`.
+**Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids with the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids in input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on `send_batch`.
 Grant: none (internal). Source: `sql/pgque-api/send.sql`.
 
 ## Consuming
@@ -470,9 +472,9 @@ This is an intentional design decision for the current release. The batch-ID-bas
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`)                        |
 | `pgque_writer` | `insert_event` (3, 7), all `send*`, `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
-| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` which is explicitly revoked                                                            |
+| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
 
-`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Only the schema/install owner (typically a superuser) can run it. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
+`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
 
 ## Experimental (not in default install)
 

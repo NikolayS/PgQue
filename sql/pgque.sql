@@ -4873,7 +4873,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
 -- Deliberately does not call insert_event_raw(): batch send needs one table
--- lookup, one disable-insert check, and one INSERT ... SELECT for the whole
+-- lookup, one disable-insert check, and one insert ... select for the whole
 -- array. Keep the queue lookup / queue_disable_insert replica-bypass logic in
 -- sync with insert_event_raw() when either path changes.
 create or replace function pgque.insert_event_bulk(
