@@ -19,7 +19,7 @@ SQL primitives. The matrix below tracks the public client API on current
 | `nack` | ✓ | ✓ | ✓ |
 | `nack` retry delay + reason options | ✓ | ✗ | ✓ |
 | High-level `Consumer` | ✓ | ✓ | ✓ |
-| Consumer wakeup model | LISTEN/NOTIFY | polling | polling |
+| Consumer wakeup model | LISTEN/NOTIFY + polling fallback | polling | polling |
 | `Consumer` poll interval option | ✓ | ✓ | ✓ |
 | `Consumer` max-messages option | ✓ | ✗ | ✓ |
 | `Consumer` retry delay option | ✓ | ✗ | ✗ |
