@@ -346,7 +346,9 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 
 ## Contributing
 
-See [blueprints/SPECx.md](blueprints/SPECx.md) for the specification and implementation plan. New code should follow red/green TDD: write the failing test first, then fix it.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor guide. See [blueprints/SPECx.md](blueprints/SPECx.md) for the specification and implementation plan.
+
+New code should follow red/green TDD: write the failing test first, then fix it. Agentic coding tools should also read [CLAUDE.md](CLAUDE.md) before making changes; it contains PgQue-specific architecture, style, testing, and safety rules.
 
 ## License
 
