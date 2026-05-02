@@ -1,10 +1,19 @@
 -- pgque security roles
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
--- Create roles idempotently
-do $$ begin create role pgque_reader; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_writer; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_admin;  exception when duplicate_object then null; end $$;
+-- Create roles idempotently.
+do $$
+begin
+    if not exists (select from pg_roles where rolname = 'pgque_reader') then
+        create role pgque_reader;
+    end if;
+    if not exists (select from pg_roles where rolname = 'pgque_writer') then
+        create role pgque_writer;
+    end if;
+    if not exists (select from pg_roles where rolname = 'pgque_admin') then
+        create role pgque_admin;
+    end if;
+end $$;
 
 -- Role hierarchy: pgque_admin inherits both pgque_reader and pgque_writer.
 -- pgque_reader and pgque_writer are SIBLINGS, not parent/child — this matches
@@ -22,20 +31,23 @@ do $$ begin create role pgque_admin;  exception when duplicate_object then null;
 -- pgque_writer. Postgres does NOT revoke prior role grants on re-install,
 -- so we must do it explicitly. Without this, in-place upgrades silently
 -- retain the vulnerable inheritance and the security fix is a no-op.
-do $$ begin
-    revoke pgque_reader from pgque_writer;
-exception when undefined_object then null;
+do $$
+begin
+    if pg_has_role('pgque_writer', 'pgque_reader', 'member') then
+        revoke pgque_reader from pgque_writer;
+    end if;
 end $$;
 
--- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
--- for role grants until PG16).
-do $$ begin
-    grant pgque_reader to pgque_admin;
-exception when duplicate_object then null;
-end $$;
-do $$ begin
-    grant pgque_writer to pgque_admin;
-exception when duplicate_object then null;
+-- Grant role hierarchy idempotently. Use explicit membership checks instead
+-- of GRANT IF NOT EXISTS so this stays compatible with PG14/15.
+do $$
+begin
+    if not pg_has_role('pgque_admin', 'pgque_reader', 'member') then
+        grant pgque_reader to pgque_admin;
+    end if;
+    if not pg_has_role('pgque_admin', 'pgque_writer', 'member') then
+        grant pgque_writer to pgque_admin;
+    end if;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -123,3 +135,14 @@ grant execute on all functions in schema pgque to pgque_admin;
 -- uninstall() drops the entire schema — only superuser / schema owner should run it.
 -- Revoke from pgque_admin (the "all functions" grant above would otherwise include it).
 revoke execute on function pgque.uninstall() from pgque_admin;
+
+-- insert_event_bulk() is an internal primitive for SECURITY DEFINER send_batch()
+-- wrappers. It is defined later during a full install, so revoke here only
+-- when roles.sql is run after pgque-api/send.sql has already been loaded.
+do $$
+begin
+    if to_regprocedure('pgque.insert_event_bulk(text, text, text[])') is not null then
+        revoke execute on function pgque.insert_event_bulk(text, text, text[])
+            from public, pgque_reader, pgque_writer, pgque_admin;
+    end if;
+end $$;

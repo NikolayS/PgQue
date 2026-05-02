@@ -4201,10 +4201,19 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- pgque security roles
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
--- Create roles idempotently
-do $$ begin create role pgque_reader; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_writer; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_admin;  exception when duplicate_object then null; end $$;
+-- Create roles idempotently.
+do $$
+begin
+    if not exists (select from pg_roles where rolname = 'pgque_reader') then
+        create role pgque_reader;
+    end if;
+    if not exists (select from pg_roles where rolname = 'pgque_writer') then
+        create role pgque_writer;
+    end if;
+    if not exists (select from pg_roles where rolname = 'pgque_admin') then
+        create role pgque_admin;
+    end if;
+end $$;
 
 -- Role hierarchy: pgque_admin inherits both pgque_reader and pgque_writer.
 -- pgque_reader and pgque_writer are SIBLINGS, not parent/child — this matches
@@ -4222,20 +4231,23 @@ do $$ begin create role pgque_admin;  exception when duplicate_object then null;
 -- pgque_writer. Postgres does NOT revoke prior role grants on re-install,
 -- so we must do it explicitly. Without this, in-place upgrades silently
 -- retain the vulnerable inheritance and the security fix is a no-op.
-do $$ begin
-    revoke pgque_reader from pgque_writer;
-exception when undefined_object then null;
+do $$
+begin
+    if pg_has_role('pgque_writer', 'pgque_reader', 'member') then
+        revoke pgque_reader from pgque_writer;
+    end if;
 end $$;
 
--- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
--- for role grants until PG16).
-do $$ begin
-    grant pgque_reader to pgque_admin;
-exception when duplicate_object then null;
-end $$;
-do $$ begin
-    grant pgque_writer to pgque_admin;
-exception when duplicate_object then null;
+-- Grant role hierarchy idempotently. Use explicit membership checks instead
+-- of GRANT IF NOT EXISTS so this stays compatible with PG14/15.
+do $$
+begin
+    if not pg_has_role('pgque_admin', 'pgque_reader', 'member') then
+        grant pgque_reader to pgque_admin;
+    end if;
+    if not pg_has_role('pgque_admin', 'pgque_writer', 'member') then
+        grant pgque_writer to pgque_admin;
+    end if;
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -4323,6 +4335,17 @@ grant execute on all functions in schema pgque to pgque_admin;
 -- uninstall() drops the entire schema — only superuser / schema owner should run it.
 -- Revoke from pgque_admin (the "all functions" grant above would otherwise include it).
 revoke execute on function pgque.uninstall() from pgque_admin;
+
+-- insert_event_bulk() is an internal primitive for SECURITY DEFINER send_batch()
+-- wrappers. It is defined later during a full install, so revoke here only
+-- when roles.sql is run after pgque-api/send.sql has already been loaded.
+do $$
+begin
+    if to_regprocedure('pgque.insert_event_bulk(text, text, text[])') is not null then
+        revoke execute on function pgque.insert_event_bulk(text, text, text[])
+            from public, pgque_reader, pgque_writer, pgque_admin;
+    end if;
+end $$;
 
 -- pgque-additions/dlq.sql
 -- pgque dead letter queue (DLQ) -- table + helper functions
@@ -4637,20 +4660,22 @@ grant execute on function pgque.maint() to pgque_admin;
 -- See SPECx.md sections 4.2 and 4.3.
 
 -- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,
-        batch_id    bigint,
-        type        text,
-        payload     text,
-        retry_count int4,
-        created_at  timestamptz,
-        extra1      text,
-        extra2      text,
-        extra3      text,
-        extra4      text
-    );
-exception when duplicate_object then null;
+do $$
+begin
+    if to_regtype('pgque.message') is null then
+        create type pgque.message as (
+            msg_id      bigint,
+            batch_id    bigint,
+            type        text,
+            payload     text,
+            retry_count int4,
+            created_at  timestamptz,
+            extra1      text,
+            extra2      text,
+            extra3      text,
+            extra4      text
+        );
+    end if;
 end $$;
 
 -- pgque.receive() -- wraps next_batch + get_batch_events
@@ -4818,27 +4843,29 @@ grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to
 -- Storage (ev_data TEXT) is identical in both paths.
 
 -- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,       -- ev_id
-        batch_id    bigint,       -- batch containing this message
-        type        text,         -- ev_type
-        payload     text,         -- ev_data (caller casts to jsonb if needed)
-        retry_count int4,         -- ev_retry (NULL for first delivery)
-        created_at  timestamptz,  -- ev_time
-        extra1      text,         -- ev_extra1
-        extra2      text,         -- ev_extra2
-        extra3      text,         -- ev_extra3
-        extra4      text          -- ev_extra4
-    );
-exception when duplicate_object then null;
+do $$
+begin
+    if to_regtype('pgque.message') is null then
+        create type pgque.message as (
+            msg_id      bigint,       -- ev_id
+            batch_id    bigint,       -- batch containing this message
+            type        text,         -- ev_type
+            payload     text,         -- ev_data (caller casts to jsonb if needed)
+            retry_count int4,         -- ev_retry (NULL for first delivery)
+            created_at  timestamptz,  -- ev_time
+            extra1      text,         -- ev_extra1
+            extra2      text,         -- ev_extra2
+            extra3      text,         -- ev_extra3
+            extra4      text          -- ev_extra4
+        );
+    end if;
 end $$;
 
 -- pgque.send(queue, payload jsonb) -- send with default type, JSON payload
-create or replace function pgque.send(i_queue text, i_payload jsonb)
+create or replace function pgque.send(queue_name text, payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload::text);
+    return pgque.insert_event(queue_name, 'default', payload::text);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -4848,74 +4875,167 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- the caller has already validated the payload. Raw binary with NUL bytes
 -- (protobuf, msgpack, Avro wire format) is not accepted by PG `text` --
 -- encode first.
-create or replace function pgque.send(i_queue text, i_payload text)
+create or replace function pgque.send(queue_name text, payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload);
+    return pgque.insert_event(queue_name, 'default', payload);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
-create or replace function pgque.send(i_queue text, i_type text, i_payload jsonb)
+create or replace function pgque.send(queue_name text, type_name text, payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload::text);
+    return pgque.insert_event(queue_name, type_name, payload::text);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send(queue, type, payload text) -- fast path with explicit type
-create or replace function pgque.send(i_queue text, i_type text, i_payload text)
+create or replace function pgque.send(queue_name text, type_name text, payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload);
+    return pgque.insert_event(queue_name, type_name, payload);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.send_batch(queue, type, payloads jsonb[]) -- batch send, JSON payloads
-create or replace function pgque.send_batch(
-    i_queue text, i_type text, i_payloads jsonb[])
+-- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
+-- Deliberately does not call insert_event_raw(): batch send needs one table
+-- lookup, one disable-insert check, and one insert ... select for the whole
+-- array. Keep the queue lookup / queue_disable_insert replica-bypass logic in
+-- sync with insert_event_raw() when either path changes.
+create or replace function pgque.insert_event_bulk(
+    queue_name text, ev_type text, ev_data_list text[])
 returns bigint[] as $$
 declare
-    ids bigint[] := '{}';
-    p jsonb;
+    -- Local aliases avoid ambiguity with table columns inside SQL statements.
+    _queue_name alias for $1;
+    _ev_type alias for $2;
+    _ev_data_list alias for $3;
+    qstate record;
+    v_ids bigint[];
 begin
-    foreach p in array i_payloads loop
-        ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p::text));
-    end loop;
-    return ids;
+    select
+        pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
+        q.queue_event_seq::regclass as queue_event_seq,
+        q.queue_disable_insert
+    into qstate
+    from pgque.queue q
+    where q.queue_name = _queue_name;
+
+    if not found then
+        raise exception 'queue not found: %', _queue_name;
+    end if;
+
+    if qstate.queue_disable_insert then
+        -- Keep upstream PgQ semantics: disabled queues still accept inserts
+        -- when session_replication_role = 'replica'. This is likely for
+        -- replication/load paths such as Londiste; send_batch() must match
+        -- insert_event_raw()/insert_event() behavior instead of inventing a
+        -- stricter batch-only rule.
+        if current_setting('session_replication_role') <> 'replica' then
+            raise exception 'Insert into queue disallowed';
+        end if;
+    end if;
+
+    execute format($sql$
+        with input as materialized (
+            select
+                u.ord,
+                u.payload as ev_data
+            from unnest($2::text[]) with ordinality as u(payload, ord)
+        ), numbered as materialized (
+            select
+                ord,
+                nextval($1) as ev_id,
+                ev_data
+            from input
+            order by ord
+        ), ins as (
+            insert into %s (
+                ev_id, ev_time, ev_owner, ev_retry,
+                ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4
+            )
+            select
+                ev_id, $3, null, null,
+                $4, ev_data, null, null, null, null
+            from numbered
+            -- Return order is handled below by array_agg(... order by ord);
+            -- this keeps physical insertion broadly aligned with input order.
+            order by ord
+            returning ev_id
+        )
+        select coalesce(array_agg(numbered.ev_id order by numbered.ord), '{}'::bigint[])
+        from numbered
+        join ins using (ev_id)
+    $sql$, qstate.cur_table_name)
+    into v_ids
+    using qstate.queue_event_seq, _ev_data_list, now(), _ev_type;
+
+    return v_ids;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.send_batch(queue, type, payloads text[]) -- fast-path batch send
-create or replace function pgque.send_batch(
-    i_queue text, i_type text, i_payloads text[])
+-- pgque.send_batch(queue, payloads jsonb[]) -- default-type batch send
+create or replace function pgque.send_batch(queue_name text, payloads jsonb[])
 returns bigint[] as $$
-declare
-    ids bigint[] := '{}';
-    p text;
 begin
-    foreach p in array i_payloads loop
-        ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p));
-    end loop;
-    return ids;
+    return pgque.send_batch(queue_name, 'default', payloads);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
+create or replace function pgque.send_batch(
+    queue_name text, type_name text, payloads jsonb[])
+returns bigint[] as $$
+begin
+    if payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+    if cardinality(payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
+
+    return pgque.insert_event_bulk(queue_name, type_name, payloads::text[]);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send_batch(queue, payloads text[]) -- default-type fast-path batch send
+create or replace function pgque.send_batch(queue_name text, payloads text[])
+returns bigint[] as $$
+begin
+    return pgque.send_batch(queue_name, 'default', payloads);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
+create or replace function pgque.send_batch(
+    queue_name text, type_name text, payloads text[])
+returns bigint[] as $$
+begin
+    if payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+    if cardinality(payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
+
+    return pgque.insert_event_bulk(queue_name, type_name, payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
-create or replace function pgque.subscribe(i_queue text, i_consumer text)
+create or replace function pgque.subscribe(queue text, consumer text)
 returns integer as $$
 begin
-    return pgque.register_consumer(i_queue, i_consumer);
+    return pgque.register_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
-create or replace function pgque.unsubscribe(i_queue text, i_consumer text)
+create or replace function pgque.unsubscribe(queue text, consumer text)
 returns integer as $$
 begin
-    return pgque.unregister_consumer(i_queue, i_consumer);
+    return pgque.unregister_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -4928,6 +5048,8 @@ grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
 grant execute on function pgque.send(text, text, text)          to pgque_writer;
+grant execute on function pgque.send_batch(text, jsonb[])       to pgque_writer;
+grant execute on function pgque.send_batch(text, text[])        to pgque_writer;
 grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
 grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
 -- Upgrade path: pre-#163 installs granted subscribe/unsubscribe to
@@ -4939,10 +5061,15 @@ revoke execute on function pgque.unsubscribe(text, text)       from pgque_writer
 grant execute on function pgque.subscribe(text, text)           to pgque_reader;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 
+-- Internal primitive used by SECURITY DEFINER send_batch wrappers only.
+-- Direct pgque_admin access is intentionally not granted: pgque_admin inherits
+-- pgque_writer, and writers should enter through the audited public send_batch()
+-- wrappers rather than this low-level primitive.
+revoke execute on function pgque.insert_event_bulk(text, text, text[])
+    from public, pgque_reader, pgque_writer, pgque_admin;
+
 -- Re-apply deny-by-default after all API functions are defined.
 -- roles.sql's blanket revoke runs before pgque-api/ files are loaded, so
 -- functions created here would otherwise inherit PostgreSQL's default
 -- PUBLIC EXECUTE. This second pass covers everything.
 revoke execute on all functions in schema pgque from public;
-
-

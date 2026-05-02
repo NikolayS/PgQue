@@ -18,9 +18,33 @@ Functions shipped outside the default install are in the [Experimental](#experim
 
 ## Publishing
 
-All `send*` functions reduce to `pgque.insert_event`. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
+Single-message `send` wrappers delegate to `pgque.insert_event`; batch `send_batch` wrappers delegate to the internal set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
 
-#### `pgque.send(queue text, payload jsonb) → bigint`
+### Publishing argument names and types
+
+Argument names are part of the SQL API because PostgreSQL supports named calls (`arg := value`). Available publishing arguments:
+
+| Argument | SQL type | Meaning |
+|----------|----------|---------|
+| `queue_name` | `text` | PgQue queue name. |
+| `type_name` | `text` | Application event type stored in `ev_type` (`'default'` for 2-arg `send`). Free-form text such as `order.created`; this is not a PostgreSQL type. |
+| `payload` | `text` or `jsonb` | Single event payload. `text` is opaque/verbatim; `jsonb` validates and stores canonical JSON text. |
+| `payloads` | `text[]` or `jsonb[]` | Batch payload array. Result array positions correspond to input positions. |
+
+Available publishing overloads:
+
+| Function | Payload type | Return |
+|----------|--------------|--------|
+| `send(queue_name, payload)` | `text` or `jsonb` | `bigint` event id |
+| `send(queue_name, type_name, payload)` | `text` or `jsonb` | `bigint` event id |
+| `send_batch(queue_name, payloads)` | `text[]` or `jsonb[]` | `bigint[]` event ids, event type `'default'` |
+| `send_batch(queue_name, type_name, payloads)` | `text[]` or `jsonb[]` | `bigint[]` event ids |
+
+Use explicit casts (`::jsonb`, `::jsonb[]`, `::text[]`) when overload resolution would otherwise be ambiguous. Untyped string literals choose the `text` fast path.
+
+**Named-argument note:** PR #159 standardized modern publishing argument names to `queue_name`, `type_name`, `payload`, and `payloads`. Positional calls are unchanged. Named calls using the previous implementation-only names (`i_queue`, `i_type`, `i_payload`, `i_payloads`) must switch to the documented names.
+
+#### `pgque.send(queue_name text, payload jsonb) → bigint`
 
 Inserts `payload` into `queue` with event type `'default'`. Returns the event id.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
@@ -29,12 +53,12 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 select pgque.send('orders', '{"order_id": 42}'::jsonb);
 ```
 
-#### `pgque.send(queue text, payload text) → bigint`
+#### `pgque.send(queue_name text, payload text) → bigint`
 
 Fast-path send: stores the payload bytes verbatim, no JSON parse. Untyped string literals (`'…'`) resolve to this overload. Returns the event id.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
-#### `pgque.send(queue text, type text, payload jsonb) → bigint`
+#### `pgque.send(queue_name text, type_name text, payload jsonb) → bigint`
 
 Same as the 2-arg `jsonb` overload, but with an explicit event type. Returns the event id.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
@@ -43,25 +67,47 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 select pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
 ```
 
-#### `pgque.send(queue text, type text, payload text) → bigint`
+#### `pgque.send(queue_name text, type_name text, payload text) → bigint`
 
 Fast-path send with explicit event type. Returns the event id.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
-#### `pgque.send_batch(queue text, type text, payloads jsonb[]) → bigint[]`
+#### `pgque.send_batch(queue_name text, payloads jsonb[]) → bigint[]`
 
-Inserts each element of `payloads` into `queue` within a single transaction. Returns the array of event ids in the same order.
+Default-type JSON batch send. Equivalent to `pgque.send_batch(queue_name, 'default', payloads)`.
+Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
+
+#### `pgque.send_batch(queue_name text, type_name text, payloads jsonb[]) → bigint[]`
+
+Set-based batch send for JSON payloads: validates each element as `jsonb`, stores its canonical text form, and returns event ids aligned to input order. Do not rely on the numeric ids being monotonically increasing inside one batch; use array position for input/result correlation. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 ```sql
 select pgque.send_batch('orders', 'order.created',
     array['{"id":1}', '{"id":2}']::jsonb[]);
+
+-- Named-argument calls are supported; argument names are part of the API.
+select pgque.send_batch(
+    queue_name := 'orders',
+    type_name := 'order.created',
+    payloads := array['{"id":1}', '{"id":2}']::jsonb[]
+);
 ```
 
-#### `pgque.send_batch(queue text, type text, payloads text[]) → bigint[]`
+#### `pgque.send_batch(queue_name text, payloads text[]) → bigint[]`
 
-Fast-path batch send. Returns the array of event ids.
+Default-type text batch send. Equivalent to `pgque.send_batch(queue_name, 'default', payloads)`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
+
+#### `pgque.send_batch(queue_name text, type_name text, payloads text[]) → bigint[]`
+
+Set-based fast-path batch send for opaque text payloads. Returns event ids aligned to input order. Do not rely on the numeric ids being monotonically increasing inside one batch; use array position for input/result correlation. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
+Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
+
+#### `pgque.insert_event_bulk(queue_name text, ev_type text, ev_data_list text[]) → bigint[]`
+
+**Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids from the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids aligned to input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on the stable `send_batch` surface. The schema owner/superuser can still call it for install/debug work.
+Grant: none (internal). Source: `sql/pgque-api/send.sql`.
 
 ## Consuming
 
@@ -464,10 +510,10 @@ This is an intentional design decision for the current release. The batch-ID-bas
 | Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`)                        |
-| `pgque_writer` | `insert_event` (3, 7), all `send*`, `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
-| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` which is explicitly revoked                                                            |
+| `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
+| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
 
-`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Only the schema/install owner (typically a superuser) can run it. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
+`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
 
 ## Experimental (not in default install)
 

@@ -79,24 +79,576 @@ begin
   raise notice 'PASS: send_batch(text[]) returns 3 ids';
 end $$;
 
+-- Test 3c.0: send_batch(queue_name, payloads) uses default event type
+-- just like send(queue_name, payload).
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_count int;
+begin
+  v_ids := pgque.send_batch(
+    'test_send',
+    array['{"default_json":1}'::jsonb]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(queue_name, jsonb[]) should return 1 id';
+
+  v_ids := pgque.send_batch(
+    'test_send',
+    array['default-text']::text[]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(queue_name, text[]) should return 1 id';
+
+  select
+    pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+  into v_table
+  from pgque.queue
+  where queue_name = 'test_send';
+
+  execute format($sql$
+    select count(*)
+    from %s
+    where ev_id = any($1)
+      and ev_type = 'default'
+  $sql$, v_table)
+  into v_count
+  using v_ids;
+  assert v_count = 1,
+    'send_batch(queue_name, payloads) should use default event type';
+
+  v_ids := pgque.send_batch(
+    queue_name := 'test_send',
+    payloads := array['{"named_default":1}'::jsonb]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(queue_name :=, payloads :=) should return 1 id';
+
+  raise notice 'PASS: send_batch(queue_name, payloads) default type';
+end $$;
+
+-- Test 3b.1: named-argument calls use stable public parameter names
+-- (`queue_name`, `type_name`, `payload`, `payloads`). These names are part of
+-- the SQL API: callers may use `arg := value` syntax.
+do $$
+declare
+  v_eid bigint;
+  v_ids bigint[];
+begin
+  v_eid := pgque.send(
+    queue_name := 'test_send',
+    payload := '{"named":"default"}'::jsonb
+  );
+  assert v_eid is not null,
+    'send(queue_name :=, payload :=) should return event id';
+
+  v_eid := pgque.send(
+    queue_name := 'test_send',
+    type_name := 'named.explicit',
+    payload := '{"named":"explicit"}'::jsonb
+  );
+  assert v_eid is not null,
+    'send(queue_name :=, type_name :=, payload :=) should return event id';
+
+  v_ids := pgque.send_batch(
+    queue_name := 'test_send',
+    type_name := 'named.batch_json',
+    payloads := array['{"n":1}'::jsonb]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(jsonb[], named args) should return 1 id';
+
+  v_ids := pgque.send_batch(
+    queue_name := 'test_send',
+    type_name := 'named.batch_text',
+    payloads := array['named-text']::text[]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(text[], named args) should return 1 id';
+
+  raise notice 'PASS: named-argument send()/send_batch() calls';
+end $$;
+
+-- Test 3c.1: insert_event_bulk() direct single-element call
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_payload text;
+begin
+  v_ids := pgque.insert_event_bulk(
+    'test_send',
+    'batch.bulk_one',
+    array['bulk-one']::text[]
+  );
+  assert cardinality(v_ids) = 1,
+    'insert_event_bulk(text[]) on single input must return 1 id';
+
+  select
+    pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+  into v_table
+  from pgque.queue
+  where queue_name = 'test_send';
+
+  execute format($sql$
+    select ev_data
+    from %s
+    where ev_id = $1
+  $sql$, v_table)
+  into v_payload
+  using v_ids[1];
+
+  assert v_payload = 'bulk-one',
+    'insert_event_bulk(text[]) single input should preserve payload';
+
+  v_ids := pgque.insert_event_bulk(
+    'test_send',
+    'batch.bulk_empty',
+    '{}'::text[]
+  );
+  assert v_ids = '{}'::bigint[],
+    'insert_event_bulk(text[]) direct empty input must return empty array';
+
+  raise notice 'PASS: insert_event_bulk(text[]) direct single-element/empty calls';
+end $$;
+
+-- Test 3c.2: insert_event_bulk() preserves NULL array elements
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_null_count int;
+  v_payload text;
+begin
+  v_ids := pgque.insert_event_bulk(
+    'test_send',
+    'batch.bulk_null',
+    array['before', null, 'after']::text[]
+  );
+  assert cardinality(v_ids) = 3,
+    'insert_event_bulk(text[]) with NULL element must return 3 ids';
+
+  select
+    pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+  into v_table
+  from pgque.queue
+  where queue_name = 'test_send';
+
+  execute format($sql$
+    select count(*)
+    from %s
+    where ev_id = any($1)
+      and ev_data is null
+  $sql$, v_table)
+  into v_null_count
+  using v_ids;
+
+  execute format($sql$
+    select ev_data
+    from %s
+    where ev_id = $1
+  $sql$, v_table)
+  into v_payload
+  using v_ids[3];
+
+  assert v_null_count = 1,
+    'insert_event_bulk(text[]) should insert exactly one NULL payload';
+  assert v_payload = 'after',
+    'insert_event_bulk(text[]) should preserve array order around NULL payloads';
+  raise notice 'PASS: insert_event_bulk(text[]) preserves NULL elements';
+end $$;
+
+-- Test 3c.3: pgque_writer can use send_batch() wrappers but not internals
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_count int;
+begin
+  set role pgque_writer;
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.writer_smoke',
+    array['writer-payload']::text[]
+  );
+  reset role;
+
+  assert cardinality(v_ids) = 1,
+    'pgque_writer send_batch(text[]) must return 1 id';
+
+  select
+    pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+  into v_table
+  from pgque.queue
+  where queue_name = 'test_send';
+
+  execute format($sql$
+    select count(*)
+    from %s
+    where ev_id = $1
+      and ev_data = $2
+  $sql$, v_table)
+  into v_count
+  using v_ids[1], 'writer-payload';
+
+  assert v_count = 1,
+    'pgque_writer send_batch(text[]) should insert through SECURITY DEFINER wrapper';
+  raise notice 'PASS: pgque_writer send_batch() wrapper smoke test';
+exception when others then
+  reset role;
+  raise;
+end $$;
+
 -- Test 3d: send_batch() on empty input returns empty array, not NULL
 do $$
 declare
   v_ids bigint[];
 begin
-  v_ids := pgque.send_batch('test_send', 'batch.empty', array[]::jsonb[]);
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.empty',
+    array[]::jsonb[]
+  );
   assert v_ids is not null, 'send_batch(jsonb[]) on empty input must not return NULL';
   assert cardinality(v_ids) = 0,
     'send_batch(jsonb[]) on empty input must return empty array, got '
     || cardinality(v_ids)::text;
 
-  v_ids := pgque.send_batch('test_send', 'batch.empty', array[]::text[]);
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.empty',
+    array[]::text[]
+  );
   assert v_ids is not null, 'send_batch(text[]) on empty input must not return NULL';
   assert cardinality(v_ids) = 0,
     'send_batch(text[]) on empty input must return empty array, got '
     || cardinality(v_ids)::text;
 
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.one',
+    array['{"n":1}'::jsonb]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(jsonb[]) on single input must return 1 id';
+
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.one_text',
+    array['one']::text[]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(text[]) on single input must return 1 id';
+
+  v_ids := pgque.send_batch(
+    'missing_empty_queue',
+    'batch.empty',
+    array[]::jsonb[]
+  );
+  assert cardinality(v_ids) = 0,
+    'send_batch(jsonb[]) on missing queue + empty input should return empty array';
+
+  v_ids := pgque.send_batch(
+    'missing_empty_queue',
+    'batch.empty',
+    array[]::text[]
+  );
+  assert cardinality(v_ids) = 0,
+    'send_batch(text[]) on missing queue + empty input should return empty array';
+
   raise notice 'PASS: send_batch() on empty input returns empty array';
+end $$;
+
+-- Test 3e: send_batch() implementation is set-based, not a PL/pgSQL loop
+-- over pgque.insert_event(). This protects producer throughput: batching should
+-- reduce client round trips *and* avoid per-row function calls inside Postgres.
+do $$
+declare
+  v_def text;
+begin
+  select
+    pg_get_functiondef('pgque.send_batch(text, text, jsonb[])'::regprocedure)
+  into v_def;
+  assert v_def !~* '\mforeach\M',
+    'send_batch(jsonb[]) must not loop with FOREACH';
+  assert v_def ~* 'pgque\.insert_event_bulk\s*\(',
+    'send_batch(jsonb[]) must delegate to insert_event_bulk';
+
+  select
+    pg_get_functiondef('pgque.send_batch(text, text, text[])'::regprocedure)
+  into v_def;
+  assert v_def !~* '\mforeach\M',
+    'send_batch(text[]) must not loop with FOREACH';
+  assert v_def ~* 'pgque\.insert_event_bulk\s*\(',
+    'send_batch(text[]) must delegate to insert_event_bulk';
+
+  select
+    pg_get_functiondef('pgque.insert_event_bulk(text, text, text[])'::regprocedure)
+  into v_def;
+  assert v_def !~* '\mforeach\M',
+    'insert_event_bulk(text[]) must not loop with FOREACH';
+  assert v_def !~* 'pgque\.insert_event\s*\(',
+    'insert_event_bulk(text[]) must not call insert_event per row';
+  assert not has_function_privilege(
+    'pgque_writer',
+    'pgque.insert_event_bulk(text, text, text[])',
+    'execute'
+  ), 'pgque_writer must not execute internal insert_event_bulk directly';
+  assert not has_function_privilege(
+    'pgque_admin',
+    'pgque.insert_event_bulk(text, text, text[])',
+    'execute'
+  ), 'pgque_admin must not execute internal insert_event_bulk directly';
+
+  -- Requires the test session user to be superuser or a pgque_writer member.
+  set role pgque_writer;
+  begin
+    perform pgque.insert_event_bulk(
+      'test_send',
+      'batch.denied_internal',
+      array['denied']::text[]
+    );
+    raise exception 'pgque_writer direct insert_event_bulk() call should fail';
+  exception when insufficient_privilege then
+    reset role;
+  end;
+
+  raise notice 'PASS: send_batch() implementation is set-based';
+exception when others then
+  reset role;
+  raise;
+end $$;
+
+-- Test 3e.1: send_batch(NULL array) rejects invalid input instead of
+-- silently treating it like an empty batch. The old FOREACH implementation
+-- errored on NULL arrays; keep that failure mode explicit while allowing
+-- array[] to mean "empty batch".
+do $$
+begin
+  perform pgque.send_batch(
+    'test_send',
+    'batch.null_array',
+    null::jsonb[]
+  );
+  raise exception 'send_batch(jsonb NULL array) should fail';
+exception when others then
+  assert sqlerrm = 'payloads must not be null',
+    'unexpected jsonb NULL array error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  perform pgque.send_batch(
+    'test_send',
+    'batch.null_array',
+    null::text[]
+  );
+  raise exception 'send_batch(text NULL array) should fail';
+exception when others then
+  assert sqlerrm = 'payloads must not be null',
+    'unexpected text NULL array error: ' || sqlerrm;
+end $$;
+
+-- Test 3e.2: send_batch(non-empty) reports missing queues and disabled queues
+-- (empty batches intentionally short-circuit before queue lookup).
+do $$
+begin
+  perform pgque.send_batch(
+    'missing_nonempty_queue',
+    'batch.missing',
+    array['{}'::jsonb]
+  );
+  raise exception 'send_batch(jsonb[]) on missing queue should fail';
+exception when others then
+  assert sqlerrm = 'queue not found: missing_nonempty_queue',
+    'unexpected jsonb missing queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  perform pgque.send_batch(
+    'missing_nonempty_queue',
+    'batch.missing',
+    array['{}']::text[]
+  );
+  raise exception 'send_batch(text[]) on missing queue should fail';
+exception when others then
+  assert sqlerrm = 'queue not found: missing_nonempty_queue',
+    'unexpected text missing queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  update pgque.queue
+  set queue_disable_insert = true
+  where queue_name = 'test_send';
+  perform pgque.insert_event_bulk(
+    'test_send',
+    'batch.disabled_bulk',
+    array['{}']::text[]
+  );
+  raise exception 'insert_event_bulk(text[]) on disabled queue should fail';
+exception when others then
+  update pgque.queue
+  set queue_disable_insert = false
+  where queue_name = 'test_send';
+  assert sqlerrm = 'Insert into queue disallowed',
+    'unexpected bulk disabled queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  update pgque.queue
+  set queue_disable_insert = true
+  where queue_name = 'test_send';
+  perform pgque.send_batch(
+    'test_send',
+    'batch.disabled',
+    array['{}']::jsonb[]
+  );
+  raise exception 'send_batch(jsonb[]) on disabled queue should fail';
+exception when others then
+  update pgque.queue
+  set queue_disable_insert = false
+  where queue_name = 'test_send';
+  assert sqlerrm = 'Insert into queue disallowed',
+    'unexpected jsonb disabled queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  update pgque.queue
+  set queue_disable_insert = true
+  where queue_name = 'test_send';
+  perform pgque.send_batch(
+    'test_send',
+    'batch.disabled',
+    array['{}']::text[]
+  );
+  raise exception 'send_batch(text[]) on disabled queue should fail';
+exception when others then
+  update pgque.queue
+  set queue_disable_insert = false
+  where queue_name = 'test_send';
+  assert sqlerrm = 'Insert into queue disallowed',
+    'unexpected text disabled queue error: ' || sqlerrm;
+end $$;
+
+-- Test 3f: send_batch() preserves input order and payloads at larger batch sizes
+do $$
+declare
+  v_ids bigint[];
+  v_count int;
+  v_bad_order int;
+  v_table text;
+begin
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.large',
+    array(
+      select jsonb_build_object('n', g)
+      from generate_series(1, 1000) g
+    )
+  );
+
+  assert cardinality(v_ids) = 1000,
+    'send_batch(jsonb[]) should return 1000 ids, got ' || cardinality(v_ids)::text;
+
+  select
+    pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+  into v_table
+  from pgque.queue
+  where queue_name = 'test_send';
+
+  execute format($sql$
+    select count(*)
+    from %s
+    where ev_id = any($1)
+      and ev_type = $2
+  $sql$, v_table)
+  into v_count
+  using v_ids, 'batch.large';
+  assert v_count = 1000,
+    'send_batch(jsonb[]) should insert 1000 rows, got ' || v_count;
+
+  execute format($sql$
+    with expected as (
+      select
+        ord,
+        $1[ord] as ev_id
+      from generate_subscripts($1, 1) as ord
+    )
+    select count(*)
+    from expected e
+    join %s ev using (ev_id)
+    where (ev.ev_data::jsonb->>'n')::int <> e.ord
+  $sql$, v_table)
+  into v_bad_order
+  using v_ids;
+  assert v_bad_order = 0,
+    'send_batch(jsonb[]) should preserve payload order, mismatches=' || v_bad_order;
+
+  raise notice 'PASS: send_batch() preserves order and payloads for large JSON batches';
+end $$;
+
+-- Test 3g: send_batch(text[]) preserves input order and opaque payloads
+-- at larger batch sizes.
+do $$
+declare
+  v_ids bigint[];
+  v_count int;
+  v_bad_order int;
+  v_table text;
+begin
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.large_text',
+    array(
+      select 'opaque-' || g || E'\\nnot-json {'
+      from generate_series(1, 1000) g
+    )::text[]
+  );
+
+  assert cardinality(v_ids) = 1000,
+    'send_batch(text[]) should return 1000 ids, got ' || cardinality(v_ids)::text;
+
+  select
+    pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+  into v_table
+  from pgque.queue
+  where queue_name = 'test_send';
+
+  execute format($sql$
+    select count(*)
+    from %s
+    where ev_id = any($1)
+      and ev_type = $2
+  $sql$, v_table)
+  into v_count
+  using v_ids, 'batch.large_text';
+  assert v_count = 1000,
+    'send_batch(text[]) should insert 1000 rows, got ' || v_count;
+
+  execute format($sql$
+    with expected as (
+      select
+        ord,
+        $1[ord] as ev_id,
+        'opaque-' || ord || E'\\nnot-json {' as payload
+      from generate_subscripts($1, 1) as ord
+    )
+    select count(*)
+    from expected e
+    join %s ev using (ev_id)
+    where ev.ev_data <> e.payload
+  $sql$, v_table)
+  into v_bad_order
+  using v_ids;
+  assert v_bad_order = 0,
+    'send_batch(text[]) should preserve payload order, mismatches=' || v_bad_order;
+
+  raise notice 'PASS: send_batch() preserves order and payloads for large text batches';
 end $$;
 
 -- Test 4: subscribe/unsubscribe

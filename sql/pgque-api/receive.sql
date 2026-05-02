@@ -7,20 +7,22 @@
 -- See SPECx.md sections 4.2 and 4.3.
 
 -- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,
-        batch_id    bigint,
-        type        text,
-        payload     text,
-        retry_count int4,
-        created_at  timestamptz,
-        extra1      text,
-        extra2      text,
-        extra3      text,
-        extra4      text
-    );
-exception when duplicate_object then null;
+do $$
+begin
+    if to_regtype('pgque.message') is null then
+        create type pgque.message as (
+            msg_id      bigint,
+            batch_id    bigint,
+            type        text,
+            payload     text,
+            retry_count int4,
+            created_at  timestamptz,
+            extra1      text,
+            extra2      text,
+            extra3      text,
+            extra4      text
+        );
+    end if;
 end $$;
 
 -- pgque.receive() -- wraps next_batch + get_batch_events
