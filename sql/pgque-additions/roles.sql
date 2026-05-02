@@ -4,25 +4,13 @@
 -- Create roles idempotently.
 do $$
 begin
-    if not exists (
-        select 1
-        from pg_roles
-        where rolname = 'pgque_reader'
-    ) then
+    if not exists (select from pg_roles where rolname = 'pgque_reader') then
         create role pgque_reader;
     end if;
-    if not exists (
-        select 1
-        from pg_roles
-        where rolname = 'pgque_writer'
-    ) then
+    if not exists (select from pg_roles where rolname = 'pgque_writer') then
         create role pgque_writer;
     end if;
-    if not exists (
-        select 1
-        from pg_roles
-        where rolname = 'pgque_admin'
-    ) then
+    if not exists (select from pg_roles where rolname = 'pgque_admin') then
         create role pgque_admin;
     end if;
 end $$;
