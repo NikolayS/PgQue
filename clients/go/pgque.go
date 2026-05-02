@@ -67,9 +67,9 @@ func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error
 }
 
 // SendBatch publishes multiple payloads with the same event type in one SQL call.
-// It returns event IDs in input order. PostgreSQL executes the call atomically
-// inside the caller's transaction: if any payload is rejected, no message from
-// the batch is inserted. An empty typ defaults to "default".
+// It returns event IDs in input order. PostgreSQL executes the SQL function as
+// one atomic statement: if any payload is rejected, no message from the batch is
+// inserted. An empty typ defaults to "default".
 func (c *Client) SendBatch(ctx context.Context, queue, typ string, payloads []any) ([]int64, error) {
 	jsonPayloads := make([]string, len(payloads))
 	for i, payload := range payloads {

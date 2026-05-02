@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sort"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -124,6 +125,7 @@ func TestSendBatch(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].MsgID < msgs[j].MsgID })
 	for i, msg := range msgs {
 		if msg.Type != "batch.test" {
 			t.Fatalf("expected type batch.test, got %s", msg.Type)
