@@ -31,6 +31,7 @@ Discussion on [Hacker News](https://news.ycombinator.com/item?id=47817349).
 - [Client libraries](#client-libraries)
 - [Benchmarks](#benchmarks)
 - [Architecture](#architecture)
+- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -344,9 +345,41 @@ methodology continues to evolve.
 
 PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, three-table TRUNCATE rotation on the hot path, separate retry / delayed / dead-letter tables, and independent per-consumer cursors — and adds a modern API layer on top. See [blueprints/SPECx.md](blueprints/SPECx.md) for the full specification and [docs/pgq-concepts.md](docs/pgq-concepts.md) for the batch/tick/rotation glossary.
 
+## Roadmap
+
+| Feature | Done |
+|---|---|
+| PgQ core engine | ✅ |
+| Modern Postgres support (14-18, 19devel) | ✅ |
+| Pure SQL / PL/pgSQL install | ✅ |
+| Managed Postgres support | ✅ |
+| No daemon / no C extension | ✅ |
+| `pg_cron` or external ticking | ✅ |
+| Sub-second ticking with `pg_cron` |  |
+| System-table rotation / bloat mitigation |  |
+| Subconsumers / coop consumers |  |
+| Queue splitter |  |
+| Queue mover |  |
+| Modern `send`, `receive`, `ack`, `nack` API | ✅ |
+| `send_batch` API | ✅ |
+| Improved `send_batch` performance |  |
+| Dead-letter queue after retry limit | ✅ |
+| Go library | ✅ |
+| TypeScript library | ✅ |
+| Python library | ✅ |
+| Rust library |  |
+| Java library |  |
+| Ruby library |  |
+| Basic observability views | ✅ |
+| Prometheus exporter |  |
+| `pg_tle` extension package |  |
+| Migration guides |  |
+
 ## Contributing
 
-See [blueprints/SPECx.md](blueprints/SPECx.md) for the specification and implementation plan. New code should follow red/green TDD: write the failing test first, then fix it.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+See [blueprints/SPECx.md](blueprints/SPECx.md) for the specification and implementation plan. New code should follow red/green TDD: write the failing test first, then fix it. Agents and AI coding tools should also read [CLAUDE.md](CLAUDE.md).
 
 ## License
 
