@@ -4873,10 +4873,10 @@ begin
 end $$;
 
 -- pgque.send(queue, payload jsonb) -- send with default type, JSON payload
-create or replace function pgque.send(i_queue text, i_payload jsonb)
+create or replace function pgque.send(queue_name text, payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload::text);
+    return pgque.insert_event(queue_name, 'default', payload::text);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -4886,26 +4886,26 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- the caller has already validated the payload. Raw binary with NUL bytes
 -- (protobuf, msgpack, Avro wire format) is not accepted by PG `text` --
 -- encode first.
-create or replace function pgque.send(i_queue text, i_payload text)
+create or replace function pgque.send(queue_name text, payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, 'default', i_payload);
+    return pgque.insert_event(queue_name, 'default', payload);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
-create or replace function pgque.send(i_queue text, i_type text, i_payload jsonb)
+create or replace function pgque.send(queue_name text, ev_type text, payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload::text);
+    return pgque.insert_event(queue_name, ev_type, payload::text);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send(queue, type, payload text) -- fast path with explicit type
-create or replace function pgque.send(i_queue text, i_type text, i_payload text)
+create or replace function pgque.send(queue_name text, ev_type text, payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload);
+    return pgque.insert_event(queue_name, ev_type, payload);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -4915,9 +4915,12 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- array. Keep the queue lookup / queue_disable_insert replica-bypass logic in
 -- sync with insert_event_raw() when either path changes.
 create or replace function pgque.insert_event_bulk(
-    i_queue text, i_type text, i_payloads text[])
+    queue_name text, ev_type text, ev_data_list text[])
 returns bigint[] as $$
 declare
+    _queue_name alias for $1;
+    _ev_type alias for $2;
+    _ev_data_list alias for $3;
     qstate record;
     v_ids bigint[];
 begin
@@ -4927,10 +4930,10 @@ begin
         q.queue_disable_insert
     into qstate
     from pgque.queue q
-    where q.queue_name = i_queue;
+    where q.queue_name = _queue_name;
 
     if not found then
-        raise exception 'queue not found: %', i_queue;
+        raise exception 'queue not found: %', _queue_name;
     end if;
 
     if qstate.queue_disable_insert then
@@ -4969,7 +4972,7 @@ begin
         join ins using (ev_id)
     $sql$, qstate.cur_table_name)
     into v_ids
-    using qstate.queue_event_seq, i_payloads, now(), i_type;
+    using qstate.queue_event_seq, _ev_data_list, now(), _ev_type;
 
     return v_ids;
 end;
@@ -4977,23 +4980,23 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
 create or replace function pgque.send_batch(
-    i_queue text, i_type text, i_payloads jsonb[])
+    queue_name text, ev_type text, payloads jsonb[])
 returns bigint[] as $$
 begin
-    if i_payloads is null then
+    if payloads is null then
         raise exception 'payloads must not be null';
     end if;
-    if cardinality(i_payloads) = 0 then
+    if cardinality(payloads) = 0 then
         return '{}'::bigint[];
     end if;
 
     return pgque.insert_event_bulk(
-        i_queue,
-        i_type,
+        queue_name,
+        ev_type,
         array(
             select
                 u.payload::text
-            from unnest(i_payloads) with ordinality as u(payload, ord)
+            from unnest(payloads) with ordinality as u(payload, ord)
             order by u.ord
         )::text[]
     );
@@ -5002,33 +5005,33 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
 create or replace function pgque.send_batch(
-    i_queue text, i_type text, i_payloads text[])
+    queue_name text, ev_type text, payloads text[])
 returns bigint[] as $$
 begin
-    if i_payloads is null then
+    if payloads is null then
         raise exception 'payloads must not be null';
     end if;
-    if cardinality(i_payloads) = 0 then
+    if cardinality(payloads) = 0 then
         return '{}'::bigint[];
     end if;
 
-    return pgque.insert_event_bulk(i_queue, i_type, i_payloads);
+    return pgque.insert_event_bulk(queue_name, ev_type, payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
-create or replace function pgque.subscribe(i_queue text, i_consumer text)
+create or replace function pgque.subscribe(queue_name text, consumer_name text)
 returns integer as $$
 begin
-    return pgque.register_consumer(i_queue, i_consumer);
+    return pgque.register_consumer(queue_name, consumer_name);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
-create or replace function pgque.unsubscribe(i_queue text, i_consumer text)
+create or replace function pgque.unsubscribe(queue_name text, consumer_name text)
 returns integer as $$
 begin
-    return pgque.unregister_consumer(i_queue, i_consumer);
+    return pgque.unregister_consumer(queue_name, consumer_name);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
