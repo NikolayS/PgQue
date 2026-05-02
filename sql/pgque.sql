@@ -5032,18 +5032,18 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
-create or replace function pgque.subscribe(queue_name text, consumer_name text)
+create or replace function pgque.subscribe(queue text, consumer text)
 returns integer as $$
 begin
-    return pgque.register_consumer(queue_name, consumer_name);
+    return pgque.register_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
-create or replace function pgque.unsubscribe(queue_name text, consumer_name text)
+create or replace function pgque.unsubscribe(queue text, consumer text)
 returns integer as $$
 begin
-    return pgque.unregister_consumer(queue_name, consumer_name);
+    return pgque.unregister_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 

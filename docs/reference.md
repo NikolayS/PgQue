@@ -144,12 +144,12 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed');
 ```
 
-#### `pgque.subscribe(queue_name text, consumer_name text) → integer`
+#### `pgque.subscribe(queue text, consumer text) → integer`
 
 Registers `consumer` on `queue`. Modern alias for `pgque.register_consumer`. Returns `1` on new registration, `0` if already registered.
 Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql`.
 
-#### `pgque.unsubscribe(queue_name text, consumer_name text) → integer`
+#### `pgque.unsubscribe(queue text, consumer text) → integer`
 
 Removes the consumer (and its retry-queue entries) from `queue`. Modern alias for `pgque.unregister_consumer`.
 Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql`.
