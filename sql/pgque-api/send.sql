@@ -116,28 +116,32 @@ begin
 
     execute format($sql$
         with input as materialized (
-            select u.ord,
-                   u.payload as ev_data
-              from unnest($2::text[]) with ordinality as u(payload, ord)
+            select
+                u.ord,
+                u.payload as ev_data
+            from unnest($2::text[]) with ordinality as u(payload, ord)
         ), numbered as materialized (
-            select ord,
-                   nextval($1) as ev_id,
-                   ev_data
-              from input
-             order by ord
+            select
+                ord,
+                nextval($1) as ev_id,
+                ev_data
+            from input
+            order by ord
         ), ins as (
-            insert into %s
-                (ev_id, ev_time, ev_owner, ev_retry,
-                 ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4)
-            select ev_id, $3, null, null,
-                   $4, ev_data, null, null, null, null
-              from numbered
-             order by ord
+            insert into %s (
+                ev_id, ev_time, ev_owner, ev_retry,
+                ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4
+            )
+            select
+                ev_id, $3, null, null,
+                $4, ev_data, null, null, null, null
+            from numbered
+            order by ord
             returning ev_id
         )
         select coalesce(array_agg(numbered.ev_id order by numbered.ord), '{}'::bigint[])
-          from numbered
-          join ins using (ev_id)
+        from numbered
+        join ins using (ev_id)
     $sql$, qstate.cur_table_name)
     into v_ids
     using qstate.queue_event_seq, i_payloads, now(), i_type;
@@ -162,9 +166,10 @@ begin
         i_queue,
         i_type,
         array(
-            select u.payload::text
-              from unnest(i_payloads) with ordinality as u(payload, ord)
-             order by u.ord
+            select
+                u.payload::text
+            from unnest(i_payloads) with ordinality as u(payload, ord)
+            order by u.ord
         )::text[]
     );
 end;
