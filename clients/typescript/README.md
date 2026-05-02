@@ -32,14 +32,15 @@ try {
   await client.subscribe('orders', 'order_worker');
 
   // Producer
-  await client.send('orders', {
+  const eventId = await client.send('orders', {
     type: 'order.created',
     payload: { id: 42 },
   });
-  await client.sendBatch('orders', 'order.created', [
+  const batchIds = await client.sendBatch('orders', 'order.created', [
     { id: 43 },
     { id: 44 },
   ]);
+  console.log('published', eventId, batchIds);
 
   // High-level consumer with per-event-type dispatch.
   // msg.payload is raw JSON text — call JSON.parse() to get the object back.
@@ -76,8 +77,8 @@ try {
 | `consumer.start(signal?)` | Run; resolves when `AbortSignal` aborts. |
 | `client.close()` | Drain the pool. |
 
-`Message.msgId`, `Message.batchId`, and the return value of `send()` are
-JS `bigint` to match PostgreSQL `bigint` losslessly.
+`Message.msgId`, `Message.batchId`, and the return values of `send()` /
+`sendBatch()` are JS `bigint` to match PostgreSQL `bigint` losslessly.
 
 ## Errors
 
