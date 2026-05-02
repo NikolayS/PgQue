@@ -1,10 +1,19 @@
 -- pgque security roles
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
--- Create roles idempotently
-do $$ begin create role pgque_reader; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_writer; exception when duplicate_object then null; end $$;
-do $$ begin create role pgque_admin;  exception when duplicate_object then null; end $$;
+-- Create roles idempotently.
+do $$
+begin
+    if not exists (select 1 from pg_roles where rolname = 'pgque_reader') then
+        create role pgque_reader;
+    end if;
+    if not exists (select 1 from pg_roles where rolname = 'pgque_writer') then
+        create role pgque_writer;
+    end if;
+    if not exists (select 1 from pg_roles where rolname = 'pgque_admin') then
+        create role pgque_admin;
+    end if;
+end $$;
 
 -- Role hierarchy: pgque_admin inherits both pgque_reader and pgque_writer.
 -- pgque_reader and pgque_writer are SIBLINGS, not parent/child — this matches
@@ -29,15 +38,16 @@ begin
     end if;
 end $$;
 
--- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
--- for role grants until PG16).
-do $$ begin
-    grant pgque_reader to pgque_admin;
-exception when duplicate_object then null;
-end $$;
-do $$ begin
-    grant pgque_writer to pgque_admin;
-exception when duplicate_object then null;
+-- Grant role hierarchy idempotently. Use explicit membership checks instead
+-- of GRANT IF NOT EXISTS so this stays compatible with PG14/15.
+do $$
+begin
+    if not pg_has_role('pgque_admin', 'pgque_reader', 'member') then
+        grant pgque_reader to pgque_admin;
+    end if;
+    if not pg_has_role('pgque_admin', 'pgque_writer', 'member') then
+        grant pgque_writer to pgque_admin;
+    end if;
 end $$;
 
 -- ---------------------------------------------------------------------------

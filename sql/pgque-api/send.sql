@@ -29,20 +29,22 @@
 -- Storage (ev_data TEXT) is identical in both paths.
 
 -- pgque.message type (idempotent creation)
-do $$ begin
-    create type pgque.message as (
-        msg_id      bigint,       -- ev_id
-        batch_id    bigint,       -- batch containing this message
-        type        text,         -- ev_type
-        payload     text,         -- ev_data (caller casts to jsonb if needed)
-        retry_count int4,         -- ev_retry (NULL for first delivery)
-        created_at  timestamptz,  -- ev_time
-        extra1      text,         -- ev_extra1
-        extra2      text,         -- ev_extra2
-        extra3      text,         -- ev_extra3
-        extra4      text          -- ev_extra4
-    );
-exception when duplicate_object then null;
+do $$
+begin
+    if to_regtype('pgque.message') is null then
+        create type pgque.message as (
+            msg_id      bigint,       -- ev_id
+            batch_id    bigint,       -- batch containing this message
+            type        text,         -- ev_type
+            payload     text,         -- ev_data (caller casts to jsonb if needed)
+            retry_count int4,         -- ev_retry (NULL for first delivery)
+            created_at  timestamptz,  -- ev_time
+            extra1      text,         -- ev_extra1
+            extra2      text,         -- ev_extra2
+            extra3      text,         -- ev_extra3
+            extra4      text          -- ev_extra4
+        );
+    end if;
 end $$;
 
 -- pgque.send(queue, payload jsonb) -- send with default type, JSON payload
