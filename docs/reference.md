@@ -18,7 +18,7 @@ Functions shipped outside the default install are in the [Experimental](#experim
 
 ## Publishing
 
-All `send*` functions reduce to `pgque.insert_event`. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
+Single-message `send` functions reduce to `pgque.insert_event`; batch `send_batch` functions reduce to the set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
 
 #### `pgque.send(queue text, payload jsonb) → bigint`
 
@@ -50,7 +50,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.send_batch(queue text, type text, payloads jsonb[]) → bigint[]`
 
-Set-based batch send: inserts all elements of `payloads` into `queue` in one SQL statement / transaction. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`.
+Set-based batch send: inserts all elements of `payloads` into `queue` in one SQL statement / transaction. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to a write-disabled queue raise `Insert into queue disallowed`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 ```sql
@@ -60,7 +60,7 @@ select pgque.send_batch('orders', 'order.created',
 
 #### `pgque.send_batch(queue text, type text, payloads text[]) → bigint[]`
 
-Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`.
+Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to a write-disabled queue raise `Insert into queue disallowed`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 ## Consuming

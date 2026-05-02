@@ -82,67 +82,29 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
-create or replace function pgque.send_batch(
-    i_queue text, i_type text, i_payloads jsonb[])
-returns bigint[] as $$
-begin
-    if i_payloads is null then
-        raise exception 'payloads must not be null';
-    end if;
-    if cardinality(i_payloads) = 0 then
-        return '{}'::bigint[];
-    end if;
-
-    return pgque.send_batch(
-        i_queue,
-        i_type,
-        array(
-            select u.payload::text
-              from unnest(i_payloads) with ordinality as u(payload, ord)
-             order by u.ord
-        )::text[]
-    );
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
-create or replace function pgque.send_batch(
+-- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
+create or replace function pgque.insert_event_bulk(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
 declare
-    v_table_name text;
-    v_seq_name text;
+    qstate record;
     v_ids bigint[];
 begin
-    if i_payloads is null then
-        raise exception 'payloads must not be null';
-    end if;
-    if cardinality(i_payloads) = 0 then
-        return '{}'::bigint[];
-    end if;
-
-    begin
-        v_table_name := pgque.quote_fqname(pgque.current_event_table(i_queue));
-    exception when others then
-        if sqlerrm = 'Event queue not found' then
-            raise exception 'queue not found: %', i_queue;
-        elsif sqlerrm = 'Writing to queue disabled' then
-            raise exception 'Insert into queue disallowed';
-        else
-            raise;
-        end if;
-    end;
-
-    select q.queue_event_seq
-      into v_seq_name
+    select pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
+           q.queue_event_seq::regclass as queue_event_seq,
+           q.queue_disable_insert
+      into qstate
       from pgque.queue q
      where q.queue_name = i_queue;
 
     if not found then
-        -- current_event_table() should have caught this; keep a defensive
-        -- error in case queue metadata changes concurrently.
         raise exception 'queue not found: %', i_queue;
+    end if;
+
+    if qstate.queue_disable_insert then
+        if current_setting('session_replication_role') <> 'replica' then
+            raise exception 'Insert into queue disallowed';
+        end if;
     end if;
 
     execute format($sql$
@@ -152,7 +114,7 @@ begin
               from unnest($2::text[]) with ordinality as u(payload, ord)
         ), numbered as materialized (
             select ord,
-                   nextval($1::regclass) as ev_id,
+                   nextval($1) as ev_id,
                    ev_data
               from input
              order by ord
@@ -169,11 +131,51 @@ begin
         select coalesce(array_agg(numbered.ev_id order by numbered.ord), '{}'::bigint[])
           from numbered
           join ins using (ev_id)
-    $sql$, v_table_name)
+    $sql$, qstate.cur_table_name)
     into v_ids
-    using v_seq_name, i_payloads, now(), i_type;
+    using qstate.queue_event_seq, i_payloads, now(), i_type;
 
     return v_ids;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
+create or replace function pgque.send_batch(
+    i_queue text, i_type text, i_payloads jsonb[])
+returns bigint[] as $$
+begin
+    if i_payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+    if cardinality(i_payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
+
+    return pgque.insert_event_bulk(
+        i_queue,
+        i_type,
+        array(
+            select u.payload::text
+              from unnest(i_payloads) with ordinality as u(payload, ord)
+             order by u.ord
+        )::text[]
+    );
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
+create or replace function pgque.send_batch(
+    i_queue text, i_type text, i_payloads text[])
+returns bigint[] as $$
+begin
+    if i_payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+    if cardinality(i_payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
+
+    return pgque.insert_event_bulk(i_queue, i_type, i_payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
