@@ -112,6 +112,11 @@ begin
     end if;
 
     if qstate.queue_disable_insert then
+        -- Keep upstream PgQ semantics: disabled queues still accept inserts
+        -- when session_replication_role = 'replica'. This is likely for
+        -- replication/load paths such as Londiste; send_batch() must match
+        -- insert_event_raw()/insert_event() behavior instead of inventing a
+        -- stricter batch-only rule.
         if current_setting('session_replication_role') <> 'replica' then
             raise exception 'Insert into queue disallowed';
         end if;
