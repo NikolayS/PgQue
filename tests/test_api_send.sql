@@ -96,15 +96,15 @@ begin
 
   v_eid := pgque.send(
     queue_name := 'test_send',
-    ev_type := 'named.explicit',
+    type_name := 'named.explicit',
     payload := '{"named":"explicit"}'::jsonb
   );
   assert v_eid is not null,
-    'send(queue_name :=, ev_type :=, payload :=) should return event id';
+    'send(queue_name :=, type_name :=, payload :=) should return event id';
 
   v_ids := pgque.send_batch(
     queue_name := 'test_send',
-    ev_type := 'named.batch_json',
+    type_name := 'named.batch_json',
     payloads := array['{"n":1}'::jsonb]
   );
   assert cardinality(v_ids) = 1,
@@ -112,7 +112,7 @@ begin
 
   v_ids := pgque.send_batch(
     queue_name := 'test_send',
-    ev_type := 'named.batch_text',
+    type_name := 'named.batch_text',
     payloads := array['named-text']::text[]
   );
   assert cardinality(v_ids) = 1,

@@ -69,18 +69,18 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
-create or replace function pgque.send(queue_name text, ev_type text, payload jsonb)
+create or replace function pgque.send(queue_name text, type_name text, payload jsonb)
 returns bigint as $$
 begin
-    return pgque.insert_event(queue_name, ev_type, payload::text);
+    return pgque.insert_event(queue_name, type_name, payload::text);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send(queue, type, payload text) -- fast path with explicit type
-create or replace function pgque.send(queue_name text, ev_type text, payload text)
+create or replace function pgque.send(queue_name text, type_name text, payload text)
 returns bigint as $$
 begin
-    return pgque.insert_event(queue_name, ev_type, payload);
+    return pgque.insert_event(queue_name, type_name, payload);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -90,12 +90,12 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- array. Keep the queue lookup / queue_disable_insert replica-bypass logic in
 -- sync with insert_event_raw() when either path changes.
 create or replace function pgque.insert_event_bulk(
-    queue_name text, ev_type text, ev_data_list text[])
+    queue_name text, type_name text, payloads text[])
 returns bigint[] as $$
 declare
     _queue_name alias for $1;
-    _ev_type alias for $2;
-    _ev_data_list alias for $3;
+    _type_name alias for $2;
+    _payloads alias for $3;
     qstate record;
     v_ids bigint[];
 begin
@@ -152,7 +152,7 @@ begin
         join ins using (ev_id)
     $sql$, qstate.cur_table_name)
     into v_ids
-    using qstate.queue_event_seq, _ev_data_list, now(), _ev_type;
+    using qstate.queue_event_seq, _payloads, now(), _type_name;
 
     return v_ids;
 end;
@@ -160,7 +160,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
 create or replace function pgque.send_batch(
-    queue_name text, ev_type text, payloads jsonb[])
+    queue_name text, type_name text, payloads jsonb[])
 returns bigint[] as $$
 begin
     if payloads is null then
@@ -172,7 +172,7 @@ begin
 
     return pgque.insert_event_bulk(
         queue_name,
-        ev_type,
+        type_name,
         array(
             select
                 u.payload::text
@@ -185,7 +185,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
 create or replace function pgque.send_batch(
-    queue_name text, ev_type text, payloads text[])
+    queue_name text, type_name text, payloads text[])
 returns bigint[] as $$
 begin
     if payloads is null then
@@ -195,7 +195,7 @@ begin
         return '{}'::bigint[];
     end if;
 
-    return pgque.insert_event_bulk(queue_name, ev_type, payloads);
+    return pgque.insert_event_bulk(queue_name, type_name, payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
