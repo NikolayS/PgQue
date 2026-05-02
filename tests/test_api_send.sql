@@ -79,6 +79,48 @@ begin
   raise notice 'PASS: send_batch(text[]) returns 3 ids';
 end $$;
 
+-- Test 3b.1: named-argument calls use stable public parameter names
+-- (`queue_name`, `ev_type`, `payload`, `payloads`). These names are part of
+-- the SQL API: callers may use `arg := value` syntax.
+do $$
+declare
+  v_eid bigint;
+  v_ids bigint[];
+begin
+  v_eid := pgque.send(
+    queue_name := 'test_send',
+    payload := '{"named":"default"}'::jsonb
+  );
+  assert v_eid is not null,
+    'send(queue_name :=, payload :=) should return event id';
+
+  v_eid := pgque.send(
+    queue_name := 'test_send',
+    ev_type := 'named.explicit',
+    payload := '{"named":"explicit"}'::jsonb
+  );
+  assert v_eid is not null,
+    'send(queue_name :=, ev_type :=, payload :=) should return event id';
+
+  v_ids := pgque.send_batch(
+    queue_name := 'test_send',
+    ev_type := 'named.batch_json',
+    payloads := array['{"n":1}'::jsonb]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(jsonb[], named args) should return 1 id';
+
+  v_ids := pgque.send_batch(
+    queue_name := 'test_send',
+    ev_type := 'named.batch_text',
+    payloads := array['named-text']::text[]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(text[], named args) should return 1 id';
+
+  raise notice 'PASS: named-argument send()/send_batch() calls';
+end $$;
+
 -- Test 3c.1: insert_event_bulk() direct single-element call
 do $$
 declare
