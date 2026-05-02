@@ -104,7 +104,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 Set-based fast-path batch send for opaque text payloads. Returns event ids aligned to input order. Do not rely on the numeric ids being monotonically increasing inside one batch; use array position for input/result correlation. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
-#### `pgque.insert_event_bulk(queue_name text, type_name text, payloads text[]) → bigint[]`
+#### `pgque.insert_event_bulk(queue_name text, ev_type text, ev_data_list text[]) → bigint[]`
 
 **Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids from the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids aligned to input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on the stable `send_batch` surface. The schema owner/superuser can still call it for install/debug work.
 Grant: none (internal). Source: `sql/pgque-api/send.sql`.

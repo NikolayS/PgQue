@@ -90,14 +90,13 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- array. Keep the queue lookup / queue_disable_insert replica-bypass logic in
 -- sync with insert_event_raw() when either path changes.
 create or replace function pgque.insert_event_bulk(
-    queue_name text, type_name text, payloads text[])
+    queue_name text, ev_type text, ev_data_list text[])
 returns bigint[] as $$
 declare
-    -- Public argument names are intentionally friendly for named calls, but
-    -- local aliases avoid ambiguity with table columns inside SQL statements.
+    -- Local aliases avoid ambiguity with table columns inside SQL statements.
     _queue_name alias for $1;
-    _type_name alias for $2;
-    _payloads alias for $3;
+    _ev_type alias for $2;
+    _ev_data_list alias for $3;
     qstate record;
     v_ids bigint[];
 begin
@@ -154,7 +153,7 @@ begin
         join ins using (ev_id)
     $sql$, qstate.cur_table_name)
     into v_ids
-    using qstate.queue_event_seq, _payloads, now(), _type_name;
+    using qstate.queue_event_seq, _ev_data_list, now(), _ev_type;
 
     return v_ids;
 end;
