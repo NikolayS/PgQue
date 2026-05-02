@@ -35,7 +35,7 @@ snapshot isolation, batch_event_sql algorithm, dual-filter optimization).
 
 ## Style Rules
 
-Follow the shared rules at https://gitlab.com/postgres-ai/rules/-/tree/main/rules
+These rules are the source of truth for agentic engineering in this repo. Agents and AI coding tools must read this file before making changes.
 
 ### SQL Style
 
@@ -100,6 +100,15 @@ pgque/
     typescript/        -- pgque-ts
   cli/                 -- pgque CLI (Go)
 ```
+
+## Agentic Engineering Rules
+
+- Use red/green TDD for new code: write the failing test first, then the implementation.
+- Keep changes surgical: one logical fix or feature per PR.
+- Preserve PgQ core behavior unless the change is intentional, documented, and tested.
+- Keep the default install managed-Postgres-compatible: no C extension, no `shared_preload_libraries`, no restart requirement.
+- Keep generated files and source changes consistent when both are affected.
+- Include the relevant test or manual verification command in PR descriptions.
 
 ## Key Design Rules
 
