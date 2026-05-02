@@ -194,9 +194,7 @@ create user metrics with password '...';              -- replace with a real pas
 grant pgque_reader to metrics;
 ```
 
-### Upgrading from a pre-#163 install
-
-Pre-#163 PgQue granted `pgque_reader` to `pgque_writer` (writer inherited reader). #163 reverses that: the two are now siblings. **Existing deployments must take two manual steps after re-running `\i sql/pgque.sql`:**
+**Upgrading from a pre-#163 install.** Pre-#163 PgQue granted `pgque_reader` to `pgque_writer` (writer inherited reader). #163 reverses that: the two are now siblings. **Existing deployments must take two manual steps after re-running `\i sql/pgque.sql`:**
 
 1. The re-install **does** revoke the old `pgque_reader → pgque_writer` membership for you (idempotent `revoke` in `roles.sql`). No action needed for that part.
 2. Any application role that previously held `pgque_writer` and called `receive`/`ack`/`nack`/`subscribe`/`unsubscribe` will start failing with `permission denied`. Grant `pgque_reader` to those roles:
@@ -211,10 +209,13 @@ If you previously assumed a single role for both, audit which apps still need it
 
 ```sql
 -- Find roles holding pgque_writer that are missing pgque_reader.
-select rolname from pg_roles r
+-- (pgque_writer/postgres are excluded as obvious self-matches; pgque_admin
+-- is filtered transitively by the second predicate since it is a member of
+-- pgque_reader.)
+select rolname from pg_roles
  where pg_has_role(rolname, 'pgque_writer', 'MEMBER')
    and not pg_has_role(rolname, 'pgque_reader', 'MEMBER')
-   and rolname not in ('pgque_writer','pgque_admin','postgres');
+   and rolname not in ('pgque_writer','postgres');
 ```
 
 Then `grant pgque_reader to <each_role>;` per the audit. Pure producers (e.g. webhook ingesters that only `send()`) need no change.
