@@ -28,6 +28,9 @@
 \echo 'Running: test_security_extra_maint'
 \i tests/test_security_extra_maint.sql
 
+\echo 'Running: test_security_get_batch_cursor'
+\i tests/test_security_get_batch_cursor.sql
+
 \echo 'Running: test_security_producer_isolation'
 \i tests/test_security_producer_isolation.sql
 
