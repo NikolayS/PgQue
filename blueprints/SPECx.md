@@ -1173,7 +1173,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
 | Modern API | PgQ primitive underneath | Notes |
 |---|---|---|
 | `pgque.send(queue, payload)` | `pgque.insert_event(queue, type, data)` | TEXT overload is default for untyped literals (fast path, opaque bytes); JSONB overload is opt-in via `::jsonb` cast (validation + canonicalization) |
-| `pgque.send_batch(queue, type, payloads[])` | `insert_event_bulk()` set-based primitive | One queue lookup + one set-based insert; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
+| `pgque.send_batch(queue, type, payloads[])` | `insert_event_bulk()` set-based primitive | One queue lookup + one set-based insert; returned array positions match input positions; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
 | `pgque.send_at(queue, type, payload, time)` | `delayed_events` table + `maint_deliver_delayed()` | New |
 | `pgque.receive(queue, consumer, n)` | `next_batch()` + `get_batch_events()` | Combined |
 | `pgque.ack(batch_id)` | `finish_batch(batch_id)` | Rename |

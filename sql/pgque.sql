@@ -4325,11 +4325,13 @@ grant execute on all functions in schema pgque to pgque_admin;
 revoke execute on function pgque.uninstall() from pgque_admin;
 
 -- insert_event_bulk() is an internal primitive for SECURITY DEFINER send_batch()
--- wrappers. It is defined later during a full install, so tolerate standalone
--- roles.sql execution before pgque-api/send.sql has been loaded.
-do $$ begin
-    revoke execute on function pgque.insert_event_bulk(text, text, text[]) from pgque_admin;
-exception when undefined_function then null;
+-- wrappers. It is defined later during a full install, so revoke here only
+-- when roles.sql is run after pgque-api/send.sql has already been loaded.
+do $$
+begin
+    if to_regprocedure('pgque.insert_event_bulk(text, text, text[])') is not null then
+        revoke execute on function pgque.insert_event_bulk(text, text, text[]) from pgque_admin;
+    end if;
 end $$;
 
 -- pgque-additions/dlq.sql
@@ -5028,4 +5030,3 @@ revoke execute on function pgque.insert_event_bulk(text, text, text[])
 -- functions created here would otherwise inherit PostgreSQL's default
 -- PUBLIC EXECUTE. This second pass covers everything.
 revoke execute on all functions in schema pgque from public;
-
