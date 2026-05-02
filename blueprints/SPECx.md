@@ -769,7 +769,7 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 ```
 
-> **UPDATE 2026-05-02:** PR #159 replaces the draft `send_batch()` loop with a set-based implementation. Public `send_batch(queue_name, type_name, payloads)` wrappers now validate NULL/empty-array API rules and delegate to an internal `insert_event_bulk(queue_name, type_name, payloads)` primitive. The primitive resolves the queue/table once, performs one set-based insert, and returns event ids aligned to input array positions. It is not granted to public API roles directly; callers should use `send_batch()`.
+> **UPDATE 2026-05-02:** PR #159 replaces the draft `send_batch()` loop with a set-based implementation. Public `send_batch(queue_name, payloads)` and `send_batch(queue_name, type_name, payloads)` wrappers now validate NULL/empty-array API rules and delegate to an internal `insert_event_bulk(queue_name, type_name, payloads)` primitive. The primitive resolves the queue/table once, performs one set-based insert, and returns event ids aligned to input array positions. It is not granted to public API roles directly; callers should use `send_batch()`.
 
 ### 4.2 Consuming: `pgque.receive()`
 
@@ -1180,7 +1180,7 @@ The PgQ-style API (`insert_event`, `next_batch`, `get_batch_events`,
 `finish_batch`, `event_retry`) remains fully available for users who need
 fine-grained control.
 
-> **UPDATE 2026-05-02:** For PR #159, the `send_batch(queue, type, payloads[])` row above is superseded by `send_batch(queue_name, type_name, payloads)`: one queue lookup plus one set-based insert via internal `insert_event_bulk()`; `text[]` remains the default overload and `jsonb[]` remains opt-in via `::jsonb[]`. The new argument names are intentional because PostgreSQL supports named-argument calls with `arg := value`.
+> **UPDATE 2026-05-02:** For PR #159, the `send_batch(queue, type, payloads[])` row above is superseded by `send_batch(queue_name, payloads)` / `send_batch(queue_name, type_name, payloads)`: one queue lookup plus one set-based insert via internal `insert_event_bulk()`; `text[]` remains the default overload and `jsonb[]` remains opt-in via `::jsonb[]`. The new argument names are intentional because PostgreSQL supports named-argument calls with `arg := value`.
 
 ---
 

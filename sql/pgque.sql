@@ -4971,6 +4971,14 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
+-- pgque.send_batch(queue, payloads jsonb[]) -- default-type batch send
+create or replace function pgque.send_batch(queue_name text, payloads jsonb[])
+returns bigint[] as $$
+begin
+    return pgque.send_batch(queue_name, 'default', payloads);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
 -- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
 create or replace function pgque.send_batch(
     queue_name text, type_name text, payloads jsonb[])
@@ -4993,6 +5001,14 @@ begin
             order by u.ord
         )::text[]
     );
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.send_batch(queue, payloads text[]) -- default-type fast-path batch send
+create or replace function pgque.send_batch(queue_name text, payloads text[])
+returns bigint[] as $$
+begin
+    return pgque.send_batch(queue_name, 'default', payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -5037,6 +5053,8 @@ grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
 grant execute on function pgque.send(text, text, text)          to pgque_writer;
+grant execute on function pgque.send_batch(text, jsonb[])       to pgque_writer;
+grant execute on function pgque.send_batch(text, text[])        to pgque_writer;
 grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
 grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
 -- Upgrade path: pre-#163 installs granted subscribe/unsubscribe to

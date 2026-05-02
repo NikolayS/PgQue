@@ -79,6 +79,55 @@ begin
   raise notice 'PASS: send_batch(text[]) returns 3 ids';
 end $$;
 
+-- Test 3c.0: send_batch(queue_name, payloads) uses default event type
+-- just like send(queue_name, payload).
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_count int;
+begin
+  v_ids := pgque.send_batch(
+    'test_send',
+    array['{"default_json":1}'::jsonb]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(queue_name, jsonb[]) should return 1 id';
+
+  v_ids := pgque.send_batch(
+    'test_send',
+    array['default-text']::text[]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(queue_name, text[]) should return 1 id';
+
+  select
+    pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+  into v_table
+  from pgque.queue
+  where queue_name = 'test_send';
+
+  execute format($sql$
+    select count(*)
+    from %s
+    where ev_id = any($1)
+      and ev_type = 'default'
+  $sql$, v_table)
+  into v_count
+  using v_ids;
+  assert v_count = 1,
+    'send_batch(queue_name, payloads) should use default event type';
+
+  v_ids := pgque.send_batch(
+    queue_name := 'test_send',
+    payloads := array['{"named_default":1}'::jsonb]
+  );
+  assert cardinality(v_ids) = 1,
+    'send_batch(queue_name :=, payloads :=) should return 1 id';
+
+  raise notice 'PASS: send_batch(queue_name, payloads) default type';
+end $$;
+
 -- Test 3b.1: named-argument calls use stable public parameter names
 -- (`queue_name`, `ev_type`, `payload`, `payloads`). These names are part of
 -- the SQL API: callers may use `arg := value` syntax.
