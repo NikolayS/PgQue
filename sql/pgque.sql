@@ -4222,9 +4222,11 @@ do $$ begin create role pgque_admin;  exception when duplicate_object then null;
 -- pgque_writer. Postgres does NOT revoke prior role grants on re-install,
 -- so we must do it explicitly. Without this, in-place upgrades silently
 -- retain the vulnerable inheritance and the security fix is a no-op.
-do $$ begin
-    revoke pgque_reader from pgque_writer;
-exception when undefined_object then null;
+do $$
+begin
+    if pg_has_role('pgque_writer', 'pgque_reader', 'member') then
+        revoke pgque_reader from pgque_writer;
+    end if;
 end $$;
 
 -- Wrapped in exception handlers for PG14/15 compatibility (no IF NOT EXISTS
