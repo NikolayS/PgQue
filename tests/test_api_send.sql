@@ -129,7 +129,7 @@ begin
 end $$;
 
 -- Test 3b.1: named-argument calls use stable public parameter names
--- (`queue_name`, `ev_type`, `payload`, `payloads`). These names are part of
+-- (`queue_name`, `type_name`, `payload`, `payloads`). These names are part of
 -- the SQL API: callers may use `arg := value` syntax.
 do $$
 declare
