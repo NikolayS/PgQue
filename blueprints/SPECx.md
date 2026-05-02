@@ -735,36 +735,41 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
+create function pgque.insert_event_bulk(
+    i_queue text, i_type text, i_payloads text[])
+returns bigint[] as $$
+-- Internal set-based primitive: resolve queue/table once, allocate event IDs
+-- set-wise, insert all rows with one INSERT ... SELECT, and return IDs in
+-- input order. Public send_batch() wrappers handle NULL/empty-array API rules.
+-- Full implementation lives in sql/pgque-api/send.sql.
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
 create function pgque.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
-declare
-    ids bigint[] := '{}';
-    p jsonb;
 begin
-    -- TODO: optimize to resolve queue/table once and bypass insert_event_raw
-    -- with a single multi-VALUES insert. Currently each insert_event() call
-    -- resolves the queue independently. Deferred to implementation.
-    foreach p in array i_payloads loop
-        ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p::text));
-    end loop;
-    return ids;
+    if i_payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+    if cardinality(i_payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
+    return pgque.insert_event_bulk(i_queue, i_type,
+        array(select p::text from unnest(i_payloads) with ordinality as u(p, ord) order by ord));
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 create function pgque.send_batch(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
-declare
-    ids bigint[] := '{}';
-    p text;
 begin
-    foreach p in array i_payloads loop
-        ids := array_append(ids,
-            pgque.insert_event(i_queue, i_type, p));
-    end loop;
-    return ids;
+    if i_payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+    if cardinality(i_payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
+    return pgque.insert_event_bulk(i_queue, i_type, i_payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 ```
@@ -1163,7 +1168,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
 | Modern API | PgQ primitive underneath | Notes |
 |---|---|---|
 | `pgque.send(queue, payload)` | `pgque.insert_event(queue, type, data)` | TEXT overload is default for untyped literals (fast path, opaque bytes); JSONB overload is opt-in via `::jsonb` cast (validation + canonicalization) |
-| `pgque.send_batch(queue, type, payloads[])` | Loop of `insert_event()` calls | Single TX; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
+| `pgque.send_batch(queue, type, payloads[])` | `insert_event_bulk()` set-based primitive | Single atomic SQL statement; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
 | `pgque.send_at(queue, type, payload, time)` | `delayed_events` table + `maint_deliver_delayed()` | New |
 | `pgque.receive(queue, consumer, n)` | `next_batch()` + `get_batch_events()` | Combined |
 | `pgque.ack(batch_id)` | `finish_batch(batch_id)` | Rename |

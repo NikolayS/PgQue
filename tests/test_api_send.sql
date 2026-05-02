@@ -96,6 +96,14 @@ begin
     'send_batch(text[]) on empty input must return empty array, got '
     || cardinality(v_ids)::text;
 
+  v_ids := pgque.send_batch('test_send', 'batch.one', array['{"n":1}'::jsonb]);
+  assert cardinality(v_ids) = 1,
+    'send_batch(jsonb[]) on single input must return 1 id';
+
+  v_ids := pgque.send_batch('test_send', 'batch.one_text', array['one']::text[]);
+  assert cardinality(v_ids) = 1,
+    'send_batch(text[]) on single input must return 1 id';
+
   v_ids := pgque.send_batch('missing_empty_queue', 'batch.empty', array[]::jsonb[]);
   assert cardinality(v_ids) = 0,
     'send_batch(jsonb[]) on missing queue + empty input should return empty array';
@@ -118,15 +126,26 @@ begin
     into v_def;
   assert v_def !~* '\mforeach\M',
     'send_batch(jsonb[]) must not loop with FOREACH';
-  assert v_def !~* 'pgque\.insert_event\s*\(',
-    'send_batch(jsonb[]) must not call insert_event per row';
+  assert v_def ~* 'pgque\.insert_event_bulk\s*\(',
+    'send_batch(jsonb[]) must delegate to insert_event_bulk';
 
   select pg_get_functiondef('pgque.send_batch(text, text, text[])'::regprocedure)
     into v_def;
   assert v_def !~* '\mforeach\M',
     'send_batch(text[]) must not loop with FOREACH';
+  assert v_def ~* 'pgque\.insert_event_bulk\s*\(',
+    'send_batch(text[]) must delegate to insert_event_bulk';
+
+  select pg_get_functiondef('pgque.insert_event_bulk(text, text, text[])'::regprocedure)
+    into v_def;
+  assert v_def !~* '\mforeach\M',
+    'insert_event_bulk(text[]) must not loop with FOREACH';
   assert v_def !~* 'pgque\.insert_event\s*\(',
-    'send_batch(text[]) must not call insert_event per row';
+    'insert_event_bulk(text[]) must not call insert_event per row';
+  assert not has_function_privilege('pgque_writer', 'pgque.insert_event_bulk(text, text, text[])', 'execute'),
+    'pgque_writer must not execute internal insert_event_bulk directly';
+  assert not has_function_privilege('pgque_admin', 'pgque.insert_event_bulk(text, text, text[])', 'execute'),
+    'pgque_admin must not execute internal insert_event_bulk directly';
 
   raise notice 'PASS: send_batch() implementation is set-based';
 end $$;
@@ -153,7 +172,7 @@ exception when others then
     'unexpected text NULL array error: ' || sqlerrm;
 end $$;
 
--- Test 3e.2: send_batch(non-empty) reports missing queues
+-- Test 3e.2: send_batch(non-empty) reports missing queues and disabled queues
 -- (empty batches intentionally short-circuit before queue lookup).
 do $$
 begin
@@ -171,6 +190,28 @@ begin
 exception when others then
   assert sqlerrm = 'queue not found: missing_nonempty_queue',
     'unexpected text missing queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  update pgque.queue set queue_disable_insert = true where queue_name = 'test_send';
+  perform pgque.send_batch('test_send', 'batch.disabled', array['{}']::jsonb[]);
+  raise exception 'send_batch(jsonb[]) on disabled queue should fail';
+exception when others then
+  update pgque.queue set queue_disable_insert = false where queue_name = 'test_send';
+  assert sqlerrm = 'Insert into queue disallowed',
+    'unexpected jsonb disabled queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  update pgque.queue set queue_disable_insert = true where queue_name = 'test_send';
+  perform pgque.send_batch('test_send', 'batch.disabled', array['{}']::text[]);
+  raise exception 'send_batch(text[]) on disabled queue should fail';
+exception when others then
+  update pgque.queue set queue_disable_insert = false where queue_name = 'test_send';
+  assert sqlerrm = 'Insert into queue disallowed',
+    'unexpected text disabled queue error: ' || sqlerrm;
 end $$;
 
 -- Test 3f: send_batch() preserves input order and payloads at larger batch sizes

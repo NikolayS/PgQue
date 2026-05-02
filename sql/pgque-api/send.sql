@@ -215,6 +215,10 @@ revoke execute on function pgque.unsubscribe(text, text)       from pgque_writer
 grant execute on function pgque.subscribe(text, text)           to pgque_reader;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 
+-- Internal primitive used by SECURITY DEFINER send_batch wrappers only.
+revoke execute on function pgque.insert_event_bulk(text, text, text[])
+    from public, pgque_reader, pgque_writer, pgque_admin;
+
 -- Re-apply deny-by-default after all API functions are defined.
 -- roles.sql's blanket revoke runs before pgque-api/ files are loaded, so
 -- functions created here would otherwise inherit PostgreSQL's default
