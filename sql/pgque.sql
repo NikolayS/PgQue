@@ -4909,12 +4909,13 @@ declare
     qstate record;
     v_ids bigint[];
 begin
-    select pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
-           q.queue_event_seq::regclass as queue_event_seq,
-           q.queue_disable_insert
-      into qstate
-      from pgque.queue q
-     where q.queue_name = i_queue;
+    select
+        pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
+        q.queue_event_seq::regclass as queue_event_seq,
+        q.queue_disable_insert
+    into qstate
+    from pgque.queue q
+    where q.queue_name = i_queue;
 
     if not found then
         raise exception 'queue not found: %', i_queue;
