@@ -16,7 +16,7 @@ import pytest
 import pgque
 
 
-def test_stop_is_honored_within_two_seconds(dsn, setup_queue):
+def test_stop_is_honored_promptly(dsn, setup_queue):
     """`stop()` must interrupt the LISTEN/NOTIFY wait promptly.
 
     Regression for #158: the prior `for _notify in conn.notifies(timeout=...)`
@@ -75,9 +75,21 @@ def test_notify_wakes_consumer_before_poll_interval(dsn, conn, setup_queue):
         # Let the consumer reach LISTEN + first poll.
         time.sleep(1.0)
 
-        # Send + tick from a separate connection (this triggers
-        # pg_notify on channel pgque_<queue> via the queue's NOTIFY
-        # trigger, which the consumer is LISTENing on).
+        # Send + tick from a separate connection. Two-commit ordering
+        # is intentional and deterministic:
+        #   1. send commits the event row only -- NO NOTIFY fires
+        #      (pgque has no insert trigger; the only pg_notify call
+        #      lives inside pgque.ticker(), see sql/pgque.sql).
+        #   2. force_tick + ticker commits the tick row + pg_notify
+        #      atomically. This commit both establishes batch
+        #      visibility (PgQ requires the tick to be in a separate
+        #      transaction from the events; events in the same xact
+        #      as the tick are not visible in the tick's snapshot)
+        #      AND fires the NOTIFY. So when the consumer wakes from
+        #      the NOTIFY, the batch is already visible.
+        # Putting send + tick in a single transaction would deliver
+        # one NOTIFY but the events would not be visible in the
+        # tick's snapshot -- consumer would wake to an empty batch.
         with psycopg.connect(dsn, autocommit=False) as producer:
             client = pgque.PgqueClient(producer)
             client.send(queue, {"v": 1}, type="evt.wake")

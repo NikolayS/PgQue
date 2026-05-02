@@ -8,6 +8,7 @@ import logging
 import signal
 import select
 import threading
+import time
 from typing import Callable, Optional
 
 import psycopg
@@ -169,12 +170,22 @@ class Consumer:
         Each slice is at most ``_WAIT_SLICE_SECONDS`` so ``stop()`` is
         observed within ~SLICE seconds of the call. Issue #158.
         """
-        import time as _time
+        # Drain any NOTIFY already buffered in libpq from the prior
+        # _poll_once (e.g. delivered alongside query results). Without
+        # this, a buffered notify sits in libpq until the socket
+        # becomes readable for some other reason -- select() won't see
+        # it, and wakeup latency stretches out. Restores the implicit
+        # entry-drain semantics of the old conn.notifies(timeout=...).
+        drained = False
+        for _notify in conn.notifies(timeout=0):
+            drained = True
+        if drained:
+            return
 
-        deadline = _time.monotonic() + self.poll_interval
+        deadline = time.monotonic() + self.poll_interval
         fd = conn.fileno()
         while self._running:
-            remaining = deadline - _time.monotonic()
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
             slice_timeout = min(_WAIT_SLICE_SECONDS, remaining)
