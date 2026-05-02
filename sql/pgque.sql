@@ -4882,6 +4882,9 @@ begin
     if i_payloads is null then
         raise exception 'payloads must not be null';
     end if;
+    if cardinality(i_payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
 
     select q.queue_id,
            pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
@@ -4904,21 +4907,26 @@ begin
     execute format($sql$
         with input as materialized (
             select u.ord,
-                   nextval($1::regclass) as ev_id,
                    u.payload::text as ev_data
               from unnest($2::jsonb[]) with ordinality as u(payload, ord)
+        ), numbered as materialized (
+            select ord,
+                   nextval($1::regclass) as ev_id,
+                   ev_data
+              from input
+             order by ord
         ), ins as (
             insert into %s
                 (ev_id, ev_time, ev_owner, ev_retry,
                  ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4)
             select ev_id, $3, null, null,
                    $4, ev_data, null, null, null, null
-              from input
+              from numbered
              order by ord
             returning ev_id
         )
-        select coalesce(array_agg(input.ev_id order by input.ord), '{}'::bigint[])
-          from input
+        select coalesce(array_agg(numbered.ev_id order by numbered.ord), '{}'::bigint[])
+          from numbered
           join ins using (ev_id)
     $sql$, qstate.cur_table_name)
     into v_ids
@@ -4939,6 +4947,9 @@ begin
     if i_payloads is null then
         raise exception 'payloads must not be null';
     end if;
+    if cardinality(i_payloads) = 0 then
+        return '{}'::bigint[];
+    end if;
 
     select q.queue_id,
            pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
@@ -4961,21 +4972,26 @@ begin
     execute format($sql$
         with input as materialized (
             select u.ord,
-                   nextval($1::regclass) as ev_id,
                    u.payload as ev_data
               from unnest($2::text[]) with ordinality as u(payload, ord)
+        ), numbered as materialized (
+            select ord,
+                   nextval($1::regclass) as ev_id,
+                   ev_data
+              from input
+             order by ord
         ), ins as (
             insert into %s
                 (ev_id, ev_time, ev_owner, ev_retry,
                  ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4)
             select ev_id, $3, null, null,
                    $4, ev_data, null, null, null, null
-              from input
+              from numbered
              order by ord
             returning ev_id
         )
-        select coalesce(array_agg(input.ev_id order by input.ord), '{}'::bigint[])
-          from input
+        select coalesce(array_agg(numbered.ev_id order by numbered.ord), '{}'::bigint[])
+          from numbered
           join ins using (ev_id)
     $sql$, qstate.cur_table_name)
     into v_ids

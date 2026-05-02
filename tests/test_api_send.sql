@@ -96,6 +96,14 @@ begin
     'send_batch(text[]) on empty input must return empty array, got '
     || cardinality(v_ids)::text;
 
+  v_ids := pgque.send_batch('missing_empty_queue', 'batch.empty', array[]::jsonb[]);
+  assert cardinality(v_ids) = 0,
+    'send_batch(jsonb[]) on missing queue + empty input should return empty array';
+
+  v_ids := pgque.send_batch('missing_empty_queue', 'batch.empty', array[]::text[]);
+  assert cardinality(v_ids) = 0,
+    'send_batch(text[]) on missing queue + empty input should return empty array';
+
   raise notice 'PASS: send_batch() on empty input returns empty array';
 end $$;
 
