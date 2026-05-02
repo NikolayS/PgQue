@@ -20,6 +20,27 @@ Functions shipped outside the default install are in the [Experimental](#experim
 
 Single-message `send` wrappers delegate to `pgque.insert_event`; batch `send_batch` wrappers delegate to the internal set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
 
+### Publishing argument names and types
+
+Argument names are part of the SQL API because PostgreSQL supports named calls (`arg := value`). Available publishing arguments:
+
+| Argument | SQL type | Meaning |
+|----------|----------|---------|
+| `queue_name` | `text` | PgQue queue name. |
+| `type_name` | `text` | Application event type stored in `ev_type` (`'default'` for 2-arg `send`). Free-form text such as `order.created`; this is not a PostgreSQL type. |
+| `payload` | `text` or `jsonb` | Single event payload. `text` is opaque/verbatim; `jsonb` validates and stores canonical JSON text. |
+| `payloads` | `text[]` or `jsonb[]` | Batch payload array. Result array positions correspond to input positions. |
+
+Available publishing overloads:
+
+| Function | Payload type | Return |
+|----------|--------------|--------|
+| `send(queue_name, payload)` | `text` or `jsonb` | `bigint` event id |
+| `send(queue_name, type_name, payload)` | `text` or `jsonb` | `bigint` event id |
+| `send_batch(queue_name, type_name, payloads)` | `text[]` or `jsonb[]` | `bigint[]` event ids |
+
+Use explicit casts (`::jsonb`, `::jsonb[]`, `::text[]`) when overload resolution would otherwise be ambiguous. Untyped string literals choose the `text` fast path.
+
 #### `pgque.send(queue_name text, payload jsonb) → bigint`
 
 Inserts `payload` into `queue` with event type `'default'`. Returns the event id.
