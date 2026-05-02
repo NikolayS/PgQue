@@ -35,35 +35,17 @@ snapshot isolation, batch_event_sql algorithm, dual-filter optimization).
 
 ## Style Rules
 
-Keep the rules self-contained in this file. Do not require contributors or
-agentic tools to read private/company-specific style guides.
+Follow the shared rules at https://gitlab.com/postgres-ai/rules/-/tree/main/rules
 
 ### SQL Style
 
-- Lowercase SQL keywords: `select`, `create function`, not `SELECT`, `CREATE FUNCTION`.
-- `snake_case` for all identifiers.
-- Schema-qualify all internal references: `pgque.queue`, not just `queue`.
-- Public SQL argument names are API: PostgreSQL supports named calls (`arg := value`).
-  Prefer clear names such as `queue_name`, `type_name`, `payload`, `payloads`.
-- Use block SQL formatting for non-trivial queries:
-  ```sql
-  select
-      col1,
-      col2
-  into target
-  from pgque.table_name
-  where key = value;
-  ```
-- Avoid hanging-clause formatting in new SQL (`select a, b into ... from ...`).
-- All `security definer` functions must include
-  `set search_path = pgque, pg_catalog`.
-- Avoid `begin ... exception when ... then null` and silent exception swallowing.
-  Prefer explicit catalog/privilege checks (`to_regtype`, `to_regprocedure`,
-  `pg_has_role`, `exists (...)`).
-- Use `xid8` for transaction ID columns, `pg_snapshot` for snapshot columns.
-- Use modern PG14+ function names: `pg_current_xact_id()` not `txid_current()`.
-- Keep PgQ-compatible behavior unless intentionally changing it. If preserving
-  odd PgQ behavior (for example replication/Londiste paths), comment why.
+- Lowercase SQL keywords: `select`, `create function`, not `SELECT`, `CREATE FUNCTION`
+- `snake_case` for all identifiers
+- Schema-qualify all internal references: `pgque.queue`, not just `queue`
+- All `SECURITY DEFINER` functions MUST include
+  `SET search_path = pgque, pg_catalog`
+- Use `xid8` for transaction ID columns, `pg_snapshot` for snapshot columns
+- Use modern PG14+ function names: `pg_current_xact_id()` not `txid_current()`
 
 ### Binary Units
 
