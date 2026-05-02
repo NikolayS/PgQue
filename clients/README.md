@@ -9,6 +9,9 @@ SQL primitives. The matrix below tracks the public client API on current
 | Capability | Python | Go | TypeScript |
 | --- | :---: | :---: | :---: |
 | `connect` / `close` | ✓ | ✓ | ✓ |
+| Raw SQL escape hatch | ✓ (`conn`) | ✓ (`Pool()`) | ✓ (`rawPool`) |
+| Typed client errors | ✓ | ✗ | ✓ |
+| Lossless PostgreSQL `bigint` IDs | ✓ (`int`) | ✓ (`int64`) | ✓ (`bigint`) |
 | `send` | ✓ | ✓ | ✓ |
 | `send_batch` / `SendBatch` / `sendBatch` | ✓ | ✓ | ✓ |
 | `receive` | ✓ | ✓ | ✓ |
@@ -16,7 +19,10 @@ SQL primitives. The matrix below tracks the public client API on current
 | `nack` | ✓ | ✓ | ✓ |
 | `nack` retry delay + reason options | ✓ | ✗ | ✓ |
 | High-level `Consumer` | ✓ | ✓ | ✓ |
+| Consumer wakeup model | LISTEN/NOTIFY | polling | polling |
+| `Consumer` poll interval option | ✓ | ✓ | ✓ |
 | `Consumer` max-messages option | ✓ | ✗ | ✓ |
+| `Consumer` retry delay option | ✓ | ✗ | ✗ |
 | Unknown-type behavior avoids silent ack | ✗ | ✓ | ✓ |
 | Configurable unknown-type policy | ✗ | ✗ | ✗ |
 | `subscribe` / `unsubscribe` wrappers | ✗ | ✗ | ✓ |
