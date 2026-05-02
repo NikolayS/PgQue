@@ -181,16 +181,7 @@ begin
         return '{}'::bigint[];
     end if;
 
-    return pgque.insert_event_bulk(
-        queue_name,
-        type_name,
-        array(
-            select
-                u.payload::text
-            from unnest(payloads) with ordinality as u(payload, ord)
-            order by u.ord
-        )::text[]
-    );
+    return pgque.insert_event_bulk(queue_name, type_name, payloads::text[]);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
