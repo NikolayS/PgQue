@@ -54,7 +54,7 @@ grant pgque_writer to app_webhook;
 grant pgque_reader to metrics;
 ```
 
-See the [reference](reference.md) for the full surface.
+See [reference.md — Roles and grants](reference.md#roles-and-grants) for the full table and rationale.
 
 ## Step 2: Create the queue and the consumer
 

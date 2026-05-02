@@ -4580,7 +4580,11 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- pgque_admin.
 --
 -- dlq_inspect is read-only — available to pgque_reader and above.
--- dlq_replay / dlq_replay_all re-insert events — writer-level.
+-- dlq_replay / dlq_replay_all re-insert events into queues — writer-level
+-- because they call insert_event(), the canonical produce primitive.
+-- (Replaying a dead-letter is conceptually a produce action: the event ends
+-- up back on the queue tail. A pure consumer with only pgque_reader cannot
+-- replay; that is intentional.)
 -- dlq_purge / event_dead: admin-level operations (purge = data loss,
 -- event_dead = internal DLQ hook called from nack()). Granted to pgque_admin
 -- explicitly for the reason above.

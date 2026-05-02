@@ -228,6 +228,12 @@ reset role;
 select pgque.unsubscribe('q_iso', 'victim');
 select pgque.drop_queue('q_iso', true);
 
+-- Mirror the preamble's defensive revoke: revoke any schema-level privileges
+-- the test roles may have picked up before dropping. Today the test grants
+-- only role membership, but a future addition that grants schema usage to
+-- the test roles should not break drop role.
+revoke all privileges on schema pgque from producer_only;
+revoke all privileges on schema pgque from consumer_only;
 revoke pgque_writer from producer_only;
 revoke pgque_reader from consumer_only;
 drop role producer_only;
