@@ -123,6 +123,28 @@ begin
   raise notice 'PASS: send_batch() implementation is set-based';
 end $$;
 
+-- Test 3e.1: send_batch(NULL array) rejects invalid input instead of
+-- silently treating it like an empty batch. The old FOREACH implementation
+-- errored on NULL arrays; keep that failure mode explicit while allowing
+-- array[] to mean "empty batch".
+do $$
+begin
+  perform pgque.send_batch('test_send', 'batch.null_array', null::jsonb[]);
+  raise exception 'send_batch(jsonb NULL array) should fail';
+exception when others then
+  assert sqlerrm = 'payloads must not be null',
+    'unexpected jsonb NULL array error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  perform pgque.send_batch('test_send', 'batch.null_array', null::text[]);
+  raise exception 'send_batch(text NULL array) should fail';
+exception when others then
+  assert sqlerrm = 'payloads must not be null',
+    'unexpected text NULL array error: ' || sqlerrm;
+end $$;
+
 -- Test 3f: send_batch() preserves input order and payloads at larger batch sizes
 do $$
 declare

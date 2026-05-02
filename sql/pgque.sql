@@ -4879,6 +4879,10 @@ declare
     qstate record;
     v_ids bigint[];
 begin
+    if i_payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+
     select q.queue_id,
            pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
            q.queue_event_seq,
@@ -4898,7 +4902,7 @@ begin
     end if;
 
     execute format($sql$
-        with input as (
+        with input as materialized (
             select u.ord,
                    nextval($1::regclass) as ev_id,
                    u.payload::text as ev_data
@@ -4932,6 +4936,10 @@ declare
     qstate record;
     v_ids bigint[];
 begin
+    if i_payloads is null then
+        raise exception 'payloads must not be null';
+    end if;
+
     select q.queue_id,
            pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
            q.queue_event_seq,
@@ -4951,7 +4959,7 @@ begin
     end if;
 
     execute format($sql$
-        with input as (
+        with input as materialized (
             select u.ord,
                    nextval($1::regclass) as ev_id,
                    u.payload as ev_data
@@ -5018,5 +5026,4 @@ grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 -- functions created here would otherwise inherit PostgreSQL's default
 -- PUBLIC EXECUTE. This second pass covers everything.
 revoke execute on all functions in schema pgque from public;
-
 
