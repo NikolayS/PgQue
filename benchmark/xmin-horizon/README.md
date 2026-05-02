@@ -1,4 +1,4 @@
-# bench/xmin-horizon
+# benchmark/xmin-horizon
 
 Reproducible benchmark for PG-backed queues under a blocked xmin horizon.
 
@@ -23,7 +23,7 @@ This benchmark contrasts two workloads under that condition:
 Requires Docker and `psql` + `pgbench` on the host (homebrew `libpq` is enough).
 
 ```sh
-cd bench/xmin-horizon
+cd benchmark/xmin-horizon
 make up                 # start PG17 in Docker
 make run-s1             # baseline, both workloads, default 300s each
 make run-s2             # RR transaction holds xmin, both workloads
