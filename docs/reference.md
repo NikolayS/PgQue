@@ -80,10 +80,30 @@ select * from pgque.receive('orders', 'processor', 100);
 
 **Batch-ownership caveat.** `max_return` limits the number of rows returned to the caller, but `ack(batch_id)` advances the consumer cursor past the entire underlying batch. If `max_return < ticker_max_count`, calling `ack()` after a partial receive will drop the unreturned rows from the consumer's perspective. Either consume the full batch before acking, or use `max_return >= ticker_max_count` for safe pagination.
 
+#### `pgque.ack(queue text, consumer text, batch_id bigint) → integer`
+
+Ownership-checked ack (#164). Verifies that `batch_id` matches `sub_batch` for the row in `pgque.subscription` identified by `(queue, consumer)`, then delegates to `pgque.finish_batch`. On mismatch — queue not found, consumer not subscribed, or `sub_batch` differs — raises with sqlstate `42501` (`insufficient_privilege`) and a message that names the offending `(queue, consumer, batch_id)` triple. **Prefer this overload in multi-tenant deployments.**
+Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
+
+```sql
+select pgque.ack('orders', 'processor', :batch_id);
+```
+
 #### `pgque.ack(batch_id bigint) → integer`
 
 Closes the batch and advances the consumer position. Modern alias for `pgque.finish_batch`. Returns `1` on success, `0` if the batch was not found.
+**Deprecated for multi-tenant deployments**: this overload cannot enforce ownership — any role with `pgque_reader` can call it on any active batch by id. Use `pgque.ack(queue, consumer, batch_id)` instead. Kept as a back-compat shim for existing callers and client drivers.
 Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
+
+#### `pgque.nack(queue text, consumer text, batch_id bigint, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
+
+Ownership-checked nack (#164). Same `(queue, consumer, batch_id)` ownership check as `pgque.ack(queue, consumer, batch_id)`; on mismatch raises sqlstate `42501`. After the check, delegates to the 4-arg `pgque.nack(batch_id, msg, retry_after, reason)` below — the canonical-event re-query, retry, and DLQ routing rules are identical. **Prefer this overload in multi-tenant deployments.**
+Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
+
+```sql
+perform pgque.nack('orders', 'processor', msg.batch_id, msg,
+                   interval '5 minutes', 'validation failed');
+```
 
 #### `pgque.nack(batch_id bigint, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
 
@@ -92,6 +112,8 @@ Negative-acknowledges one message. Only `msg.msg_id` (and the `batch_id` argumen
 - If the canonical `ev_retry` is below the queue's `max_retries`, re-queues after `retry_after` (via `pgque.event_retry`).
 - If `ev_retry >= max_retries`, routes the canonical event to `pgque.dead_letter` (via `pgque.event_dead`). This is idempotent: repeated calls for the same terminal message produce exactly one DLQ row (the second call does nothing).
 - If `msg.msg_id` is not present in the active batch — including a `NULL` msg_id or a msg_id from a different batch — raises `msg_id % not found in batch %`.
+
+**Deprecated for multi-tenant deployments**: this overload cannot enforce ownership. Use `pgque.nack(queue, consumer, batch_id, msg, ...)` instead. Kept as a back-compat shim for existing callers and client drivers.
 Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql

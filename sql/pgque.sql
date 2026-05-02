@@ -4696,10 +4696,49 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.ack() -- finishes the batch, advances consumer position
+-- pgque.ack() -- finishes the batch, advances consumer position.
+--
+-- 1-arg form: compatibility shim. Cannot enforce ownership (any pgque_reader
+-- can ack any active batch by id). Deprecated for multi-tenant deployments;
+-- prefer the 3-arg overload below. Kept for back-compat with existing
+-- callers and client drivers (#164).
 create or replace function pgque.ack(i_batch_id bigint)
 returns integer as $$
 begin
+    return pgque.finish_batch(i_batch_id);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.ack(queue, consumer, batch_id) -- ownership-checked ack (#164).
+--
+-- Verifies the active batch belongs to (queue, consumer) before delegating
+-- to finish_batch(). Closes the consumer-vs-consumer boundary: a
+-- pgque_reader holding role app_b cannot ack app_a's batch by id.
+--
+-- On mismatch (queue not found, consumer not subscribed, or sub_batch !=
+-- i_batch_id) raises with sqlstate 42501 (insufficient_privilege) and a
+-- message that names the offending (queue, consumer, batch_id) triple.
+create or replace function pgque.ack(
+    i_queue text, i_consumer text, i_batch_id bigint)
+returns integer as $$
+declare
+    v_sub_batch bigint;
+    v_found     boolean := false;
+begin
+    select s.sub_batch, true into v_sub_batch, v_found
+      from pgque.subscription s
+      join pgque.queue q    on q.queue_id    = s.sub_queue
+      join pgque.consumer c on c.co_id       = s.sub_consumer
+     where q.queue_name = i_queue
+       and c.co_name    = i_consumer;
+
+    if not v_found or v_sub_batch is distinct from i_batch_id then
+        raise exception
+            'pgque.ack: batch % does not belong to (queue=%, consumer=%)',
+            i_batch_id, i_queue, i_consumer
+            using errcode = '42501';
+    end if;
+
     return pgque.finish_batch(i_batch_id);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
@@ -4766,6 +4805,43 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
+-- pgque.nack(queue, consumer, batch_id, msg, ...) -- ownership-checked nack
+-- (#164). Verifies the active batch belongs to (queue, consumer) before
+-- delegating to the 4-arg compatibility nack(batch_id, msg, ...). On
+-- mismatch raises sqlstate 42501 (insufficient_privilege).
+--
+-- The 4-arg form is retained for back-compat but cannot enforce ownership;
+-- prefer this overload in multi-tenant deployments.
+create or replace function pgque.nack(
+    i_queue text,
+    i_consumer text,
+    i_batch_id bigint,
+    i_msg pgque.message,
+    i_retry_after interval default '60 seconds',
+    i_reason text default null)
+returns integer as $$
+declare
+    v_sub_batch bigint;
+    v_found     boolean := false;
+begin
+    select s.sub_batch, true into v_sub_batch, v_found
+      from pgque.subscription s
+      join pgque.queue q    on q.queue_id    = s.sub_queue
+      join pgque.consumer c on c.co_id       = s.sub_consumer
+     where q.queue_name = i_queue
+       and c.co_name    = i_consumer;
+
+    if not v_found or v_sub_batch is distinct from i_batch_id then
+        raise exception
+            'pgque.nack: batch % does not belong to (queue=%, consumer=%)',
+            i_batch_id, i_queue, i_consumer
+            using errcode = '42501';
+    end if;
+
+    return pgque.nack(i_batch_id, i_msg, i_retry_after, i_reason);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
@@ -4779,12 +4855,16 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- Upgrade path: pre-#163 installs granted these to pgque_writer. Postgres
 -- preserves function-level grants across `create or replace function`, so
 -- explicitly revoke before re-granting on the new role.
-revoke execute on function pgque.receive(text, text, int)                    from pgque_writer;
-revoke execute on function pgque.ack(bigint)                                 from pgque_writer;
-revoke execute on function pgque.nack(bigint, pgque.message, interval, text) from pgque_writer;
-grant execute on function pgque.receive(text, text, int)                      to pgque_reader;
-grant execute on function pgque.ack(bigint)                                   to pgque_reader;
-grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_reader;
+revoke execute on function pgque.receive(text, text, int)                                    from pgque_writer;
+revoke execute on function pgque.ack(bigint)                                                 from pgque_writer;
+revoke execute on function pgque.ack(text, text, bigint)                                     from pgque_writer;
+revoke execute on function pgque.nack(bigint, pgque.message, interval, text)                 from pgque_writer;
+revoke execute on function pgque.nack(text, text, bigint, pgque.message, interval, text)     from pgque_writer;
+grant execute on function pgque.receive(text, text, int)                                      to pgque_reader;
+grant execute on function pgque.ack(bigint)                                                   to pgque_reader;
+grant execute on function pgque.ack(text, text, bigint)                                       to pgque_reader;
+grant execute on function pgque.nack(bigint, pgque.message, interval, text)                   to pgque_reader;
+grant execute on function pgque.nack(text, text, bigint, pgque.message, interval, text)       to pgque_reader;
 
 -- pgque-api/send.sql
 -- pgque-api/send.sql -- Modern send/subscribe API layer

@@ -31,6 +31,9 @@
 \echo 'Running: test_security_producer_isolation'
 \i tests/test_security_producer_isolation.sql
 
+\echo 'Running: test_security_consumer_isolation'
+\i tests/test_security_consumer_isolation.sql
+
 \echo 'Running: test_core_lifecycle'
 \i tests/test_core_lifecycle.sql
 

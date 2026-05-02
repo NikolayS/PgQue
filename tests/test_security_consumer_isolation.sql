@@ -83,15 +83,18 @@ reset role;
 
 set role app_b;
 
--- #164: app_b must not be able to ack app_a's active batch via the new
--- (queue, consumer, batch_id) overload, even though app_b legitimately holds
--- pgque_reader. The ownership check is on (queue, consumer, sub_batch).
+-- #164: app_b is subscribed to (q_iso_b, consumer_b). When it calls
+-- pgque.ack(queue, consumer, batch_id) with its own identifiers but
+-- app_a's batch_id, the ownership check (sub_batch != i_batch_id) must
+-- reject the call with insufficient_privilege. This is exactly the threat
+-- model from the issue: any pgque_reader could previously call the 1-arg
+-- pgque.ack(batch_id) and finish another consumer's batch.
 do $$
 declare
     v_bid bigint := current_setting('pgque_test.app_a_batch_id')::bigint;
 begin
     begin
-        perform pgque.ack('q_iso_a', 'consumer_a', v_bid);
+        perform pgque.ack('q_iso_b', 'consumer_b', v_bid);
         raise exception 'FAIL #164 (ack): app_b acked app_a batch %', v_bid;
     exception
         when insufficient_privilege then
@@ -101,7 +104,8 @@ begin
     end;
 end $$;
 
--- #164 nack: same ownership check on the 6-arg overload.
+-- #164 nack: same ownership check on the 6-arg overload — app_b passes its
+-- own identifiers but app_a's batch_id and msg_id.
 do $$
 declare
     v_bid bigint := current_setting('pgque_test.app_a_batch_id')::bigint;
@@ -111,7 +115,7 @@ begin
     v_msg.msg_id := v_mid;
     v_msg.batch_id := v_bid;
     begin
-        perform pgque.nack('q_iso_a', 'consumer_a', v_bid, v_msg,
+        perform pgque.nack('q_iso_b', 'consumer_b', v_bid, v_msg,
                            '60 seconds'::interval, 'attacker reason');
         raise exception 'FAIL #164 (nack): app_b nacked app_a event %', v_mid;
     exception
