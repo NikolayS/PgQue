@@ -50,7 +50,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.send_batch(queue text, type text, payloads jsonb[]) → bigint[]`
 
-Set-based batch send: inserts all elements of `payloads` into `queue` in one SQL statement / transaction. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to a write-disabled queue raise `Insert into queue disallowed`.
+Set-based batch send: inserts all elements of `payloads` into `queue` in one SQL statement / transaction. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to an unknown queue raise `queue not found: <queue>`; to a write-disabled queue they raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 ```sql
@@ -60,10 +60,8 @@ select pgque.send_batch('orders', 'order.created',
 
 #### `pgque.send_batch(queue text, type text, payloads text[]) → bigint[]`
 
-Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to a write-disabled queue raise `Insert into queue disallowed`.
+Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to an unknown queue raise `queue not found: <queue>`; to a write-disabled queue they raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
-
-##### Internal primitives
 
 #### `pgque.insert_event_bulk(queue text, type text, payloads text[]) → bigint[]`
 

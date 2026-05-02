@@ -741,7 +741,8 @@ returns bigint[] as $$
 -- Internal set-based primitive: resolve queue/table once, allocate event IDs
 -- set-wise, insert all rows with one INSERT ... SELECT, and return IDs in
 -- input order. Public send_batch() wrappers handle NULL/empty-array API rules.
--- Full implementation lives in sql/pgque-api/send.sql.
+-- Full implementation lives in sql/pgque-api/send.sql; this is a contract stub,
+-- not runnable PL/pgSQL.
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 create function pgque.send_batch(

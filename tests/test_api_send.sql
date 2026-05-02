@@ -240,7 +240,19 @@ begin
   assert not has_function_privilege('pgque_admin', 'pgque.insert_event_bulk(text, text, text[])', 'execute'),
     'pgque_admin must not execute internal insert_event_bulk directly';
 
+  -- Requires the test session user to be superuser or a pgque_writer member.
+  set role pgque_writer;
+  begin
+    perform pgque.insert_event_bulk('test_send', 'batch.denied_internal', array['denied']::text[]);
+    raise exception 'pgque_writer direct insert_event_bulk() call should fail';
+  exception when insufficient_privilege then
+    reset role;
+  end;
+
   raise notice 'PASS: send_batch() implementation is set-based';
+exception when others then
+  reset role;
+  raise;
 end $$;
 
 -- Test 3e.1: send_batch(NULL array) rejects invalid input instead of

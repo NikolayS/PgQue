@@ -123,3 +123,11 @@ grant execute on all functions in schema pgque to pgque_admin;
 -- uninstall() drops the entire schema — only superuser / schema owner should run it.
 -- Revoke from pgque_admin (the "all functions" grant above would otherwise include it).
 revoke execute on function pgque.uninstall() from pgque_admin;
+
+-- insert_event_bulk() is an internal primitive for SECURITY DEFINER send_batch()
+-- wrappers. It is defined later during a full install, so tolerate standalone
+-- roles.sql execution before pgque-api/send.sql has been loaded.
+do $$ begin
+    revoke execute on function pgque.insert_event_bulk(text, text, text[]) from pgque_admin;
+exception when undefined_function then null;
+end $$;
