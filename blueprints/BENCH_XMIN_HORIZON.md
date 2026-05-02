@@ -49,4 +49,4 @@ log_autovacuum_min_duration = 0
 
 ## File Layout
 
-`bench/xmin-horizon/` — see implementation.
+`benchmark/xmin-horizon/` — see implementation.
