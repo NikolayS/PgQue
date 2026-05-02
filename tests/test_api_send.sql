@@ -153,6 +153,26 @@ exception when others then
     'unexpected text NULL array error: ' || sqlerrm;
 end $$;
 
+-- Test 3e.2: send_batch(non-empty) reports missing queues
+-- (empty batches intentionally short-circuit before queue lookup).
+do $$
+begin
+  perform pgque.send_batch('missing_nonempty_queue', 'batch.missing', array['{}'::jsonb]);
+  raise exception 'send_batch(jsonb[]) on missing queue should fail';
+exception when others then
+  assert sqlerrm = 'queue not found: missing_nonempty_queue',
+    'unexpected jsonb missing queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  perform pgque.send_batch('missing_nonempty_queue', 'batch.missing', array['{}']::text[]);
+  raise exception 'send_batch(text[]) on missing queue should fail';
+exception when others then
+  assert sqlerrm = 'queue not found: missing_nonempty_queue',
+    'unexpected text missing queue error: ' || sqlerrm;
+end $$;
+
 -- Test 3f: send_batch() preserves input order and payloads at larger batch sizes
 do $$
 declare
@@ -196,6 +216,52 @@ begin
     'send_batch(jsonb[]) should preserve payload order, mismatches=' || v_bad_order;
 
   raise notice 'PASS: send_batch() preserves order and payloads for large JSON batches';
+end $$;
+
+-- Test 3g: send_batch(text[]) preserves input order and opaque payloads
+-- at larger batch sizes.
+do $$
+declare
+  v_ids bigint[];
+  v_count int;
+  v_bad_order int;
+  v_table text;
+begin
+  v_ids := pgque.send_batch(
+    'test_send',
+    'batch.large_text',
+    array(select 'opaque-' || g || E'\\nnot-json {' from generate_series(1, 1000) g)::text[]
+  );
+
+  assert cardinality(v_ids) = 1000,
+    'send_batch(text[]) should return 1000 ids, got ' || cardinality(v_ids)::text;
+
+  select pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+    into v_table
+    from pgque.queue
+   where queue_name = 'test_send';
+
+  execute format(
+    'select count(*) from %s where ev_id = any($1) and ev_type = $2',
+    v_table
+  ) into v_count using v_ids, 'batch.large_text';
+  assert v_count = 1000,
+    'send_batch(text[]) should insert 1000 rows, got ' || v_count;
+
+  execute format($sql$
+    with expected as (
+      select ord, $1[ord] as ev_id, 'opaque-' || ord || E'\\nnot-json {' as payload
+        from generate_subscripts($1, 1) as ord
+    )
+    select count(*)
+      from expected e
+      join %s ev using (ev_id)
+     where ev.ev_data <> e.payload
+  $sql$, v_table) into v_bad_order using v_ids;
+  assert v_bad_order = 0,
+    'send_batch(text[]) should preserve payload order, mismatches=' || v_bad_order;
+
+  raise notice 'PASS: send_batch() preserves order and payloads for large text batches';
 end $$;
 
 -- Test 4: subscribe/unsubscribe

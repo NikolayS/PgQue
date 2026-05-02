@@ -86,9 +86,6 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
-declare
-    qstate record;
-    v_ids bigint[];
 begin
     if i_payloads is null then
         raise exception 'payloads must not be null';
@@ -97,53 +94,15 @@ begin
         return '{}'::bigint[];
     end if;
 
-    select q.queue_id,
-           pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
-           q.queue_event_seq,
-           q.queue_disable_insert
-      into qstate
-      from pgque.queue q
-     where q.queue_name = i_queue;
-
-    if not found then
-        raise exception 'queue not found: %', i_queue;
-    end if;
-
-    if qstate.queue_disable_insert then
-        if current_setting('session_replication_role') <> 'replica' then
-            raise exception 'Insert into queue disallowed';
-        end if;
-    end if;
-
-    execute format($sql$
-        with input as materialized (
-            select u.ord,
-                   u.payload::text as ev_data
-              from unnest($2::jsonb[]) with ordinality as u(payload, ord)
-        ), numbered as materialized (
-            select ord,
-                   nextval($1::regclass) as ev_id,
-                   ev_data
-              from input
-             order by ord
-        ), ins as (
-            insert into %s
-                (ev_id, ev_time, ev_owner, ev_retry,
-                 ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4)
-            select ev_id, $3, null, null,
-                   $4, ev_data, null, null, null, null
-              from numbered
-             order by ord
-            returning ev_id
-        )
-        select coalesce(array_agg(numbered.ev_id order by numbered.ord), '{}'::bigint[])
-          from numbered
-          join ins using (ev_id)
-    $sql$, qstate.cur_table_name)
-    into v_ids
-    using qstate.queue_event_seq, i_payloads, now(), i_type;
-
-    return v_ids;
+    return pgque.send_batch(
+        i_queue,
+        i_type,
+        array(
+            select u.payload::text
+              from unnest(i_payloads) with ordinality as u(payload, ord)
+             order by u.ord
+        )::text[]
+    );
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -152,7 +111,8 @@ create or replace function pgque.send_batch(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
 declare
-    qstate record;
+    v_table_name text;
+    v_seq_name text;
     v_ids bigint[];
 begin
     if i_payloads is null then
@@ -162,22 +122,27 @@ begin
         return '{}'::bigint[];
     end if;
 
-    select q.queue_id,
-           pgque.quote_fqname(q.queue_data_pfx || '_' || q.queue_cur_table::text) as cur_table_name,
-           q.queue_event_seq,
-           q.queue_disable_insert
-      into qstate
+    begin
+        v_table_name := pgque.quote_fqname(pgque.current_event_table(i_queue));
+    exception when others then
+        if sqlerrm = 'Event queue not found' then
+            raise exception 'queue not found: %', i_queue;
+        elsif sqlerrm = 'Writing to queue disabled' then
+            raise exception 'Insert into queue disallowed';
+        else
+            raise;
+        end if;
+    end;
+
+    select q.queue_event_seq
+      into v_seq_name
       from pgque.queue q
      where q.queue_name = i_queue;
 
     if not found then
+        -- current_event_table() should have caught this; keep a defensive
+        -- error in case queue metadata changes concurrently.
         raise exception 'queue not found: %', i_queue;
-    end if;
-
-    if qstate.queue_disable_insert then
-        if current_setting('session_replication_role') <> 'replica' then
-            raise exception 'Insert into queue disallowed';
-        end if;
     end if;
 
     execute format($sql$
@@ -204,9 +169,9 @@ begin
         select coalesce(array_agg(numbered.ev_id order by numbered.ord), '{}'::bigint[])
           from numbered
           join ins using (ev_id)
-    $sql$, qstate.cur_table_name)
+    $sql$, v_table_name)
     into v_ids
-    using qstate.queue_event_seq, i_payloads, now(), i_type;
+    using v_seq_name, i_payloads, now(), i_type;
 
     return v_ids;
 end;
