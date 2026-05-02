@@ -17,7 +17,7 @@
 | 0.1.0-draft | 2026-04-12 | Initial draft: repackaging thesis, what changes from PgQ, modern API layer, observability, client libraries, advanced patterns, implementation phases, source file inventory. |
 | 0.2.0-draft | 2026-04-12 | Landscape comparison (28 systems across PG-native, external brokers, workflow engines, Python task queues; architectural comparison table; positioning rationale). Team/staffing with week-by-week Gantt. Risk table (11 risks). Best practices. Sprint-level implementation plan with deliverables and test plans. |
 | 0.3.0-draft | 2026-04-12 | First review round. Rename pgqx to pgque (PgQ Universal Edition). Explicit two-layer architecture (pgque-core vs pgque-api). Fix receive() batch ownership trap (rename i_batch_size to i_max_return, document that ack processes entire batch). Fix nack() to accept retry_count parameter (avoid re-querying batch). Fix send_batch() to resolve queue/table once. Fix OTel counter/gauge semantics. Fix queue_health() edge cases. Soften "Exactly-once capable" to "Exactly-once capable (transactional pattern)". Resolve priority contradiction. Add VACUUM for delayed_events and dead_letter to maint(). Defer full OTel export architecture and Node/Ruby SDKs to v2. Align Sprint 5 with risk mitigation (Python + Go only). Document receive() rotation-blocking behavior. |
-| 0.4.0-draft | 2026-04-12 | Second review round (3 reviewers). Add preliminary benchmark results (section 2.9, from NikolayS/pgq#1 -- quick-and-dirty laptop benchmark, needs repetition on server hardware). Update throughput claim from ~10-20k to ~86k ev/s (PL/pgSQL measured). Add PgQ code import strategy: git submodule + build/transform.sh (section 8.0). Fix `event_dead()` to accept event fields from caller instead of re-querying batch. Replace `send_batch()` loop/TODO with set-based `insert_event_bulk()` primitive. Read `max_retries` from queue config instead of hardcoding 5 in `nack()`. Drop `peek()` from v1 scope. Fix `delayed_events` index (remove broken partial-index predicate with `now()`). Rename `send_at()` return type documentation to clarify it returns a scheduled-entry ID, not a queue event ID. Fix Node.js/Ruby class names (PgqxClient -> PgqueClient, Pgqx:: -> Pgque::). Fix CLI env var (PGQX_DSN -> PGQUE_DSN). Align Gantt with v1 scope (remove Node.js/Ruby from weeks 7-8). Add `queue_max_retries` column to `pgque.queue` table. Fix `queue_health()` to handle queues with no ticks. |
+| 0.4.0-draft | 2026-04-12 | Second review round (3 reviewers). Add preliminary benchmark results (section 2.9, from NikolayS/pgq#1 -- quick-and-dirty laptop benchmark, needs repetition on server hardware). Update throughput claim from ~10-20k to ~86k ev/s (PL/pgSQL measured). Add PgQ code import strategy: git submodule + build/transform.sh (section 8.0). Fix `event_dead()` to accept event fields from caller instead of re-querying batch. Remove dead `qstate` lookup from `send_batch()`, leave TODO. Read `max_retries` from queue config instead of hardcoding 5 in `nack()`. Drop `peek()` from v1 scope. Fix `delayed_events` index (remove broken partial-index predicate with `now()`). Rename `send_at()` return type documentation to clarify it returns a scheduled-entry ID, not a queue event ID. Fix Node.js/Ruby class names (PgqxClient -> PgqueClient, Pgqx:: -> Pgque::). Fix CLI env var (PGQX_DSN -> PGQUE_DSN). Align Gantt with v1 scope (remove Node.js/Ruby from weeks 7-8). Add `queue_max_retries` column to `pgque.queue` table. Fix `queue_health()` to handle queues with no ticks. |
 | 0.5.0-draft | 2026-04-12 | Third review round (3 approvals). Fix section 2.7 throughput claim (was still ~10-20k, now reflects benchmarks with `synchronous_commit=off` caveat). Add `sync_commit=off` caveat to section 2.5 comparison table. Combine `nack()` two lookups into single join. Add `queue_max_retries` column to schema definition (section 3.4.6.1). Document `ev_txid` NULL in DLQ (pgque.message does not carry txid). Correct RedPanda comparison units (MiB/s not Mbps). |
 | 0.6.0-draft | 2026-04-12 | Add red/green TDD methodology (section 13.2). Add 10 user stories as acceptance tests (section 13.3): basic produce/consume, fan-out, retry+DLQ, delayed delivery, batch under load, rotation under lag, transactional exactly-once, managed PG install, observability, idempotent install. Tests serve both CI automation and manual/AI-agent verification. |
 | 1.0.0 | 2026-04-12 | Spec approved. Three independent review rounds, all reviewers approved. |
@@ -735,49 +735,41 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
-create function pgque.insert_event_bulk(
-    i_queue text, i_type text, i_payloads text[])
-returns bigint[] as $$
-begin
-    -- Internal primitive contract only. Real implementation lives in
-    -- sql/pgque-api/send.sql, performs one queue lookup plus one set-based
-    -- INSERT ... SELECT, returns IDs in input order, and is not granted to
-    -- API roles directly.
-    raise exception 'spec stub: see sql/pgque-api/send.sql';
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
 create function pgque.send_batch(
     i_queue text, i_type text, i_payloads jsonb[])
 returns bigint[] as $$
+declare
+    ids bigint[] := '{}';
+    p jsonb;
 begin
-    if i_payloads is null then
-        raise exception 'payloads must not be null';
-    end if;
-    if cardinality(i_payloads) = 0 then
-        return '{}'::bigint[];
-    end if;
-    -- jsonb[] overload validates/canonicalizes through Postgres, then hands
-    -- canonical text payloads to the shared bulk primitive.
-    return pgque.insert_event_bulk(i_queue, i_type,
-        array(select p::text from unnest(i_payloads) with ordinality as u(p, ord) order by ord));
+    -- TODO: optimize to resolve queue/table once and bypass insert_event_raw
+    -- with a single multi-VALUES insert. Currently each insert_event() call
+    -- resolves the queue independently. Deferred to implementation.
+    foreach p in array i_payloads loop
+        ids := array_append(ids,
+            pgque.insert_event(i_queue, i_type, p::text));
+    end loop;
+    return ids;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 create function pgque.send_batch(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
+declare
+    ids bigint[] := '{}';
+    p text;
 begin
-    if i_payloads is null then
-        raise exception 'payloads must not be null';
-    end if;
-    if cardinality(i_payloads) = 0 then
-        return '{}'::bigint[];
-    end if;
-    return pgque.insert_event_bulk(i_queue, i_type, i_payloads);
+    foreach p in array i_payloads loop
+        ids := array_append(ids,
+            pgque.insert_event(i_queue, i_type, p));
+    end loop;
+    return ids;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 ```
+
+> **UPDATE 2026-05-02:** PR #159 replaces the draft `send_batch()` loop with a set-based implementation. Public `send_batch(jsonb[])` and `send_batch(text[])` wrappers now validate NULL/empty-array API rules and delegate to an internal `insert_event_bulk(queue, type, text[])` primitive. The primitive resolves the queue/table once, performs one set-based insert, and returns event ids aligned to input array positions. It is not granted to public API roles directly; callers should use `send_batch()`.
 
 ### 4.2 Consuming: `pgque.receive()`
 
@@ -1173,7 +1165,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
 | Modern API | PgQ primitive underneath | Notes |
 |---|---|---|
 | `pgque.send(queue, payload)` | `pgque.insert_event(queue, type, data)` | TEXT overload is default for untyped literals (fast path, opaque bytes); JSONB overload is opt-in via `::jsonb` cast (validation + canonicalization) |
-| `pgque.send_batch(queue, type, payloads[])` | `insert_event_bulk()` set-based primitive | One queue lookup + one set-based insert; returned array positions match input positions; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
+| `pgque.send_batch(queue, type, payloads[])` | Loop of `insert_event()` calls | Single TX; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
 | `pgque.send_at(queue, type, payload, time)` | `delayed_events` table + `maint_deliver_delayed()` | New |
 | `pgque.receive(queue, consumer, n)` | `next_batch()` + `get_batch_events()` | Combined |
 | `pgque.ack(batch_id)` | `finish_batch(batch_id)` | Rename |
@@ -1187,6 +1179,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
 The PgQ-style API (`insert_event`, `next_batch`, `get_batch_events`,
 `finish_batch`, `event_retry`) remains fully available for users who need
 fine-grained control.
+
+> **UPDATE 2026-05-02:** For PR #159, the `send_batch(queue, type, payloads[])` row above is superseded by the set-based implementation described in §4.1: one queue lookup plus one set-based insert via internal `insert_event_bulk()`; `text[]` remains the default overload and `jsonb[]` remains opt-in via `::jsonb[]`.
 
 ---
 
