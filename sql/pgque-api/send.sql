@@ -131,14 +131,24 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- Grants for the send* + subscribe/unsubscribe family.
+-- send* are producer-side (insert events) -> pgque_writer.
+-- subscribe/unsubscribe are consumer-side (manage subscription cursor) ->
+-- pgque_reader. See sql/pgque-additions/roles.sql for the producer/consumer
+-- split rationale.
 grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
 grant execute on function pgque.send(text, text, text)          to pgque_writer;
 grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
 grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
-grant execute on function pgque.subscribe(text, text)           to pgque_writer;
-grant execute on function pgque.unsubscribe(text, text)         to pgque_writer;
+-- Upgrade path: pre-#163 installs granted subscribe/unsubscribe to
+-- pgque_writer. Revoke explicitly before re-granting on pgque_reader so
+-- in-place upgrades clear the old grants (create or replace function
+-- preserves function-level grants).
+revoke execute on function pgque.subscribe(text, text)         from pgque_writer;
+revoke execute on function pgque.unsubscribe(text, text)       from pgque_writer;
+grant execute on function pgque.subscribe(text, text)           to pgque_reader;
+grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 
 -- Re-apply deny-by-default after all API functions are defined.
 -- roles.sql's blanket revoke runs before pgque-api/ files are loaded, so
