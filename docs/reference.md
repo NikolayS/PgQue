@@ -63,6 +63,11 @@ select pgque.send_batch('orders', 'order.created',
 Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to a write-disabled queue raise `Insert into queue disallowed`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
+#### `pgque.insert_event_bulk(queue text, type text, payloads text[]) → bigint[]`
+
+Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids with the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids in input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on `send_batch`.
+Grant: none (internal). Source: `sql/pgque-api/send.sql`.
+
 ## Consuming
 
 The consume API wraps `pgque.next_batch`, `pgque.get_batch_events`, `pgque.finish_batch`, and `pgque.event_retry`. Typical loop: `receive` → process → `ack` (or `nack` on failure).

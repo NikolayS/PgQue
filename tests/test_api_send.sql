@@ -79,6 +79,63 @@ begin
   raise notice 'PASS: send_batch(text[]) returns 3 ids';
 end $$;
 
+-- Test 3c.1: insert_event_bulk() direct single-element call
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_payload text;
+begin
+  v_ids := pgque.insert_event_bulk('test_send', 'batch.bulk_one', array['bulk-one']::text[]);
+  assert cardinality(v_ids) = 1,
+    'insert_event_bulk(text[]) on single input must return 1 id';
+
+  select pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+    into v_table
+    from pgque.queue
+   where queue_name = 'test_send';
+
+  execute format('select ev_data from %s where ev_id = $1', v_table)
+    into v_payload
+    using v_ids[1];
+
+  assert v_payload = 'bulk-one',
+    'insert_event_bulk(text[]) single input should preserve payload';
+  raise notice 'PASS: insert_event_bulk(text[]) direct single-element call';
+end $$;
+
+-- Test 3c.2: insert_event_bulk() preserves NULL array elements
+do $$
+declare
+  v_ids bigint[];
+  v_table text;
+  v_null_count int;
+  v_payload text;
+begin
+  v_ids := pgque.insert_event_bulk('test_send', 'batch.bulk_null', array['before', null, 'after']::text[]);
+  assert cardinality(v_ids) = 3,
+    'insert_event_bulk(text[]) with NULL element must return 3 ids';
+
+  select pgque.quote_fqname(queue_data_pfx || '_' || queue_cur_table::text)
+    into v_table
+    from pgque.queue
+   where queue_name = 'test_send';
+
+  execute format('select count(*) from %s where ev_id = any($1) and ev_data is null', v_table)
+    into v_null_count
+    using v_ids;
+
+  execute format('select ev_data from %s where ev_id = $1', v_table)
+    into v_payload
+    using v_ids[3];
+
+  assert v_null_count = 1,
+    'insert_event_bulk(text[]) should insert exactly one NULL payload';
+  assert v_payload = 'after',
+    'insert_event_bulk(text[]) should preserve array order around NULL payloads';
+  raise notice 'PASS: insert_event_bulk(text[]) preserves NULL elements';
+end $$;
+
 -- Test 3d: send_batch() on empty input returns empty array, not NULL
 do $$
 declare
@@ -190,6 +247,17 @@ begin
 exception when others then
   assert sqlerrm = 'queue not found: missing_nonempty_queue',
     'unexpected text missing queue error: ' || sqlerrm;
+end $$;
+
+do $$
+begin
+  update pgque.queue set queue_disable_insert = true where queue_name = 'test_send';
+  perform pgque.insert_event_bulk('test_send', 'batch.disabled_bulk', array['{}']::text[]);
+  raise exception 'insert_event_bulk(text[]) on disabled queue should fail';
+exception when others then
+  update pgque.queue set queue_disable_insert = false where queue_name = 'test_send';
+  assert sqlerrm = 'Insert into queue disallowed',
+    'unexpected bulk disabled queue error: ' || sqlerrm;
 end $$;
 
 do $$

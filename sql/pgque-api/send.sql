@@ -83,6 +83,10 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
+-- Deliberately does not call insert_event_raw(): batch send needs one table
+-- lookup, one disable-insert check, and one INSERT ... SELECT for the whole
+-- array. Keep the queue lookup / queue_disable_insert replica-bypass logic in
+-- sync with insert_event_raw() when either path changes.
 create or replace function pgque.insert_event_bulk(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
@@ -216,6 +220,9 @@ grant execute on function pgque.subscribe(text, text)           to pgque_reader;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 
 -- Internal primitive used by SECURITY DEFINER send_batch wrappers only.
+-- Direct pgque_admin access is intentionally not granted: pgque_admin inherits
+-- pgque_writer, and writers should enter through the audited public send_batch()
+-- wrappers rather than this low-level primitive.
 revoke execute on function pgque.insert_event_bulk(text, text, text[])
     from public, pgque_reader, pgque_writer, pgque_admin;
 
