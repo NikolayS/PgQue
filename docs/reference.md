@@ -18,7 +18,7 @@ Functions shipped outside the default install are in the [Experimental](#experim
 
 ## Publishing
 
-Single-message `send` functions reduce to `pgque.insert_event`; batch `send_batch` functions reduce to the set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
+Single-message `send` wrappers delegate to `pgque.insert_event`; batch `send_batch` wrappers delegate to the internal set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
 
 #### `pgque.send(queue text, payload jsonb) → bigint`
 
@@ -50,7 +50,7 @@ Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.send_batch(queue text, type text, payloads jsonb[]) → bigint[]`
 
-Set-based batch send: inserts all elements of `payloads` into `queue` in one SQL statement / transaction. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to an unknown queue raise `queue not found: <queue>`; to a write-disabled queue they raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
+Set-based batch send for JSON payloads: validates each element as `jsonb`, stores its canonical text form, and returns event ids in input order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 ```sql
@@ -60,12 +60,12 @@ select pgque.send_batch('orders', 'order.created',
 
 #### `pgque.send_batch(queue text, type text, payloads text[]) → bigint[]`
 
-Set-based fast-path batch send for opaque text payloads. Returns the array of event ids in the same order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches to an unknown queue raise `queue not found: <queue>`; to a write-disabled queue they raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
+Set-based fast-path batch send for opaque text payloads. Returns event ids in input order. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
 Grant: `pgque_writer`. Source: `sql/pgque-api/send.sql`.
 
 #### `pgque.insert_event_bulk(queue text, type text, payloads text[]) → bigint[]`
 
-**Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids with the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids in input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on `send_batch`.
+**Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids from the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids in input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on the stable `send_batch` surface.
 Grant: none (internal). Source: `sql/pgque-api/send.sql`.
 
 ## Consuming

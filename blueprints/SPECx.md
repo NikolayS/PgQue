@@ -738,11 +738,13 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create function pgque.insert_event_bulk(
     i_queue text, i_type text, i_payloads text[])
 returns bigint[] as $$
--- Internal set-based primitive: resolve queue/table once, allocate event IDs
--- set-wise, insert all rows with one INSERT ... SELECT, and return IDs in
--- input order. Public send_batch() wrappers handle NULL/empty-array API rules.
--- Full implementation lives in sql/pgque-api/send.sql; this is a contract stub,
--- not runnable PL/pgSQL.
+begin
+    -- Internal primitive contract only. Real implementation lives in
+    -- sql/pgque-api/send.sql, performs one queue lookup plus one set-based
+    -- INSERT ... SELECT, returns IDs in input order, and is not granted to
+    -- API roles directly.
+    raise exception 'spec stub: see sql/pgque-api/send.sql';
+end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 create function pgque.send_batch(
@@ -755,6 +757,8 @@ begin
     if cardinality(i_payloads) = 0 then
         return '{}'::bigint[];
     end if;
+    -- jsonb[] overload validates/canonicalizes through Postgres, then hands
+    -- canonical text payloads to the shared bulk primitive.
     return pgque.insert_event_bulk(i_queue, i_type,
         array(select p::text from unnest(i_payloads) with ordinality as u(p, ord) order by ord));
 end;
@@ -1169,7 +1173,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pgque, pg_catalog;
 | Modern API | PgQ primitive underneath | Notes |
 |---|---|---|
 | `pgque.send(queue, payload)` | `pgque.insert_event(queue, type, data)` | TEXT overload is default for untyped literals (fast path, opaque bytes); JSONB overload is opt-in via `::jsonb` cast (validation + canonicalization) |
-| `pgque.send_batch(queue, type, payloads[])` | `insert_event_bulk()` set-based primitive | Single atomic SQL statement; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
+| `pgque.send_batch(queue, type, payloads[])` | `insert_event_bulk()` set-based primitive | One queue lookup + one set-based insert; `text[]` default, `jsonb[]` opt-in via `::jsonb[]` cast |
 | `pgque.send_at(queue, type, payload, time)` | `delayed_events` table + `maint_deliver_delayed()` | New |
 | `pgque.receive(queue, consumer, n)` | `next_batch()` + `get_batch_events()` | Combined |
 | `pgque.ack(batch_id)` | `finish_batch(batch_id)` | Rename |
