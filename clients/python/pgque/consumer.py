@@ -18,6 +18,10 @@ from .types import Message
 
 logger = logging.getLogger("pgque")
 
+# Maximum time the LISTEN wait blocks before re-checking the stop flag.
+# Bounds shutdown latency to roughly this many seconds. See issue #158.
+_WAIT_SLICE_SECONDS = 0.5
+
 
 class Consumer:
     """Synchronous polling consumer with LISTEN/NOTIFY wakeup.
@@ -134,15 +138,14 @@ class Consumer:
                     if not self._running:
                         break
 
-                    # Wait for NOTIFY or poll_interval timeout
-                    try:
-                        gen = conn.notifies(timeout=self.poll_interval)
-                        for _notify in gen:
-                            # Any notification means new events; break
-                            # to poll immediately.
-                            break
-                    except StopIteration:
-                        pass
+                    # Wait for NOTIFY or poll_interval timeout in short
+                    # bounded slices. psycopg's conn.notifies() can
+                    # block uninterruptibly for the full timeout, which
+                    # makes stop() slow and can miss prompt wakeups
+                    # (issue #158). Polling the underlying socket with
+                    # select() lets us re-check _running every SLICE
+                    # seconds and drain any pending NOTIFY immediately.
+                    self._wait_for_notify_or_stop(conn)
 
         finally:
             if in_main_thread:
@@ -154,6 +157,41 @@ class Consumer:
     def stop(self) -> None:
         """Request graceful shutdown (safe to call from another thread)."""
         self._running = False
+
+    def _wait_for_notify_or_stop(self, conn: psycopg.Connection) -> None:
+        """Wait up to ``poll_interval`` for a NOTIFY, in short slices.
+
+        Returns early on any of:
+          * a NOTIFY arrives (drained from the connection),
+          * ``stop()`` flips ``_running`` to False,
+          * ``poll_interval`` elapses cumulatively.
+
+        Each slice is at most ``_WAIT_SLICE_SECONDS`` so ``stop()`` is
+        observed within ~SLICE seconds of the call. Issue #158.
+        """
+        import time as _time
+
+        deadline = _time.monotonic() + self.poll_interval
+        fd = conn.fileno()
+        while self._running:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                return
+            slice_timeout = min(_WAIT_SLICE_SECONDS, remaining)
+            # select() returns when the socket is readable (notify
+            # delivered by the server) or when slice_timeout expires.
+            # It is a thin wrapper around the OS poll, so it is cheap
+            # and interruptible.
+            r, _w, _x = select.select([fd], [], [], slice_timeout)
+            if not self._running:
+                return
+            if r:
+                # Drain pending notifications without blocking. A
+                # zero timeout makes notifies() return immediately
+                # after consuming whatever is buffered.
+                for _notify in conn.notifies(timeout=0):
+                    pass
+                return
 
     def _poll_once(self, conn: psycopg.Connection) -> None:
         """Receive one batch and dispatch messages."""
