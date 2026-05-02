@@ -147,7 +147,7 @@ perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed')
 #### `pgque.subscribe(queue text, consumer text) → integer`
 
 Registers `consumer` on `queue`. Modern alias for `pgque.register_consumer`. Returns `1` on new registration, `0` if already registered.
-Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql` (co-located with the send-side wrappers; the file covers both produce and subscription management).
+Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql` (despite the file name, the grant is `pgque_reader` — subscription management is a consumer-side operation; the file historically co-locates produce wrappers and subscription wrappers).
 
 #### `pgque.unsubscribe(queue text, consumer text) → integer`
 

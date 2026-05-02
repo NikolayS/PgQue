@@ -17,6 +17,11 @@ Vocabulary adapted from the 2009 PgCon talk by Kreen & Pihlak
 - **Ticker** — creates ticks, vacuums, rotates, reschedules retries.
   In PgQue: `pg_cron` calling `pgque.ticker()`.
 - **Tick** — position marker in the event stream; delimits batches.
+- **Roles** — three database roles, all created by the install:
+  - `pgque_reader` (consume side: `receive`, `ack`, `nack`, `subscribe`, `unsubscribe`, plus the underlying PgQ batch primitives)
+  - `pgque_writer` (produce side: `send`, `send_batch`, `insert_event`)
+  - `pgque_admin` (operator; member of both)
+  Reader and writer are **siblings** — neither inherits the other. Apps that produce and consume must hold both. See [`reference.md` — Roles and grants](reference.md#roles-and-grants) for the full table and rationale (issues #102, #106, #163).
 
 ## Delivery
 

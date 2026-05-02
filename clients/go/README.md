@@ -15,6 +15,17 @@ go get github.com/NikolayS/pgque-go@latest
 Requires Go 1.21+ and PostgreSQL 14+ with the PgQue schema installed
 (`\i pgque.sql` — no extension required).
 
+## Database permissions
+
+The connecting database role needs `pgque_reader` to consume (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`) and `pgque_writer` to produce (`send`, `send_batch`). The two are **siblings** — neither inherits the other. An app that both produces and consumes (the typical case for code using this client) must be granted **both** roles:
+
+```sql
+grant pgque_reader to your_app_user;
+grant pgque_writer to your_app_user;
+```
+
+See [`docs/reference.md` — Roles and grants](../../docs/reference.md#roles-and-grants) for the full role table.
+
 ## Quickstart
 
 ```go
