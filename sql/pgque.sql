@@ -2215,26 +2215,8 @@ $$ language plpgsql; -- no perms needed
 
 
 -- ----------------------------------------------------------------------
--- SECURITY (issue #108): get_batch_cursor / 4-arg overload
---
--- i_extra_where is concatenated VERBATIM into the dynamic cursor body:
---     'select * from (' || _sql || ') _evs where ' || i_extra_where || ' order by 1'
--- This is a trusted-SQL primitive. A caller that controls i_extra_where
--- can:
---   - Inject arbitrary predicate SQL.
---   - Use "false UNION ALL SELECT ..." to forge event rows returned to
---     application code.
---   - Exfiltrate data visible to the function invoker via subqueries.
---
--- The PgQ engine body is sacred (SPECx Key Design Rule #2), so the chosen
--- fix is a boundary lockdown rather than predicate sanitization:
---   - EXECUTE is revoked from pgque_reader, pgque_writer, and PUBLIC
---     (see the grants block in this file).
---   - Only pgque_admin may invoke this function.
---   - Callers MUST NEVER pass user-controlled text in i_extra_where.
---
--- The 3-arg overload below routes through the 4-arg variant (with NULL
--- extra_where). Both are treated as admin-only.
+-- Advanced PgQ-compatible primitive. Application roles should use
+-- pgque.receive(); get_batch_cursor is kept admin-only in the grants block.
 -- ----------------------------------------------------------------------
 create or replace function pgque.get_batch_cursor(
     in i_batch_id       bigint,
@@ -4369,13 +4351,8 @@ begin
     end if;
 end $$;
 
--- get_batch_cursor: the 4-arg overload (i_extra_where) concatenates raw SQL
--- into the dynamic cursor body and is therefore a trusted-SQL primitive
--- (issue #108: a UNION ALL fragment can forge rows returned to callers).
--- The 3-arg overload routes through the 4-arg variant, so it is treated the
--- same way. Defense-in-depth: explicitly revoke from pgque_reader,
--- pgque_writer, and PUBLIC. Access remains via "grant execute on all
--- functions ... to pgque_admin" above. Do NOT grant these to reader/writer.
+-- get_batch_cursor is an advanced PgQ-compatible primitive.
+-- Keep both overloads admin-only; application roles should use pgque.receive().
 revoke execute on function pgque.get_batch_cursor(bigint, text, int4)        from public, pgque_reader, pgque_writer;
 revoke execute on function pgque.get_batch_cursor(bigint, text, int4, text)  from public, pgque_reader, pgque_writer;
 

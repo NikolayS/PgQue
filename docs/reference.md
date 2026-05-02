@@ -421,12 +421,12 @@ Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4) → setof record`
 
 Declares a server-side cursor over the batch and returns the first `quick_limit` events. Remaining events can be fetched with `fetch … from <cursor_name>`.
-Grant: `pgque_admin`. Source: `sql/pgque.sql`.
+Grant: `pgque_admin` only. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4, extra_where text) → setof record`
 
 Same as above with an additional `where` filter applied inside the cursor.
-Grant: `pgque_admin`. Source: `sql/pgque.sql`.
+Grant: `pgque_admin` only. Source: `sql/pgque.sql`.
 
 #### `pgque.finish_batch(batch_id bigint) → integer`
 
