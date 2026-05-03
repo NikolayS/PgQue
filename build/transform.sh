@@ -646,7 +646,7 @@ apply_idempotency_guards() {
 # Start with header
 cat > "${INSTALL_FILE}" << 'HEADER'
 -- pgque.sql -- PgQ Universal Edition
--- Version: 1.0.0-dev
+-- Version: 0.2.0-dev
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
