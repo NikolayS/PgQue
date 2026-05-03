@@ -19,13 +19,18 @@ permissions:
 
 jobs:
   build-and-publish:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: npm
+    env:
+      VERSION: ${{ inputs.version }}
     defaults:
       run:
         working-directory: clients/typescript
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -34,15 +39,21 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.14.0"
           registry-url: https://registry.npmjs.org
+
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@^11.5.1
 
       - name: Verify version input
         run: |
           set -Eeuo pipefail
+          case "$VERSION" in
+            *[!0-9.]*|*..*|.*|*.) echo "version must look like 0.2.0"; exit 1 ;;
+          esac
           actual=$(node -p "require('./package.json').version")
-          test "$actual" = "${{ inputs.version }}" || {
-            echo "version input ${{ inputs.version }} != package.json $actual"
+          test "$actual" = "$VERSION" || {
+            echo "version input $VERSION != package.json $actual"
             exit 1
           }
 

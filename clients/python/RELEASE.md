@@ -32,7 +32,15 @@ The release workflow is `.github/workflows/release-python.yml`.
    - package: `pgque-py`
 4. In TestPyPI, configure the same workflow with environment `testpypi`.
 5. Run **Release Python client** with `repository=testpypi` first.
-6. Verify the TestPyPI artifact installs in a clean environment.
+6. Verify the TestPyPI artifact installs in a clean environment, using PyPI
+   as the extra index for dependencies:
+
+   ```bash
+   python -m pip install \
+     --index-url https://test.pypi.org/simple \
+     --extra-index-url https://pypi.org/simple \
+     pgque-py
+   ```
 7. Run the workflow again with `repository=pypi`.
 
 The workflow builds with `python -m build`, validates with `twine check`, and

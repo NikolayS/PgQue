@@ -44,5 +44,5 @@ The release workflow is `.github/workflows/release-typescript.yml`.
 6. Run the workflow again with `dry_run=false`.
 
 The workflow installs with `bun install --frozen-lockfile`, runs `bun run check`,
-builds `dist/`, and publishes with npm provenance via OIDC. No long-lived npm
-token is needed.
+builds `dist/`, ensures npm >= 11.5.1 for Trusted Publishing, and publishes
+with npm provenance via OIDC. No long-lived npm token is needed.

@@ -7,6 +7,11 @@ on:
         description: "Go client version, e.g. v0.2.0"
         required: true
         type: string
+      dry_run:
+        description: "Validate release without creating a tag/release"
+        required: true
+        default: true
+        type: boolean
       create_release:
         description: "Create a GitHub Release for the submodule tag"
         required: true
@@ -18,10 +23,15 @@ permissions:
 
 jobs:
   tag:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: go-release
+    env:
+      VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
@@ -32,35 +42,46 @@ jobs:
       - name: Validate version and tests
         run: |
           set -Eeuo pipefail
-          case "${{ inputs.version }}" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "version must look like v0.2.0"; exit 1 ;;
-          esac
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must look like v0.2.0"
+            exit 1
+          fi
           cd clients/go
           go test ./...
 
-      - name: Create and push submodule tag
+      - name: Show tag that would be created
+        if: inputs.dry_run
         run: |
           set -Eeuo pipefail
-          tag="clients/go/${{ inputs.version }}"
+          echo "dry run: would create and push clients/go/$VERSION"
+
+      - name: Create and push submodule tag
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -Eeuo pipefail
+          tag="clients/go/$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git rev-parse "$tag" >/dev/null 2>&1; then
             echo "tag $tag already exists"
             exit 1
           fi
-          git tag -a "$tag" -m "Go client ${{ inputs.version }}"
+          git tag -a "$tag" -m "Go client $VERSION"
           git push origin "$tag"
 
       - name: Create GitHub Release
-        if: inputs.create_release
+        if: ${{ !inputs.dry_run && inputs.create_release }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          gh release create "clients/go/${{ inputs.version }}" \
-            --title "Go client ${{ inputs.version }}" \
-            --notes "Go client release for module github.com/NikolayS/pgque/clients/go. Install with: go get github.com/NikolayS/pgque/clients/go@${{ inputs.version }}"
+          tag="clients/go/$VERSION"
+          gh release create "$tag" \
+            --title "Go client $VERSION" \
+            --notes "Go client release for module github.com/NikolayS/pgque/clients/go. Install with: go get github.com/NikolayS/pgque/clients/go@$VERSION"
 
-      - name: Ask pkg.go.dev to index the version
+      - name: Warm Go module proxy cache
+        if: ${{ !inputs.dry_run }}
         run: |
           set -Eeuo pipefail
-          curl -fsSL "https://proxy.golang.org/github.com/!nikolay!s/pgque/clients/go/@v/${{ inputs.version }}.info" >/dev/null || true
+          curl -fsSL "https://proxy.golang.org/github.com/!nikolay!s/pgque/clients/go/@v/$VERSION.info" >/dev/null || true

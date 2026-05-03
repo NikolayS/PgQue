@@ -5,7 +5,7 @@ Module path: `github.com/NikolayS/pgque/clients/go`.
 Install:
 
 ```bash
-go get github.com/NikolayS/pgque/clients/go@v0.2.0
+go get github.com/NikolayS/pgque/clients/go@latest
 ```
 
 ## Versioning
@@ -30,9 +30,10 @@ A plain repository tag like `v0.2.0` does **not** identify this submodule for
 The release workflow is `.github/workflows/release-go.yml`.
 
 1. Update `clients/go` docs/code as needed and merge the release prep PR.
-2. Run **Release Go client** with `version=vX.Y.Z`.
-3. The workflow runs `go test ./...`, creates annotated tag
+2. Run **Release Go client** with `version=vX.Y.Z` and `dry_run=true`.
+3. If the dry run is clean, run it again with `dry_run=false`.
+4. The workflow runs `go test ./...`, creates annotated tag
    `clients/go/vX.Y.Z`, pushes it, and optionally creates a GitHub Release.
-4. pkg.go.dev indexes the module after the tag is visible through the Go proxy.
+5. pkg.go.dev indexes the module after the tag is visible through the Go proxy.
 
 No package registry credentials are required.
