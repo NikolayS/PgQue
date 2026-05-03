@@ -68,8 +68,8 @@ end $$;
 -- from top-level CALL (not inside a DO block), hence the bookkeeping via a
 -- temp table.
 select pgque.create_queue('test_tick_period_loop');
-select pgque.set_queue_config('test_tick_period_loop', 'ticker_max_lag', '0 seconds');
-select pgque.set_queue_config('test_tick_period_loop', 'ticker_idle_period', '0 seconds');
+select pgque.set_queue_config('test_tick_period_loop', 'ticker_max_lag', '1 millisecond');
+select pgque.set_queue_config('test_tick_period_loop', 'ticker_idle_period', '1 millisecond');
 select pgque.set_tick_period_ms(200);
 
 create temp table _tick_period_before as
@@ -105,8 +105,8 @@ select pgque.set_tick_period_ms(100);
 
 -- Test 5: ticker_loop with tick_period_ms = 1000 ticks exactly once per slot
 select pgque.create_queue('test_tick_period_once');
-select pgque.set_queue_config('test_tick_period_once', 'ticker_max_lag', '0 seconds');
-select pgque.set_queue_config('test_tick_period_once', 'ticker_idle_period', '0 seconds');
+select pgque.set_queue_config('test_tick_period_once', 'ticker_max_lag', '1 millisecond');
+select pgque.set_queue_config('test_tick_period_once', 'ticker_idle_period', '1 millisecond');
 select pgque.set_tick_period_ms(1000);
 
 create temp table _tick_period_once_before as

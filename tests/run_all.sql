@@ -94,5 +94,8 @@
 \echo 'Running: test_force_next_tick_alias'
 \i tests/test_force_next_tick_alias.sql
 
+\echo 'Running: test_config_hardening'
+\i tests/test_config_hardening.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

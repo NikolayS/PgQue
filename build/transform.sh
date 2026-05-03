@@ -789,7 +789,7 @@ echo "-- Section 6: pgque additions (NEW — not derived from PgQ)" >> "${INSTAL
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
-for addition_file in config.sql queue_max_retries.sql lifecycle.sql tick_helpers.sql roles.sql dlq.sql; do
+for addition_file in config.sql queue_max_retries.sql lifecycle.sql tick_helpers.sql roles.sql dlq.sql hardening.sql; do
   echo "-- pgque-additions/${addition_file}" >> "${INSTALL_FILE}"
   cat "${ADDITIONS_DIR}/${addition_file}" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
@@ -916,6 +916,19 @@ if grep -q 'lifecycle.sql\|pgque.version\|pgque.start\|pgque.stop' "${INSTALL_FI
   echo "PASS: pgque additions present in install script"
 else
   echo "FAIL: pgque additions not found in install script"
+  asm_errors=$((asm_errors + 1))
+fi
+
+# Verify additions order: roles must exist before add-on files with explicit
+# role grants. This catches assembly regressions before install-time failures
+# like "ERROR: role \"pgque_reader\" does not exist".
+roles_line=$(grep -n -- '-- pgque-additions/roles.sql' "${INSTALL_FILE}" | head -1 | cut -d: -f1 || true)
+dlq_line=$(grep -n -- '-- pgque-additions/dlq.sql' "${INSTALL_FILE}" | head -1 | cut -d: -f1 || true)
+if [[ -n "${roles_line}" && -n "${dlq_line}" && ${roles_line} -lt ${dlq_line} ]]; then
+  echo "PASS: pgque additions order keeps roles.sql before dlq.sql"
+else
+  echo "FAIL: pgque additions order must place roles.sql before dlq.sql"
+  echo "roles.sql line: ${roles_line:-missing}; dlq.sql line: ${dlq_line:-missing}"
   asm_errors=$((asm_errors + 1))
 fi
 

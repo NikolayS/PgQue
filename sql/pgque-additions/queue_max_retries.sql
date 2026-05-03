@@ -15,7 +15,13 @@ begin
     end if;
 end $$;
 
--- Override set_queue_config to also accept queue_max_retries
+-- Override set_queue_config to also accept queue_max_retries.
+--
+-- #100: validate parameter values before writing them to pgque.queue.
+-- The base PgQ implementation accepts any string PostgreSQL can cast to the
+-- column type, so a typo like ticker_max_count=0 or rotation_period=-1h
+-- silently produced broken ticker / rotation behavior. Reject nonsensical
+-- values up front with a clear error.
 create or replace function pgque.set_queue_config(
     x_queue_name    text,
     x_param_name    text,
@@ -23,6 +29,8 @@ create or replace function pgque.set_queue_config(
 returns integer as $$
 declare
     v_param_name    text;
+    v_int_val       int8;
+    v_interval_val  interval;
 begin
     -- discard NULL input
     if x_queue_name is null or x_param_name is null then
@@ -49,8 +57,47 @@ begin
         raise exception 'cannot change parameter "%s"', x_param_name;
     end if;
 
+    -- Per-parameter semantic validation (#100). Type errors (non-numeric for
+    -- integer params, non-interval for interval params) still surface as
+    -- PostgreSQL cast errors during the UPDATE; this block adds the
+    -- range/sign checks that PG cannot infer from the column type alone.
+    -- NULL values pass through to reset the column to its DEFAULT.
+    if x_param_value is not null then
+        case v_param_name
+            when 'queue_max_retries' then
+                v_int_val := x_param_value::int8;
+                if v_int_val < 0 then
+                    raise exception 'set_queue_config: max_retries must be >= 0, got %', v_int_val;
+                end if;
+            when 'queue_ticker_max_count' then
+                v_int_val := x_param_value::int8;
+                if v_int_val <= 0 then
+                    raise exception 'set_queue_config: ticker_max_count must be > 0, got %', v_int_val;
+                end if;
+            when 'queue_ticker_max_lag' then
+                v_interval_val := x_param_value::interval;
+                if v_interval_val <= interval '0' then
+                    raise exception 'set_queue_config: ticker_max_lag must be > 0, got %', v_interval_val;
+                end if;
+            when 'queue_ticker_idle_period' then
+                v_interval_val := x_param_value::interval;
+                if v_interval_val <= interval '0' then
+                    raise exception 'set_queue_config: ticker_idle_period must be > 0, got %', v_interval_val;
+                end if;
+            when 'queue_rotation_period' then
+                v_interval_val := x_param_value::interval;
+                if v_interval_val <= interval '0' then
+                    raise exception 'set_queue_config: rotation_period must be > 0, got %', v_interval_val;
+                end if;
+            else
+                -- queue_ticker_paused / queue_external_ticker: bool, validated by cast.
+                null;
+        end case;
+    end if;
+
     execute 'update pgque.queue set '
-        || v_param_name || ' = ' || quote_literal(x_param_value)
+        || v_param_name || ' = '
+        || case when x_param_value is null then 'DEFAULT' else quote_literal(x_param_value) end
         || ' where queue_name = ' || quote_literal(x_queue_name);
 
     return 1;

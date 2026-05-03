@@ -4022,7 +4022,13 @@ begin
     end if;
 end $$;
 
--- Override set_queue_config to also accept queue_max_retries
+-- Override set_queue_config to also accept queue_max_retries.
+--
+-- #100: validate parameter values before writing them to pgque.queue.
+-- The base PgQ implementation accepts any string PostgreSQL can cast to the
+-- column type, so a typo like ticker_max_count=0 or rotation_period=-1h
+-- silently produced broken ticker / rotation behavior. Reject nonsensical
+-- values up front with a clear error.
 create or replace function pgque.set_queue_config(
     x_queue_name    text,
     x_param_name    text,
@@ -4030,6 +4036,8 @@ create or replace function pgque.set_queue_config(
 returns integer as $$
 declare
     v_param_name    text;
+    v_int_val       int8;
+    v_interval_val  interval;
 begin
     -- discard NULL input
     if x_queue_name is null or x_param_name is null then
@@ -4056,8 +4064,47 @@ begin
         raise exception 'cannot change parameter "%s"', x_param_name;
     end if;
 
+    -- Per-parameter semantic validation (#100). Type errors (non-numeric for
+    -- integer params, non-interval for interval params) still surface as
+    -- PostgreSQL cast errors during the UPDATE; this block adds the
+    -- range/sign checks that PG cannot infer from the column type alone.
+    -- NULL values pass through to reset the column to its DEFAULT.
+    if x_param_value is not null then
+        case v_param_name
+            when 'queue_max_retries' then
+                v_int_val := x_param_value::int8;
+                if v_int_val < 0 then
+                    raise exception 'set_queue_config: max_retries must be >= 0, got %', v_int_val;
+                end if;
+            when 'queue_ticker_max_count' then
+                v_int_val := x_param_value::int8;
+                if v_int_val <= 0 then
+                    raise exception 'set_queue_config: ticker_max_count must be > 0, got %', v_int_val;
+                end if;
+            when 'queue_ticker_max_lag' then
+                v_interval_val := x_param_value::interval;
+                if v_interval_val <= interval '0' then
+                    raise exception 'set_queue_config: ticker_max_lag must be > 0, got %', v_interval_val;
+                end if;
+            when 'queue_ticker_idle_period' then
+                v_interval_val := x_param_value::interval;
+                if v_interval_val <= interval '0' then
+                    raise exception 'set_queue_config: ticker_idle_period must be > 0, got %', v_interval_val;
+                end if;
+            when 'queue_rotation_period' then
+                v_interval_val := x_param_value::interval;
+                if v_interval_val <= interval '0' then
+                    raise exception 'set_queue_config: rotation_period must be > 0, got %', v_interval_val;
+                end if;
+            else
+                -- queue_ticker_paused / queue_external_ticker: bool, validated by cast.
+                null;
+        end case;
+    end if;
+
     execute 'update pgque.queue set '
-        || v_param_name || ' = ' || quote_literal(x_param_value)
+        || v_param_name || ' = '
+        || case when x_param_value is null then 'DEFAULT' else quote_literal(x_param_value) end
         || ' where queue_name = ' || quote_literal(x_queue_name);
 
     return 1;
@@ -4818,6 +4865,138 @@ grant execute on function pgque.event_dead(
     bigint, bigint, text, timestamptz, xid8, int4,
     text, text, text, text, text, text)                     to pgque_admin;
 grant execute on function pgque.dlq_purge(text, interval)   to pgque_admin;
+
+-- pgque-additions/hardening.sql
+-- pgque hardening overrides for #100.
+-- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+--
+-- Two findings from the round-2 raw-SQL audit:
+--
+--   Finding 2: pgque.ticker(queue, tick_id, ts, event_seq) — the external
+--   ticker push API — accepted any tick_id / event_seq the (queue, tick_id)
+--   PK didn't reject. Non-monotonic input could create ticks that consumers
+--   would never reach. The override validates that tick_id is strictly
+--   greater than the queue's current max tick_id and event_seq is at least
+--   the previous tick's event_seq.
+--
+--   Finding 3: pgque.force_tick(queue) returned NULL when the queue was
+--   missing, paused, or marked external_ticker. Silent NULL is a footgun
+--   in scripts and tests. The override raises clear errors instead.
+
+-- Override the 4-arg external ticker with monotonicity checks.
+create or replace function pgque.ticker(
+    i_queue_name text,
+    i_tick_id bigint,
+    i_orig_timestamp timestamptz,
+    i_event_seq bigint)
+returns bigint as $$
+declare
+    v_queue_id    int4;
+    v_paused      bool;
+    v_external    bool;
+    v_max_tick    bigint;
+    v_max_seq     bigint;
+begin
+    -- Resolve queue and capture validation flags up front.
+    select queue_id, queue_ticker_paused, queue_external_ticker
+      into v_queue_id, v_paused, v_external
+      from pgque.queue
+     where queue_name = i_queue_name;
+    if not found then
+        raise exception 'queue not found: %', i_queue_name;
+    end if;
+    if v_paused then
+        raise exception 'queue % is paused (queue_ticker_paused = true)',
+            i_queue_name;
+    end if;
+    if not v_external then
+        raise exception 'queue % is not configured for external ticker '
+            '(queue_external_ticker = false); use pgque.ticker(queue) instead',
+            i_queue_name;
+    end if;
+
+    -- Monotonicity: tick_id must be strictly greater than current max.
+    select coalesce(max(tick_id), 0)
+      into v_max_tick
+      from pgque.tick
+     where tick_queue = v_queue_id;
+    if i_tick_id <= v_max_tick then
+        raise exception 'external ticker tick_id must be strictly greater than current max (% <= %)',
+            i_tick_id, v_max_tick;
+    end if;
+
+    -- Monotonicity: event_seq must be >= previous tick's event_seq.
+    -- Equal is allowed (no new events between ticks); strictly less is a bug.
+    select tick_event_seq
+      into v_max_seq
+      from pgque.tick
+     where tick_queue = v_queue_id
+     order by tick_id desc
+     limit 1;
+    if v_max_seq is not null and i_event_seq < v_max_seq then
+        raise exception 'external ticker event_seq must be >= previous tick (% < %)',
+            i_event_seq, v_max_seq;
+    end if;
+
+    -- All checks passed: insert the tick and update sequence state.
+    insert into pgque.tick (tick_queue, tick_id, tick_time, tick_event_seq)
+    values (v_queue_id, i_tick_id, i_orig_timestamp, i_event_seq);
+
+    perform pgque.seq_setval(queue_tick_seq, i_tick_id),
+            pgque.seq_setval(queue_event_seq, i_event_seq)
+       from pgque.queue
+      where queue_id = v_queue_id;
+
+    perform pg_notify('pgque_' || i_queue_name, i_tick_id::text); -- PgQue transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
+    return i_tick_id;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- Override force_tick: raise instead of silently returning NULL when the
+-- target queue is missing, paused, or configured for external ticker.
+create or replace function pgque.force_tick(i_queue_name text)
+returns bigint as $$
+declare
+    v_queue_id    int4;
+    v_paused      bool;
+    v_external    bool;
+    v_max_count   int4;
+    v_max_tick    bigint;
+begin
+    select queue_id, queue_ticker_paused, queue_external_ticker, queue_ticker_max_count
+      into v_queue_id, v_paused, v_external, v_max_count
+      from pgque.queue
+     where queue_name = i_queue_name;
+    if not found then
+        raise exception 'queue not found: %', i_queue_name;
+    end if;
+    if v_paused then
+        raise exception 'queue % is paused (queue_ticker_paused = true)',
+            i_queue_name;
+    end if;
+    if v_external then
+        raise exception 'queue % is configured for external ticker; '
+            'force_tick is meaningless — push ticks via pgque.ticker(queue, tick_id, ts, event_seq)',
+            i_queue_name;
+    end if;
+
+    -- Bump event-seq past ticker_max_count so the next pgque.ticker() run ticks.
+    perform setval(queue_event_seq, nextval(queue_event_seq) + v_max_count * 2 + 1000)
+       from pgque.queue
+      where queue_id = v_queue_id;
+
+    -- Return the current last tick id (the one before force_tick took effect).
+    -- If the queue has no ticks yet, returns NULL — same as the upstream
+    -- behavior on a brand-new queue.
+    select tick_id
+      into v_max_tick
+      from pgque.tick
+     where tick_queue = v_queue_id
+     order by tick_id desc
+     limit 1;
+    return v_max_tick;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- ======================================================================
 -- Section 7: pgque-api (NEW — not derived from PgQ)

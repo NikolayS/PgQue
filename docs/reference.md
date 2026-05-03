@@ -176,6 +176,8 @@ Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 Sets one queue parameter. Accepted `param` values (without the `queue_` prefix): `ticker_max_count`, `ticker_max_lag`, `ticker_idle_period`, `ticker_paused`, `rotation_period`, `external_ticker`, `max_retries`.
 Grant: `pgque_admin`. Source: `sql/pgque.sql` (extended in `sql/pgque-additions/queue_max_retries.sql`).
 
+Observable behavior: numeric/interval settings are range-checked (`max_retries >= 0`; ticker counts/lags/idle/rotation periods must be positive). Passing SQL `NULL` resets the column to its schema default.
+
 ```sql
 select pgque.set_queue_config('orders', 'max_retries', '10');
 ```
@@ -257,7 +259,7 @@ Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 Checks whether a tick is due for `queue` and inserts one if so. Returns the tick id (or `NULL` if no tick was created).
 Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
-> Note: a 4-argument `ticker(queue, tick_id, timestamp, event_seq)` overload exists for queues configured with `external_ticker = true` (pushing ticks from an external clock source). Not covered here.
+> Note: a 4-argument `ticker(queue, tick_id, timestamp, event_seq)` overload exists for queues configured with `external_ticker = true` (pushing ticks from an external clock source). External ticks must be monotonic: `tick_id` must increase, and `event_seq` must not move backwards.
 
 #### `pgque.force_next_tick(queue text) → bigint`
 
@@ -272,7 +274,7 @@ Grant: `pgque_admin`. Source: `sql/pgque-additions/tick_helpers.sql`.
 
 #### `pgque.force_tick(queue text) → bigint`
 
-Alias for `pgque.force_next_tick`. Retained for compatibility with upstream PgQ (the historical name); identical behavior. The name is misleading — the function does not insert a tick by itself, it only bumps the event sequence so the next `pgque.ticker()` call inserts one. Prefer `force_next_tick` in new code.
+Alias for `pgque.force_next_tick`. Retained for compatibility with upstream PgQ (the historical name); identical behavior. The name is misleading — the function does not insert a tick by itself, it only bumps the event sequence so the next `pgque.ticker()` call inserts one. Raises if the queue is missing, ticker-paused, or configured for an external ticker. Prefer `force_next_tick` in new code.
 Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.uninstall() → void`
