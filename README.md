@@ -167,12 +167,21 @@ Treat installation as one-way for now — upgrade and reinstall paths are still 
 
 The default `\i sql/pgque.sql` path stays the recommended install — PgQue itself is pure SQL + PL/pgSQL, with no C extension or `shared_preload_libraries` required on the server. (pg_cron is recommended as the ticker but stays optional; see [Installation](#installation) above.)
 
-For environments that already run [`pg_tle`](https://github.com/aws/pg_tle) (Trusted Language Extensions: AWS RDS / Aurora, AlloyDB, Supabase, self-hosted), PgQue can opt into being a real Postgres extension. That gives you `pg_extension` membership, `alter extension pgque update` for version upgrades, and `drop extension pgque cascade` for atomic uninstall:
+For environments that already run [`pg_tle`](https://github.com/aws/pg_tle) (Trusted Language Extensions: AWS RDS / Aurora, AlloyDB, Supabase, self-hosted), PgQue can opt into being a real Postgres extension. That gives you `pg_extension` membership, `alter extension pgque update` for version upgrades, and `drop extension pgque cascade` for atomic uninstall.
+
+**One-time prerequisite.** pg_tle is a C extension and must be loaded via `shared_preload_libraries`. On managed providers this is done via the parameter group / cluster config UI (and a reboot); on self-hosted Postgres:
 
 ```sql
-create extension if not exists pg_tle;
+alter system set shared_preload_libraries = 'pg_tle';   -- merge into the existing list if non-empty
+-- restart Postgres, then in the target database:
+create extension pg_tle;
+```
+
+Once pg_tle is loaded, register and create PgQue:
+
+```sql
 \i sql/pgque-tle.sql       -- registers pgque with pg_tle
-create extension pgque;        -- materialises the schema in this database
+create extension pgque;     -- materialises the schema in this database
 ```
 
 The wrapper pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` because Postgres roles are cluster-global and cannot be created from inside a TLE install body, so the role running this needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-tle-uninstall.sql`.

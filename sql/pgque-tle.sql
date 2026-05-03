@@ -29,7 +29,9 @@ do $$
 begin
     if not exists (select 1 from pg_catalog.pg_extension where extname = 'pg_tle') then
         raise exception 'pg_tle is not available in this database. '
-            'Run create extension if not exists pg_tle; first, '
+            'Add pg_tle to shared_preload_libraries (managed providers: '
+            'parameter group + reboot; self-hosted: alter system + restart), '
+            'then run: create extension pg_tle; '
             'and grant pgtle_admin to the current role.';
     end if;
 end $$;
