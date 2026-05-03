@@ -111,28 +111,9 @@ client.conn.commit()
 
 ## Transactions
 
-PgQue is snapshot-based. `client.send` (or any insert), the ticker, and
-`client.receive` must run in **distinct, committed** transactions —
-otherwise the ticker's snapshot does not see the producer's commit and
-the consumer returns zero rows.
+`send` → ticker → `receive` must each run in its own committed transaction (PgQue is snapshot-based). `pgque.connect(dsn)` is non-autocommit by default — commit between produce and consumer. The `Consumer` is autocommit + explicit `conn.transaction()` around `receive + dispatch + ack`.
 
-`pgque.connect(dsn)` defaults to `autocommit=False` (psycopg's default),
-so `client.send(...)` does not commit until you call
-`client.conn.commit()`. The Quickstart above commits between subscribe
-and produce; commit again before the consumer side runs. The `Consumer`
-class wraps its own connection in `autocommit=True` and opens an
-explicit `with conn.transaction()` only around `receive + dispatch +
-ack` — the recommended pattern.
-
-If you need transactional enqueue (`pgque.send` inside your
-application's transaction), commit it before any consumer-side call. Do
-**not** wrap `send` and `receive` in one explicit transaction — the
-consumer cannot see what the producer just sent until it commits. The
-same caveat applies to `pgque.maint_retry_events` + `pgque.ticker`:
-they must be in separate transactions for the re-queued rows to appear
-in the next batch.
-
-See [pgq-concepts.md#snapshot-rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+Don't wrap `send` and `receive` in one explicit tx; same for `maint_retry_events` + `ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
 
 
 ## Tests

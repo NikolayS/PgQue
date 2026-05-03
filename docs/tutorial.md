@@ -124,7 +124,7 @@ For demos and tests, PgQue provides `pgque.force_next_tick` to bypass the tick t
 -- separate transactions (psql autocommit). Do not wrap in begin/commit:
 -- ticker() must see the prior send committed before it can include it in a batch.
 select pgque.force_next_tick('orders');
-select pgque.ticker();
+select pgque.ticker();  -- separate transaction
 ```
 
 ```
@@ -139,7 +139,7 @@ select pgque.ticker();
 
 `force_next_tick` returns the current tick id (the queue was seeded with tick `1` by `create_queue`). `ticker()` returns the number of queues it processed.
 
-> **Each statement above runs in its own transaction.** That is intentional — PgQue is snapshot-based. `pgque.ticker` records the snapshot it sees; `pgque.receive` only returns events whose insert committed *before* that snapshot. If you wrap `send` + `force_tick` + `ticker` (or `maint_retry_events` + `ticker`) inside one explicit `begin`/`commit` block, the ticker's snapshot does not see the inserts and the next `receive` returns zero rows. See the [snapshot rule](pgq-concepts.md#snapshot-rule).
+> Each statement above runs in its own transaction — required, not stylistic. PgQue is snapshot-based: the ticker captures a snapshot, and `receive` only returns events whose `send` committed before it. Wrapping `send` + `force_next_tick` + `ticker` + `receive` in one `begin`/`commit` returns zero rows. See the [snapshot rule](pgq-concepts.md#snapshot-rule).
 
 Now try receiving again:
 
@@ -217,15 +217,15 @@ select pgque.set_queue_config('orders', 'max_retries', '2');
 
 The parameter is `max_retries`, not `queue_max_retries` — `set_queue_config` prepends `queue_` for you.
 
-Send another event, tick, and receive:
+Send another event, tick, and receive (each select is a separate transaction — required, see [snapshot rule](pgq-concepts.md#snapshot-rule)):
 
 ```sql
 -- send / force_next_tick / ticker / receive are four separate transactions in psql
 -- autocommit. Do not wrap them in begin/commit — the snapshot rule still applies.
 select pgque.send('orders', '{"order_id": 43, "total": 10.00}'::jsonb);
 select pgque.force_next_tick('orders');
-select pgque.ticker();
-select * from pgque.receive('orders', 'processor', 100);
+select pgque.ticker();  -- separate transaction
+select * from pgque.receive('orders', 'processor', 100);  -- separate transaction
 ```
 
 ```
@@ -256,8 +256,8 @@ The event is now in PgQ's retry queue. Moving it back into the main event stream
 -- four separate transactions (psql autocommit). Do not wrap in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_next_tick('orders');
-select pgque.ticker();
-select * from pgque.receive('orders', 'processor', 100);
+select pgque.ticker();  -- separate transaction
+select * from pgque.receive('orders', 'processor', 100);  -- separate transaction
 ```
 
 In production, `pgque.start()` schedules `maint_retry_events` on its own cadence — you never call it by hand. See [`pgque.maint()`](reference.md#pgquemaint--integer) and the surrounding Lifecycle entries in the reference.
@@ -291,7 +291,7 @@ end $$;
 -- three more, in psql autocommit. Do not wrap them in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_next_tick('orders');
-select pgque.ticker();
+select pgque.ticker();  -- separate transaction
 ```
 
 The second iteration sees `retry_count = 2` and routes to the DLQ instead of the retry queue. After it runs, `receive` returns nothing — the event has moved to `pgque.dead_letter`.

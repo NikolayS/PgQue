@@ -40,10 +40,10 @@ select pgque.subscribe('orders', 'analytics_pipeline');
 -- send / force_next_tick / ticker / receive are separate transactions in psql
 -- autocommit. Do not wrap them in begin/commit — the snapshot rule applies.
 select pgque.send('orders', 'order.created', '{"order_id": 1}'::jsonb);
-select pgque.force_next_tick('orders');
-select pgque.ticker();
+select pgque.force_next_tick('orders');  -- separate transaction
+select pgque.ticker();                    -- separate transaction
 
-select * from pgque.receive('orders', 'audit_logger', 100);
+select * from pgque.receive('orders', 'audit_logger', 100);          -- separate transaction
 select * from pgque.receive('orders', 'notification_sender', 100);
 ```
 
@@ -69,7 +69,7 @@ commit;
 
 The `inserted` CTE runs to completion even though the main query does not reference it (data-modifying CTEs always execute). Every row in `msgs` shares the same `batch_id`, so the scalar subquery picks any one of them and `pgque.ack` runs exactly once. **Batch-ownership caveat:** `pgque.ack(batch_id)` advances the consumer past the entire underlying batch, even if `receive()` returned fewer rows than the batch contains (due to `max_return`). Either consume the full batch before acking, or use `max_return >= ticker_max_count` (default 500) to ensure all rows are returned.
 
-> **Anti-pattern: send + receive in one transaction.** The pattern above merges `receive` + side effects + `ack` into one tx — that is correct. **Do not** also merge the producer's `send` (or `force_tick` / `ticker`) into the same transaction. PgQue is snapshot-based, so the ticker's snapshot must be taken *after* the producer commits, and the consumer's snapshot must be taken *after* the ticker commits. The following anti-pattern silently returns zero rows because the ticker's snapshot predates the `send`'s commit:
+> **Anti-pattern: send + receive in one transaction.** Above merges `receive` + writes + `ack` into one tx — correct. Do **not** also merge `send` / `force_tick` / `ticker` into the same tx; the ticker's snapshot must be taken *after* `send` commits.
 >
 > ```sql
 > -- WRONG -- consumer sees 0 rows
@@ -81,7 +81,7 @@ The `inserted` CTE runs to completion even though the main query does not refere
 > commit;
 > ```
 >
-> See [pgq-concepts.md#snapshot-rule](pgq-concepts.md#snapshot-rule) for the full rule.
+> See [pgq-concepts.md#snapshot-rule](pgq-concepts.md#snapshot-rule).
 
 ## Recurring jobs with pg_cron
 

@@ -123,26 +123,9 @@ or `pg.Client` instances in the same process are unaffected.
 
 ## Transactions
 
-PgQue is snapshot-based. `client.send` (or any insert), the ticker, and
-`client.receive` must run in **distinct, committed** transactions —
-otherwise the ticker's snapshot does not see the producer's commit and
-`receive` returns zero rows.
+`send` → ticker → `receive` must each run in its own committed transaction (PgQue is snapshot-based). `pg.Pool#query` satisfies this transparently — every `send`/`receive`/`ack` is its own implicit tx, and the `Consumer` is pool-level.
 
-By default this is satisfied transparently: every method on `client`
-goes through `pg.Pool#query`, which checks out a fresh connection and
-runs each statement in its own implicit transaction. The high-level
-`Consumer` poll loop is also pool-level; no special handling required.
-
-The footgun is `client.rawPool`. If you want transactional enqueue —
-`pgque.send` inside your application's transaction — check out a
-client with `await client.rawPool.connect()`, then run `BEGIN`, your
-inserts including the `pgque.send`, and `COMMIT`. Do **not** mix
-`pgque.send` and `pgque.receive` in one shared transaction — the
-consumer cannot see what the producer just sent until it commits. The
-same caveat applies to invoking `pgque.maint_retry_events` and
-`pgque.ticker` inside one Tx.
-
-See [pgq-concepts.md#snapshot-rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+The footgun is `client.rawPool`: for transactional enqueue, call `BEGIN` / `pgque.send` / `COMMIT` on a checked-out client. Don't mix `pgque.send` and `pgque.receive` in one shared tx; same for `pgque.maint_retry_events` + `pgque.ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
 
 ## Tests
 

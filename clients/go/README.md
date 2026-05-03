@@ -186,27 +186,9 @@ TypeScript client (`PgqueQueueNotFoundError`, `PgqueConsumerNotFoundError`,
 
 ## Transactions
 
-PgQue is snapshot-based. `Client.Send` (or any insert), the ticker, and
-`Client.Receive` must run in **distinct, committed** transactions —
-otherwise the ticker's snapshot does not see the producer's commit and
-`Receive` returns zero rows.
+`Send` → ticker → `Receive` must each run in its own committed transaction (PgQue is snapshot-based). `pgxpool` satisfies this transparently — every `Send`/`Receive`/`Ack` is its own implicit tx, and the `Consumer` is pool-level.
 
-By default this is satisfied transparently: every `Client.Send`,
-`Client.Receive`, `Client.Ack`, etc. uses `pgxpool` and runs in its own
-implicit transaction. The `Consumer` poll loop is also pool-level; no
-special handling required.
-
-The footgun is `Client.Pool()`. Its doc-comment notes you can call
-`pgque.send` inside your own `pgx.Tx` for transactional enqueueing —
-that is correct, but **only if the consumer side runs in a separate
-transaction after your `tx.Commit()`**. Do **not** wrap `pgque.send`
-and `pgque.receive` in one shared `pgx.Tx` — the consumer cannot see
-what the producer just sent until it commits. The same caveat applies
-to invoking `pgque.maint_retry_events` and `pgque.ticker` inside one
-Tx: the ticker's snapshot will predate the maint commit and the next
-batch will be empty.
-
-See [pgq-concepts.md#snapshot-rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+The footgun is `Client.Pool()`: calling `pgque.send` inside your own `pgx.Tx` is fine for transactional enqueue, but the consumer must run after `tx.Commit()`. Don't wrap `pgque.send` and `pgque.receive` in one shared `pgx.Tx`; same for `pgque.maint_retry_events` + `pgque.ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
 
 ## Tests
 
