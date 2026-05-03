@@ -81,8 +81,8 @@ jobs:
     name: pg_tle install path
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '17'
-      PGTLE_TAG: v1.5.1
+      PG_VERSION: '18'
+      PGTLE_TAG: v1.5.2
     steps:
       - uses: actions/checkout@v4
         with:
