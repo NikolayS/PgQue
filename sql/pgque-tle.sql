@@ -54,14 +54,25 @@ end $$;
 
 -- Step 3: register the extension body with pg_tle. The body is the verbatim
 -- contents of sql/pgque.sql; create extension pgque executes it inside the
--- caller's transaction.
-select pgtle.install_extension(
-    'pgque',
-    '1.0.0-dev',
-    'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
+-- caller's transaction. Wrapped in a do-block so re-running this script is a
+-- no-op when this exact version is already in pg_tle's catalog (otherwise
+-- pgtle.install_extension would raise "extension version already installed").
+do $wrapper$
+begin
+    if exists (
+        select 1 from pgtle.available_extensions()
+        where name = 'pgque' and default_version = '0.2.0-dev'
+    ) then
+        raise notice 'pgque 0.2.0-dev already registered with pg_tle; skipping install_extension().';
+        return;
+    end if;
+    perform pgtle.install_extension(
+        'pgque',
+        '0.2.0-dev',
+        'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
 $pgque_extension_body$
 -- pgque.sql -- PgQ Universal Edition
--- Version: 1.0.0-dev
+-- Version: 0.2.0-dev
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -2276,6 +2287,18 @@ end;
 $$ language plpgsql; -- no perms needed
 
 
+-- ----------------------------------------------------------------------
+-- Advanced PgQ-compatible primitive. Application roles should use
+-- pgque.receive(); get_batch_cursor is kept admin-only in the grants block.
+--
+-- SECURITY: i_extra_where is concatenated into dynamic SQL verbatim. It is a
+-- trusted-SQL fragment, NOT a parameter. A caller can inject arbitrary
+-- predicates (including UNION ALL) and forge rows in the returned stream.
+-- This behavior is inherited from upstream PgQ; it is acceptable here only
+-- because both overloads are revoked from public, pgque_reader, and
+-- pgque_writer and granted to pgque_admin only. NEVER pass user-controlled
+-- input as i_extra_where, even from admin code paths.
+-- ----------------------------------------------------------------------
 create or replace function pgque.get_batch_cursor(
     in i_batch_id       bigint,
     in i_cursor_name    text,
@@ -2302,7 +2325,9 @@ returns setof record as $$
 --      i_batch_id      - ID of active batch.
 --      i_cursor_name   - Name for new cursor
 --      i_quick_limit   - Number of events to return immediately
---      i_extra_where   - optional where clause to filter events
+--      i_extra_where   - optional where clause to filter events.
+--                        Trusted SQL fragment, not a parameter; never pass
+--                        user-controlled text. Function is admin-only.
 --
 -- Returns:
 --      List of events.
@@ -4208,7 +4233,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.version()
 returns text as $$
 begin
-    return '1.0.0-dev';
+    return '0.2.0-dev';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -5144,8 +5169,9 @@ revoke execute on all functions in schema pgque from public;
 
 
 $pgque_extension_body$
-);
+    );
+end $wrapper$;
 
 \echo ''
-\echo 'PgQue 1.0.0-dev registered with pg_tle.'
-\echo 'Run CREATE EXTENSION pgque; to materialise the schema in this database.'
+\echo 'PgQue 0.2.0-dev registered with pg_tle.'
+\echo 'Run create extension pgque; to materialise the schema in this database.'

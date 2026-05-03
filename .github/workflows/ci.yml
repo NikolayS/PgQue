@@ -95,25 +95,33 @@ jobs:
         run: |
           set -Eeuo pipefail
           docker build \
-            --build-arg PG_VERSION=${PG_VERSION} \
-            --build-arg PGTLE_TAG=${PGTLE_TAG} \
-            -t pgque-pgtle:test \
+            --build-arg "PG_VERSION=${PG_VERSION}" \
+            --build-arg "PGTLE_TAG=${PGTLE_TAG}" \
+            -t pgque-tle:test \
             -f ci/Dockerfile.tle .
 
       - name: Start PostgreSQL with pg_tle preloaded
         run: |
           set -Eeuo pipefail
-          docker run -d --name pgque-pgtle-test \
+          docker run -d --name pgque-tle-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            pgque-pgtle:test \
+            pgque-tle:test \
             -c shared_preload_libraries=pg_tle
 
-          for i in $(seq 1 30); do
-            docker exec pgque-pgtle-test pg_isready -U postgres && break
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec pgque-tle-test pg_isready -U postgres; then
+              ready=1
+              break
+            fi
             sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 30 seconds"
+            exit 1
+          fi
 
       - name: Run pg_tle e2e test
         run: |
@@ -126,18 +134,18 @@ jobs:
           set -Eeuo pipefail
           # Fresh database so the e2e drop above does not interfere.
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
-            -v ON_ERROR_STOP=1 -c 'create database pgque_pgtle_regress'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_regress \
+            -v ON_ERROR_STOP=1 -c 'create database pgque_tle_regress'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_regress \
             -v ON_ERROR_STOP=1 \
             -c 'create extension pg_tle;' \
             -f sql/pgque-tle.sql \
             -c 'create extension pgque;'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_regress \
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_regress \
             -v ON_ERROR_STOP=1 -f tests/run_all.sql
 
       - name: Cleanup
         if: always()
-        run: docker rm -f pgque-pgtle-test
+        run: docker rm -f pgque-tle-test
 
   python-client-tests:
     name: Python client tests

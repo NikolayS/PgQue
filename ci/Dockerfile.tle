@@ -16,14 +16,14 @@ ARG PG_VERSION
 ARG PGTLE_TAG=v1.5.2
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        postgresql-server-dev-${PG_VERSION} \
-        ca-certificates \
-        git \
-        flex \
-        bison \
-        libkrb5-dev \
-    && git clone --depth=1 --branch=${PGTLE_TAG} https://github.com/aws/pg_tle.git /tmp/pg_tle \
-    && cd /tmp/pg_tle && make && make install \
-    && rm -rf /tmp/pg_tle /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends \
+       build-essential \
+       postgresql-server-dev-${PG_VERSION} \
+       ca-certificates \
+       git \
+       flex \
+       bison \
+       libkrb5-dev \
+  && git clone --depth=1 --branch=${PGTLE_TAG} https://github.com/aws/pg_tle.git /tmp/pg_tle \
+  && cd /tmp/pg_tle && make && make install \
+  && rm -rf /tmp/pg_tle /var/lib/apt/lists/*

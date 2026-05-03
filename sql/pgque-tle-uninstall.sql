@@ -2,8 +2,10 @@
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- Drops the pgque extension from this database (if installed) and unregisters
--- every installed version from pg_tle's catalog. Roles are NOT dropped because
--- they may still be referenced by other databases on the cluster.
+-- pgque from pg_tle's catalog. Roles are NOT dropped because they may still
+-- be referenced by other databases on the cluster.
+--
+-- Idempotent: safe to re-run.
 --
 -- Usage:
 --   psql -d mydb -f sql/pgque-tle-uninstall.sql

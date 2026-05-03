@@ -977,23 +977,36 @@ echo "=== Packaging pg_tle install script ==="
 PGTLE_FILE="${SQL_DIR}/pgque-tle.sql"
 PGTLE_DOLLAR_TAG="pgque_extension_body"
 
-# Sanity check: the chosen dollar-quote tag must not appear in the body, or
-# the dollar-quoted literal will terminate early and pg_tle.install_extension
-# will receive a truncated body.
-if grep -q "\$${PGTLE_DOLLAR_TAG}\$" "${INSTALL_FILE}"; then
-  echo "FAIL: dollar-quote tag \$${PGTLE_DOLLAR_TAG}\$ collides with body content" >&2
+# Sanity check: neither dollar-quote tag (the body tag and the outer wrapper
+# tag) may appear in the body content, otherwise the literal terminates early
+# and pg_tle.install_extension receives a truncated body. Use grep -F so the
+# `$` characters are matched literally instead of as end-of-line anchors.
+for tag in "${PGTLE_DOLLAR_TAG}" wrapper; do
+  if grep -qF "\$${tag}\$" "${INSTALL_FILE}"; then
+    echo "FAIL: dollar-quote tag \$${tag}\$ collides with body content" >&2
+    exit 1
+  fi
+done
+
+# Extract the version string from pgque.version() in lifecycle.sql so the
+# pg_tle install always advertises the same version pgque.version() returns at
+# runtime. Anchor to the function so unrelated `return '...'` lines added later
+# cannot shadow it, and validate the extracted literal so a malformed value
+# cannot break the heredoc that embeds it into the generated SQL.
+PGTLE_VERSION=$(awk '
+  /create or replace function pgque\.version/ { in_fn=1; next }
+  in_fn && match($0, /return '\''[^'\'']+'\''/) {
+    s=substr($0, RSTART+8, RLENGTH-9); print s; exit
+  }
+' "${ADDITIONS_DIR}/lifecycle.sql")
+
+if [[ -z "${PGTLE_VERSION}" ]]; then
+  echo "FAIL: could not extract pgque version from pgque.version() in lifecycle.sql" >&2
   exit 1
 fi
 
-# Extract the version string from pgque-additions/lifecycle.sql so the
-# pg_tle install always advertises the same version that pgque.version()
-# returns at runtime.
-PGTLE_VERSION=$(grep -E "return '[^']+';" "${ADDITIONS_DIR}/lifecycle.sql" \
-  | head -1 \
-  | sed -E "s/.*return '([^']+)'.*/\1/")
-
-if [[ -z "${PGTLE_VERSION}" ]]; then
-  echo "FAIL: could not extract pgque version from lifecycle.sql" >&2
+if ! [[ "${PGTLE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+  echo "FAIL: pgque version '${PGTLE_VERSION}' is not a valid semver string" >&2
   exit 1
 fi
 
@@ -1054,11 +1067,22 @@ end \$\$;
 
 -- Step 3: register the extension body with pg_tle. The body is the verbatim
 -- contents of sql/pgque.sql; create extension pgque executes it inside the
--- caller's transaction.
-select pgtle.install_extension(
-    'pgque',
-    '${PGTLE_VERSION}',
-    'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
+-- caller's transaction. Wrapped in a do-block so re-running this script is a
+-- no-op when this exact version is already in pg_tle's catalog (otherwise
+-- pgtle.install_extension would raise "extension version already installed").
+do \$wrapper\$
+begin
+    if exists (
+        select 1 from pgtle.available_extensions()
+        where name = 'pgque' and default_version = '${PGTLE_VERSION}'
+    ) then
+        raise notice 'pgque ${PGTLE_VERSION} already registered with pg_tle; skipping install_extension().';
+        return;
+    end if;
+    perform pgtle.install_extension(
+        'pgque',
+        '${PGTLE_VERSION}',
+        'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
 \$${PGTLE_DOLLAR_TAG}\$
 HEADER
 
@@ -1066,11 +1090,12 @@ cat "${INSTALL_FILE}" >> "${PGTLE_FILE}"
 
 cat >> "${PGTLE_FILE}" << FOOTER
 \$${PGTLE_DOLLAR_TAG}\$
-);
+    );
+end \$wrapper\$;
 
 \\echo ''
 \\echo 'PgQue ${PGTLE_VERSION} registered with pg_tle.'
-\\echo 'Run CREATE EXTENSION pgque; to materialise the schema in this database.'
+\\echo 'Run create extension pgque; to materialise the schema in this database.'
 FOOTER
 
 pgtle_lines=$(wc -l < "${PGTLE_FILE}")
