@@ -62,10 +62,17 @@ jobs:
           GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
-          git ls-remote --exit-code --tags "https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git" "refs/tags/$VERSION" && {
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git"
+          if git ls-remote --exit-code --tags "$remote" "refs/tags/$VERSION" >/dev/null; then
             echo "mirror tag $VERSION already exists"
             exit 1
-          } || true
+          else
+            rc=$?
+            if [ "$rc" -ne 2 ]; then
+              echo "failed to check mirror tag $VERSION"
+              exit "$rc"
+            fi
+          fi
 
       - name: Show mirror update dry run
         if: inputs.dry_run
@@ -79,12 +86,19 @@ jobs:
           GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           remote="https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git"
+          candidate="refs/heads/release-candidate/$VERSION"
+          git push "$remote" "$split_sha:$candidate"
+
+          tmp=$(mktemp -d)
+          git clone --no-checkout --filter=blob:none "$remote" "$tmp"
+          git -C "$tmp" config user.name "github-actions[bot]"
+          git -C "$tmp" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$tmp" fetch origin "$candidate"
+          git -C "$tmp" tag -a "$VERSION" FETCH_HEAD -m "Go client $VERSION"
+          git -C "$tmp" push origin "refs/tags/$VERSION"
           git push "$remote" "$split_sha:refs/heads/main"
-          git tag -a "$VERSION" "$split_sha" -m "Go client $VERSION"
-          git push "$remote" "refs/tags/$VERSION"
+          git push "$remote" ":$candidate"
 
       - name: Create GitHub Release in mirror
         if: ${{ !inputs.dry_run && inputs.create_release }}
