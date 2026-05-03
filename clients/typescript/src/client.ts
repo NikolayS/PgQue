@@ -71,14 +71,10 @@ export class Client {
    *
    * **Payload shape requirements:** `event.payload` is serialized with
    * `JSON.stringify`. This means:
-   * - Top-level `undefined` (or an omitted `payload` field) is coerced to
-   *   the JSON literal `null` so the JSONB column receives a valid value.
-   * - `null` round-trips as JSON `null`.
-   * - Object properties whose values are `undefined` are dropped by
-   *   `JSON.stringify` per the JSON spec.
-   * - Functions, symbols, and `BigInt` literals are not JSON-serializable
-   *   as top-level payloads and are rejected.
+   * - Values that are not JSON-serializable (`undefined`, functions,
+   *   symbols, `BigInt` literals) will be silently dropped or throw.
    * - Circular references throw a `TypeError` from `JSON.stringify`.
+   * - `undefined` at the top level becomes the JSON string `"null"`.
    *
    * Pass plain JSON-compatible values (objects, arrays, strings, numbers,
    * booleans, `null`) to avoid surprises.
@@ -88,7 +84,7 @@ export class Client {
       throw new PgqueSqlError('send', { cause: new Error('queue must be a non-empty string') });
     }
     const type = event.type && event.type.length > 0 ? event.type : 'default';
-    const payload = serializePayload(event.payload);
+    const payload = JSON.stringify(event.payload);
     try {
       const result = await this.pool.query<{ send: bigint }>(
         'select pgque.send($1, $2, $3::jsonb) as send',
@@ -105,47 +101,9 @@ export class Client {
     }
   }
 
-  /** Publish same-type payloads atomically; empty type defaults to `default`. */
-  async sendBatch(queue: string, type: string, payloads: unknown[]): Promise<bigint[]> {
-    if (!queue) {
-      throw new PgqueSqlError('sendBatch', {
-        cause: new Error('queue must be a non-empty string'),
-      });
-    }
-    const eventType = type && type.length > 0 ? type : 'default';
-    const encoded = payloads.map((payload, index) => {
-      try {
-        return JSON.stringify(payload) ?? 'null';
-      } catch (err) {
-        throw new PgqueSqlError('sendBatch', {
-          cause: new Error(`payload at index ${index} is not JSON-serializable`, { cause: err }),
-        });
-      }
-    });
-
-    try {
-      const result = await this.pool.query<{ send_batch: Array<bigint | string> }>(
-        'select pgque.send_batch($1, $2, $3::jsonb[]) as send_batch',
-        [queue, eventType, encoded],
-      );
-      const row = result.rows[0];
-      if (!row) {
-        throw new PgqueSqlError('sendBatch', { cause: new Error('no row returned') });
-      }
-      return row.send_batch.map((id) => (typeof id === 'bigint' ? id : BigInt(id)));
-    } catch (err) {
-      if (err instanceof PgqueError) throw err;
-      throw mapPgError('sendBatch', err, { queue });
-    }
-  }
-
   /**
    * Fetch up to `maxMessages` from the next batch for `consumer` on `queue`.
    * Returns an empty array when no batch is currently available.
-   *
-   * WARNING: `ack(batchId)` finishes the whole underlying PgQ batch, including
-   * rows beyond `maxMessages`. Direct receive callers should pass a value large
-   * enough for the queue's possible batch size before acknowledging the batch.
    */
   async receive(queue: string, consumer: string, maxMessages = 100): Promise<Message[]> {
     if (!queue) {
@@ -268,27 +226,80 @@ export class Client {
   }
 
   /**
-   * Wrapper for pgque.ticker(): if `queue` is given, runs the per-queue
-   * overload (`pgque.ticker(queue text)`); otherwise runs the no-arg global
-   * overload. Resolves after the ticker call completes.
+   * Run the per-queue ticker for `queue`. Wraps `pgque.ticker(queue text)`
+   * (the one-argument SQL overload).
+   *
+   * Returns the new tick id (`bigint`) when a tick was created, or `null`
+   * when no tick was needed (e.g. the queue is idle or the max-lag threshold
+   * has not been reached yet). Mirrors the SQL function's `returns bigint`
+   * contract where the function returns `NULL` on no-op.
+   *
+   * Throws if the queue does not exist or has an external ticker configured.
+   *
+   * For the global (all-queues) ticker use {@link tickerAll}.
    */
-  async ticker(queue?: string): Promise<void> {
+  async ticker(queue: string): Promise<bigint | null> {
     try {
-      if (queue !== undefined) {
-        await this.pool.query('select pgque.ticker($1)', [queue]);
-      } else {
-        await this.pool.query('select pgque.ticker()');
+      const result = await this.pool.query<{ ticker: bigint | null }>(
+        'select pgque.ticker($1) as ticker',
+        [queue],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new PgqueSqlError('ticker', { cause: new Error('no row returned') });
       }
+      return row.ticker !== null ? BigInt(row.ticker) : null;
     } catch (err) {
-      throw mapPgError('ticker', err, queue !== undefined ? { queue } : undefined);
+      if (err instanceof PgqueError) throw err;
+      throw mapPgError('ticker', err, { queue });
     }
   }
 
-  /** Exact wrapper for pgque.force_tick(queue). Bumps the event-seq threshold so the next ticker run produces a tick. */
-  async forceTick(queue: string): Promise<void> {
+  /**
+   * Run the global ticker across all eligible queues. Wraps the zero-argument
+   * `pgque.ticker()` SQL overload.
+   *
+   * Returns the number of queues that had a tick inserted during this call.
+   * The SQL function returns `bigint`; this method narrows to JS `number`
+   * because the queue count is always well within `Number.MAX_SAFE_INTEGER`.
+   */
+  async tickerAll(): Promise<number> {
     try {
-      await this.pool.query('select pgque.force_tick($1)', [queue]);
+      const result = await this.pool.query<{ ticker: bigint }>(
+        'select pgque.ticker() as ticker',
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new PgqueSqlError('tickerAll', { cause: new Error('no row returned') });
+      }
+      return Number(row.ticker);
     } catch (err) {
+      if (err instanceof PgqueError) throw err;
+      throw mapPgError('tickerAll', err);
+    }
+  }
+
+  /**
+   * Bump the event-seq threshold for `queue` so the next `ticker(queue)` call
+   * produces a tick. Wraps `pgque.force_tick(queue text)`.
+   *
+   * Returns the current last tick id (`bigint`) for the queue, or `null` if
+   * the queue has no ticks yet (brand-new queue) or if the queue is paused /
+   * has an external ticker (the SQL function silently skips those cases).
+   */
+  async forceTick(queue: string): Promise<bigint | null> {
+    try {
+      const result = await this.pool.query<{ force_tick: bigint | null }>(
+        'select pgque.force_tick($1) as force_tick',
+        [queue],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new PgqueSqlError('force_tick', { cause: new Error('no row returned') });
+      }
+      return row.force_tick !== null ? BigInt(row.force_tick) : null;
+    } catch (err) {
+      if (err instanceof PgqueError) throw err;
       throw mapPgError('force_tick', err, { queue });
     }
   }
@@ -323,30 +334,6 @@ export async function connect(
   }
   probe.release();
   return new Client(pool);
-}
-
-function serializePayload(payload: unknown): string {
-  // JSON.stringify(undefined) returns the literal `undefined` (not the
-  // string "null"), which would coerce to a SQL NULL bind param. Coerce
-  // top-level undefined to JSON null instead so it round-trips as a
-  // valid JSONB value. Omitted payload fields also arrive here as
-  // `undefined` because Event.payload is optional.
-  if (payload === undefined) return 'null';
-
-  let encoded: string | undefined;
-  try {
-    encoded = JSON.stringify(payload);
-  } catch (err) {
-    throw new PgqueSqlError('send', {
-      cause: err instanceof Error ? err : new Error(String(err)),
-    });
-  }
-  if (encoded === undefined) {
-    throw new PgqueSqlError('send', {
-      cause: new Error('payload must be JSON-serializable'),
-    });
-  }
-  return encoded;
 }
 
 function rowToMessage(row: RawMessageRow): Message {
