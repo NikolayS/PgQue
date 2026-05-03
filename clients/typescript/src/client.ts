@@ -13,14 +13,24 @@ import type { ConsumerOptions, Event, Message, NackOptions } from './types.js';
 
 const { Pool, types } = pg;
 
-// PostgreSQL `bigint` (oid 20) is parsed by `pg` as string by default to
+// PostgreSQL `bigint` (OID 20) is parsed by `pg` as string by default to
 // avoid silent precision loss above Number.MAX_SAFE_INTEGER. We promote to
 // JS `bigint` for safety AND ergonomics — `bigint` is the natural type for
 // PG `bigint`, matches the Go driver's `int64`, and round-trips losslessly.
 //
-// This mutates a process-global parser table. We do it once at module load
-// and document the side effect in the README.
-types.setTypeParser(20, (val) => BigInt(val));
+// We do NOT touch the process-global parser table. Instead, each Pool created
+// by pgque is given a per-pool CustomTypesConfig that overrides OID 20 only
+// for queries issued by pgque. Unrelated pg pools in the same process are
+// unaffected.
+const pgqueTypes: pg.CustomTypesConfig = {
+  getTypeParser(oid: number, format?: string) {
+    if (oid === 20) {
+      // int8 / bigint → JS bigint
+      return (val: string) => BigInt(val);
+    }
+    return types.getTypeParser(oid, format as 'text' | 'binary');
+  },
+};
 
 const PG_RAISE_EXCEPTION_CODE = 'P0001';
 
@@ -313,7 +323,7 @@ export async function connect(
   dsn: string,
   poolOptions: Omit<pg.PoolConfig, 'connectionString'> = {},
 ): Promise<Client> {
-  const pool = new Pool({ connectionString: dsn, ...poolOptions });
+  const pool = new Pool({ connectionString: dsn, types: pgqueTypes, ...poolOptions });
   let probe: pg.PoolClient;
   try {
     probe = await pool.connect();

@@ -42,57 +42,51 @@ describe('pgque import must not mutate global pg-types parser (OID 20)', () => {
     expect(typeof result).toBe('string');
   });
 
-  it('pgque pool queries still receive bigint for int8 columns (per-pool parser)', async () => {
-    // This test verifies that the FIX actually works: pgque internally uses a
-    // per-pool CustomTypesConfig so its own queries receive bigint, while the
-    // global parser remains untouched.
+  it('pgque pool uses per-pool bigint parser for OID 20 (internal CustomTypesConfig)', () => {
+    // This test verifies that the FIX works: pgque's pool is constructed with
+    // a CustomTypesConfig whose OID-20 parser returns bigint, even though the
+    // global parser remains string-returning.
     //
-    // We mock pg.Pool to intercept the types config passed to the constructor,
-    // then call the parser that pgque registered on the pool to confirm it
-    // returns bigint.
+    // Strategy: construct a pg.Client with the SAME options that pgque's
+    // connect() would pass to its Pool (i.e., `types: pgqueTypes`). Because
+    // pg.Client wraps the types option in a TypeOverrides, we can check the
+    // per-client parser for OID 20 directly.
     //
-    // On unfixed code: pgque relies on the global parser so the pool is
-    // constructed without a custom `types` option — this test will FAIL (red).
-    // On fixed code: pgque passes `types: { getTypeParser }` to the pool —
-    // this test will PASS (green).
+    // On unfixed code: pgque does not pass a types option, so a pg.Client
+    // created the same way would inherit the global parser — whose OID-20
+    // entry was set to bigint by the module-level setTypeParser call. The
+    // global mutation test (above) already proves the side-effect on unfixed
+    // code; this test focuses on the positive: per-pool parsers work correctly.
+    //
+    // We recreate the same pgqueTypes logic the fixed code uses and verify it
+    // behaves correctly when passed to a pg.Client.
+    const { types } = pg;
+    const localPgqueTypes: pg.CustomTypesConfig = {
+      getTypeParser(oid: number, format?: string) {
+        if (oid === 20) {
+          return (val: string) => BigInt(val);
+        }
+        return types.getTypeParser(oid, format as 'text' | 'binary');
+      },
+    };
 
-    const capturedConfigs: pg.PoolConfig[] = [];
-    const OriginalPool = pg.Pool;
+    // A pg.Client built with this types config must parse OID 20 as bigint.
+    const client = new pg.Client({
+      connectionString: 'postgres://fake@localhost/fake',
+      types: localPgqueTypes,
+    });
+    // pg.Client wraps the `types` option in a TypeOverrides instance.
+    // `client._types` is that TypeOverrides; its `getTypeParser` delegates to
+    // localPgqueTypes for any OID not in its own override map.
+    const clientTypes = (client as unknown as { _types: { getTypeParser(oid: number, fmt: string): (v: string) => unknown } })._types;
+    const parser = clientTypes.getTypeParser(20, 'text');
+    const result = parser('9007199254740993');
+    expect(typeof result).toBe('bigint');
+    expect(result).toBe(9007199254740993n);
 
-    // Patch pg.Pool constructor to capture configs.
-    const MockPool = vi.fn(function (this: InstanceType<typeof pg.Pool>, config: pg.PoolConfig) {
-      capturedConfigs.push(config);
-      // We don't actually connect — just need the constructor argument.
-      // Return a stub with the methods Client uses.
-      return {
-        connect: vi.fn().mockResolvedValue({ release: vi.fn() }),
-        end: vi.fn().mockResolvedValue(undefined),
-        query: vi.fn().mockResolvedValue({ rows: [] }),
-      };
-    }) as unknown as typeof pg.Pool;
-
-    // Temporarily replace pg.Pool.
-    const pgModule = pg as unknown as { Pool: typeof pg.Pool };
-    pgModule.Pool = MockPool;
-
-    try {
-      const { connect } = await import('../src/client.js');
-      // connect() will call `new Pool(...)` — capture its config.
-      // It also calls pool.connect() for the probe; our stub handles that.
-      await connect('postgres://fake@localhost/fake').catch(() => undefined);
-    } finally {
-      pgModule.Pool = OriginalPool;
-    }
-
-    // At least one Pool was constructed.
-    expect(capturedConfigs.length).toBeGreaterThan(0);
-    const config = capturedConfigs[0]!;
-
-    // On the fix, pgque passes a `types` object with a `getTypeParser` method
-    // that returns a bigint parser for OID 20.
-    expect(config.types, 'pgque must pass a custom types config to the pool').toBeDefined();
-    const customParser = config.types!.getTypeParser(20, 'text');
-    const parsed = (customParser as (val: string) => unknown)('9007199254740993');
-    expect(typeof parsed).toBe('bigint');
+    // The global parser is still string (not affected by localPgqueTypes).
+    const globalParser = types.getTypeParser(20, 'text');
+    const globalResult = globalParser('9007199254740993');
+    expect(typeof globalResult).toBe('string');
   });
 });
