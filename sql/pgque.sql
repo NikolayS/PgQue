@@ -2254,7 +2254,7 @@ returns setof record as $$
 --      i_quick_limit   - Number of events to return immediately
 --      i_extra_where   - optional where clause to filter events.
 --                        Trusted SQL fragment, not a parameter; never pass
---                        user-controlled text.
+--                        user-controlled text. Function is admin-only.
 --
 -- Returns:
 --      List of events.

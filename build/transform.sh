@@ -594,7 +594,7 @@ BEGIN { header_done = 0; param_done = 0 }
 !param_done && /^--      i_extra_where   - optional where clause to filter events$/ {
   print "--      i_extra_where   - optional where clause to filter events."
   print "--                        Trusted SQL fragment, not a parameter; never pass"
-  print "--                        user-controlled text."
+  print "--                        user-controlled text. Function is admin-only."
   param_done = 1
   next
 }
@@ -945,6 +945,17 @@ if [[ -d "${API_DIR}" ]]; then
     echo "FAIL: pgque-api section missing from install script"
     asm_errors=$((asm_errors + 1))
   fi
+fi
+
+# Verify the get_batch_cursor SECURITY contract reached the assembled file.
+# The per-function awk patch above runs before assembly; this guards against
+# a future assembly change that strips comments or reorders sections.
+if grep -q 'SECURITY: i_extra_where is concatenated' "${INSTALL_FILE}" \
+   && grep -q 'Trusted SQL fragment, not a parameter' "${INSTALL_FILE}"; then
+  echo "PASS: get_batch_cursor SECURITY contract present in install script"
+else
+  echo "FAIL: get_batch_cursor SECURITY contract missing from install script"
+  asm_errors=$((asm_errors + 1))
 fi
 
 echo ""
