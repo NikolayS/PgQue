@@ -251,8 +251,7 @@ func TestSendAndReceive(t *testing.T) {
 	}
 
 	// Ack
-	err = client.Ack(ctx, msgs[0].BatchID)
-	if err != nil {
+	if _, err = client.Ack(ctx, msgs[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -289,7 +288,7 @@ func TestNack(t *testing.T) {
 	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0]); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+	if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
 

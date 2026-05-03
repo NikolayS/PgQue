@@ -34,7 +34,7 @@ func TestSend_DefaultEventType(t *testing.T) {
 	if msgs[0].Type != "default" {
 		t.Fatalf("expected default type, got %q", msgs[0].Type)
 	}
-	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+	if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -71,7 +71,7 @@ func TestSend_MultipleEventsOneBatch(t *testing.T) {
 			t.Fatalf("expected all messages in one batch, got mixed batch ids %d and %d", first, m.BatchID)
 		}
 	}
-	if err := client.Ack(ctx, first); err != nil {
+	if _, err := client.Ack(ctx, first); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -101,7 +101,7 @@ func TestReceive_RespectsMaxBatch(t *testing.T) {
 		t.Fatalf("Receive returned %d messages, expected ≤ 10", len(msgs))
 	}
 	if len(msgs) > 0 {
-		client.Ack(ctx, msgs[0].BatchID)
+		_, _ = client.Ack(ctx, msgs[0].BatchID)
 	}
 }
 
@@ -181,7 +181,7 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 		}
 		// Close the batch so PgQ advances the consumer cursor and the
 		// retry_queue rows become eligible for redelivery on the next cycle.
-		if err := client.Ack(ctx, batchID); err != nil {
+		if _, err := client.Ack(ctx, batchID); err != nil {
 			t.Fatalf("ack after nack: %v", err)
 		}
 	}
@@ -243,7 +243,7 @@ func TestSendReceive_PayloadRoundTrip(t *testing.T) {
 	if !strings.Contains(msgs[0].Payload, `"string"`) || !strings.Contains(msgs[0].Payload, `"hello"`) {
 		t.Fatalf("payload missing expected fields: %s", msgs[0].Payload)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // TestSendBatch_RoundTrip verifies that SendBatch publishes every payload
@@ -285,7 +285,7 @@ func TestSendBatch_RoundTrip(t *testing.T) {
 			t.Fatalf("expected batch.type, got %q", m.Type)
 		}
 	}
-	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+	if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -338,7 +338,7 @@ func TestNack_WithRetryAfter(t *testing.T) {
 		pgque.WithReason("custom-reason-string")); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+	if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -23,7 +23,9 @@ type HandlerFunc func(ctx context.Context, msg Message) error
 // simulate Nack failures without a live database.
 type consumerBackend interface {
 	Receive(ctx context.Context, queue, consumer string, maxMessages int) ([]Message, error)
-	Ack(ctx context.Context, batchID int64) error
+	// Ack returns the row-count from pgque.finish_batch: 1 on success,
+	// 0 for a stale/double ack (batch already finished or not found).
+	Ack(ctx context.Context, batchID int64) (int64, error)
 	Nack(ctx context.Context, batchID int64, msg Message, opts ...NackOption) error
 }
 
@@ -136,8 +138,11 @@ func (c *Consumer) Start(ctx context.Context) error {
 				log.Printf("pgque: skipping ack for batch %d due to prior nack failures; PgQue will redeliver", batchID)
 				continue
 			}
-			if err := c.backend.Ack(ctx, batchID); err != nil {
+			n, err := c.backend.Ack(ctx, batchID)
+			if err != nil {
 				log.Printf("pgque: ack error: %v", err)
+			} else if n == 0 {
+				log.Printf("pgque: ack batch %d returned 0 rows — stale or double ack (batch already finished or not found)", batchID)
 			}
 		}
 	}

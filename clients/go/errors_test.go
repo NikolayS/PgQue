@@ -153,7 +153,7 @@ func TestAck_NonExistentBatch(t *testing.T) {
 	defer client.Close()
 	ctx := context.Background()
 
-	err := client.Ack(ctx, 9_999_999_999)
+	_, err := client.Ack(ctx, 9_999_999_999)
 	if err == nil {
 		t.Skip("Ack of non-existent batch did not error — backend treats this as no-op (acceptable)")
 	}
@@ -169,7 +169,7 @@ func TestAck_AfterClose(t *testing.T) {
 			t.Fatalf("Ack after Close panicked: %v", r)
 		}
 	}()
-	if err := client.Ack(context.Background(), 1); err == nil {
+	if _, err := client.Ack(context.Background(), 1); err == nil {
 		t.Fatal("expected error from Ack after Close")
 	}
 }

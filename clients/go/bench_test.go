@@ -74,7 +74,7 @@ func BenchmarkSendReceiveAck(b *testing.B) {
 			b.Fatal(err)
 		}
 		if len(msgs) > 0 {
-			if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+			if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 				b.Fatal(err)
 			}
 		}

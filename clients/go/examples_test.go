@@ -38,7 +38,7 @@ func Example_sendReceiveAck() {
 		log.Printf("got %s: %s", msg.Type, msg.Payload)
 	}
 	if len(msgs) > 0 {
-		if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+		if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 			log.Fatal(err)
 		}
 	}

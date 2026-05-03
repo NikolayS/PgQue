@@ -159,6 +159,10 @@ export class Client {
   /**
    * Fetch up to `maxMessages` from the next batch for `consumer` on `queue`.
    * Returns an empty array when no batch is currently available.
+   *
+   * WARNING: `ack(batchId)` finishes the whole underlying PgQ batch, including
+   * rows beyond `maxMessages`. Direct receive callers should pass a value large
+   * enough for the queue's possible batch size before acknowledging the batch.
    */
   async receive(queue: string, consumer: string, maxMessages = 100): Promise<Message[]> {
     if (!queue) {
@@ -186,13 +190,43 @@ export class Client {
     }
   }
 
-  /** Acknowledge (finish) a batch, advancing the consumer's position. */
-  async ack(batchId: bigint): Promise<void> {
+  /**
+   * Acknowledge (finish) a batch, advancing the consumer's position.
+   *
+   * Returns the row-count from `pgque.finish_batch`:
+   * - `1` — the batch was active and has been finished (normal success).
+   * - `0` — no active batch was finished: the `batchId` was not found,
+   *   was already finished (stale/double ack), or belongs to a different
+   *   consumer (race). Callers should log this at warn level; it is not a
+   *   SQL error and does not indicate a connection problem.
+   */
+  async ack(batchId: bigint): Promise<number> {
     if (typeof batchId !== 'bigint') {
       throw new PgqueSqlError('ack', { cause: new Error('batchId must be bigint') });
     }
     try {
-      await this.pool.query('select pgque.ack($1)', [batchId.toString()]);
+      // pgque.ack returns SQL integer (OID 23). pg parses OID 23 as JS
+      // number — only OID 20 (int8) is mapped to BigInt by pgqueTypes for
+      // our pool. The generic is `{ ack: number }` to reflect actual driver
+      // behaviour.
+      const result = await this.pool.query<{ ack: number }>(
+        'select pgque.ack($1) as ack',
+        [batchId.toString()],
+      );
+      const row = result.rows[0];
+      // pgque.ack always returns exactly one row (the integer result of
+      // pgque.finish_batch). The fallback path is unreachable in practice;
+      // the throw is a defensive sentinel so a malformed driver result is
+      // not silently misread as a stale/double ack (rowcount 0).
+      if (!row) {
+        throw new PgqueSqlError('ack', {
+          cause: new Error('pgque.ack returned no rows'),
+        });
+      }
+      // `Number(...)` is a defensive no-op: `pg` already returns OID 23
+      // (integer) as JS `number`. Coercing here guards against a future
+      // parser change that would yield bigint or string.
+      return Number(row.ack);
     } catch (err) {
       if (err instanceof PgqueError) throw err;
       throw mapPgError('ack', err);

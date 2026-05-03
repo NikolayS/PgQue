@@ -15,7 +15,7 @@ SQL primitives. The matrix below tracks the public client API on current
 | `send` | ✓ | ✓ | ✓ |
 | `send_batch` / `SendBatch` / `sendBatch` | ✓ | ✓ | ✓ |
 | `receive` | ✓ | ✓ | ✓ |
-| `ack` | ✓ | ✓ | ✓ |
+| `ack` returns SQL rowcount (0 stale, 1 success) | ✓ (int) | ✓ (int64) | ✓ (number) |
 | `nack` | ✓ | ✓ | ✓ |
 | `nack` retry delay + reason options | ✓ | ✗ | ✓ |
 | High-level `Consumer` | ✓ | ✓ | ✓ |

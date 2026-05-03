@@ -113,7 +113,12 @@ export class Consumer {
           );
         } else {
           try {
-            await this.client.ack(batchId);
+            const n = await this.client.ack(batchId);
+            if (n === 0) {
+              this.logger.warn(
+                `pgque: ack batch ${batchId} returned 0 — stale or double ack (batch already finished or not found)`,
+              );
+            }
           } catch (err) {
             this.logger.error(`pgque: ack error: ${formatErr(err)}`);
           }

@@ -33,7 +33,7 @@ func TestEvent_EmptyPayload(t *testing.T) {
 	if !strings.Contains(msgs[0].Payload, "null") {
 		t.Logf("payload for nil Payload is %q (acceptable as long as Receive does not panic)", msgs[0].Payload)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // TestEvent_LargePayload: 1 MiB payload round-trips without truncation.
@@ -62,7 +62,7 @@ func TestEvent_LargePayload(t *testing.T) {
 	if !strings.Contains(msgs[0].Payload, big) {
 		t.Fatalf("large payload truncated: received %d bytes, expected ≥ %d", len(msgs[0].Payload), size)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // TestEvent_UnicodeEverything: type and payload contain unicode (CJK + emoji).
@@ -93,7 +93,7 @@ func TestEvent_UnicodeEverything(t *testing.T) {
 	if !strings.Contains(msgs[0].Payload, "中文") || !strings.Contains(msgs[0].Payload, "🎉") {
 		t.Fatalf("payload unicode mangled: %s", msgs[0].Payload)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // TestEvent_TypeWithSpecialChars: types with dots, dashes, and slashes are
@@ -136,7 +136,7 @@ func TestEvent_TypeWithSpecialChars(t *testing.T) {
 		}
 	}
 	if len(msgs) > 0 {
-		client.Ack(ctx, msgs[0].BatchID)
+		_, _ = client.Ack(ctx, msgs[0].BatchID)
 	}
 }
 
@@ -171,7 +171,7 @@ func TestMessage_TimestampSensible(t *testing.T) {
 	if msgs[0].CreatedAt.Before(before) || msgs[0].CreatedAt.After(after) {
 		t.Fatalf("CreatedAt %v not within [%v, %v]", msgs[0].CreatedAt, before, after)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // TestMessage_RetryCountInitiallyNilOrZero: a freshly-sent event has retry_count
@@ -199,7 +199,7 @@ func TestMessage_RetryCountInitiallyNilOrZero(t *testing.T) {
 	if msgs[0].RetryCount != nil && *msgs[0].RetryCount != 0 {
 		t.Fatalf("expected RetryCount nil or 0 for fresh event, got %d", *msgs[0].RetryCount)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // TestEvent_PayloadIsString: a string Payload marshals to a JSON string.
@@ -226,7 +226,7 @@ func TestEvent_PayloadIsString(t *testing.T) {
 	if msgs[0].Payload != `"just a string"` {
 		t.Fatalf("expected JSON-quoted string payload, got %q", msgs[0].Payload)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // TestEvent_PayloadIsArray: a slice payload marshals to a JSON array.
@@ -253,7 +253,7 @@ func TestEvent_PayloadIsArray(t *testing.T) {
 	if msgs[0].Payload != "[1, 2, 3]" {
 		t.Fatalf("expected [1, 2, 3], got %q", msgs[0].Payload)
 	}
-	client.Ack(ctx, msgs[0].BatchID)
+	_, _ = client.Ack(ctx, msgs[0].BatchID)
 }
 
 // NOTE: The Send API does not currently accept Extra1..Extra4 fields on
