@@ -67,6 +67,11 @@ export interface ConsumerOptions {
   unknownHandlerPolicy?: 'ack' | 'nack';
   /** Optional logger. Defaults to `console`. */
   logger?: Pick<Console, 'warn' | 'error'>;
+  /**
+   * @internal — used in tests to inject a stub `pg.Client` for the
+   * dedicated LISTEN connection instead of opening a real one.
+   */
+  _listenClientFactory?: () => Promise<import('pg').Client>;
 }
 
 /**

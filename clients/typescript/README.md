@@ -82,6 +82,56 @@ try {
 `sendBatch()`, `ticker(queue)`, and `forceTick(queue)` are JS `bigint` to
 match PostgreSQL `bigint` losslessly.
 
+### Consumer options
+
+`client.newConsumer(queue, name, opts?)` accepts:
+
+| Option | Default | Notes |
+|---|---|---|
+| `pollInterval` | `30000` (ms) | Maximum wait between poll cycles. With LISTEN/NOTIFY enabled (the default when using `client.newConsumer`), the consumer wakes immediately on a tick notification and only falls back to this interval as a safety net for missed notifications. |
+| `maxMessages` | `2147483647` | Max messages returned per `pgque.receive` call. The default is PostgreSQL's `int` maximum, so the high-level consumer requests the whole PgQ batch before acknowledging it. `pgque.ack(batch_id)` finishes the whole underlying batch, including rows beyond `maxMessages`; only lower this value when it is at least as large as the queue's possible batch size for your workload. |
+| `unknownHandlerPolicy` | `'nack'` | What to do when a message arrives whose `type` has no registered handler. `'nack'` (default) routes to retry / DLQ via `pgque.nack`. `'ack'` logs a warning and lets the batch ack absorb it (silent discard). |
+| `logger` | `console` | Receives `warn` / `error` lines. |
+
+### LISTEN/NOTIFY wakeup
+
+The consumer opens a dedicated `pg.Client` connection and issues
+`LISTEN pgque_<queue>`. When the PgQue ticker emits a `pg_notify`, the
+consumer wakes immediately — typically within single-digit milliseconds of
+the tick — instead of waiting up to `pollInterval`. Polling remains active
+as a safety net for missed notifications and network drops; `pollInterval`
+becomes the maximum latency rather than the typical one.
+
+If the dedicated LISTEN connection drops (network glitch, idle connection
+timeout, etc.), the consumer reconnects automatically with a short backoff
+(1 s → 2 s → 5 s, capped at `pollInterval`). During reconnection the poll
+fallback keeps messages flowing. Call `consumer.start(signal)` and abort
+the signal to stop cleanly; the LISTEN connection is unlistened and closed
+before `start()` resolves.
+
+### Payload coercion: `undefined` → JSON `null`
+
+`client.send()` JSON-encodes `event.payload` before binding it as
+`jsonb`. Because `JSON.stringify(undefined)` returns the JS literal
+`undefined` (not the string `"null"`), the driver substitutes the JSON
+literal `null` whenever the top-level `payload` is `undefined`:
+
+```ts
+// All three store the JSON value `null` in the queue:
+await client.send('q', { type: 't', payload: null });
+await client.send('q', { type: 't', payload: undefined });
+await client.send('q', { type: 't' });
+```
+
+Inside an object, properties whose value is `undefined` are dropped by
+`JSON.stringify` per the JSON spec. This is the standard JS behavior;
+the driver does not try to override it:
+
+```ts
+await client.send('q', { type: 't', payload: { a: 1, b: undefined } });
+// Stored as: {"a":1}
+```
+
 ## Errors
 
 All errors derive from `PgqueError`:

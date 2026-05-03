@@ -264,6 +264,9 @@ describe('Consumer (in-memory mocks)', () => {
       on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
         notifyEmitter.on(event, handler);
       }),
+      once: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        notifyEmitter.once(event, handler);
+      }),
       removeListener: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
         notifyEmitter.removeListener(event, handler);
       }),

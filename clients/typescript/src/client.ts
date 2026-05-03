@@ -11,7 +11,7 @@ import {
 } from './errors.js';
 import type { ConsumerOptions, Event, Message, NackOptions } from './types.js';
 
-const { Pool, types } = pg;
+const { Pool, Client: Client_, types } = pg;
 
 // PostgreSQL `bigint` (OID 20) is parsed by `pg` as string by default to
 // avoid silent precision loss above Number.MAX_SAFE_INTEGER. We promote to
@@ -69,7 +69,10 @@ interface RawMessageRow {
  */
 export class Client {
   /** @internal — use {@link connect} instead. */
-  constructor(private readonly pool: pg.Pool) {}
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly dsn?: string,
+  ) {}
 
   /** Release the connection pool. After this, the client must not be used. */
   async close(): Promise<void> {
@@ -277,7 +280,20 @@ export class Client {
    * must already be subscribed (e.g. via {@link subscribe}).
    */
   newConsumer(queue: string, name: string, opts: ConsumerOptions = {}): Consumer {
-    return new Consumer(this, queue, name, opts);
+    // Inject a factory for the dedicated LISTEN pg.Client when we have a DSN
+    // and the caller hasn't already provided a test-stub factory.
+    const dsn = this.dsn;
+    const optsWithFactory: ConsumerOptions =
+      dsn !== undefined && opts._listenClientFactory === undefined
+        ? {
+            ...opts,
+            _listenClientFactory: async () => {
+              const c = new Client_({ connectionString: dsn });
+              return c;
+            },
+          }
+        : opts;
+    return new Consumer(this, queue, name, optsWithFactory);
   }
 
   /**
@@ -398,7 +414,7 @@ export async function connect(
     throw new PgqueConnectionError(`pgque: connect: ${(err as Error).message}`, { cause: err });
   }
   probe.release();
-  return new Client(pool);
+  return new Client(pool, dsn);
 }
 
 function rowToMessage(row: RawMessageRow): Message {
