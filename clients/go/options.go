@@ -19,16 +19,15 @@ func WithPollInterval(d time.Duration) ConsumerOption {
 	return func(c *Consumer) { c.pollInterval = d }
 }
 
-// WithMaxMessages sets the per-Receive limit. Default is 500, matching
-// pgque's default queue_ticker_max_count threshold so common batches are
-// drained in one Receive call.
+// WithMaxMessages sets the per-Receive limit. By default the Consumer
+// requests PostgreSQL's int maximum so it drains the whole PgQ batch before
+// acknowledging it.
 //
 // WARNING: pgque.ack(batch_id) finishes the entire underlying PgQ batch,
-// including rows the consumer never received because of this limit. If a
-// batch exceeds maxMessages (possible via ticker_max_lag bursts or operator
-// changes to ticker_max_count), the unreturned rows are skipped after ack.
-// See issue #134. Size maxMessages >= the queue's ticker_max_count for
-// safe pagination on a per-workload basis.
+// including rows the consumer never received because of this limit. If you
+// set maxMessages below the real batch size, unreturned rows are skipped
+// after ack. Only lower this value when it is at least as large as the
+// queue's possible batch size for your workload.
 func WithMaxMessages(n int) ConsumerOption {
 	return func(c *Consumer) {
 		if n > 0 {

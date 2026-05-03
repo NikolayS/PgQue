@@ -59,8 +59,7 @@ func main() {
 
     // Consumer side
     consumer := client.NewConsumer("orders", "order_worker",
-        pgque.WithMaxMessages(500),                            // ticker_max_count default
-        pgque.WithUnknownHandlerPolicy(pgque.NackUnknown),     // also the default
+        pgque.WithUnknownHandlerPolicy(pgque.NackUnknown), // also the default
     )
     consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) error {
         log.Printf("got %s: %s", msg.Type, msg.Payload)
@@ -77,8 +76,8 @@ func main() {
 | Option                                  | Default        | Notes                                                                 |
 | --------------------------------------- | -------------- | --------------------------------------------------------------------- |
 | `WithPollInterval(d time.Duration)`     | `30s`          | Idle backoff between polls when the queue is empty.                   |
-| `WithMaxMessages(n int)`                | `500`          | Per-Receive limit; matches default `ticker_max_count`. If a batch exceeds this, `Ack` still finishes it and unreturned rows are skipped — size `>=` the queue's `ticker_max_count`. |
-| `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` silently skips messages with no registered handler.      |
+| `WithMaxMessages(n int)`                | `math.MaxInt32` | Per-Receive limit. The default requests the whole PgQ batch before `Ack`. If you lower it below the real batch size, `Ack` still finishes the batch and unreturned rows are skipped. |
+| `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` logs and skips messages with no registered handler.      |
 
 ## Nack options
 

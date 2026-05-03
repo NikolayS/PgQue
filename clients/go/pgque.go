@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -178,37 +179,6 @@ func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts ...N
 	return nil
 }
 
-// SendBatch publishes a batch of events of the same type to the named
-// queue and returns the assigned event IDs in input order. Each payload
-// is JSON-marshalled before being passed to pgque.send_batch(text, text,
-// jsonb[]).
-//
-// SendBatch is a thin 1:1 wrapper around the SQL function: producer-side
-// transactional guarantees come from the underlying pgx pool, and
-// validation (queue exists, type non-null) is enforced by the SQL layer.
-func (c *Client) SendBatch(ctx context.Context, queue, eventType string, payloads []any) ([]int64, error) {
-	if eventType == "" {
-		eventType = "default"
-	}
-	encoded := make([]string, len(payloads))
-	for i, p := range payloads {
-		b, err := json.Marshal(p)
-		if err != nil {
-			return nil, fmt.Errorf("pgque: marshal payload %d: %w", i, err)
-		}
-		encoded[i] = string(b)
-	}
-	var ids []int64
-	err := c.pool.QueryRow(ctx,
-		"SELECT pgque.send_batch($1, $2, $3::jsonb[])",
-		queue, eventType, encoded,
-	).Scan(&ids)
-	if err != nil {
-		return nil, fmt.Errorf("pgque: send_batch: %w", err)
-	}
-	return ids, nil
-}
-
 // NewConsumer creates a Consumer that polls the given queue under the
 // given consumer name. The consumer must already be registered in PgQue
 // (e.g. via pgque.register_consumer).
@@ -216,7 +186,7 @@ func (c *Client) SendBatch(ctx context.Context, queue, eventType string, payload
 // Defaults — override with the matching ConsumerOption:
 //
 //   - poll interval: 30s   (WithPollInterval)
-//   - max messages:  500   (WithMaxMessages, matches ticker_max_count)
+//   - max messages:  MaxInt32 (WithMaxMessages; drains the whole batch by default)
 //   - unknown type:  Nack  (WithUnknownHandlerPolicy)
 func (c *Client) NewConsumer(queue, name string, opts ...ConsumerOption) *Consumer {
 	consumer := &Consumer{
@@ -224,7 +194,7 @@ func (c *Client) NewConsumer(queue, name string, opts ...ConsumerOption) *Consum
 		queue:         queue,
 		name:          name,
 		pollInterval:  30 * time.Second,
-		maxMessages:   500,
+		maxMessages:   math.MaxInt32,
 		handlers:      make(map[string]HandlerFunc),
 		unknownPolicy: NackUnknown,
 	}

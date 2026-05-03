@@ -5,6 +5,7 @@ package pgque_test
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,9 +28,11 @@ type stubBackend struct {
 	ackCount  int32
 
 	nackErr error
+	lastMax int32
 }
 
-func (s *stubBackend) Receive(_ context.Context, _, _ string, _ int) ([]pgque.Message, error) {
+func (s *stubBackend) Receive(_ context.Context, _, _ string, maxMessages int) ([]pgque.Message, error) {
+	atomic.StoreInt32(&s.lastMax, int32(maxMessages))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.delivered {
@@ -55,8 +58,7 @@ func (s *stubBackend) Nack(_ context.Context, _ int64, _ pgque.Message, _ ...pgq
 // was never recorded. With the fix in place, a Nack error must leave
 // the batch unacked so that PgQue redelivers it on the next Receive.
 func TestConsumer_NackFailure_DoesNotAck(t *testing.T) {
-	client := connectOrSkip(t)
-	defer client.Close()
+	var client *pgque.Client
 
 	stub := &stubBackend{
 		msg: pgque.Message{
@@ -89,8 +91,7 @@ func TestConsumer_NackFailure_DoesNotAck(t *testing.T) {
 // TestConsumer_NackSuccess_StillAcks confirms the green case: when the
 // per-message Nack succeeds, the batch is acked exactly once.
 func TestConsumer_NackSuccess_StillAcks(t *testing.T) {
-	client := connectOrSkip(t)
-	defer client.Close()
+	var client *pgque.Client
 
 	stub := &stubBackend{
 		msg: pgque.Message{
@@ -123,8 +124,7 @@ func TestConsumer_NackSuccess_StillAcks(t *testing.T) {
 // for unhandled types: the batch is acked, the unknown message is
 // effectively dropped (consumer-side ignored).
 func TestConsumer_AckUnknownPolicy_SkipsNack(t *testing.T) {
-	client := connectOrSkip(t)
-	defer client.Close()
+	var client *pgque.Client
 
 	stub := &stubBackend{
 		msg: pgque.Message{
@@ -149,5 +149,40 @@ func TestConsumer_AckUnknownPolicy_SkipsNack(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&stub.ackCount); got == 0 {
 		t.Fatal("AckUnknown policy must still Ack the batch, got 0")
+	}
+}
+
+func TestConsumer_DefaultMaxMessagesRequestsWholeBatch(t *testing.T) {
+	var client *pgque.Client
+	stub := &stubBackend{}
+
+	c := client.NewConsumer("dummy_queue", "dummy_consumer",
+		pgque.WithPollInterval(10*time.Millisecond))
+	pgque.SetConsumerBackend(c, stub)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	_ = c.Start(ctx)
+
+	if got := atomic.LoadInt32(&stub.lastMax); got != math.MaxInt32 {
+		t.Fatalf("default maxMessages = %d, want math.MaxInt32", got)
+	}
+}
+
+func TestConsumer_WithMaxMessagesPassesReceiveLimit(t *testing.T) {
+	var client *pgque.Client
+	stub := &stubBackend{}
+
+	c := client.NewConsumer("dummy_queue", "dummy_consumer",
+		pgque.WithPollInterval(10*time.Millisecond),
+		pgque.WithMaxMessages(123))
+	pgque.SetConsumerBackend(c, stub)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	_ = c.Start(ctx)
+
+	if got := atomic.LoadInt32(&stub.lastMax); got != 123 {
+		t.Fatalf("configured maxMessages = %d, want 123", got)
 	}
 }
