@@ -22,7 +22,14 @@ const { Pool, types } = pg;
 // by pgque is given a per-pool CustomTypesConfig that overrides OID 20 only
 // for queries issued by pgque. Unrelated pg pools in the same process are
 // unaffected.
-const pgqueTypes: pg.CustomTypesConfig = {
+/**
+ * Per-pool type overrides used by pgque's `connect()`.
+ * Parses PostgreSQL `bigint` (OID 20) as JS `bigint` without touching the
+ * process-global `pg.types` table.
+ *
+ * @internal — exported for testing only; do not depend on this in application code.
+ */
+export const pgqueTypes: pg.CustomTypesConfig = {
   getTypeParser(oid: number, format?: string) {
     if (oid === 20) {
       // int8 / bigint → JS bigint
@@ -309,6 +316,9 @@ export class Client {
  * the connection eagerly; rejects with {@link PgqueConnectionError} on
  * failure.
  *
+ * The `types` parser config is reserved for pgque's internal bigint parsing;
+ * user-supplied `types` is ignored.
+ *
  * @example
  * ```ts
  * const client = await connect('postgres://user:pass@localhost/mydb');
@@ -321,9 +331,9 @@ export class Client {
  */
 export async function connect(
   dsn: string,
-  poolOptions: Omit<pg.PoolConfig, 'connectionString'> = {},
+  poolOptions: Omit<pg.PoolConfig, 'connectionString' | 'types'> = {},
 ): Promise<Client> {
-  const pool = new Pool({ connectionString: dsn, types: pgqueTypes, ...poolOptions });
+  const pool = new Pool({ connectionString: dsn, ...poolOptions, types: pgqueTypes });
   let probe: pg.PoolClient;
   try {
     probe = await pool.connect();

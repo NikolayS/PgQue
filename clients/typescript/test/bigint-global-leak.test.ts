@@ -10,6 +10,7 @@
 
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import pg from 'pg';
+import { pgqueTypes } from '../src/index.js';
 
 // ---------------------------------------------------------------------------
 // Test 1 (red on unfixed code, green on fix):
@@ -47,45 +48,28 @@ describe('pgque import must not mutate global pg-types parser (OID 20)', () => {
     // a CustomTypesConfig whose OID-20 parser returns bigint, even though the
     // global parser remains string-returning.
     //
-    // Strategy: construct a pg.Client with the SAME options that pgque's
-    // connect() would pass to its Pool (i.e., `types: pgqueTypes`). Because
-    // pg.Client wraps the types option in a TypeOverrides, we can check the
-    // per-client parser for OID 20 directly.
-    //
-    // On unfixed code: pgque does not pass a types option, so a pg.Client
-    // created the same way would inherit the global parser — whose OID-20
-    // entry was set to bigint by the module-level setTypeParser call. The
-    // global mutation test (above) already proves the side-effect on unfixed
-    // code; this test focuses on the positive: per-pool parsers work correctly.
-    //
-    // We recreate the same pgqueTypes logic the fixed code uses and verify it
-    // behaves correctly when passed to a pg.Client.
-    const { types } = pg;
-    const localPgqueTypes: pg.CustomTypesConfig = {
-      getTypeParser(oid: number, format?: string) {
-        if (oid === 20) {
-          return (val: string) => BigInt(val);
-        }
-        return types.getTypeParser(oid, format as 'text' | 'binary');
-      },
-    };
+    // Strategy: construct a pg.Client with the production `pgqueTypes` object
+    // exported from client.ts. Because pg.Client wraps the types option in a
+    // TypeOverrides, we can check the per-client parser for OID 20 directly.
+    // Using the real exported object means any future change to `pgqueTypes`
+    // is automatically reflected here without needing to update this test.
 
-    // A pg.Client built with this types config must parse OID 20 as bigint.
+    // A pg.Client built with the production pgqueTypes must parse OID 20 as bigint.
     const client = new pg.Client({
       connectionString: 'postgres://fake@localhost/fake',
-      types: localPgqueTypes,
+      types: pgqueTypes,
     });
     // pg.Client wraps the `types` option in a TypeOverrides instance.
     // `client._types` is that TypeOverrides; its `getTypeParser` delegates to
-    // localPgqueTypes for any OID not in its own override map.
+    // pgqueTypes for any OID not in its own override map.
     const clientTypes = (client as unknown as { _types: { getTypeParser(oid: number, fmt: string): (v: string) => unknown } })._types;
     const parser = clientTypes.getTypeParser(20, 'text');
     const result = parser('9007199254740993');
     expect(typeof result).toBe('bigint');
     expect(result).toBe(9007199254740993n);
 
-    // The global parser is still string (not affected by localPgqueTypes).
-    const globalParser = types.getTypeParser(20, 'text');
+    // The global parser is still string (not affected by pgqueTypes).
+    const globalParser = pg.types.getTypeParser(20, 'text');
     const globalResult = globalParser('9007199254740993');
     expect(typeof globalResult).toBe('string');
   });

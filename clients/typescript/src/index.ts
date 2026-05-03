@@ -34,7 +34,7 @@
  * and does not affect other `pg` clients in the same process.
  */
 
-export { Client, connect } from './client.js';
+export { Client, connect, pgqueTypes } from './client.js';
 export { Consumer } from './consumer.js';
 export {
   PgqueConnectionError,
