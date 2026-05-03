@@ -42,7 +42,7 @@ Available publishing overloads:
 
 Use explicit casts (`::jsonb`, `::jsonb[]`, `::text[]`) when overload resolution would otherwise be ambiguous. Untyped string literals choose the `text` fast path.
 
-**Named-argument note:** PR #159 standardized modern publishing argument names to `queue_name`, `type_name`, `payload`, and `payloads`. Positional calls are unchanged. Named calls using the previous implementation-only names (`i_queue`, `i_type`, `i_payload`, `i_payloads`) must switch to the documented names.
+**Named-argument note:** modern publishing argument names are `queue_name`, `type_name`, `payload`, and `payloads`. Positional calls are unchanged.
 
 #### `pgque.send(queue_name text, payload jsonb) → bigint`
 
@@ -113,7 +113,7 @@ Grant: none (internal). Source: `sql/pgque-api/send.sql`.
 
 The consume API wraps `pgque.next_batch`, `pgque.get_batch_events`, `pgque.finish_batch`, and `pgque.event_retry`. Typical loop: `receive` → process → `ack` (or `nack` on failure).
 
-All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`) are granted to `pgque_reader`, mirroring upstream PgQ's producer/consumer role split. Apps that both produce and consume must hold both `pgque_reader` and `pgque_writer` — `pgque_writer` does not inherit `pgque_reader` (see issues #102, #106).
+All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`) are granted to `pgque_reader`, mirroring upstream PgQ's producer/consumer role split. Apps that both produce and consume must hold both `pgque_reader` and `pgque_writer` — `pgque_writer` does not inherit `pgque_reader`.
 
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
@@ -485,7 +485,7 @@ Returned by `pgque.receive()` and consumed by `pgque.nack()`.
 
 ## Roles and grants
 
-Three roles. `pgque_reader` (consume) and `pgque_writer` (produce) are **siblings**, not parent/child — this mirrors upstream PgQ's role model and prevents a producer-only role from acking another consumer's batch (#102, #106). `pgque_admin` is a member of both. Source: `sql/pgque-additions/roles.sql` (plus colocated grants in `sql/pgque-api/*.sql` and `sql/pgque-additions/dlq.sql`).
+Three roles. `pgque_reader` (consume) and `pgque_writer` (produce) are **siblings**, not parent/child — this mirrors upstream PgQ's role model and prevents a producer-only role from acking another consumer's batch. `pgque_admin` is a member of both. Source: `sql/pgque-additions/roles.sql` (plus colocated grants in `sql/pgque-api/*.sql` and `sql/pgque-additions/dlq.sql`).
 
 Apps that produce **and** consume must be granted both `pgque_reader` and `pgque_writer` explicitly.
 

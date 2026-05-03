@@ -64,6 +64,24 @@ set -Eeuo pipefail
 - 2-space indent, no tabs
 - Quote all variable expansions
 
+### Documentation
+
+- **Write for new users.** README and docs target someone arriving today, not
+  someone migrating from an older state. Do not include "before X" or
+  "previously did Y, now does Z" framing in the README or under `docs/`.
+  Migration notes belong in release notes (`CHANGELOG.md` / GitHub releases),
+  full stop.
+- **No PR or issue numbers in the README or `docs/`.** No `#123`, no
+  `(see PR #456)`, no `refs #102, #106`. Refer to behavior, not the change
+  history that produced it. (External citations to other projects' issue
+  trackers, used as evidence for a claim, are fine.) PR/issue numbers may
+  appear in commit messages, release notes, `blueprints/`, and `CONTRIBUTING.md`.
+- **Installation docs must be self-complete but not bloated.** Every
+  install/quickstart doc covers: install command, ticker setup (or how to skip
+  it), and role grants (`pgque_reader` / `pgque_writer` / `pgque_admin`,
+  including the produce+consume case that needs both). One short snippet,
+  not a tour.
+
 ### Git Commits
 
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`

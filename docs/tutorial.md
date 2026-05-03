@@ -39,7 +39,20 @@ select pgque.version();
  [[your version]]
 ```
 
-The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. See the [reference](reference.md) for the full surface.
+The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. The roles are siblings: `pgque_writer` produces (`send`, `send_batch`); `pgque_reader` consumes (`subscribe`, `receive`, `ack`, `nack`); `pgque_admin` is a member of both. Apps that produce **and** consume need both:
+
+```sql
+-- Produce + consume:
+grant pgque_reader, pgque_writer to app_orders;
+
+-- Pure producer:
+grant pgque_writer to app_webhook;
+
+-- Pure consumer / dashboard / metrics:
+grant pgque_reader to metrics;
+```
+
+This tutorial runs every step as the install owner, so no extra grants are needed to follow along. See the [reference](reference.md) for the full surface.
 
 ## Step 2: Create the queue and the consumer
 
