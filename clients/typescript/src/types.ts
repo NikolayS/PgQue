@@ -54,11 +54,10 @@ export interface ConsumerOptions {
    * `maxMessages` — which can happen when `ticker_max_lag` fires after
    * more than `ticker_max_count` events have accumulated, or when the
    * operator raises `ticker_max_count` — the unreturned rows are skipped
-   * after ack. See https://github.com/NikolayS/pgque/issues/134.
+   * after ack.
    *
    * Set `maxMessages` to at least the queue's `ticker_max_count` for your
-   * workload to make the data-loss window unlikely; a SQL-side
-   * partial-ack fix is tracked in #134.
+   * workload to make the data-loss window unlikely.
    */
   maxMessages?: number;
   /**
