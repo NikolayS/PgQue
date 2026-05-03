@@ -139,6 +139,8 @@ select pgque.ticker();
 
 `force_next_tick` returns the current tick id (the queue was seeded with tick `1` by `create_queue`). `ticker()` returns the number of queues it processed.
 
+> **Each statement above runs in its own transaction.** That is intentional — PgQue is snapshot-based. `pgque.ticker` records the snapshot it sees; `pgque.receive` only returns events whose insert committed *before* that snapshot. If you wrap `send` + `force_tick` + `ticker` (or `maint_retry_events` + `ticker`) inside one explicit `begin`/`commit` block, the ticker's snapshot does not see the inserts and the next `receive` returns zero rows. See the [snapshot rule](pgq-concepts.md#snapshot-rule).
+
 Now try receiving again:
 
 ```sql

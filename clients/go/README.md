@@ -184,6 +184,30 @@ TypeScript client (`PgqueQueueNotFoundError`, `PgqueConsumerNotFoundError`,
 `PgqueSqlError`). Go uses the standard acronym-uppercase convention
 (`SQLError` rather than `SqlError`).
 
+## Transactions
+
+PgQue is snapshot-based. `Client.Send` (or any insert), the ticker, and
+`Client.Receive` must run in **distinct, committed** transactions —
+otherwise the ticker's snapshot does not see the producer's commit and
+`Receive` returns zero rows.
+
+By default this is satisfied transparently: every `Client.Send`,
+`Client.Receive`, `Client.Ack`, etc. uses `pgxpool` and runs in its own
+implicit transaction. The `Consumer` poll loop is also pool-level; no
+special handling required.
+
+The footgun is `Client.Pool()`. Its doc-comment notes you can call
+`pgque.send` inside your own `pgx.Tx` for transactional enqueueing —
+that is correct, but **only if the consumer side runs in a separate
+transaction after your `tx.Commit()`**. Do **not** wrap `pgque.send`
+and `pgque.receive` in one shared `pgx.Tx` — the consumer cannot see
+what the producer just sent until it commits. The same caveat applies
+to invoking `pgque.maint_retry_events` and `pgque.ticker` inside one
+Tx: the ticker's snapshot will predate the maint commit and the next
+batch will be empty.
+
+See [pgq-concepts.md#snapshot-rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+
 ## Tests
 
 The integration tests require a running PostgreSQL with the PgQue schema

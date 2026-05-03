@@ -121,6 +121,29 @@ only on pgque's internal pool via a per-pool `CustomTypesConfig` — it
 does **not** touch the process-global `pg-types` table. Other `pg.Pool`
 or `pg.Client` instances in the same process are unaffected.
 
+## Transactions
+
+PgQue is snapshot-based. `client.send` (or any insert), the ticker, and
+`client.receive` must run in **distinct, committed** transactions —
+otherwise the ticker's snapshot does not see the producer's commit and
+`receive` returns zero rows.
+
+By default this is satisfied transparently: every method on `client`
+goes through `pg.Pool#query`, which checks out a fresh connection and
+runs each statement in its own implicit transaction. The high-level
+`Consumer` poll loop is also pool-level; no special handling required.
+
+The footgun is `client.rawPool`. If you want transactional enqueue —
+`pgque.send` inside your application's transaction — check out a
+client with `await client.rawPool.connect()`, then run `BEGIN`, your
+inserts including the `pgque.send`, and `COMMIT`. Do **not** mix
+`pgque.send` and `pgque.receive` in one shared transaction — the
+consumer cannot see what the producer just sent until it commits. The
+same caveat applies to invoking `pgque.maint_retry_events` and
+`pgque.ticker` inside one Tx.
+
+See [pgq-concepts.md#snapshot-rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+
 ## Tests
 
 The repository standardizes on Bun for TypeScript client development and CI
