@@ -10,7 +10,7 @@ SQL primitives. The matrix below tracks the public client API on current
 | --- | :---: | :---: | :---: |
 | `connect` / `close` | ✓ | ✓ | ✓ |
 | Raw SQL escape hatch | ✓ (`conn`) | ✓ (`Pool()`) | ✓ (`rawPool`) |
-| Typed client errors | ✓ | ✗ | ✓ |
+| PgQue-classified errors | ✓ | ✗ | ✓ |
 | Lossless PostgreSQL `bigint` IDs | ✓ (`int`) | ✓ (`int64`) | ✓ (`bigint`) |
 | `send` | ✓ | ✓ | ✓ |
 | `send_batch` / `SendBatch` / `sendBatch` | ✓ | ✓ | ✓ |
@@ -19,17 +19,17 @@ SQL primitives. The matrix below tracks the public client API on current
 | `nack` | ✓ | ✓ | ✓ |
 | `nack` retry delay + reason options | ✓ | ✗ | ✓ |
 | High-level `Consumer` | ✓ | ✓ | ✓ |
-| Consumer wakeup model | LISTEN/NOTIFY + polling fallback | polling | polling |
+| Consumer wakeup model | polling + optional LISTEN/NOTIFY wakeup | polling | polling |
 | `Consumer` poll interval option | ✓ | ✓ | ✓ |
 | `Consumer` max-messages option | ✓ | ✗ | ✓ |
 | `Consumer` retry delay option | ✓ | ✗ | ✗ |
 | Unknown-type behavior avoids silent ack | ✗ | ✓ | ✓ |
 | Configurable unknown-type policy | ✗ | ✗ | ✗ |
 | `subscribe` / `unsubscribe` wrappers | ✗ | ✗ | ✓ |
-| `ticker(queue?)` / `force_tick(queue)` wrappers | ✗ | ✗ | ✓ |
 
 Legend: ✓ supported by the client API on `main`; ✗ not exposed as a
-first-class client API. Callers can still use raw SQL through the underlying
-connection/pool for SQL primitives that do not yet have wrappers.
+first-class client API. Lower-level SQL primitives remain available through raw
+connection/pool escape hatches. TypeScript currently exposes extra convenience
+wrappers for `ticker` / `forceTick`; Python and Go can call them via raw SQL.
 
 See #146 for the cross-driver audit umbrella.
