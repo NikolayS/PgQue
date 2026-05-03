@@ -171,11 +171,11 @@ For environments that already run [`pg_tle`](https://github.com/aws/pg_tle) (Tru
 
 ```sql
 create extension if not exists pg_tle;
-\i sql/pgque-pg_tle.sql       -- registers pgque with pg_tle
+\i sql/pgque-tle.sql       -- registers pgque with pg_tle
 create extension pgque;        -- materialises the schema in this database
 ```
 
-The wrapper pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` because Postgres roles are cluster-global and cannot be created from inside a TLE install body, so the role running this needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-pg_tle-uninstall.sql`.
+The wrapper pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` because Postgres roles are cluster-global and cannot be created from inside a TLE install body, so the role running this needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-tle-uninstall.sql`.
 
 This path is fully opt-in. Picking it trades the strict "no C extension on the server" property for standard extension lifecycle semantics; if that trade-off is not interesting, just keep using the `\i sql/pgque.sql` install above.
 

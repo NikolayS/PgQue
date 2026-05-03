@@ -1,4 +1,4 @@
--- pgque-pg_tle-uninstall.sql -- Remove PgQue from pg_tle.
+-- pgque-tle-uninstall.sql -- Remove PgQue from pg_tle.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- Drops the pgque extension from this database (if installed) and unregisters
@@ -6,7 +6,7 @@
 -- they may still be referenced by other databases on the cluster.
 --
 -- Usage:
---   psql -d mydb -f sql/pgque-pg_tle-uninstall.sql
+--   psql -d mydb -f sql/pgque-tle-uninstall.sql
 
 \set ON_ERROR_STOP on
 

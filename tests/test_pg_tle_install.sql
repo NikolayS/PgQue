@@ -7,11 +7,11 @@
 --
 -- Steps exercised:
 --   1. create extension pg_tle
---   2. \i sql/pgque-pg_tle.sql              -- registers pgque with pg_tle
+--   2. \i sql/pgque-tle.sql              -- registers pgque with pg_tle
 --   3. create extension pgque                -- materialises the schema
 --   4. assert extension membership / role grants are wired
 --   5. drop extension pgque cascade          -- clean uninstall
---   6. \i sql/pgque-pg_tle-uninstall.sql     -- unregister from pg_tle
+--   6. \i sql/pgque-tle-uninstall.sql     -- unregister from pg_tle
 --
 -- Run from the repo root:
 --   psql -d pgque_pgtle_test -v ON_ERROR_STOP=1 -f tests/test_pg_tle_install.sql
@@ -22,7 +22,7 @@
 
 create extension if not exists pg_tle;
 
-\i sql/pgque-pg_tle.sql
+\i sql/pgque-tle.sql
 
 -- pgque must show up in the pg_tle catalog before we materialise the schema.
 do $$
@@ -75,7 +75,7 @@ begin
 end $$;
 
 -- Uninstall script unregisters the version from pg_tle.
-\i sql/pgque-pg_tle-uninstall.sql
+\i sql/pgque-tle-uninstall.sql
 
 do $$
 begin
@@ -86,7 +86,7 @@ begin
 end $$;
 
 -- Re-running the uninstall script must be a no-op (idempotent).
-\i sql/pgque-pg_tle-uninstall.sql
+\i sql/pgque-tle-uninstall.sql
 
 do $$
 begin

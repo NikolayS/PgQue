@@ -130,7 +130,7 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_regress \
             -v ON_ERROR_STOP=1 \
             -c 'create extension pg_tle;' \
-            -f sql/pgque-pg_tle.sql \
+            -f sql/pgque-tle.sql \
             -c 'create extension pgque;'
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_regress \
             -v ON_ERROR_STOP=1 -f tests/run_all.sql
