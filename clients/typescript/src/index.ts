@@ -35,7 +35,7 @@
  */
 
 export { Client, connect, pgqueTypes } from './client.js';
-export { Consumer } from './consumer.js';
+export { Consumer, DEFAULT_MAX_MESSAGES } from './consumer.js';
 export {
   PgqueConnectionError,
   PgqueConsumerNotFoundError,

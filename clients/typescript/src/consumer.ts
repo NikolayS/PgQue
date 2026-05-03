@@ -4,7 +4,12 @@
 import type { Client } from './client.js';
 import type { ConsumerOptions, HandlerFunc, Message } from './types.js';
 
-const DEFAULT_MAX_MESSAGES = 2_147_483_647; // PostgreSQL int4 max; request the whole batch by default.
+/**
+ * Default `maxMessages` for the high-level Consumer. PostgreSQL `int4` max
+ * (`2^31 - 1`); request the whole PgQ batch by default so a subsequent
+ * `pgque.ack(batch_id)` does not strand events the client never saw.
+ */
+export const DEFAULT_MAX_MESSAGES = 2_147_483_647;
 
 /**
  * High-level consumer that polls `pgque.receive`, dispatches each message
@@ -88,7 +93,7 @@ export class Consumer {
           this.logger.warn(
             `pgque: no handler registered for event type "${msg.type}", nacking msg ${msg.msgId}`,
           );
-          if (!(await this.tryNack(batchId, msg, 'unknown event type'))) {
+          if (!(await this.tryNack(batchId, msg, `unknown event type: ${msg.type}`))) {
             anyNackFailed = true;
           }
           continue;
@@ -97,7 +102,7 @@ export class Consumer {
           await handler(msg);
         } catch (err) {
           this.logger.error(`pgque: handler error for "${msg.type}": ${formatErr(err)}`);
-          if (!(await this.tryNack(batchId, msg, 'handler error'))) {
+          if (!(await this.tryNack(batchId, msg, `handler error: ${formatErr(err)}`))) {
             anyNackFailed = true;
           }
         }
