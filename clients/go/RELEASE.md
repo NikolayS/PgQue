@@ -15,8 +15,8 @@ go get github.com/NikolayS/pgque-go@latest
 ## Versioning
 
 The Go client version is independent from the SQL/server `pgque.version()`.
-Bump this module when the Go API, behavior, or packaging changes; server-only
-SQL changes do not require a Go client release.
+Choose the next Go module tag when the Go API, behavior, or packaging changes;
+server-only SQL changes do not require a Go client release.
 
 ## Tagging convention
 

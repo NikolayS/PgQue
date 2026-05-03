@@ -7,8 +7,8 @@ PgQ-based universal PostgreSQL queue. Thin, idiomatic wrapper over the
 
 ## Install
 
-For application code, install the published package with any npm-compatible
-package manager:
+After the first TypeScript client release, install the published package with
+any npm-compatible package manager:
 
 ```bash
 npm install pgque

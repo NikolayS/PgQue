@@ -32,7 +32,7 @@ The package is for server-side Node/Bun applications. It depends on
 
 The release workflow is `.github/workflows/release-typescript.yml`.
 
-1. Update `clients/typescript/package.json` version and changelog/release notes.
+1. Update `clients/typescript/package.json` version and any release notes/changelog if present.
 2. Merge the release prep PR.
 3. In npm, configure Trusted Publishing for:
    - package: `pgque`

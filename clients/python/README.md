@@ -7,6 +7,8 @@ universal PostgreSQL queue. Thin wrapper over `pgque-api` SQL functions:
 
 ## Install
 
+After the first Python client release:
+
 ```bash
 pip install pgque-py
 ```

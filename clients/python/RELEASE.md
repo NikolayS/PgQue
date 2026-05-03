@@ -23,7 +23,7 @@ server-only SQL changes do not require a Python client release.
 
 The release workflow is `.github/workflows/release-python.yml`.
 
-1. Update `clients/python/pyproject.toml` version and changelog/release notes.
+1. Update `clients/python/pyproject.toml` version and any release notes/changelog if present.
 2. Merge the release prep PR.
 3. In PyPI, configure Trusted Publisher for:
    - repository: `NikolayS/pgque`

@@ -6,6 +6,8 @@ universal PostgreSQL queue. A thin, idiomatic wrapper over the
 
 ## Install
 
+After the first Go client release:
+
 ```bash
 go get github.com/NikolayS/pgque-go@latest
 ```

@@ -269,11 +269,12 @@ Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, e
 
 ## Client libraries
 
-PgQue is SQL-first, so any Postgres driver works. First-party client libraries are available for **Python**, **Go**, and **TypeScript**.
+PgQue is SQL-first, so any Postgres driver works. First-party client libraries live in this repo for **Python**, **Go**, and **TypeScript**. The install commands below apply after the first client packages are published.
 
 ### Python (`pgque-py`) — psycopg 3
 
 ```bash
+# after the first Python client release
 pip install pgque-py
 ```
 
@@ -300,6 +301,7 @@ consumer.start()
 ### Go (`github.com/NikolayS/pgque-go`) — pgx/v5
 
 ```bash
+# after the first Go client release
 go get github.com/NikolayS/pgque-go@latest
 ```
 
@@ -322,6 +324,7 @@ consumer.Start(ctx)
 ### TypeScript (`pgque`) — node-postgres
 
 ```bash
+# after the first TypeScript client release
 npm install pgque
 ```
 
