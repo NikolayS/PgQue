@@ -31,5 +31,3 @@ Legend: ✓ supported by the client API on `main`; ✗ not exposed as a
 first-class client API. Lower-level SQL primitives remain available through raw
 connection/pool escape hatches. TypeScript currently exposes extra convenience
 wrappers for `ticker` / `forceTick`; Python and Go can call them via raw SQL.
-
-See #146 for the cross-driver audit umbrella.
