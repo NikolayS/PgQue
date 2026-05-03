@@ -177,7 +177,7 @@ create extension pgque;        -- materialises the schema in this database
 
 The wrapper pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` because Postgres roles are cluster-global and cannot be created from inside a TLE install body, so the role running this needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-tle-uninstall.sql`.
 
-This path is fully opt-in. Picking it trades the strict "no C extension on the server" property for standard extension lifecycle semantics; if that trade-off is not interesting, just keep using the `\i sql/pgque.sql` install above.
+Use this path only if you already run pg_tle and want PgQue managed via `create extension`. Otherwise stick with `\i sql/pgque.sql`.
 
 ## Roles and grants
 
