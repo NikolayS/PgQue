@@ -52,7 +52,7 @@ def test_send_unicode_payload(conn, setup_queue):
     client.send(queue, payload)
     conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
-    conn.execute("select pgque.ticker()")
+    conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)
     assert len(msgs) == 1
@@ -70,7 +70,7 @@ def test_send_large_payload(conn, setup_queue):
     client.send(queue, big)
     conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
-    conn.execute("select pgque.ticker()")
+    conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)
     assert len(msgs) == 1
@@ -148,7 +148,7 @@ def test_jsonb_payload_round_trip(conn, setup_queue, payload, expected):
     client.send(queue, payload)
     conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
-    conn.execute("select pgque.ticker()")
+    conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)
     assert len(msgs) == 1
@@ -170,7 +170,7 @@ def test_send_batch_mixed_payloads_preserve_order(conn, setup_queue):
     ids = client.send_batch(queue, "batch.mixed", payloads)
     conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
-    conn.execute("select pgque.ticker()")
+    conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
     msgs = client.receive(queue, consumer, max_messages=10)
@@ -195,7 +195,7 @@ def test_send_batch_none_payload_produces_json_null(conn, setup_queue):
     client.send_batch(queue, "default", [None])
     conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
-    conn.execute("select pgque.ticker()")
+    conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)
     assert len(msgs) == 1, "expected exactly 1 message from send_batch([None])"
