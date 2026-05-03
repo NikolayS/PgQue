@@ -52,7 +52,7 @@ class Consumer:
           default ``"*"`` handler exists), the message is nacked
           (sent to retry_queue, or to the dead-letter queue once
           ``queue_max_retries`` is exhausted). To ack unknown types
-          instead, pass ``unknown_handler="ack"``.
+          instead, pass ``unknown_handler_policy="ack"``.
 
     After all messages in a batch have been dispatched, the batch is
     acked automatically.
@@ -67,7 +67,7 @@ class Consumer:
         poll_interval: int = 30,
         max_messages: int = _DEFAULT_MAX_MESSAGES,
         retry_after: int = 60,
-        unknown_handler: Literal["nack", "ack"] = "nack",
+        unknown_handler_policy: Literal["nack", "ack"] = "nack",
     ):
         self.dsn = dsn
         self.queue = queue
@@ -75,12 +75,12 @@ class Consumer:
         self.poll_interval = poll_interval
         self.max_messages = max_messages
         self.retry_after = retry_after
-        if unknown_handler not in ("nack", "ack"):
+        if unknown_handler_policy not in ("nack", "ack"):
             raise ValueError(
-                "unknown_handler must be 'nack' or 'ack', "
-                f"got {unknown_handler!r}"
+                "unknown_handler_policy must be 'nack' or 'ack', "
+                f"got {unknown_handler_policy!r}"
             )
-        self._unknown_handler = unknown_handler
+        self._unknown_handler_policy = unknown_handler_policy
 
         self._handlers: dict[str, Callable] = {}
         self._default_handler: Optional[Callable] = None
@@ -217,11 +217,13 @@ class Consumer:
     def _poll_once(self, conn: psycopg.Connection) -> None:
         """Receive one batch and dispatch messages.
 
-        If any per-message ``nack()`` raises, the batch is NOT acked --
-        the receive transaction commits without finishing the batch, so
-        PgQ redelivers the same batch on the next poll. Without this
-        guard, swallowing a nack failure and then acking would advance
-        past the batch and silently drop the failed message.
+        If any per-message ``nack()`` raises, all remaining messages in
+        the batch are still dispatched (their handlers run), but the
+        batch is NOT acked at the end -- the receive transaction commits
+        without finishing the batch, so PgQ redelivers the whole batch
+        on the next poll. Without this guard, swallowing a nack failure
+        and then acking would advance past the batch and silently drop
+        the failed message.
         """
         # Use a transaction block for receive + ack
         with conn.transaction():
@@ -243,7 +245,7 @@ class Consumer:
             for msg in msgs:
                 handler = self._handlers.get(msg.type, self._default_handler)
                 if handler is None:
-                    if self._unknown_handler == "ack":
+                    if self._unknown_handler_policy == "ack":
                         self._log.warning(
                             "no handler for event type=%s ev_id=%s; acking",
                             msg.type,
@@ -264,18 +266,18 @@ class Consumer:
                         )
                     except Exception:
                         nack_failed = True
-                        logger.exception(
+                        self._log.exception(
                             "nack failed for unhandled msg_id=%d; "
                             "skipping batch ack so PgQ redelivers",
                             msg.msg_id,
                         )
-                        break
+                        continue
                     continue
 
                 try:
                     handler(msg)
                 except Exception:
-                    logger.exception(
+                    self._log.exception(
                         "handler failed for msg_id=%d, nacking",
                         msg.msg_id,
                     )
@@ -285,12 +287,12 @@ class Consumer:
                         )
                     except Exception:
                         nack_failed = True
-                        logger.exception(
+                        self._log.exception(
                             "nack failed for msg_id=%d; "
                             "skipping batch ack so PgQ redelivers",
                             msg.msg_id,
                         )
-                        break
+                        continue
 
             if nack_failed:
                 # Do NOT ack -- redeliver on next poll.
