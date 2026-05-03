@@ -250,7 +250,14 @@ select * from pgque.receive('orders', 'processor', 100);
 select pgque.ack(1);
 ```
 
-Send, tick, and receive **must** run in separate transactions — that's a hard requirement of PgQ's snapshot-based design, not a recommendation. A `tick` records a snapshot of committed transaction IDs; a `send` in the same xact is still in-progress at that moment and gets excluded from the next batch's visibility window, so the event never surfaces. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `force_tick()` is mainly for demos, tests, and manual operation. In application code, capture `batch_id` from any returned row and pass it to `ack`. In psql, `... \gset` followed by `select pgque.ack(:batch_id)` is the scriptable equivalent of the manual call above.
+Send, tick, and receive **must** run in separate transactions — that's a hard requirement of PgQ's snapshot-based design, not a recommendation. A `tick` records a snapshot of committed transaction IDs; a `send` in the same xact is still in-progress at that moment and gets excluded from the next batch's visibility window, so the event never surfaces. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `force_tick()` is mainly for demos, tests, and manual operation. In application code, capture `batch_id` from any returned row and pass it to `ack`.
+
+The scriptable psql idiom (replaces tx 4 + tx 5 above):
+
+```sql
+select batch_id from pgque.receive('orders', 'processor', 100) limit 1 \gset
+select pgque.ack(:batch_id);
+```
 
 Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, exactly-once, and recurring jobs in [examples](docs/examples.md).
 

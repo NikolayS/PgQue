@@ -499,7 +499,7 @@ PgQue roles are coarse **database-level** roles. They are intended for trusted a
 - `pgque_writer` can produce to **any** queue (`pgque.send`, `pgque.send_batch`, `pgque.insert_event`).
 - There is **no per-queue ACL** and no per-tenant isolation built into PgQue. Queue names and consumer names are plain strings — any role with the matching grant can interact with them.
 
-This is an intentional design decision for the current release. The batch-ID-based primitives (`ack`, `nack`, `event_retry`) operate on IDs and do not enforce ownership; the producer/consumer split closes only the producer-vs-consumer boundary, not the consumer-vs-consumer one.
+This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `event_retry`) operate on IDs and do not enforce ownership; the producer/consumer split closes only the producer-vs-consumer boundary, not the consumer-vs-consumer one.
 
 **Recommended isolation patterns** if you need mutually untrusted tenants in one database:
 
