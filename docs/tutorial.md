@@ -39,7 +39,9 @@ select pgque.version();
  [[your version]]
 ```
 
-The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. The roles are siblings: `pgque_writer` produces (`send`, `send_batch`); `pgque_reader` consumes (`subscribe`, `receive`, `ack`, `nack`); `pgque_admin` is a member of both. Apps that produce **and** consume need both:
+The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. The roles are siblings: `pgque_writer` produces (`send`, `send_batch`); `pgque_reader` consumes (`subscribe`, `receive`, `ack`, `nack`); `pgque_admin` is a member of both.
+
+Apps that produce **and** consume need both — the typical app setup looks like this (illustrative; `app_orders`/`app_webhook`/`metrics` are placeholder app-role names you would create yourself):
 
 ```sql
 -- Produce + consume:
@@ -52,7 +54,7 @@ grant pgque_writer to app_webhook;
 grant pgque_reader to metrics;
 ```
 
-This tutorial runs every step as the install owner, so no extra grants are needed to follow along. See the [reference](reference.md) for the full surface.
+This tutorial runs every step as the install owner, so no extra grants are needed to follow along — skip the snippet above on a fresh box. See the [reference](reference.md) for the full surface.
 
 ## Step 2: Create the queue and the consumer
 
@@ -144,7 +146,7 @@ select * from pgque.receive('orders', 'processor', 100);
 ```
  msg_id | batch_id | type    | payload                            | retry_count | created_at
 --------+----------+---------+------------------------------------+-------------+----------------------
-      1 |        1 | default | {"order_id": 42, "total": 99.95}   |             | 2026-04-17 10:00:00+00
+      1 |        1 | default | {"total": 99.95, "order_id": 42}   |             | 2026-04-17 10:00:00+00
 (1 row)
 ```
 
@@ -223,7 +225,7 @@ select * from pgque.receive('orders', 'processor', 100);
 ```
  msg_id | batch_id | type    | payload                            | retry_count | ...
 --------+----------+---------+------------------------------------+-------------+----
-      2 |        2 | default | {"order_id": 43, "total": 10.00}   |             |
+      2 |        2 | default | {"total": 10.00, "order_id": 43}   |             |
 (1 row)
 ```
 
@@ -256,7 +258,7 @@ In production, `pgque.start()` schedules `maint_retry_events` on its own cadence
 ```
  msg_id | batch_id | type    | payload                            | retry_count | ...
 --------+----------+---------+------------------------------------+-------------+----
-      2 |        3 | default | {"order_id": 43, "total": 10.00}   |           1 |
+      2 |        3 | default | {"total": 10.00, "order_id": 43}   |           1 |
 (1 row)
 ```
 
@@ -295,7 +297,7 @@ from pgque.dlq_inspect('orders');
 ```
  dl_id | dl_reason     | ev_id | ev_retry | ev_data
 -------+---------------+-------+----------+----------------------------------
-     1 | still failing |     2 |        2 | {"order_id": 43, "total": 10.00}
+     1 | still failing |     2 |        2 | {"total": 10.00, "order_id": 43}
 (1 row)
 ```
 

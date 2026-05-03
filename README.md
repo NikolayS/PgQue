@@ -127,6 +127,13 @@ Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autova
 
 **Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically (every 1 second by default). `pg_cron` is the recommended default — pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
+Get the source — `\i sql/pgque.sql` resolves relative to the cwd, so run psql from the repo root:
+
+```bash
+git clone https://github.com/NikolayS/pgque
+cd pgque
+```
+
 Inside a psql session:
 
 ```sql
@@ -154,9 +161,9 @@ select pgque.start();
 Without `pg_cron`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
 
 ```bash
-PAGER=cat psql --no-psqlrc -c "select pgque.ticker()"              # every 1 second
-PAGER=cat psql --no-psqlrc -c "select pgque.maint_retry_events()"  # every 30 seconds
-PAGER=cat psql --no-psqlrc -c "select pgque.maint()"               # every 30 seconds
+PAGER=cat psql --no-psqlrc -d mydb -c "select pgque.ticker()"              # every 1 second
+PAGER=cat psql --no-psqlrc -d mydb -c "select pgque.maint_retry_events()"  # every 30 seconds
+PAGER=cat psql --no-psqlrc -d mydb -c "select pgque.maint()"               # every 30 seconds
 ```
 
 **Important:** PgQue does not deliver messages without a working ticker. Enqueueing still works, but consumers will see nothing new because no ticks are created. If you do not use `pg_cron`, run `pgque.ticker()`, `pgque.maint_retry_events()`, and `pgque.maint()` yourself. Skipping `maint_retry_events()` means nack'd events will never be redelivered.
@@ -233,7 +240,9 @@ select pgque.ticker();
 select * from pgque.receive('orders', 'processor', 100);
 --  msg_id | batch_id |  type   |             payload              | retry_count | ...
 -- --------+----------+---------+----------------------------------+-------------+----
---       1 |        1 | default | {"order_id": 42, "total": 99.95} |             |
+--       1 |        1 | default | {"total": 99.95, "order_id": 42} |             |
+-- (jsonb sorts object keys by length then alphabetically, so the input
+--  '{"order_id": 42, "total": 99.95}' comes back with "total" first)
 
 -- tx 5: ack the batch_id from the previous result
 select pgque.ack(1);
@@ -294,6 +303,10 @@ if (messages.length > 0) await client.ack(messages[0].batch_id);
 
 ```sql
 select pgque.send('orders', '{"order_id": 42}'::jsonb);
+
+-- without pg_cron, advance the queue manually (omit if a ticker is running)
+select pgque.force_tick('orders');
+select pgque.ticker();
 
 -- receive returns rows; every row carries the same batch_id
 select * from pgque.receive('orders', 'processor', 100);
