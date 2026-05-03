@@ -208,7 +208,7 @@ def test_consumer_nacks_unhandled_event_type(dsn, conn, setup_queue):
 def test_consumer_acks_unhandled_event_type_when_opt_in(
     dsn, conn, setup_queue, caplog
 ):
-    """Opt-in: unknown_handler='ack' restores warn+ack semantics.
+    """Opt-in: unknown_handler_policy='ack' restores warn+ack semantics.
 
     Must NOT appear in retry_queue, must log a WARNING, and a follow-up
     receive must not return the same msg_id.
@@ -226,12 +226,15 @@ def test_consumer_acks_unhandled_event_type_when_opt_in(
         queue=queue,
         name=consumer_name,
         poll_interval=1,
-        unknown_handler="ack",
+        unknown_handler_policy="ack",
     )
 
-    with caplog.at_level(logging.WARNING, logger="pgque"):
+    with caplog.at_level(logging.WARNING, logger="pgque"), \
+            mock.patch.object(pgque.PgqueClient, "nack") as nack_mock:
         t = _run_consumer_for(cons, 3.0)
         t.join(timeout=5.0)
+
+    nack_mock.assert_not_called()
 
     # Must NOT be in retry_queue or dead_letter -- it was acked, not nacked.
     rq = _retry_count_for_msg(conn, queue, msg_id)
@@ -261,7 +264,7 @@ def test_consumer_acks_unhandled_event_type_when_opt_in(
     )
 
 
-def test_consumer_rejects_invalid_unknown_handler(dsn, setup_queue):
+def test_consumer_rejects_invalid_unknown_handler_policy(dsn, setup_queue):
     """Constructor must reject values other than 'nack' / 'ack'."""
     queue, consumer_name = setup_queue
     try:
@@ -269,11 +272,13 @@ def test_consumer_rejects_invalid_unknown_handler(dsn, setup_queue):
             dsn=dsn,
             queue=queue,
             name=consumer_name,
-            unknown_handler="bogus",  # type: ignore[arg-type]
+            unknown_handler_policy="bogus",  # type: ignore[arg-type]
         )
     except ValueError:
         return
-    raise AssertionError("expected ValueError for invalid unknown_handler")
+    raise AssertionError(
+        "expected ValueError for invalid unknown_handler_policy"
+    )
 
 
 def test_consumer_stop_returns_promptly(dsn, setup_queue):
@@ -307,34 +312,16 @@ def test_consumer_does_not_ack_when_unknown_type_nack_fails(
         dsn=dsn, queue=queue, name=consumer_name, poll_interval=1
     )
 
-    real_client_init = pgque.PgqueClient.__init__
-    ack_calls: list[int] = []
-    nack_calls: list[int] = []
-
-    def fake_init(self, c):
-        real_client_init(self, c)
-        original_ack = self.ack
-        original_nack = self.nack
-
-        def spy_ack(batch_id):
-            ack_calls.append(batch_id)
-            return original_ack(batch_id)
-
-        def explode_nack(batch_id, msg, retry_after=60, reason=None):
-            nack_calls.append(msg.msg_id)
-            raise RuntimeError("simulated nack failure")
-
-        self.ack = spy_ack  # type: ignore[method-assign]
-        self.nack = explode_nack  # type: ignore[method-assign]
-
-    with mock.patch.object(pgque.PgqueClient, "__init__", fake_init):
+    with mock.patch.object(
+        pgque.PgqueClient,
+        "nack",
+        side_effect=RuntimeError("simulated nack failure"),
+    ) as nack_mock, mock.patch.object(pgque.PgqueClient, "ack") as ack_mock:
         t = _run_consumer_for(cons, 3.0)
         t.join(timeout=5.0)
 
-    assert nack_calls, "nack was never called for the unhandled message"
-    assert ack_calls == [], (
-        f"ack must not be called when nack raised; got ack_calls={ack_calls}"
-    )
+    assert nack_mock.called, "nack was never called for the unhandled message"
+    ack_mock.assert_not_called()
 
     # Message must still be visible: re-receive returns the same msg_id.
     follow_up = client.receive(queue, consumer_name, max_messages=10)
@@ -370,33 +357,16 @@ def test_consumer_does_not_ack_when_handler_error_nack_fails(
     def _boom(m: pgque.Message):
         raise RuntimeError("handler boom")
 
-    real_client_init = pgque.PgqueClient.__init__
-    ack_calls: list[int] = []
-    nack_calls: list[int] = []
-
-    def fake_init(self, c):
-        real_client_init(self, c)
-        original_ack = self.ack
-
-        def spy_ack(batch_id):
-            ack_calls.append(batch_id)
-            return original_ack(batch_id)
-
-        def explode_nack(batch_id, msg, retry_after=60, reason=None):
-            nack_calls.append(msg.msg_id)
-            raise RuntimeError("simulated nack failure")
-
-        self.ack = spy_ack  # type: ignore[method-assign]
-        self.nack = explode_nack  # type: ignore[method-assign]
-
-    with mock.patch.object(pgque.PgqueClient, "__init__", fake_init):
+    with mock.patch.object(
+        pgque.PgqueClient,
+        "nack",
+        side_effect=RuntimeError("simulated nack failure"),
+    ) as nack_mock, mock.patch.object(pgque.PgqueClient, "ack") as ack_mock:
         t = _run_consumer_for(cons, 3.0)
         t.join(timeout=5.0)
 
-    assert nack_calls, "nack was never called after handler raised"
-    assert ack_calls == [], (
-        f"ack must not be called when nack raised; got ack_calls={ack_calls}"
-    )
+    assert nack_mock.called, "nack was never called after handler raised"
+    ack_mock.assert_not_called()
 
     follow_up = client.receive(queue, consumer_name, max_messages=10)
     assert any(m.msg_id == msg_id for m in follow_up), (
@@ -481,3 +451,84 @@ def test_consumer_wakes_on_pg_notify_before_poll_interval(
         f"consumer woke too slowly ({elapsed:.2f}s); LISTEN/NOTIFY did not "
         f"unblock the wait"
     )
+
+
+def test_consumer_partial_batch_acks_good_messages_only(
+    dsn, conn, setup_queue
+):
+    """Mixed batch: good messages are acked via the batch ack; only the
+    failing message reappears on next receive (in retry_queue).
+
+    With ``continue`` (not ``break``) on nack failure, all handlers in
+    the batch run. With nack succeeding for the failing message, the
+    batch is acked at the end -- so the surviving good messages are
+    finished by the batch ack and only the nacked message is redelivered
+    via ``retry_queue``.
+    """
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    ok1_id = client.send(queue, {"i": 1}, type="ok")
+    boom_id = client.send(queue, {"i": 2}, type="boom")
+    ok2_id = client.send(queue, {"i": 3}, type="ok")
+    conn.commit()
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    seen_ok: list[int] = []
+    # Use a generous retry_after so the failed message stays in
+    # retry_queue while we inspect it (and is not pulled into a
+    # subsequent batch by the same consumer cycle).
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name,
+        poll_interval=1, retry_after=3600,
+    )
+
+    @cons.on("ok")
+    def _ok(m: pgque.Message):
+        seen_ok.append(m.msg_id)
+
+    @cons.on("boom")
+    def _boom(m: pgque.Message):
+        raise RuntimeError("handler boom")
+
+    t = _run_consumer_for(cons, 3.0)
+    t.join(timeout=5.0)
+
+    # Both `ok` handlers must have run -- proving dispatch continued past
+    # the failing message rather than breaking out of the loop.
+    assert ok1_id in seen_ok and ok2_id in seen_ok, (
+        f"good messages not dispatched: seen_ok={seen_ok}"
+    )
+
+    # Refresh the test connection's snapshot so it can see writes
+    # committed by the consumer's connection.
+    conn.rollback()
+
+    # Only the failing message lands in retry_queue; the good ones were
+    # finished by the batch ack.
+    assert _retry_count_for_msg(conn, queue, boom_id) >= 1, (
+        "failing 'boom' message is not in retry_queue"
+    )
+    assert _retry_count_for_msg(conn, queue, ok1_id) == 0, (
+        "good 'ok' message #1 leaked into retry_queue"
+    )
+    assert _retry_count_for_msg(conn, queue, ok2_id) == 0, (
+        "good 'ok' message #2 leaked into retry_queue"
+    )
+
+    # A fresh receive must NOT return the good messages -- they were
+    # finished by the batch ack. The boom message is held in
+    # retry_queue (verified above) until ev_retry_after expires; the
+    # combination proves the batch advanced past the good rows while
+    # the failing row was preserved for redelivery.
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+    follow_up = client.receive(queue, consumer_name, max_messages=10)
+    follow_ids = [m.msg_id for m in follow_up]
+    assert ok1_id not in follow_ids, "good message #1 was redelivered"
+    assert ok2_id not in follow_ids, "good message #2 was redelivered"
+    if follow_up:
+        client.ack(follow_up[0].batch_id)
+        conn.commit()
