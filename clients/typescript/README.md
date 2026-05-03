@@ -65,7 +65,7 @@ try {
 | `connect(dsn, poolOptions?)` | Connect via `pg.Pool`. Eagerly probes the connection. |
 | `client.send(queue, event)` | Publish; returns event id (`bigint`). |
 | `client.sendBatch(queue, type, payloads)` | Publish a same-type batch atomically; returns event ids (`bigint[]`). |
-| `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. |
+| `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. If you later call `ack(batchId)`, PgQue finishes the whole underlying batch, including rows beyond `max`; size `max` for your queue or use the high-level consumer default. |
 | `client.ack(batchId)` | Finish the batch. |
 | `client.nack(batchId, msg, opts?)` | Single-message retry/DLQ. |
 | `client.subscribe(queue, consumer)` | Wraps `pgque.register_consumer`. |
@@ -79,6 +79,40 @@ try {
 
 `Message.msgId`, `Message.batchId`, and the return values of `send()` /
 `sendBatch()` are JS `bigint` to match PostgreSQL `bigint` losslessly.
+
+### Consumer options
+
+`client.newConsumer(queue, name, opts?)` accepts:
+
+| Option | Default | Notes |
+|---|---|---|
+| `pollInterval` | `30000` (ms) | Sleep between empty polls. |
+| `maxMessages` | `2147483647` | Max messages returned per `pgque.receive` call. The default is PostgreSQL's `int` maximum, so the high-level consumer requests the whole PgQ batch before acknowledging it. `pgque.ack(batch_id)` finishes the whole underlying batch, including rows beyond `maxMessages`; only lower this value when it is at least as large as the queue's possible batch size for your workload. |
+| `unknownHandlerPolicy` | `'nack'` | What to do when a message arrives whose `type` has no registered handler. `'nack'` (default) routes to retry / DLQ via `pgque.nack`. `'ack'` logs a warning and lets the batch ack absorb it (silent discard). |
+| `logger` | `console` | Receives `warn` / `error` lines. |
+
+### Payload coercion: `undefined` → JSON `null`
+
+`client.send()` JSON-encodes `event.payload` before binding it as
+`jsonb`. Because `JSON.stringify(undefined)` returns the JS literal
+`undefined` (not the string `"null"`), the driver substitutes the JSON
+literal `null` whenever the top-level `payload` is `undefined`:
+
+```ts
+// All three store the JSON value `null` in the queue:
+await client.send('q', { type: 't', payload: null });
+await client.send('q', { type: 't', payload: undefined });
+await client.send('q', { type: 't' });
+```
+
+Inside an object, properties whose value is `undefined` are dropped by
+`JSON.stringify` per the JSON spec. This is the standard JS behavior;
+the driver does not try to override it:
+
+```ts
+await client.send('q', { type: 't', payload: { a: 1, b: undefined } });
+// Stored as: {"a":1}
+```
 
 ## Errors
 

@@ -4,6 +4,8 @@
 import type { Client } from './client.js';
 import type { ConsumerOptions, HandlerFunc, Message } from './types.js';
 
+const DEFAULT_MAX_MESSAGES = 2_147_483_647; // PostgreSQL int4 max; request the whole batch by default.
+
 /**
  * High-level consumer that polls `pgque.receive`, dispatches each message
  * to a per-event-type handler, and finalizes the batch with `ack` (or
@@ -22,6 +24,7 @@ export class Consumer {
   private readonly handlers = new Map<string, HandlerFunc>();
   private readonly pollIntervalMs: number;
   private readonly maxMessages: number;
+  private readonly unknownHandlerPolicy: 'ack' | 'nack';
   private readonly logger: Pick<Console, 'warn' | 'error'>;
 
   /** @internal — use {@link Client.newConsumer}. */
@@ -32,7 +35,8 @@ export class Consumer {
     opts: ConsumerOptions = {},
   ) {
     this.pollIntervalMs = opts.pollInterval ?? 30_000;
-    this.maxMessages = opts.maxMessages ?? 100;
+    this.maxMessages = opts.maxMessages ?? DEFAULT_MAX_MESSAGES;
+    this.unknownHandlerPolicy = opts.unknownHandlerPolicy ?? 'nack';
     this.logger = opts.logger ?? console;
   }
 
@@ -69,39 +73,63 @@ export class Consumer {
       }
 
       let batchId: bigint | null = null;
+      let anyNackFailed = false;
       for (const msg of msgs) {
         batchId = msg.batchId;
         const handler = this.handlers.get(msg.type);
         if (!handler) {
+          if (this.unknownHandlerPolicy === 'ack') {
+            this.logger.warn(
+              `pgque: no handler registered for event type "${msg.type}", acking msg ${msg.msgId} (unknownHandlerPolicy='ack')`,
+            );
+            // Fall through; the batch ack at the end of the loop covers it.
+            continue;
+          }
           this.logger.warn(
             `pgque: no handler registered for event type "${msg.type}", nacking msg ${msg.msgId}`,
           );
-          await this.tryNack(batchId, msg);
+          if (!(await this.tryNack(batchId, msg, 'unknown event type'))) {
+            anyNackFailed = true;
+          }
           continue;
         }
         try {
           await handler(msg);
         } catch (err) {
           this.logger.error(`pgque: handler error for "${msg.type}": ${formatErr(err)}`);
-          await this.tryNack(batchId, msg);
+          if (!(await this.tryNack(batchId, msg, 'handler error'))) {
+            anyNackFailed = true;
+          }
         }
       }
 
       if (batchId !== null) {
-        try {
-          await this.client.ack(batchId);
-        } catch (err) {
-          this.logger.error(`pgque: ack error: ${formatErr(err)}`);
+        if (anyNackFailed) {
+          // At least one required nack failed. Skip ack so PgQ redelivers
+          // the batch on the next poll instead of advancing the consumer
+          // past messages we couldn't route.
+          this.logger.error(
+            `pgque: skipping ack for batch ${batchId}; one or more nacks failed and the batch will be redelivered`,
+          );
+        } else {
+          try {
+            await this.client.ack(batchId);
+          } catch (err) {
+            this.logger.error(`pgque: ack error: ${formatErr(err)}`);
+          }
         }
       }
     }
   }
 
-  private async tryNack(batchId: bigint, msg: Message): Promise<void> {
+  /** Returns true if the nack succeeded, false if it threw (and was logged). */
+  private async tryNack(batchId: bigint, msg: Message, reason: string): Promise<boolean> {
     try {
-      await this.client.nack(batchId, msg);
+      await this.client.nack(batchId, msg, { reason });
+      return true;
     } catch (err) {
       this.logger.error(`pgque: nack error for "${msg.type}": ${formatErr(err)}`);
+      return false;
     }
   }
 }

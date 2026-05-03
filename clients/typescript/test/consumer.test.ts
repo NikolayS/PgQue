@@ -1,7 +1,10 @@
 // pgque -- TypeScript client for PgQue
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Consumer } from '../src/consumer.js';
+import type { Client } from '../src/client.js';
+import type { Message } from '../src/types.js';
 import { TEST_DSN, setupTestQueue, teardownTestQueue, advanceQueue, type TestEnv } from './helpers.js';
 
 const skipIfNoDb = TEST_DSN ? it : it.skip;
@@ -130,6 +133,218 @@ describe('Consumer (env-gated)', () => {
       [env.queue],
     );
     expect(retry.rows[0]!.count).toBe('1');
+  });
+});
+
+describe('Consumer (in-memory mocks)', () => {
+  it('does not call ack when nack fails for a handler error', async () => {
+    const msg: Message = {
+      msgId: 1n,
+      batchId: 99n,
+      type: 'will_fail',
+      payload: '{}',
+      retryCount: null,
+      createdAt: new Date(),
+      extra1: null,
+      extra2: null,
+      extra3: null,
+      extra4: null,
+    };
+
+    let receiveCalls = 0;
+    const fakeClient = {
+      receive: vi.fn(async () => {
+        receiveCalls += 1;
+        // First poll returns the message; subsequent polls return empty so
+        // the loop idles until aborted.
+        return receiveCalls === 1 ? [msg] : [];
+      }),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => {
+        throw new Error('synthetic nack failure');
+      }),
+    };
+
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+    consumer.handle('will_fail', async () => {
+      throw new Error('handler boom');
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    // Wait until the consumer has observed the failing nack at least once.
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.nack.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.nack).toHaveBeenCalledTimes(1);
+    // Strong assertion: ack must NEVER be called for the batch when its
+    // nack failed — the batch should be redelivered on the next poll.
+    expect(fakeClient.ack).toHaveBeenCalledTimes(0);
+    expect(fakeClient.ack.mock.calls.length).toBe(0);
+  });
+
+  it('passes the safe default maxMessages to receive', async () => {
+    const fakeClient = {
+      receive: vi.fn(async () => []),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => undefined),
+    };
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.receive.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.receive).toHaveBeenCalled();
+    expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', 2_147_483_647]);
+  });
+
+  it('passes configured maxMessages to receive', async () => {
+    const fakeClient = {
+      receive: vi.fn(async () => []),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => undefined),
+    };
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      maxMessages: 123,
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.receive.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.receive).toHaveBeenCalled();
+    expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', 123]);
+  });
+
+  it('does not call ack when nack fails for an unknown event type', async () => {
+    const msg: Message = {
+      msgId: 2n,
+      batchId: 100n,
+      type: 'unknown_type',
+      payload: '{}',
+      retryCount: null,
+      createdAt: new Date(),
+      extra1: null,
+      extra2: null,
+      extra3: null,
+      extra4: null,
+    };
+
+    let receiveCalls = 0;
+    const fakeClient = {
+      receive: vi.fn(async () => {
+        receiveCalls += 1;
+        return receiveCalls === 1 ? [msg] : [];
+      }),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => {
+        throw new Error('synthetic nack failure');
+      }),
+    };
+
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.nack.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.nack).toHaveBeenCalledTimes(1);
+    expect(fakeClient.ack).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe('Consumer.unknownHandlerPolicy=ack (env-gated)', () => {
+  let env: TestEnv;
+
+  beforeEach(async () => {
+    if (!TEST_DSN) return;
+    env = await setupTestQueue();
+  });
+
+  afterEach(async () => {
+    if (!TEST_DSN) return;
+    await teardownTestQueue(env);
+  });
+
+  skipIfNoDb('acks unknown event types via the batch when policy is "ack"', async () => {
+    const unknownId = await env.client.send(env.queue, {
+      type: 'unhandled.kind',
+      payload: { v: 7 },
+    });
+    await advanceQueue(env.client, env.queue);
+
+    const consumer = env.client.newConsumer(env.queue, env.consumer, {
+      pollInterval: 50,
+      unknownHandlerPolicy: 'ack',
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+    // Intentionally no handlers registered.
+
+    const ac = new AbortController();
+    const start = consumer.start(ac.signal);
+
+    // Allow the consumer to drain at least one batch.
+    await sleep(400);
+    ac.abort();
+    await start;
+
+    // No retry rows: opt-in 'ack' must NOT route to retry_queue.
+    const retry = await env.client.rawPool.query<{ count: string }>(
+      `select count(*)::text as count
+         from pgque.retry_queue rq
+         join pgque.queue q on q.queue_id = rq.ev_queue
+        where q.queue_name = $1`,
+      [env.queue],
+    );
+    expect(retry.rows[0]!.count).toBe('0');
+
+    // No DLQ rows either.
+    const dlq = await env.client.rawPool.query<{ count: string }>(
+      `select count(*)::text as count
+         from pgque.dead_letter dl
+         join pgque.queue q on q.queue_id = dl.dl_queue_id
+        where q.queue_name = $1`,
+      [env.queue],
+    );
+    expect(dlq.rows[0]!.count).toBe('0');
+
+    // Batch advanced: a fresh receive() must not return the unknown msg_id.
+    await advanceQueue(env.client, env.queue);
+    const after = await env.client.receive(env.queue, env.consumer, 100);
+    for (const m of after) {
+      expect(m.msgId).not.toBe(unknownId);
+    }
   });
 });
 

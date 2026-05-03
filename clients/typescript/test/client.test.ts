@@ -200,6 +200,52 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     await env.client.ack(msgs[0]!.batchId);
   });
 
+  skipIfNoDb('top-level undefined payload becomes JSON null (explicit)', async () => {
+    // `payload: undefined` must round-trip as the JSON literal `null`, not
+    // as a SQL NULL bind (which would fail the JSONB cast) and not as the
+    // JS `undefined` (which JSON.parse would reject).
+    await env.client.send(env.queue, { type: 'undef.explicit', payload: undefined });
+    await advanceQueue(env.client, env.queue);
+    const [m] = await env.client.receive(env.queue, env.consumer, 10);
+    expect(m).toBeDefined();
+    expect(m!.type).toBe('undef.explicit');
+    // Strong assertion: the stored value is the JSON literal `null`.
+    expect(m!.payload).toBe('null');
+    expect(JSON.parse(m!.payload)).toBeNull();
+    await env.client.ack(m!.batchId);
+  });
+
+  skipIfNoDb('omitted payload field becomes JSON null', async () => {
+    // Same coercion when `payload` is absent from the Event object.
+    await env.client.send(env.queue, { type: 'undef.omitted' });
+    await advanceQueue(env.client, env.queue);
+    const [m] = await env.client.receive(env.queue, env.consumer, 10);
+    expect(m).toBeDefined();
+    expect(m!.type).toBe('undef.omitted');
+    expect(m!.payload).toBe('null');
+    expect(JSON.parse(m!.payload)).toBeNull();
+    await env.client.ack(m!.batchId);
+  });
+
+  skipIfNoDb('drops nested undefined object properties per JSON.stringify', async () => {
+    await env.client.send(env.queue, {
+      type: 'undef.nested',
+      payload: { a: 1, b: undefined },
+    });
+    await advanceQueue(env.client, env.queue);
+    const [m] = await env.client.receive(env.queue, env.consumer, 10);
+    expect(m).toBeDefined();
+    expect(m!.type).toBe('undef.nested');
+    expect(JSON.parse(m!.payload)).toEqual({ a: 1 });
+    await env.client.ack(m!.batchId);
+  });
+
+  skipIfNoDb('rejects top-level function payloads', async () => {
+    await expect(
+      env.client.send(env.queue, { type: 'bad.function', payload: () => undefined }),
+    ).rejects.toBeInstanceOf(PgqueSqlError);
+  });
+
   skipIfNoDb('preserves bigint batchId across the API surface', async () => {
     await env.client.send(env.queue, { payload: { x: 1 } });
     await advanceQueue(env.client, env.queue);

@@ -25,11 +25,12 @@ export interface Message {
 
 /**
  * Event input to {@link Client.send}. `payload` is JSON-marshalled before
- * being passed to `pgque.send`. An empty `type` defaults to `"default"`.
+ * being passed to `pgque.send`; omitted payloads are stored as JSON `null`.
+ * An empty `type` defaults to `"default"`.
  */
 export interface Event {
   type?: string;
-  payload: unknown;
+  payload?: unknown;
 }
 
 /** Options for {@link Client.nack}. */
@@ -44,8 +45,26 @@ export interface NackOptions {
 export interface ConsumerOptions {
   /** Interval between poll cycles when no messages are available. Default `30s`. */
   pollInterval?: number;
-  /** Max messages requested per `pgque.receive` call. Default `100`. */
+  /**
+   * Maximum messages returned per `receive()` call. By default the
+   * high-level consumer requests the PostgreSQL `int` maximum so it drains
+   * the whole PgQ batch before acknowledging it.
+   *
+   * WARNING: `pgque.ack(batch_id)` finishes the entire underlying batch,
+   * including rows the client never returned. If you set `maxMessages`
+   * below the real batch size, unreturned rows are skipped after ack.
+   * Only lower this value when it is at least as large as the queue's
+   * possible batch size for your workload.
+   */
   maxMessages?: number;
+  /**
+   * What to do with messages whose `type` has no registered handler:
+   * - `'nack'` (default) — nack each unknown message with a reason; PgQ
+   *   routes to the retry queue or DLQ per the queue's `queue_max_retries`.
+   * - `'ack'` — log a warning and let the batch ack absorb them (silent
+   *   discard). Use only when stray types are expected and benign.
+   */
+  unknownHandlerPolicy?: 'ack' | 'nack';
   /** Optional logger. Defaults to `console`. */
   logger?: Pick<Console, 'warn' | 'error'>;
 }
