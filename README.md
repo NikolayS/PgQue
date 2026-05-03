@@ -165,14 +165,15 @@ Treat installation as one-way for now — upgrade and reinstall paths are still 
 
 ### Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension
 
-The default `\i sql/pgque.sql` path stays the recommended install — PgQue itself is pure SQL + PL/pgSQL, with no C extension or `shared_preload_libraries` required on the server. (pg_cron is recommended as the ticker but stays optional; see [Installation](#installation) above.)
+This is opt-in. The default `\i sql/pgque.sql` install stays the recommended path; use pg_tle only if you specifically want PgQue managed as a real Postgres extension.
 
-For environments that already run [`pg_tle`](https://github.com/aws/pg_tle) (Trusted Language Extensions: AWS RDS / Aurora, AlloyDB, Supabase, self-hosted), PgQue can opt into being a real Postgres extension. That gives you `pg_extension` membership, `alter extension pgque update` for version upgrades, and `drop extension pgque cascade` for atomic uninstall.
+What you get with pg_tle: `pg_extension` membership, `alter extension pgque update` for version upgrades, and `drop extension pgque cascade` for atomic uninstall. What you give up: pg_tle is itself a C extension preloaded via `shared_preload_libraries`, which is the dependency the default install avoids. Available on AWS RDS / Aurora and self-hosted Postgres; check your provider's extension list otherwise.
 
-**One-time prerequisite.** pg_tle is a C extension and must be loaded via `shared_preload_libraries`. On managed providers this is done via the parameter group / cluster config UI (and a reboot); on self-hosted Postgres:
+**Prerequisites.** Run the installer as a role that holds `pgtle_admin` plus `CREATEROLE` (Postgres roles are cluster-global, so the wrapper creates `pgque_reader` / `pgque_writer` / `pgque_admin` outside the TLE body). pg_tle must also be in `shared_preload_libraries`. On managed providers, set this via the parameter group / cluster config UI and reboot. On self-hosted Postgres, **append** `pg_tle` to the existing list — overwriting it disables anything else you preload (e.g. `pg_cron`):
 
 ```sql
-alter system set shared_preload_libraries = 'pg_tle';   -- merge into the existing list if non-empty
+show shared_preload_libraries;                                -- inspect current list first
+alter system set shared_preload_libraries = 'pg_cron,pg_tle'; -- preserve existing entries
 -- restart Postgres, then in the target database:
 create extension pg_tle;
 ```
@@ -180,13 +181,11 @@ create extension pg_tle;
 Once pg_tle is loaded, register and create PgQue:
 
 ```sql
-\i sql/pgque-tle.sql       -- registers pgque with pg_tle
-create extension pgque;     -- materialises the schema in this database
+\i sql/pgque-tle.sql
+create extension pgque;
 ```
 
-The wrapper pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` because Postgres roles are cluster-global and cannot be created from inside a TLE install body, so the role running this needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-tle-uninstall.sql`.
-
-Use this path only if you already run pg_tle and want PgQue managed via `create extension`. Otherwise stick with `\i sql/pgque.sql`.
+To uninstall: `\i sql/pgque-tle-uninstall.sql`.
 
 ## Roles and grants
 
