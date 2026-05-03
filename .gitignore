@@ -5,3 +5,6 @@ build/output/
 clients/python/*.egg-info/
 clients/typescript/node_modules/
 clients/typescript/package-lock.json
+
+# Claude Code agent worktrees and local config
+.claude/
