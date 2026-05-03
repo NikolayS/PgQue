@@ -163,6 +163,16 @@ PAGER=cat psql --no-psqlrc -c "select pgque.maint()"               # every 30 se
 
 Treat installation as one-way for now — upgrade and reinstall paths are still being tightened. To uninstall: `\i sql/pgque_uninstall.sql`.
 
+**Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension.** If your platform ships pg_tle (RDS, Aurora, AlloyDB, Supabase, self-hosted), PgQue can register itself as a Trusted Language Extension so it shows up in `pg_extension` and supports `DROP EXTENSION pgque CASCADE`:
+
+```sql
+create extension if not exists pg_tle;
+\i sql/pgque-pg_tle.sql       -- registers pgque with pg_tle
+create extension pgque;        -- creates the schema in this database
+```
+
+The wrapper script pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` (roles cannot be created from inside a TLE body), so the role running it needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-pg_tle-uninstall.sql`.
+
 ## Roles and grants
 
 The install creates three roles. Application users do not need superuser — grant them whichever role matches their access pattern.
@@ -372,7 +382,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Ruby library |  |
 | Basic observability views | ✅ |
 | Prometheus exporter |  |
-| `pg_tle` extension package |  |
+| `pg_tle` extension package | ✅ |
 | Migration guides |  |
 
 ## Contributing

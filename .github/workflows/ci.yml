@@ -73,6 +73,16 @@ jobs:
           fi
           echo "PASS: pgque schema removed after uninstall"
 
+      - name: Test pg_tle packaging (mock pg_tle)
+        run: |
+          # Use a fresh database so the mock pgtle schema does not collide
+          # with the regular install. The script verifies sql/pgque-pg_tle.sql
+          # registers the extension correctly and pre-creates the roles.
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c 'create database pgque_pgtle_test'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_test \
+            -v ON_ERROR_STOP=1 -f tests/test_pg_tle_install.sql
+
       - name: Cleanup
         if: always()
         run: docker rm -f pgque-test
