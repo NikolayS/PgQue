@@ -237,12 +237,27 @@ export class Client {
    * Negatively acknowledge a single message. Routes to the retry queue if
    * `retry_count < queue_max_retries`, otherwise to the dead-letter queue.
    * Other messages in the same batch are not affected.
+   *
+   * `opts.retryAfter` is the retry delay in **seconds** (default `60`).
+   * The driver binds it as a PostgreSQL `interval` (`'<n> seconds'`) for
+   * `pgque.nack`'s `i_retry_after` parameter; cross-driver parity with
+   * `pgque-py` and `pgque-go`.
    */
   async nack(batchId: bigint, msg: Message, opts: NackOptions = {}): Promise<void> {
     if (typeof batchId !== 'bigint') {
       throw new PgqueSqlError('nack', { cause: new Error('batchId must be bigint') });
     }
-    const retryAfter = opts.retryAfter ?? '60 seconds';
+    const retryAfterSeconds = opts.retryAfter ?? 60;
+    if (
+      typeof retryAfterSeconds !== 'number' ||
+      !Number.isFinite(retryAfterSeconds) ||
+      retryAfterSeconds < 0
+    ) {
+      throw new PgqueSqlError('nack', {
+        cause: new Error('retryAfter must be a non-negative finite number of seconds'),
+      });
+    }
+    const retryAfter = `${retryAfterSeconds} seconds`;
     const reason = opts.reason ?? null;
     // pgque.message has 10 fields: (msg_id, batch_id, type, payload,
     // retry_count, created_at, extra1, extra2, extra3, extra4). The ROW()

@@ -55,7 +55,7 @@ describe('nack routing (env-gated)', () => {
     expect(m).toBeDefined();
 
     await env.client.nack(m!.batchId, m!, {
-      retryAfter: '5 seconds',
+      retryAfter: 5,
       reason: 'simulated transient failure',
     });
     await env.client.ack(m!.batchId);

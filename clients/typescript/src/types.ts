@@ -35,15 +35,25 @@ export interface Event {
 
 /** Options for {@link Client.nack}. */
 export interface NackOptions {
-  /** Retry delay if the message has not exceeded `queue_max_retries`. Default `60s`. */
-  retryAfter?: string;
+  /**
+   * Retry delay in **seconds** if the message has not exceeded
+   * `queue_max_retries`. Default `60`.
+   *
+   * The driver binds this as a PostgreSQL `interval` (`'<n> seconds'`) for
+   * `pgque.nack`'s `i_retry_after` parameter. Cross-driver parity with
+   * `pgque-py` and `pgque-go`.
+   */
+  retryAfter?: number;
   /** Free-form reason recorded on the dead-letter row when the retry limit is hit. */
   reason?: string;
 }
 
 /** Options for {@link Client.newConsumer}. */
 export interface ConsumerOptions {
-  /** Interval between poll cycles when no messages are available. Default `30s`. */
+  /**
+   * Interval between poll cycles when no messages are available, in
+   * **milliseconds**. Default `30000` (30 seconds).
+   */
   pollInterval?: number;
   /**
    * Maximum messages returned per `receive()` call. By default the
