@@ -2,7 +2,7 @@
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Consumer } from '../src/consumer.js';
+import { Consumer, DEFAULT_MAX_MESSAGES } from '../src/consumer.js';
 import type { Client } from '../src/client.js';
 import type { Message } from '../src/types.js';
 import { TEST_DSN, setupTestQueue, teardownTestQueue, advanceQueue, type TestEnv } from './helpers.js';
@@ -134,6 +134,165 @@ describe('Consumer (env-gated)', () => {
     );
     expect(retry.rows[0]!.count).toBe('1');
   });
+
+  // Coverage gap (#a): the formatted handler-error reason must reach
+  // pgque.dead_letter.dl_reason. We force `queue_max_retries=0` so the
+  // first nack routes straight to the DLQ, then assert the stored reason.
+  skipIfNoDb('handler-error reason lands in dead_letter.dl_reason', async () => {
+    await env.client.rawPool.query(
+      `update pgque.queue set queue_max_retries = 0 where queue_name = $1`,
+      [env.queue],
+    );
+
+    await env.client.send(env.queue, { type: 'boom', payload: { v: 1 } });
+    await advanceQueue(env.client, env.queue);
+
+    const consumer = env.client.newConsumer(env.queue, env.consumer, {
+      pollInterval: 50,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+    consumer.handle('boom', async () => {
+      throw new Error('kaboom');
+    });
+
+    const ac = new AbortController();
+    const start = consumer.start(ac.signal);
+
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const dlq = await env.client.rawPool.query<{ count: string }>(
+        `select count(*)::text as count
+           from pgque.dead_letter dl
+           join pgque.queue q on q.queue_id = dl.dl_queue_id
+          where q.queue_name = $1`,
+        [env.queue],
+      );
+      if (dlq.rows[0]!.count !== '0') break;
+      await sleep(50);
+    }
+    ac.abort();
+    await start;
+
+    const dlq = await env.client.rawPool.query<{ dl_reason: string }>(
+      `select dl.dl_reason
+         from pgque.dead_letter dl
+         join pgque.queue q on q.queue_id = dl.dl_queue_id
+        where q.queue_name = $1
+        order by dl.dl_id desc
+        limit 1`,
+      [env.queue],
+    );
+    expect(dlq.rows.length).toBe(1);
+    expect(dlq.rows[0]!.dl_reason).toBe('handler error: kaboom');
+  });
+
+  // Coverage gap (#b): the default Consumer must drain the entire underlying
+  // PgQ batch in one poll. Mirrors Go's
+  // TestConsumer_WithMaxMessages_FetchesEntireBatch.
+  skipIfNoDb('default Consumer drains the whole batch in one poll', async () => {
+    const total = 105;
+    for (let i = 0; i < total; i++) {
+      await env.client.send(env.queue, { type: 'bulk', payload: { i } });
+    }
+    await advanceQueue(env.client, env.queue);
+
+    // Default options: no maxMessages override, no pollInterval override.
+    // pollInterval defaults to 30s, so a second poll is effectively
+    // impossible within the test window.
+    const consumer = env.client.newConsumer(env.queue, env.consumer, {
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+    let seen = 0;
+    consumer.handle('bulk', async () => {
+      seen += 1;
+    });
+
+    const ac = new AbortController();
+    const start = consumer.start(ac.signal);
+
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && seen < total) {
+      await sleep(25);
+    }
+    ac.abort();
+    await start;
+
+    expect(seen).toBe(total);
+  });
+
+  // Coverage gap (#c): partial-batch success+failure. Three messages (ok,
+  // boom, ok); the failing one should reappear on the next poll while the
+  // succeeding ones are acked away.
+  skipIfNoDb('partial-batch failure: only the failing message reappears', async () => {
+    await env.client.send(env.queue, { type: 'ok', payload: { i: 0 } });
+    await env.client.send(env.queue, { type: 'boom', payload: { i: 1 } });
+    await env.client.send(env.queue, { type: 'ok', payload: { i: 2 } });
+    await advanceQueue(env.client, env.queue);
+
+    const consumer = env.client.newConsumer(env.queue, env.consumer, {
+      pollInterval: 50,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    let okSeen = 0;
+    let boomSeen = 0;
+    consumer.handle('ok', async () => {
+      okSeen += 1;
+    });
+    consumer.handle('boom', async () => {
+      boomSeen += 1;
+      throw new Error('boom-err');
+    });
+
+    const ac = new AbortController();
+    const start = consumer.start(ac.signal);
+
+    // Wait until the first batch has been processed: both oks ran and the
+    // initial nack/ack cycle for boom has completed (retry row exists).
+    const firstDeadline = Date.now() + 6000;
+    while (Date.now() < firstDeadline && (okSeen < 2 || boomSeen < 1)) {
+      await sleep(25);
+    }
+    expect(okSeen).toBe(2);
+    expect(boomSeen).toBeGreaterThanOrEqual(1);
+
+    // The retry queue defaults to ev_retry_after = now() + 60s, so the
+    // boom message is not yet redeliverable. Pull it forward, ask PgQ to
+    // move the retry row back into the main queue, then force_tick +
+    // ticker so the next consumer poll observes it.
+    await env.client.rawPool.query(
+      `update pgque.retry_queue
+          set ev_retry_after = now() - interval '1 second'
+        where ev_queue = (select queue_id from pgque.queue where queue_name = $1)`,
+      [env.queue],
+    );
+    await env.client.rawPool.query(`select pgque.maint_retry_events()`);
+    await advanceQueue(env.client, env.queue);
+
+    // Now wait for redelivery of `boom`.
+    const redeliveredDeadline = Date.now() + 6000;
+    while (Date.now() < redeliveredDeadline && boomSeen < 2) {
+      await sleep(25);
+    }
+    ac.abort();
+    await start;
+
+    expect(okSeen).toBe(2); // both `ok` messages acked, never redelivered
+    expect(boomSeen).toBeGreaterThanOrEqual(2); // initial + at least one retry
+
+    // Any rows still in retry_queue for this queue must be the `boom`
+    // message — `ok` must never have been redirected to retry/DLQ.
+    const retryRows = await env.client.rawPool.query<{ ev_type: string }>(
+      `select rq.ev_type
+         from pgque.retry_queue rq
+         join pgque.queue q on q.queue_id = rq.ev_queue
+        where q.queue_name = $1`,
+      [env.queue],
+    );
+    for (const r of retryRows.rows) {
+      expect(r.ev_type).toBe('boom');
+    }
+  });
 });
 
 describe('Consumer (in-memory mocks)', () => {
@@ -211,7 +370,7 @@ describe('Consumer (in-memory mocks)', () => {
     await startPromise;
 
     expect(fakeClient.receive).toHaveBeenCalled();
-    expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', 2_147_483_647]);
+    expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', DEFAULT_MAX_MESSAGES]);
   });
 
   it('passes configured maxMessages to receive', async () => {
