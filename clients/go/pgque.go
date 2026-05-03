@@ -10,6 +10,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -164,15 +165,13 @@ func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts ...N
 	if no.reasonSet {
 		reason = no.reason
 	}
-	// pgx serialises a time.Duration through the interval-as-microseconds
-	// path; passing it explicitly cast to interval keeps the SQL prepared
-	// statement stable regardless of the driver default.
+	interval := pgtype.Interval{Microseconds: retryAfter.Microseconds(), Valid: true}
 	_, err := c.pool.Exec(ctx,
 		"SELECT pgque.nack($1, ROW($2,$3,$4,$5,$6,$7,$8,$9,$10,$11)::pgque.message, $12::interval, $13)",
 		batchID, msg.MsgID, msg.BatchID, msg.Type, msg.Payload,
 		msg.RetryCount, msg.CreatedAt,
 		msg.Extra1, msg.Extra2, msg.Extra3, msg.Extra4,
-		retryAfter, reason)
+		interval, reason)
 	if err != nil {
 		return fmt.Errorf("pgque: nack: %w", err)
 	}
