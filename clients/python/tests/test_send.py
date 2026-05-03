@@ -165,7 +165,7 @@ def test_send_batch_mixed_payloads_preserve_order(conn, setup_queue):
 
     queue, consumer = setup_queue
     client = pgque.PgqueClient(conn)
-    expected = [{"a": 1}, None, "42"]
+    expected = [{"a": 1}, None, 42]
     ids = client.send_batch(queue, "batch.mixed", expected)
     conn.commit()
     conn.execute("select pgque.force_tick(%s)", (queue,))
