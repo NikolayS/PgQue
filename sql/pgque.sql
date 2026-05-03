@@ -5098,12 +5098,28 @@ begin
     end if;
 end $$;
 
+-- Tracking table for #134: pgque.receive() records the msg_ids it actually
+-- yielded so pgque.ack() can re-queue any unreturned events from the
+-- underlying PgQ batch instead of silently dropping them. The row is keyed
+-- by batch_id and cleared by ack(); finish_batch() callers that bypass
+-- pgque.receive() are unaffected (no row → no re-queue, legacy behavior).
+create table if not exists pgque.batch_returned (
+    batch_id         bigint primary key,
+    returned_msg_ids bigint[] not null default '{}'::bigint[]
+);
+
 -- pgque.receive() -- wraps next_batch + get_batch_events
+--
+-- Fix #134: records returned msg_ids in pgque.batch_returned so ack() can
+-- re-queue events the underlying PgQ batch contained but max_return clipped.
+-- Without this, ack(batch_id) → finish_batch advances sub_last_tick past the
+-- whole tick window and the unreturned events become unreachable.
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
 returns setof pgque.message as $$
 declare
     v_batch_id bigint;
+    v_returned bigint[] := '{}'::bigint[];
     ev record;
     cnt int := 0;
 begin
@@ -5128,6 +5144,7 @@ begin
             ev.ev_retry, ev.ev_time,
             ev.ev_extra1, ev.ev_extra2, ev.ev_extra3, ev.ev_extra4
         )::pgque.message;
+        v_returned := v_returned || ev.ev_id;
         cnt := cnt + 1;
         exit when cnt >= i_max_return;
     end loop;
@@ -5135,16 +5152,66 @@ begin
     -- Empty batch: finish immediately to advance the consumer cursor.
     if cnt = 0 then
         perform pgque.finish_batch(v_batch_id);
+        return;
     end if;
+
+    -- Record which msg_ids the caller actually saw so ack() can re-queue
+    -- the rest. Upsert guards against a re-open of the same batch within
+    -- the active subscription (next_batch returns the existing batch_id
+    -- if one is already active; the latest receive() wins).
+    insert into pgque.batch_returned (batch_id, returned_msg_ids)
+    values (v_batch_id, v_returned)
+    on conflict (batch_id) do update
+        set returned_msg_ids = excluded.returned_msg_ids;
 
     return;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.ack() -- finishes the batch, advances consumer position
+--
+-- Fix #134: before finishing the batch, re-queue any events the underlying
+-- PgQ batch contained but pgque.receive() did not yield (because of the
+-- max_return cap). Re-queue uses the existing pgque.retry_queue path with
+-- ev_retry_after = now() so the events are eligible for the next
+-- maint_retry_events() cycle, and ev_retry is preserved (these events were
+-- never delivered to a handler — they must not count as a retry attempt).
+--
+-- Backward compatibility: callers that opened the batch via lower-level
+-- primitives (next_batch + finish_batch) leave no row in pgque.batch_returned,
+-- so ack() falls through to plain finish_batch as before.
 create or replace function pgque.ack(i_batch_id bigint)
 returns integer as $$
+declare
+    v_returned   bigint[];
+    v_sub_id     int4;
+    v_sub_queue  int4;
 begin
+    select returned_msg_ids into v_returned
+    from pgque.batch_returned
+    where batch_id = i_batch_id;
+
+    if found then
+        select sub_id, sub_queue into v_sub_id, v_sub_queue
+        from pgque.subscription
+        where sub_batch = i_batch_id;
+
+        if v_sub_id is not null then
+            insert into pgque.retry_queue (
+                ev_retry_after, ev_queue, ev_id, ev_time, ev_txid, ev_owner,
+                ev_retry, ev_type, ev_data,
+                ev_extra1, ev_extra2, ev_extra3, ev_extra4)
+            select now(), v_sub_queue, b.ev_id, b.ev_time, NULL::xid8, v_sub_id,
+                   coalesce(b.ev_retry, 0), b.ev_type, b.ev_data,
+                   b.ev_extra1, b.ev_extra2, b.ev_extra3, b.ev_extra4
+            from pgque.get_batch_events(i_batch_id) b
+            where not (b.ev_id = any(coalesce(v_returned, '{}'::bigint[])))
+            on conflict (ev_owner, ev_id) do nothing;
+        end if;
+
+        delete from pgque.batch_returned where batch_id = i_batch_id;
+    end if;
+
     return pgque.finish_batch(i_batch_id);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
