@@ -60,7 +60,6 @@ begin;
     insert into processed_orders (order_id, status)
     select (payload::jsonb->>'order_id')::int, 'done'
     from msgs
-    returning 1
   )
   select pgque.ack(batch_id) from msgs limit 1;
 commit;
