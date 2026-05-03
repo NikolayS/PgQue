@@ -71,11 +71,13 @@ consumer.start()  # blocks until SIGTERM / SIGINT
 
 ### Consumer options
 
-`Consumer(..., max_messages=...)` controls the per-`receive` limit. By
-default the consumer requests PostgreSQL's `int` maximum, so it drains
-the whole PgQ batch before acknowledging it. If you lower this value
-below the real batch size, `ack()` still finishes the batch and
-unreturned rows are skipped.
+`Consumer(..., max_messages=...)` controls the per-`receive` limit.
+The default is PostgreSQL's `int` maximum, so the consumer requests
+the whole PgQ batch before acknowledging it. `ack()` finishes the
+entire underlying PgQ batch, including rows beyond `max_messages`;
+only lower this value when it is at least as large as the queue's
+worst-case batch size, otherwise rows past the limit are silently
+skipped by the batch ack.
 
 ### Handling unknown event types
 
@@ -84,14 +86,14 @@ registered handler and no `"*"` catch-all. The message is retried (or
 dead-lettered once `queue_max_retries` is exhausted) so unknown types
 are never silently dropped.
 
-To ack unknown types instead, pass `unknown_handler="ack"`:
+To ack unknown types instead, pass `unknown_handler_policy="ack"`:
 
 ```python
 consumer = pgque.Consumer(
     dsn="postgresql://localhost/mydb",
     queue="orders",
     name="order_worker",
-    unknown_handler="ack",  # log WARNING and ack; do not nack
+    unknown_handler_policy="ack",  # log WARNING and ack; do not nack
 )
 ```
 
