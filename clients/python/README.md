@@ -71,8 +71,7 @@ registered handler and no `"*"` catch-all. The message is retried (or
 dead-lettered once `queue_max_retries` is exhausted) so unknown types
 are never silently dropped.
 
-To opt in to the legacy "warn + ack" behavior, pass
-`unknown_handler="ack"`:
+To ack unknown types instead, pass `unknown_handler="ack"`:
 
 ```python
 consumer = pgque.Consumer(

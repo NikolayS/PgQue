@@ -22,7 +22,8 @@ logger = logging.getLogger("pgque")
 # Maximum time the LISTEN wait blocks before re-checking the stop flag.
 # Bounds shutdown latency to roughly this many seconds.
 _WAIT_SLICE_SECONDS = 0.5
-_DEFAULT_MAX_MESSAGES = 2_147_483_647  # PostgreSQL int4 max; request the whole batch by default.
+# PostgreSQL int4 max; request the whole batch by default.
+_DEFAULT_MAX_MESSAGES = 2_147_483_647
 
 
 class Consumer:
@@ -50,9 +51,8 @@ class Consumer:
         - If no handler is registered for a message type (and no
           default ``"*"`` handler exists), the message is nacked
           (sent to retry_queue, or to the dead-letter queue once
-          ``queue_max_retries`` is exhausted). To opt in to the
-          previous behavior of acking unknown types after a WARNING,
-          pass ``unknown_handler="ack"``.
+          ``queue_max_retries`` is exhausted). To ack unknown types
+          instead, pass ``unknown_handler="ack"``.
 
     After all messages in a batch have been dispatched, the batch is
     acked automatically.
