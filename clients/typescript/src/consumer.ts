@@ -4,6 +4,8 @@
 import type { Client } from './client.js';
 import type { ConsumerOptions, HandlerFunc, Message } from './types.js';
 
+const DEFAULT_MAX_MESSAGES = 2_147_483_647; // PostgreSQL int4 max; request the whole batch by default.
+
 /**
  * High-level consumer that polls `pgque.receive`, dispatches each message
  * to a per-event-type handler, and finalizes the batch with `ack` (or
@@ -33,7 +35,7 @@ export class Consumer {
     opts: ConsumerOptions = {},
   ) {
     this.pollIntervalMs = opts.pollInterval ?? 30_000;
-    this.maxMessages = opts.maxMessages ?? 500;
+    this.maxMessages = opts.maxMessages ?? DEFAULT_MAX_MESSAGES;
     this.unknownHandlerPolicy = opts.unknownHandlerPolicy ?? 'nack';
     this.logger = opts.logger ?? console;
   }

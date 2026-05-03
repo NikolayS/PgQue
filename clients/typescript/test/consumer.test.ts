@@ -189,6 +189,99 @@ describe('Consumer (in-memory mocks)', () => {
     expect(fakeClient.ack).toHaveBeenCalledTimes(0);
     expect(fakeClient.ack.mock.calls.length).toBe(0);
   });
+
+  it('passes the safe default maxMessages to receive', async () => {
+    const fakeClient = {
+      receive: vi.fn(async () => []),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => undefined),
+    };
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.receive.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.receive).toHaveBeenCalled();
+    expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', 2_147_483_647]);
+  });
+
+  it('passes configured maxMessages to receive', async () => {
+    const fakeClient = {
+      receive: vi.fn(async () => []),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => undefined),
+    };
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      maxMessages: 123,
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.receive.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.receive).toHaveBeenCalled();
+    expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', 123]);
+  });
+
+  it('does not call ack when nack fails for an unknown event type', async () => {
+    const msg: Message = {
+      msgId: 2n,
+      batchId: 100n,
+      type: 'unknown_type',
+      payload: '{}',
+      retryCount: null,
+      createdAt: new Date(),
+      extra1: null,
+      extra2: null,
+      extra3: null,
+      extra4: null,
+    };
+
+    let receiveCalls = 0;
+    const fakeClient = {
+      receive: vi.fn(async () => {
+        receiveCalls += 1;
+        return receiveCalls === 1 ? [msg] : [];
+      }),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => {
+        throw new Error('synthetic nack failure');
+      }),
+    };
+
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.nack.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.nack).toHaveBeenCalledTimes(1);
+    expect(fakeClient.ack).toHaveBeenCalledTimes(0);
+  });
 });
 
 describe('Consumer.unknownHandlerPolicy=ack (env-gated)', () => {

@@ -217,15 +217,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
 
   skipIfNoDb('omitted payload field becomes JSON null', async () => {
     // Same coercion when `payload` is absent from the Event object.
-    // Object properties whose value is `undefined` are dropped by
-    // JSON.stringify per spec — that is the documented behavior.
-    // `payload` is required in the Event type, but the runtime explicitly
-    // handles the omitted case by coercing to JSON null. Cast the literal
-    // to exercise that path without weakening the public type signature.
-    await env.client.send(
-      env.queue,
-      { type: 'undef.omitted' } as unknown as Parameters<typeof env.client.send>[1],
-    );
+    await env.client.send(env.queue, { type: 'undef.omitted' });
     await advanceQueue(env.client, env.queue);
     const [m] = await env.client.receive(env.queue, env.consumer, 10);
     expect(m).toBeDefined();
@@ -233,6 +225,25 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     expect(m!.payload).toBe('null');
     expect(JSON.parse(m!.payload)).toBeNull();
     await env.client.ack(m!.batchId);
+  });
+
+  skipIfNoDb('drops nested undefined object properties per JSON.stringify', async () => {
+    await env.client.send(env.queue, {
+      type: 'undef.nested',
+      payload: { a: 1, b: undefined },
+    });
+    await advanceQueue(env.client, env.queue);
+    const [m] = await env.client.receive(env.queue, env.consumer, 10);
+    expect(m).toBeDefined();
+    expect(m!.type).toBe('undef.nested');
+    expect(JSON.parse(m!.payload)).toEqual({ a: 1 });
+    await env.client.ack(m!.batchId);
+  });
+
+  skipIfNoDb('rejects top-level function payloads', async () => {
+    await expect(
+      env.client.send(env.queue, { type: 'bad.function', payload: () => undefined }),
+    ).rejects.toBeInstanceOf(PgqueSqlError);
   });
 
   skipIfNoDb('preserves bigint batchId across the API surface', async () => {

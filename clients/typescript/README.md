@@ -65,7 +65,7 @@ try {
 | `connect(dsn, poolOptions?)` | Connect via `pg.Pool`. Eagerly probes the connection. |
 | `client.send(queue, event)` | Publish; returns event id (`bigint`). |
 | `client.sendBatch(queue, type, payloads)` | Publish a same-type batch atomically; returns event ids (`bigint[]`). |
-| `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. |
+| `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. If you later call `ack(batchId)`, PgQue finishes the whole underlying batch, including rows beyond `max`; size `max` for your queue or use the high-level consumer default. |
 | `client.ack(batchId)` | Finish the batch. |
 | `client.nack(batchId, msg, opts?)` | Single-message retry/DLQ. |
 | `client.subscribe(queue, consumer)` | Wraps `pgque.register_consumer`. |
@@ -87,7 +87,7 @@ try {
 | Option | Default | Notes |
 |---|---|---|
 | `pollInterval` | `30000` (ms) | Sleep between empty polls. |
-| `maxMessages` | `500` | Max messages returned per `pgque.receive` call. `500` matches PgQue's default `ticker_max_count`, which is the *threshold* at which the ticker fires — **not a hard ceiling on batch size**. This mitigates row loss when batches stay at or below the ticker threshold, but does **not** prevent it when batches exceed `maxMessages`: bursts that fire via `ticker_max_lag` after more than `ticker_max_count` events accumulate, or operator changes to `ticker_max_count`, can produce larger batches. The `pgque.ack(batch_id)` call finishes the whole batch (including unreturned rows), so any rows past `maxMessages` are skipped on ack. Size `maxMessages` to at least the queue's `ticker_max_count` for your workload. |
+| `maxMessages` | `2147483647` | Max messages returned per `pgque.receive` call. The default is PostgreSQL's `int` maximum, so the high-level consumer requests the whole PgQ batch before acknowledging it. `pgque.ack(batch_id)` finishes the whole underlying batch, including rows beyond `maxMessages`; only lower this value when it is at least as large as the queue's possible batch size for your workload. |
 | `unknownHandlerPolicy` | `'nack'` | What to do when a message arrives whose `type` has no registered handler. `'nack'` (default) routes to retry / DLQ via `pgque.nack`. `'ack'` logs a warning and lets the batch ack absorb it (silent discard). |
 | `logger` | `console` | Receives `warn` / `error` lines. |
 
