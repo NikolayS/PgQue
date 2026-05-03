@@ -24,6 +24,25 @@
 
 \echo '=== test_tle_install (e2e against real pg_tle) ==='
 
+-- Fail fast with a clear pointer to the README if pg_tle is not preloaded.
+-- Without this, the create extension below would error with
+-- "pg_tle must be loaded via shared_preload_libraries" — accurate but
+-- easy to miss when the test is one step in a larger run.
+do $$
+declare
+    spl text := current_setting('shared_preload_libraries', true);
+begin
+    if spl is null or spl !~ '\mpg_tle\M' then
+        raise exception 'pg_tle is not in shared_preload_libraries (got %). '
+            'Add pg_tle to shared_preload_libraries first '
+            '(managed providers: parameter group + reboot; '
+            'self-hosted: alter system + restart). '
+            'See the "install as a pg_tle extension" section in README.md.',
+            coalesce(spl, '<unset>');
+    end if;
+    raise notice 'PASS: pg_tle present in shared_preload_libraries';
+end $$;
+
 create extension if not exists pg_tle;
 
 \i sql/pgque-tle.sql
