@@ -323,3 +323,18 @@ jobs:
             exit 1
           fi
           echo "PASS: No remaining txid_ references"
+
+      - name: Verify generated SQL files are committed (drift check)
+        run: |
+          # build/transform.sh has already run in the previous step.
+          # The committed sql/pgque.sql and sql/pgque-tle.sql must equal
+          # what it just produced; otherwise users cloning the repo and
+          # running \i sql/pgque.sql (or \i sql/pgque-tle.sql) get a stale
+          # file. CI's other jobs rebuild the install file from sources
+          # before running tests, so they would not catch the drift.
+          if ! git diff --exit-code -- sql/pgque.sql sql/pgque-tle.sql; then
+            echo "FAIL: sql/pgque.sql or sql/pgque-tle.sql is out of sync with build/transform.sh output."
+            echo "Run: bash build/transform.sh && git add sql/pgque.sql sql/pgque-tle.sql && git commit"
+            exit 1
+          fi
+          echo "PASS: sql/pgque.sql and sql/pgque-tle.sql are in sync with build/transform.sh"
