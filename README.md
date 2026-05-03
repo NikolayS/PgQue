@@ -163,15 +163,21 @@ PAGER=cat psql --no-psqlrc -c "select pgque.maint()"               # every 30 se
 
 Treat installation as one-way for now — upgrade and reinstall paths are still being tightened. To uninstall: `\i sql/pgque_uninstall.sql`.
 
-**Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension.** If your platform ships pg_tle (RDS, Aurora, AlloyDB, Supabase, self-hosted), PgQue can register itself as a Trusted Language Extension so it shows up in `pg_extension` and supports `DROP EXTENSION pgque CASCADE`:
+### Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension
+
+The default `\i sql/pgque.sql` path stays the recommended install — it is dependency-free and does not require `shared_preload_libraries` or any C extension on the server.
+
+For environments that already run [`pg_tle`](https://github.com/aws/pg_tle) (Trusted Language Extensions: AWS RDS / Aurora, AlloyDB, Supabase, self-hosted), PgQue can opt into being a real Postgres extension. That gives you `pg_extension` membership, `alter extension pgque update` for version upgrades, and `drop extension pgque cascade` for atomic uninstall:
 
 ```sql
 create extension if not exists pg_tle;
 \i sql/pgque-pg_tle.sql       -- registers pgque with pg_tle
-create extension pgque;        -- creates the schema in this database
+create extension pgque;        -- materialises the schema in this database
 ```
 
-The wrapper script pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` (roles cannot be created from inside a TLE body), so the role running it needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-pg_tle-uninstall.sql`.
+The wrapper pre-creates `pgque_reader` / `pgque_writer` / `pgque_admin` because Postgres roles are cluster-global and cannot be created from inside a TLE install body, so the role running this needs `pgtle_admin` plus `CREATEROLE`. To uninstall: `\i sql/pgque-pg_tle-uninstall.sql`.
+
+This path is fully opt-in. Picking it trades the strict "no C extension on the server" property for standard extension lifecycle semantics; if that trade-off is not interesting, just keep using the `\i sql/pgque.sql` install above.
 
 ## Roles and grants
 

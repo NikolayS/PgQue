@@ -73,19 +73,71 @@ jobs:
           fi
           echo "PASS: pgque schema removed after uninstall"
 
-      - name: Test pg_tle packaging (mock pg_tle)
-        run: |
-          # Use a fresh database so the mock pgtle schema does not collide
-          # with the regular install. The script verifies sql/pgque-pg_tle.sql
-          # registers the extension correctly and pre-creates the roles.
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
-            -v ON_ERROR_STOP=1 -c 'create database pgque_pgtle_test'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_test \
-            -v ON_ERROR_STOP=1 -f tests/test_pg_tle_install.sql
-
       - name: Cleanup
         if: always()
         run: docker rm -f pgque-test
+
+  pg_tle-test:
+    name: pg_tle install path
+    runs-on: ubuntu-latest
+    env:
+      PG_VERSION: '17'
+      PGTLE_TAG: v1.5.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Build PG image with pg_tle
+        run: |
+          set -Eeuo pipefail
+          docker build \
+            --build-arg PG_VERSION=${PG_VERSION} \
+            --build-arg PGTLE_TAG=${PGTLE_TAG} \
+            -t pgque-pgtle:test \
+            -f ci/Dockerfile.pg_tle .
+
+      - name: Start PostgreSQL with pg_tle preloaded
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name pgque-pgtle-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            pgque-pgtle:test \
+            -c shared_preload_libraries=pg_tle
+
+          for i in $(seq 1 30); do
+            docker exec pgque-pgtle-test pg_isready -U postgres && break
+            sleep 1
+          done || { echo "PG not ready after 30 seconds"; exit 1; }
+
+      - name: Run pg_tle e2e test
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_pg_tle_install.sql
+
+      - name: Run full regression suite via pg_tle install
+        run: |
+          set -Eeuo pipefail
+          # Fresh database so the e2e drop above does not interfere.
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c 'create database pgque_pgtle_regress'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_regress \
+            -v ON_ERROR_STOP=1 \
+            -c 'create extension pg_tle;' \
+            -f sql/pgque-pg_tle.sql \
+            -c 'create extension pgque;'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_pgtle_regress \
+            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pgque-pgtle-test
 
   python-client-tests:
     name: Python client tests

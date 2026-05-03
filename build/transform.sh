@@ -1004,55 +1004,54 @@ cat > "${PGTLE_FILE}" << HEADER
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
 -- pg_tle (Trusted Language Extensions, https://github.com/aws/pg_tle) lets
--- PgQue install via CREATE EXTENSION without a C extension binary on disk.
+-- PgQue install via create extension without a C extension binary on disk.
 -- After loading this script, the extension is registered with pg_tle and can
--- be created or dropped using ordinary CREATE / DROP EXTENSION commands.
+-- be created or dropped via the standard create / drop extension commands.
 --
 -- Prerequisites:
 --   1. pg_tle is installed in this database:
---          CREATE EXTENSION IF NOT EXISTS pg_tle;
+--          create extension if not exists pg_tle;
 --   2. The current role is a member of pgtle_admin and has CREATEROLE.
 --      Postgres roles are database-cluster-global and cannot be created from
 --      inside a TLE install body, so this script pre-creates them.
 --
 -- Usage:
 --   psql -d mydb -f sql/pgque-pg_tle.sql
---   psql -d mydb -c 'CREATE EXTENSION pgque;'
+--   psql -d mydb -c 'create extension pgque;'
 --
 -- Uninstall:
 --   psql -d mydb -f sql/pgque-pg_tle-uninstall.sql
 
 \set ON_ERROR_STOP on
 
--- Step 1: confirm pg_tle is available. Probe pgtle.install_extension()
--- directly so test mocks (which provide the function without the extension)
--- work without special-casing.
+-- Step 1: confirm pg_tle is loaded.
 do \$\$
 begin
-    if to_regprocedure('pgtle.install_extension(text,text,text,text)') is null then
+    if not exists (select 1 from pg_catalog.pg_extension where extname = 'pg_tle') then
         raise exception 'pg_tle is not available in this database. '
-            'Install it first (CREATE EXTENSION IF NOT EXISTS pg_tle;) '
+            'Run create extension if not exists pg_tle; first, '
             'and grant pgtle_admin to the current role.';
     end if;
 end \$\$;
 
--- Step 2: pre-create the pgque_* roles. The body's role-creation block is
--- idempotent and becomes a no-op once these exist.
+-- Step 2: pre-create the pgque_* roles. Roles are cluster-global and cannot
+-- be created from inside a tle install body, so the body's idempotent role
+-- creation only succeeds when the roles already exist.
 do \$\$
 begin
-    if not exists (select from pg_roles where rolname = 'pgque_reader') then
+    if not exists (select 1 from pg_catalog.pg_roles where rolname = 'pgque_reader') then
         create role pgque_reader;
     end if;
-    if not exists (select from pg_roles where rolname = 'pgque_writer') then
+    if not exists (select 1 from pg_catalog.pg_roles where rolname = 'pgque_writer') then
         create role pgque_writer;
     end if;
-    if not exists (select from pg_roles where rolname = 'pgque_admin') then
+    if not exists (select 1 from pg_catalog.pg_roles where rolname = 'pgque_admin') then
         create role pgque_admin;
     end if;
 end \$\$;
 
 -- Step 3: register the extension body with pg_tle. The body is the verbatim
--- contents of sql/pgque.sql; CREATE EXTENSION pgque executes it inside the
+-- contents of sql/pgque.sql; create extension pgque executes it inside the
 -- caller's transaction.
 select pgtle.install_extension(
     'pgque',

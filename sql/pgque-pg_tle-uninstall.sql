@@ -14,8 +14,12 @@ drop extension if exists pgque cascade;
 
 do $$
 begin
-    if to_regprocedure('pgtle.uninstall_extension(text)') is null then
+    if not exists (select 1 from pg_catalog.pg_extension where extname = 'pg_tle') then
         raise notice 'pg_tle is not available; nothing to unregister.';
+        return;
+    end if;
+    if not exists (select 1 from pgtle.available_extensions() where name = 'pgque') then
+        raise notice 'pgque is not registered with pg_tle; nothing to unregister.';
         return;
     end if;
     perform pgtle.uninstall_extension('pgque');

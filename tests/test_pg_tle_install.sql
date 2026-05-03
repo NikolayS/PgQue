@@ -1,117 +1,99 @@
--- test_pg_tle_install.sql -- Validate sql/pgque-pg_tle.sql packaging.
+-- test_pg_tle_install.sql -- End-to-end pg_tle install path.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- Validates that build/transform.sh produced a working pg_tle install file.
--- Runs against a fresh database with a MOCK `pgtle.install_extension` so the
--- test does not require the real pg_tle extension to be installed in CI.
+-- Pre-conditions for the caller:
+--   - pg_tle binary is loaded (shared_preload_libraries=pg_tle)
+--   - the database is fresh (no pgque schema, no pgque extension installed)
 --
--- Run from the repo root, against a database where pgque is NOT installed:
+-- Steps exercised:
+--   1. create extension pg_tle
+--   2. \i sql/pgque-pg_tle.sql              -- registers pgque with pg_tle
+--   3. create extension pgque                -- materialises the schema
+--   4. assert extension membership / role grants are wired
+--   5. drop extension pgque cascade          -- clean uninstall
+--   6. \i sql/pgque-pg_tle-uninstall.sql     -- unregister from pg_tle
+--
+-- Run from the repo root:
 --   psql -d pgque_pgtle_test -v ON_ERROR_STOP=1 -f tests/test_pg_tle_install.sql
 
 \set ON_ERROR_STOP on
 
-\echo '=== test_pg_tle_install ==='
+\echo '=== test_pg_tle_install (e2e against real pg_tle) ==='
 
--- Mock pg_tle: capture install_extension() calls into a table so the test
--- can assert on what was registered. The four-argument form matches the
--- real pgtle.install_extension(name, version, description, ext) signature.
-drop schema if exists pgtle cascade;
-create schema pgtle;
+create extension if not exists pg_tle;
 
-create table pgtle.captured_install (
-    name        text,
-    version     text,
-    description text,
-    body        text
-);
-
-create function pgtle.install_extension(
-    name text, version text, description text, ext text
-) returns boolean as $$
-begin
-    insert into pgtle.captured_install values (name, version, description, ext);
-    return true;
-end;
-$$ language plpgsql;
-
--- The install script checks for pg_tle by probing pgtle.install_extension(),
--- not by looking at pg_extension, so the mock above is enough to satisfy it.
-
--- Run the install script.
 \i sql/pgque-pg_tle.sql
 
-\echo 'Asserting capture state...'
-
--- Test 1: install_extension was called exactly once.
-do $$
-declare
-    n int;
-begin
-    select count(*) into n from pgtle.captured_install;
-    assert n = 1, format('expected 1 captured install_extension call, got %s', n);
-    raise notice 'PASS: install_extension called exactly once';
-end $$;
-
--- Test 2: the registered extension name is 'pgque'.
-do $$
-declare
-    nm text;
-begin
-    select name into nm from pgtle.captured_install;
-    assert nm = 'pgque', format('expected name=pgque, got %s', nm);
-    raise notice 'PASS: extension name is pgque';
-end $$;
-
--- Test 3: the registered version is non-empty and looks like a version string.
+-- pgque must show up in the pg_tle catalog before we materialise the schema.
 do $$
 declare
     v text;
 begin
-    select version into v from pgtle.captured_install;
-    assert v is not null and length(v) > 0, 'version must be non-empty';
-    assert v ~ '^[0-9]+\.[0-9]+\.[0-9]+', format('version looks malformed: %s', v);
-    raise notice 'PASS: version is %', v;
+    select default_version into v
+    from pgtle.available_extensions()
+    where name = 'pgque';
+    assert v is not null, 'pgque must appear in pgtle.available_extensions()';
+    assert v ~ '^[0-9]+\.[0-9]+\.[0-9]+',
+        format('pgque version looks malformed: %s', v);
+    raise notice 'PASS: pgque registered with pg_tle as version %', v;
 end $$;
 
--- Test 4: the body contains the core PgQ schema setup.
+create extension pgque;
+
+-- Extension membership: pgque is now visible in pg_extension and the schema /
+-- core tables / public version() function are reachable.
 do $$
-declare
-    b text;
 begin
-    select body into b from pgtle.captured_install;
-    assert b ~ 'create schema if not exists pgque',
-        'body must create the pgque schema';
-    assert b ~ 'pgque\.queue', 'body must reference pgque.queue';
-    assert b ~ 'pgque\.tick', 'body must reference pgque.tick';
-    assert b ~ 'pgque\.consumer', 'body must reference pgque.consumer';
-    raise notice 'PASS: body contains core PgQ tables';
+    assert exists (select 1 from pg_catalog.pg_extension where extname = 'pgque'),
+        'pgque must be listed in pg_extension';
+    assert exists (select 1 from pg_catalog.pg_namespace where nspname = 'pgque'),
+        'pgque schema must exist';
+    assert exists (
+        select 1 from pg_catalog.pg_class c
+        join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'pgque' and c.relname = 'queue'
+    ), 'pgque.queue must exist';
+    assert pgque.version() ~ '^[0-9]+\.[0-9]+\.[0-9]+',
+        'pgque.version() must return a version string';
+    raise notice 'PASS: pgque is registered as an extension and schema is reachable';
 end $$;
 
--- Test 5: the body contains the modern API surface.
+-- Functional behaviour (produce / tick / receive / ack) is exercised by the
+-- regression and acceptance suites running against the pg_tle install path
+-- in CI; nothing extra to assert here.
+
+-- drop extension cascade removes the schema and the extension membership.
+drop extension pgque cascade;
+
 do $$
-declare
-    b text;
 begin
-    select body into b from pgtle.captured_install;
-    assert b ~ 'function pgque\.send',     'body must define pgque.send';
-    assert b ~ 'function pgque\.receive',  'body must define pgque.receive';
-    assert b ~ 'function pgque\.ack',      'body must define pgque.ack';
-    assert b ~ 'function pgque\.subscribe','body must define pgque.subscribe';
-    raise notice 'PASS: body contains modern API';
+    assert not exists (select 1 from pg_catalog.pg_extension where extname = 'pgque'),
+        'pgque extension must be gone after drop';
+    assert not exists (select 1 from pg_catalog.pg_namespace where nspname = 'pgque'),
+        'pgque schema must be gone after drop extension cascade';
+    raise notice 'PASS: drop extension pgque cascade removes schema and extension';
 end $$;
 
--- Test 6: the wrapper script pre-created the pgque_* roles so the body's
--- idempotent role creation is a no-op (CREATE ROLE inside a TLE body is
--- typically blocked when the executing role lacks CREATEROLE).
+-- Uninstall script unregisters the version from pg_tle.
+\i sql/pgque-pg_tle-uninstall.sql
+
 do $$
 begin
-    assert exists (select 1 from pg_roles where rolname = 'pgque_reader'),
-        'pgque_reader must be pre-created by the wrapper';
-    assert exists (select 1 from pg_roles where rolname = 'pgque_writer'),
-        'pgque_writer must be pre-created by the wrapper';
-    assert exists (select 1 from pg_roles where rolname = 'pgque_admin'),
-        'pgque_admin must be pre-created by the wrapper';
-    raise notice 'PASS: pgque_* roles pre-created by wrapper';
+    assert not exists (
+        select 1 from pgtle.available_extensions() where name = 'pgque'
+    ), 'pgque must be unregistered from pg_tle after uninstall script';
+    raise notice 'PASS: pg_tle no longer lists pgque after uninstall';
+end $$;
+
+-- Re-running the uninstall script must be a no-op (idempotent).
+\i sql/pgque-pg_tle-uninstall.sql
+
+do $$
+begin
+    assert not exists (
+        select 1 from pgtle.available_extensions() where name = 'pgque'
+    ), 'second uninstall run must remain a no-op';
+    raise notice 'PASS: pg_tle uninstall script is idempotent';
 end $$;
 
 \echo '=== test_pg_tle_install: ALL PASSED ==='
