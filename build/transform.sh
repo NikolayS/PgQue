@@ -568,6 +568,45 @@ sedi 's/b\.ev_id, b\.ev_time, NULL::int8, _s\.sub_id,/b.ev_id, b.ev_time, NULL::
 
 echo "PASS: batch_retry NULL::int8 -> NULL::xid8 for ev_txid (xid8) column"
 
+# Inject SECURITY header on get_batch_cursor(4-arg). The upstream PgQ source
+# concatenates i_extra_where into dynamic SQL verbatim, so the parameter is a
+# trusted-SQL fragment rather than a value. Both overloads are admin-only via
+# the grants block, but the contract must travel with the function body so
+# anyone reading sql/pgque.sql understands why.
+GET_BATCH_CURSOR_FILE="${OUTPUT_DIR}/functions/pgque.get_batch_cursor.sql"
+awk '
+BEGIN { header_done = 0; param_done = 0 }
+!header_done && /^create or replace function pgque\.get_batch_cursor\(/ {
+  print "-- ----------------------------------------------------------------------"
+  print "-- Advanced PgQ-compatible primitive. Application roles should use"
+  print "-- pgque.receive(); get_batch_cursor is kept admin-only in the grants block."
+  print "--"
+  print "-- SECURITY: i_extra_where is concatenated into dynamic SQL verbatim. It is a"
+  print "-- trusted-SQL fragment, NOT a parameter. A caller can inject arbitrary"
+  print "-- predicates (including UNION ALL) and forge rows in the returned stream."
+  print "-- This behavior is inherited from upstream PgQ; it is acceptable here only"
+  print "-- because both overloads are revoked from public, pgque_reader, and"
+  print "-- pgque_writer and granted to pgque_admin only. NEVER pass user-controlled"
+  print "-- input as i_extra_where, even from admin code paths."
+  print "-- ----------------------------------------------------------------------"
+  header_done = 1
+}
+!param_done && /^--      i_extra_where   - optional where clause to filter events$/ {
+  print "--      i_extra_where   - optional where clause to filter events."
+  print "--                        Trusted SQL fragment, not a parameter; never pass"
+  print "--                        user-controlled text."
+  param_done = 1
+  next
+}
+{ print }
+END {
+  if (!header_done) { print "ERROR: get_batch_cursor 4-arg signature not found" > "/dev/stderr"; exit 1 }
+  if (!param_done)  { print "ERROR: i_extra_where parameter doc line not found"   > "/dev/stderr"; exit 1 }
+}
+' "${GET_BATCH_CURSOR_FILE}" > "${GET_BATCH_CURSOR_FILE}.tmp" && mv "${GET_BATCH_CURSOR_FILE}.tmp" "${GET_BATCH_CURSOR_FILE}"
+
+echo "PASS: get_batch_cursor SECURITY header injected (extra_where is trusted SQL)"
+
 # -- Assembly: build sql/pgque.sql ------------------------------------
 
 echo ""

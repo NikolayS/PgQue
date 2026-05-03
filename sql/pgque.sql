@@ -2224,7 +2224,7 @@ $$ language plpgsql; -- no perms needed
 -- This behavior is inherited from upstream PgQ; it is acceptable here only
 -- because both overloads are revoked from public, pgque_reader, and
 -- pgque_writer and granted to pgque_admin only. NEVER pass user-controlled
--- input as i_extra_where, even from admin code paths. See issue #108.
+-- input as i_extra_where, even from admin code paths.
 -- ----------------------------------------------------------------------
 create or replace function pgque.get_batch_cursor(
     in i_batch_id       bigint,
@@ -2254,7 +2254,7 @@ returns setof record as $$
 --      i_quick_limit   - Number of events to return immediately
 --      i_extra_where   - optional where clause to filter events.
 --                        Trusted SQL fragment, not a parameter; never pass
---                        user-controlled text. See issue #108.
+--                        user-controlled text.
 --
 -- Returns:
 --      List of events.
@@ -4361,6 +4361,7 @@ begin
     end if;
 end $$;
 
+
 -- get_batch_cursor is an advanced PgQ-compatible primitive.
 -- Keep both overloads admin-only; application roles should use pgque.receive().
 revoke execute on function pgque.get_batch_cursor(bigint, text, int4)        from public, pgque_reader, pgque_writer;
@@ -5092,3 +5093,5 @@ revoke execute on function pgque.insert_event_bulk(text, text, text[])
 -- functions created here would otherwise inherit PostgreSQL's default
 -- PUBLIC EXECUTE. This second pass covers everything.
 revoke execute on all functions in schema pgque from public;
+
+
