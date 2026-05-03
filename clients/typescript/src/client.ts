@@ -101,6 +101,40 @@ export class Client {
     }
   }
 
+  /** Publish same-type payloads atomically; empty type defaults to `default`. */
+  async sendBatch(queue: string, type: string, payloads: unknown[]): Promise<bigint[]> {
+    if (!queue) {
+      throw new PgqueSqlError('sendBatch', {
+        cause: new Error('queue must be a non-empty string'),
+      });
+    }
+    const eventType = type && type.length > 0 ? type : 'default';
+    const encoded = payloads.map((payload, index) => {
+      try {
+        return JSON.stringify(payload) ?? 'null';
+      } catch (err) {
+        throw new PgqueSqlError('sendBatch', {
+          cause: new Error(`payload at index ${index} is not JSON-serializable`, { cause: err }),
+        });
+      }
+    });
+
+    try {
+      const result = await this.pool.query<{ send_batch: Array<bigint | string> }>(
+        'select pgque.send_batch($1, $2, $3::jsonb[]) as send_batch',
+        [queue, eventType, encoded],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new PgqueSqlError('sendBatch', { cause: new Error('no row returned') });
+      }
+      return row.send_batch.map((id) => (typeof id === 'bigint' ? id : BigInt(id)));
+    } catch (err) {
+      if (err instanceof PgqueError) throw err;
+      throw mapPgError('sendBatch', err, { queue });
+    }
+  }
+
   /**
    * Fetch up to `maxMessages` from the next batch for `consumer` on `queue`.
    * Returns an empty array when no batch is currently available.
