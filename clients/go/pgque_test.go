@@ -286,7 +286,7 @@ func TestNack(t *testing.T) {
 
 	// retry_count starts at null which coalesces to 0; default queue_max_retries
 	// is 5; so this nack should route to retry_queue, not the DLQ.
-	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0]); err != nil {
+	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0], pgque.NackOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
@@ -351,7 +351,7 @@ func TestNackPlaceholderCount(t *testing.T) {
 	}
 
 	// The whole point: this call must succeed against a live DB.
-	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0]); err != nil {
+	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0], pgque.NackOptions{}); err != nil {
 		t.Fatalf("Nack() returned error (placeholder/arg mismatch?): %v", err)
 	}
 }

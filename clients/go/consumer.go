@@ -24,8 +24,11 @@ type HandlerFunc func(ctx context.Context, msg Message) error
 type consumerBackend interface {
 	Receive(ctx context.Context, queue, consumer string, maxMessages int) ([]Message, error)
 	Ack(ctx context.Context, batchID int64) error
-	Nack(ctx context.Context, batchID int64, msg Message, opts ...NackOption) error
+	Nack(ctx context.Context, batchID int64, msg Message, opts NackOptions) error
 }
+
+// strPtr returns a pointer to s; used for building NackOptions.Reason.
+func strPtr(s string) *string { return &s }
 
 // Consumer polls a queue and dispatches messages to registered
 // handlers. Create one via Client.NewConsumer.
@@ -115,7 +118,9 @@ func (c *Consumer) Start(ctx context.Context) error {
 					continue
 				}
 				log.Printf("pgque: no handler registered for event type %q, nacking message %d", msg.Type, msg.MsgID)
-				if nackErr := c.backend.Nack(ctx, batchID, msg); nackErr != nil {
+				if nackErr := c.backend.Nack(ctx, batchID, msg, NackOptions{
+					Reason: strPtr("unknown event type: " + msg.Type),
+				}); nackErr != nil {
 					log.Printf("pgque: nack error for unhandled type %s: %v", msg.Type, nackErr)
 					nackFailed = true
 				}
@@ -123,7 +128,9 @@ func (c *Consumer) Start(ctx context.Context) error {
 			}
 			if handlerErr := c.dispatchWithRecover(ctx, handler, msg); handlerErr != nil {
 				log.Printf("pgque: handler error for %s: %v", msg.Type, handlerErr)
-				if nackErr := c.backend.Nack(ctx, batchID, msg); nackErr != nil {
+				if nackErr := c.backend.Nack(ctx, batchID, msg, NackOptions{
+					Reason: strPtr("handler error: " + handlerErr.Error()),
+				}); nackErr != nil {
 					log.Printf("pgque: nack error for %s: %v", msg.Type, nackErr)
 					nackFailed = true
 				}

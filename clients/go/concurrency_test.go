@@ -298,6 +298,117 @@ func TestConsumer_WithMaxMessages_FetchesEntireBatch(t *testing.T) {
 	}
 }
 
+// TestConsumer_PartialBatch_AcksAfterSomeNacks: a batch of 3 messages —
+// ok / boom / ok — must produce exactly one Nack (for boom), one Ack
+// (for the batch as a whole), and on the next poll only the boom message
+// reappears via retry_queue. Effects are observed against live PG: the
+// nack count is the retry_queue row count for the queue, the ack effect
+// is the consumer cursor advancing past the original batch, and
+// "reappears" is a fresh Receive after maint_retry_events promotes the
+// retry row back into events.
+func TestConsumer_PartialBatch_AcksAfterSomeNacks(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshQueue(t, client)
+	ctx := context.Background()
+
+	send := func(typ string, payload any) {
+		if _, err := client.Send(ctx, queue, pgque.Event{Type: typ, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("ok", map[string]any{"i": 1})
+	send("boom", map[string]any{"i": 2})
+	send("ok", map[string]any{"i": 3})
+	tick(t, client, queue)
+
+	var okCalls, boomCalls int32
+	c := client.NewConsumer(queue, consumer, pgque.WithPollInterval(50*time.Millisecond))
+	c.Handle("ok", func(ctx context.Context, m pgque.Message) error {
+		atomic.AddInt32(&okCalls, 1)
+		return nil
+	})
+	c.Handle("boom", func(ctx context.Context, m pgque.Message) error {
+		atomic.AddInt32(&boomCalls, 1)
+		return errors.New("boom handler failure")
+	})
+
+	consumerCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	go c.Start(consumerCtx)
+
+	// Wait until all three messages have been dispatched.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&okCalls) >= 2 && atomic.LoadInt32(&boomCalls) >= 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-consumerCtx.Done()
+
+	if got := atomic.LoadInt32(&okCalls); got != 2 {
+		t.Fatalf("ok handler invocations: got %d, want 2", got)
+	}
+	if got := atomic.LoadInt32(&boomCalls); got != 1 {
+		t.Fatalf("boom handler invocations: got %d, want 1", got)
+	}
+
+	// 1 Nack observed: retry_queue should hold exactly the boom message.
+	if got := retryQueueCount(t, client, queue); got != 1 {
+		t.Fatalf("retry_queue rows after partial batch: got %d, want 1", got)
+	}
+	var retriedType string
+	if err := client.Pool().QueryRow(ctx, `
+		select rq.ev_type from pgque.retry_queue rq
+		join pgque.queue q on q.queue_id = rq.ev_queue
+		where q.queue_name = $1`, queue).Scan(&retriedType); err != nil {
+		t.Fatal(err)
+	}
+	if retriedType != "boom" {
+		t.Fatalf("retry_queue ev_type: got %q, want %q", retriedType, "boom")
+	}
+
+	// 1 Ack observed: the consumer's cursor advanced past the original batch.
+	// A fresh Receive on the original tick window must return zero rows
+	// (the retry row has not yet been promoted back to events).
+	msgs, err := client.Receive(ctx, queue, consumer, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("post-ack Receive returned %d rows, want 0 (cursor did not advance?)", len(msgs))
+	}
+
+	// Promote the retry row back to events: pull its ev_retry_after into
+	// the past, run maint_retry_events, then tick.
+	if _, err := client.Pool().Exec(ctx, `
+		update pgque.retry_queue
+		set ev_retry_after = now() - interval '1 second'
+		where ev_queue = (select queue_id from pgque.queue where queue_name = $1)`, queue); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Pool().Exec(ctx, "select pgque.maint_retry_events()"); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, client, queue)
+
+	// On next poll, only the boom message reappears.
+	msgs, err = client.Receive(ctx, queue, consumer, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("redelivered batch size: got %d, want 1", len(msgs))
+	}
+	if msgs[0].Type != "boom" {
+		t.Fatalf("redelivered message type: got %q, want %q", msgs[0].Type, "boom")
+	}
+	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestConsumer_DoubleStart_DoesNotPanic: calling Start twice concurrently on
 // the same Consumer instance must not panic. The semantics of concurrent
 // Start calls are otherwise undefined; this test only asserts absence of panic.

@@ -175,7 +175,7 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 		var batchID int64
 		for _, m := range msgs {
 			batchID = m.BatchID
-			if err := client.Nack(ctx, m.BatchID, m); err != nil {
+			if err := client.Nack(ctx, m.BatchID, m, pgque.NackOptions{}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -333,9 +333,12 @@ func TestNack_WithRetryAfter(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
 
-	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0],
-		pgque.WithRetryAfter(3600*time.Second),
-		pgque.WithReason("custom-reason-string")); err != nil {
+	retryAfter := 3600 * time.Second
+	reason := "custom-reason-string"
+	if err := client.Nack(ctx, msgs[0].BatchID, msgs[0], pgque.NackOptions{
+		RetryAfter: &retryAfter,
+		Reason:     &reason,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {

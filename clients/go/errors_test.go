@@ -185,7 +185,7 @@ func TestNack_AfterClose(t *testing.T) {
 		}
 	}()
 	msg := pgque.Message{MsgID: 1, BatchID: 1, Type: "x"}
-	if err := client.Nack(context.Background(), 1, msg); err == nil {
+	if err := client.Nack(context.Background(), 1, msg, pgque.NackOptions{}); err == nil {
 		t.Fatal("expected error from Nack after Close")
 	}
 }
