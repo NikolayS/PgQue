@@ -37,6 +37,8 @@ select pgque.subscribe('orders', 'audit_logger');
 select pgque.subscribe('orders', 'notification_sender');
 select pgque.subscribe('orders', 'analytics_pipeline');
 
+-- send / force_tick / ticker / receive are separate transactions in psql
+-- autocommit. Do not wrap them in begin/commit — the snapshot rule applies.
 select pgque.send('orders', 'order.created', '{"order_id": 1}'::jsonb);
 select pgque.force_tick('orders');
 select pgque.ticker();

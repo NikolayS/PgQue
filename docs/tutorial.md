@@ -121,6 +121,8 @@ See the [concepts glossary](pgq-concepts.md) for the full definitions of event, 
 For demos and tests, PgQue provides `pgque.force_tick` to bypass the tick thresholds for one queue. It does **not** create the tick by itself — you still have to call `pgque.ticker()` afterwards to produce the tick:
 
 ```sql
+-- separate transactions (psql autocommit). Do not wrap in begin/commit:
+-- ticker() must see the prior send committed before it can include it in a batch.
 select pgque.force_tick('orders');
 select pgque.ticker();
 ```
@@ -216,6 +218,8 @@ The parameter is `max_retries`, not `queue_max_retries` — `set_queue_config` p
 Send another event, tick, and receive:
 
 ```sql
+-- send / force_tick / ticker / receive are four separate transactions in psql
+-- autocommit. Do not wrap them in begin/commit — the snapshot rule still applies.
 select pgque.send('orders', '{"order_id": 43, "total": 10.00}'::jsonb);
 select pgque.force_tick('orders');
 select pgque.ticker();
@@ -247,6 +251,7 @@ end $$;
 The event is now in PgQ's retry queue. Moving it back into the main event stream is a separate maintenance step: `pgque.maint_retry_events()`. After that, the next tick makes it visible again:
 
 ```sql
+-- four separate transactions (psql autocommit). Do not wrap in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_tick('orders');
 select pgque.ticker();
@@ -280,6 +285,8 @@ begin
     perform pgque.ack(v_msg.batch_id);
 end $$;
 
+-- the do-block above is one transaction; the three statements below are
+-- three more, in psql autocommit. Do not wrap them in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_tick('orders');
 select pgque.ticker();

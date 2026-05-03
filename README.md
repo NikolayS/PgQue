@@ -232,7 +232,9 @@ select pgque.subscribe('orders', 'processor');
 select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
 
 -- tx 3: advance the queue if you are not using pg_cron
--- (force_tick bumps the event-seq threshold; ticker() then inserts the tick)
+-- force_tick bumps the event-seq threshold; ticker() then inserts the tick.
+-- Each select below is its own implicit transaction in psql autocommit —
+-- do NOT wrap these in begin/commit (the tick must see the send committed).
 select pgque.force_tick('orders');
 select pgque.ticker();
 
@@ -304,7 +306,8 @@ if (messages.length > 0) await client.ack(messages[0].batch_id);
 ```sql
 select pgque.send('orders', '{"order_id": 42}'::jsonb);
 
--- without pg_cron, advance the queue manually (omit if a ticker is running)
+-- without pg_cron, advance the queue manually (omit if a ticker is running).
+-- Run as separate transactions — do not wrap in begin/commit.
 select pgque.force_tick('orders');
 select pgque.ticker();
 
