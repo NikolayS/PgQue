@@ -165,7 +165,7 @@ Treat installation as one-way for now — upgrade and reinstall paths are still 
 
 ### Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension
 
-The default `\i sql/pgque.sql` path stays the recommended install — it is dependency-free and does not require `shared_preload_libraries` or any C extension on the server.
+The default `\i sql/pgque.sql` path stays the recommended install — PgQue itself is pure SQL + PL/pgSQL, with no C extension or `shared_preload_libraries` required on the server. (pg_cron is recommended as the ticker but stays optional; see [Installation](#installation) above.)
 
 For environments that already run [`pg_tle`](https://github.com/aws/pg_tle) (Trusted Language Extensions: AWS RDS / Aurora, AlloyDB, Supabase, self-hosted), PgQue can opt into being a real Postgres extension. That gives you `pg_extension` membership, `alter extension pgque update` for version upgrades, and `drop extension pgque cascade` for atomic uninstall:
 
