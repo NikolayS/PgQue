@@ -153,14 +153,33 @@ func TestNack_ToDLQAtRetryLimit(t *testing.T) {
 	const maxCycles = 5
 	for i := 0; i < maxCycles; i++ {
 		// Expire any pending retry delays so maint_retry_events picks them up
-		// immediately; in production these would expire naturally.
-		if _, err := client.Pool().Exec(ctx,
-			"update pgque.retry_queue set ev_retry_after = now() - interval '1 second'"); err != nil {
+		// immediately; in production these would expire naturally. Scope the
+		// update to this test's queue — pgque.ack() now re-queues unreturned
+		// batch rows globally (#134), so a global update would race with rows
+		// from sibling tests.
+		if _, err := client.Pool().Exec(ctx, `
+			update pgque.retry_queue rq
+			   set ev_retry_after = now() - interval '1 second'
+			  from pgque.queue q
+			 where q.queue_id = rq.ev_queue
+			   and q.queue_name = $1`, queue); err != nil {
 			t.Logf("retry_queue update unavailable: %v", err)
 		}
-		// Re-queue retry_queue rows for redelivery.
-		if _, err := client.Pool().Exec(ctx, "select pgque.maint_retry_events()"); err != nil {
-			t.Logf("maint_retry_events unavailable, using ticker fallback: %v", err)
+		// Re-queue retry_queue rows for redelivery. maint_retry_events()
+		// processes at most 10 rows per call; loop until drained so that
+		// past-due rows left behind by sibling tests (which can pile up under
+		// the global retry_queue now that pgque.ack() re-queues unreturned
+		// batch events for #134) do not starve this test's row.
+		for {
+			var n int
+			if err := client.Pool().QueryRow(ctx,
+				"select pgque.maint_retry_events()").Scan(&n); err != nil {
+				t.Logf("maint_retry_events unavailable, using ticker fallback: %v", err)
+				break
+			}
+			if n == 0 {
+				break
+			}
 		}
 		tick(t, client, queue)
 
