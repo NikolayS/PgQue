@@ -159,6 +159,30 @@ def test_jsonb_payload_round_trip(conn, setup_queue, payload, expected):
     conn.commit()
 
 
+def test_send_batch_mixed_payloads_preserve_order(conn, setup_queue):
+    """send_batch preserves payload order, including JSON null."""
+    import json
+
+    queue, consumer = setup_queue
+    client = pgque.PgqueClient(conn)
+    expected = [{"a": 1}, None, "42"]
+    ids = client.send_batch(queue, "batch.mixed", expected)
+    conn.commit()
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    msgs = client.receive(queue, consumer, max_messages=10)
+    assert [m.msg_id for m in msgs] == ids
+    got = [
+        m.payload if not isinstance(m.payload, str) else json.loads(m.payload)
+        for m in msgs
+    ]
+    assert got == expected
+    client.ack(msgs[0].batch_id)
+    conn.commit()
+
+
 def test_send_batch_none_payload_produces_json_null(conn, setup_queue):
     """send_batch([None]) must store JSON null, not SQL NULL."""
     # send(None) coerces to JSON null via "null"; send_batch must match it.

@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 from unittest import mock
+from unittest.mock import MagicMock
 
 import pgque
 
@@ -31,6 +32,26 @@ def test_consumer_default_max_messages_requests_whole_batch(dsn):
 def test_consumer_configured_max_messages_is_preserved(dsn):
     cons = pgque.Consumer(dsn=dsn, queue="q", name="c", max_messages=123)
     assert cons.max_messages == 123
+
+
+def test_consumer_poll_once_passes_default_max_messages(dsn):
+    cons = pgque.Consumer(dsn=dsn, queue="q", name="c")
+    fake_conn = MagicMock()
+
+    with mock.patch.object(pgque.PgqueClient, "receive", return_value=[]) as receive:
+        cons._poll_once(fake_conn)
+
+    receive.assert_called_once_with("q", "c", 2_147_483_647)
+
+
+def test_consumer_poll_once_passes_configured_max_messages(dsn):
+    cons = pgque.Consumer(dsn=dsn, queue="q", name="c", max_messages=123)
+    fake_conn = MagicMock()
+
+    with mock.patch.object(pgque.PgqueClient, "receive", return_value=[]) as receive:
+        cons._poll_once(fake_conn)
+
+    receive.assert_called_once_with("q", "c", 123)
 
 
 def test_consumer_dispatches_by_event_type(dsn, conn, setup_queue):
@@ -212,10 +233,14 @@ def test_consumer_acks_unhandled_event_type_when_opt_in(
         t = _run_consumer_for(cons, 3.0)
         t.join(timeout=5.0)
 
-    # Must NOT be in retry_queue -- it was acked, not nacked.
+    # Must NOT be in retry_queue or dead_letter -- it was acked, not nacked.
     rq = _retry_count_for_msg(conn, queue, msg_id)
+    dlq = _dead_letter_count_for_msg(conn, queue, msg_id)
     assert rq == 0, (
         "unhandled event type was nacked (found in retry_queue); expected ack"
+    )
+    assert dlq == 0, (
+        "unhandled event type was dead-lettered; expected ack"
     )
 
     # A WARNING must have been logged containing the type.
