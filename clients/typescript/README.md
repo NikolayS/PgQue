@@ -162,6 +162,13 @@ PGQUE_TEST_DSN=postgresql://postgres:pgque_test@localhost/pgque_test \
 
 Without `PGQUE_TEST_DSN` the integration tests skip.
 
+## Distribution
+
+The npm package is `pgque`. It publishes ESM JavaScript and TypeScript
+declarations from `dist/`, built from the Bun-managed source tree.
+
+See [RELEASE.md](RELEASE.md) for publishing steps.
+
 ## License
 
 Apache-2.0. Copyright 2026 Nikolay Samokhvalov.

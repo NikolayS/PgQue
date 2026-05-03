@@ -7,7 +7,7 @@ universal PostgreSQL queue. A thin, idiomatic wrapper over the
 ## Install
 
 ```bash
-go get github.com/NikolayS/pgque/clients/go
+go get github.com/NikolayS/pgque/clients/go@v0.2.0
 ```
 
 Requires Go 1.21+ and PostgreSQL 14+ with the PgQue schema installed
@@ -111,6 +111,14 @@ PGQUE_TEST_DSN=postgres://postgres:pgque_test@localhost/pgque_test \
 ```
 
 Without `PGQUE_TEST_DSN`, the tests skip.
+
+## Distribution
+
+This client is published as the Go module
+`github.com/NikolayS/pgque/clients/go`. Because it lives in a subdirectory,
+release tags use the Go submodule form, for example `clients/go/v0.2.0`.
+
+See [RELEASE.md](RELEASE.md) for publishing steps.
 
 ## More
 

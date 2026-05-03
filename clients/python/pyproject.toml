@@ -1,5 +1,5 @@
 [project]
-name = "pgque"
+name = "pgque-py"
 version = "0.2.0"
 description = "Python client for PgQue -- PgQ Universal Edition"
 readme = "README.md"
@@ -18,11 +18,12 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "psycopg[binary]>=3.1",
+    "psycopg[binary]>=3.1,<4",
 ]
 
 [project.optional-dependencies]

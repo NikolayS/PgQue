@@ -1,0 +1,68 @@
+name: Release Python client
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, matching clients/python/pyproject.toml"
+        required: true
+        type: string
+      repository:
+        description: "Package index"
+        required: true
+        default: "testpypi"
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.repository == 'pypi' && 'pypi' || 'testpypi' }}
+    defaults:
+      run:
+        working-directory: clients/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify version input
+        run: |
+          set -Eeuo pipefail
+          actual=$(python - <<'PY'
+          import tomllib
+          print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])
+          PY
+          )
+          test "$actual" = "${{ inputs.version }}" || {
+            echo "version input ${{ inputs.version }} != pyproject.toml $actual"
+            exit 1
+          }
+
+      - name: Build distribution
+        run: |
+          set -Eeuo pipefail
+          python -m pip install -U build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Publish to TestPyPI
+        if: inputs.repository == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: clients/python/dist
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: inputs.repository == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: clients/python/dist
