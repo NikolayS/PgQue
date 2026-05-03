@@ -8,26 +8,27 @@ on:
         required: true
         type: string
       dry_run:
-        description: "Validate release without creating a tag/release"
+        description: "Validate release without pushing to mirror"
         required: true
         default: true
         type: boolean
       create_release:
-        description: "Create a GitHub Release for the submodule tag"
+        description: "Create a GitHub Release in the mirror repository"
         required: true
         default: true
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  tag:
+  mirror-and-tag:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: go-release
     env:
       VERSION: ${{ inputs.version }}
+      MIRROR_REPO: NikolayS/pgque-go
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,39 +50,56 @@ jobs:
           cd clients/go
           go test ./...
 
-      - name: Show tag that would be created
+      - name: Split clients/go subtree
+        run: |
+          set -Eeuo pipefail
+          split_sha=$(git subtree split --prefix=clients/go HEAD)
+          echo "split_sha=$split_sha" >> "$GITHUB_ENV"
+          echo "mirror commit: $split_sha"
+
+      - name: Check mirror tag does not exist
+        env:
+          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          git ls-remote --exit-code --tags "https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git" "refs/tags/$VERSION" && {
+            echo "mirror tag $VERSION already exists"
+            exit 1
+          } || true
+
+      - name: Show mirror update dry run
         if: inputs.dry_run
         run: |
           set -Eeuo pipefail
-          echo "dry run: would create and push clients/go/$VERSION"
+          echo "dry run: would push subtree $split_sha to ${MIRROR_REPO}:main and tag $VERSION"
 
-      - name: Create and push submodule tag
+      - name: Push mirror main and tag
         if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
-          tag="clients/go/$VERSION"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "tag $tag already exists"
-            exit 1
-          fi
-          git tag -a "$tag" -m "Go client $VERSION"
-          git push origin "$tag"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git"
+          git push "$remote" "$split_sha:refs/heads/main"
+          git tag -a "$VERSION" "$split_sha" -m "Go client $VERSION"
+          git push "$remote" "refs/tags/$VERSION"
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release in mirror
         if: ${{ !inputs.dry_run && inputs.create_release }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
-          tag="clients/go/$VERSION"
-          gh release create "$tag" \
+          gh release create "$VERSION" \
+            --repo "$MIRROR_REPO" \
+            --target "$split_sha" \
             --title "Go client $VERSION" \
-            --notes "Go client release for module github.com/NikolayS/pgque/clients/go. Install with: go get github.com/NikolayS/pgque/clients/go@$VERSION"
+            --notes "Go client release for module github.com/NikolayS/pgque-go. Install with: go get github.com/NikolayS/pgque-go@$VERSION"
 
       - name: Warm Go module proxy cache
         if: ${{ !inputs.dry_run }}
         run: |
           set -Eeuo pipefail
-          curl -fsSL "https://proxy.golang.org/github.com/!nikolay!s/pgque/clients/go/@v/$VERSION.info" >/dev/null || true
+          curl -fsSL "https://proxy.golang.org/github.com/!nikolay!s/pgque-go/@v/$VERSION.info" >/dev/null || true

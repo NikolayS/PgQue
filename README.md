@@ -297,10 +297,10 @@ def handle_order(msg):
 consumer.start()
 ```
 
-### Go (`github.com/NikolayS/pgque/clients/go`) — pgx/v5
+### Go (`github.com/NikolayS/pgque-go`) — pgx/v5
 
 ```bash
-go get github.com/NikolayS/pgque/clients/go@v0.2.0
+go get github.com/NikolayS/pgque-go@latest
 ```
 
 ```go

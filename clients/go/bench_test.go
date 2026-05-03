@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // BenchmarkSend measures single-Send latency.

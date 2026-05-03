@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // TestEvent_EmptyPayload: a nil Payload marshals to JSON null and round-trips.

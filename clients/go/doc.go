@@ -6,7 +6,7 @@
 //
 // Install the Go module:
 //
-//	go get github.com/NikolayS/pgque/clients/go
+//	go get github.com/NikolayS/pgque-go
 //
 // Quick start:
 //

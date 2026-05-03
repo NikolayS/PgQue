@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // TestConnect_BadDSN: a syntactically invalid DSN must error from Connect,

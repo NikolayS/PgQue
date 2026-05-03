@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // TestSend_DefaultEventType verifies that an Event with empty Type is sent

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // TestRace_ConcurrentSend: many goroutines call Send concurrently; no race,
