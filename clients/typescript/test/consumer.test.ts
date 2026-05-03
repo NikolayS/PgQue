@@ -2,6 +2,7 @@
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { Consumer } from '../src/consumer.js';
 import type { Client } from '../src/client.js';
 import type { Message } from '../src/types.js';
@@ -108,6 +109,38 @@ describe('Consumer (env-gated)', () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
+  skipIfNoDb('LISTEN/NOTIFY wakes consumer before pollInterval elapses', async () => {
+    // Use a very long pollInterval so only a NOTIFY can wake the consumer in time.
+    const consumer = env.client.newConsumer(env.queue, env.consumer, {
+      pollInterval: 60_000,
+    });
+    const seen: Message[] = [];
+    consumer.handle('notify.test', async (msg) => {
+      seen.push(msg);
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+
+    // Give the consumer a moment to set up its LISTEN connection.
+    await sleep(200);
+
+    // Send a message and advance the queue so the ticker emits a NOTIFY.
+    await env.client.send(env.queue, { type: 'notify.test', payload: { x: 1 } });
+    await advanceQueue(env.client, env.queue);
+
+    // Assert delivery within 2 s — clearly via NOTIFY, not the 60 s poll.
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && seen.length === 0) {
+      await sleep(50);
+    }
+
+    ac.abort();
+    await startPromise;
+
+    expect(seen).toHaveLength(1);
+  }, 10_000);
+
   skipIfNoDb('unhandled message types are nacked, not silently consumed', async () => {
     await env.client.send(env.queue, { type: 'unknown', payload: { v: 1 } });
     await advanceQueue(env.client, env.queue);
@@ -212,6 +245,75 @@ describe('Consumer (in-memory mocks)', () => {
 
     expect(fakeClient.receive).toHaveBeenCalled();
     expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', 2_147_483_647]);
+  });
+
+  it('NOTIFY wakes the poll loop before the long sleep elapses (stub pg.Client)', async () => {
+    // Build a fake pg.Client stub that emits 'notification' events.
+    const notifyEmitter = new EventEmitter();
+    let listenCalled = false;
+    let unlistenCalled = false;
+
+    const fakePgClient = {
+      connect: vi.fn(async () => undefined),
+      end: vi.fn(async () => undefined),
+      query: vi.fn(async (sql: string) => {
+        if (/^\s*LISTEN/i.test(sql)) listenCalled = true;
+        if (/^\s*UNLISTEN/i.test(sql)) unlistenCalled = true;
+        return { rows: [] };
+      }),
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        notifyEmitter.on(event, handler);
+      }),
+      removeListener: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        notifyEmitter.removeListener(event, handler);
+      }),
+    };
+
+    // Consumer with a long pollInterval — only NOTIFY should trigger a cycle.
+    const fakeClient = {
+      receive: vi.fn(async () => []),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => undefined),
+    };
+
+    const consumer = new Consumer(
+      fakeClient as unknown as Client,
+      'orders',
+      'worker',
+      {
+        pollInterval: 60_000,
+        logger: { warn: () => undefined, error: () => undefined },
+        _listenClientFactory: async () => fakePgClient as unknown as import('pg').Client,
+      },
+    );
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+
+    // Wait for LISTEN to be registered.
+    const listenDeadline = Date.now() + 1000;
+    while (!listenCalled && Date.now() < listenDeadline) {
+      await sleep(10);
+    }
+    expect(listenCalled).toBe(true);
+
+    // Record how many receive() calls happened before we fire the notification.
+    const callsBefore = fakeClient.receive.mock.calls.length;
+
+    // Fire a simulated NOTIFY from the server.
+    notifyEmitter.emit('notification', { channel: 'pgque_orders', payload: '42' });
+
+    // The consumer should wake up and call receive() again within 500 ms.
+    const wakeDeadline = Date.now() + 500;
+    while (fakeClient.receive.mock.calls.length <= callsBefore && Date.now() < wakeDeadline) {
+      await sleep(10);
+    }
+
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.receive.mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(unlistenCalled).toBe(true);
   });
 
   it('passes configured maxMessages to receive', async () => {
