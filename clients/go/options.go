@@ -9,10 +9,6 @@ import "time"
 // to Client.NewConsumer.
 type ConsumerOption func(*Consumer)
 
-// Option is the legacy alias for ConsumerOption. Kept for backward
-// compatibility with code written against earlier releases.
-type Option = ConsumerOption
-
 // WithPollInterval sets the interval the Consumer waits between poll
 // cycles when Receive returns no messages or fails. Default is 30s.
 func WithPollInterval(d time.Duration) ConsumerOption {
@@ -21,7 +17,7 @@ func WithPollInterval(d time.Duration) ConsumerOption {
 
 // WithMaxMessages sets the per-Receive limit. By default the Consumer
 // requests PostgreSQL's int maximum so it drains the whole PgQ batch before
-// acknowledging it.
+// acknowledging it. Panics if n <= 0.
 //
 // WARNING: pgque.ack(batch_id) finishes the entire underlying PgQ batch,
 // including rows the consumer never received because of this limit. If you
@@ -29,10 +25,11 @@ func WithPollInterval(d time.Duration) ConsumerOption {
 // after ack. Only lower this value when it is at least as large as the
 // queue's possible batch size for your workload.
 func WithMaxMessages(n int) ConsumerOption {
+	if n <= 0 {
+		panic("pgque: WithMaxMessages requires n > 0")
+	}
 	return func(c *Consumer) {
-		if n > 0 {
-			c.maxMessages = n
-		}
+		c.maxMessages = n
 	}
 }
 
@@ -62,35 +59,17 @@ func WithUnknownHandlerPolicy(p UnknownHandlerPolicy) ConsumerOption {
 	return func(c *Consumer) { c.unknownPolicy = p }
 }
 
-// NackOption configures a single Nack call. Pass to Client.Nack.
-type NackOption func(*nackOptions)
+// NackOptions tunes a single Client.Nack call. A zero-value NackOptions
+// uses the SQL-side defaults: 60s retry delay, NULL reason.
+type NackOptions struct {
+	// RetryAfter sets the delay before the message becomes eligible for
+	// redelivery from retry_queue. Maps to the i_retry_after argument of
+	// pgque.nack. Nil means 60 seconds.
+	RetryAfter *time.Duration
 
-// nackOptions captures the optional Nack parameters. Defaults match the
-// SQL function: 60s retry delay, NULL reason.
-type nackOptions struct {
-	retryAfter    time.Duration
-	retryAfterSet bool
-	reason        string
-	reasonSet     bool
-}
-
-// WithRetryAfter sets the delay before the message becomes eligible for
-// redelivery from retry_queue. Maps to the i_retry_after argument of
-// pgque.nack. Default is 60 seconds.
-func WithRetryAfter(d time.Duration) NackOption {
-	return func(o *nackOptions) {
-		o.retryAfter = d
-		o.retryAfterSet = true
-	}
-}
-
-// WithReason sets the human-readable reason recorded on the dead_letter
-// row when this nack exhausts the retry budget. Maps to the i_reason
-// argument of pgque.nack. Default is NULL (the SQL function then records
-// "max retries exceeded").
-func WithReason(reason string) NackOption {
-	return func(o *nackOptions) {
-		o.reason = reason
-		o.reasonSet = true
-	}
+	// Reason sets the human-readable reason recorded on the dead_letter
+	// row when this nack exhausts the retry budget. Maps to the i_reason
+	// argument of pgque.nack. Nil means SQL NULL (the SQL function then
+	// records "max retries exceeded").
+	Reason *string
 }

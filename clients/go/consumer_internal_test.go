@@ -1,6 +1,6 @@
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-package pgque_test
+package pgque
 
 import (
 	"context"
@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	pgque "github.com/NikolayS/pgque-go"
 )
 
 // stubBackend is a Consumer backend that returns a single message on the
@@ -22,7 +20,7 @@ type stubBackend struct {
 	mu sync.Mutex
 
 	delivered bool
-	msg       pgque.Message
+	msg       Message
 
 	nackCount int32
 	ackCount  int32
@@ -31,7 +29,7 @@ type stubBackend struct {
 	lastMax int32
 }
 
-func (s *stubBackend) Receive(_ context.Context, _, _ string, maxMessages int) ([]pgque.Message, error) {
+func (s *stubBackend) Receive(_ context.Context, _, _ string, maxMessages int) ([]Message, error) {
 	atomic.StoreInt32(&s.lastMax, int32(maxMessages))
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -39,7 +37,7 @@ func (s *stubBackend) Receive(_ context.Context, _, _ string, maxMessages int) (
 		return nil, nil
 	}
 	s.delivered = true
-	return []pgque.Message{s.msg}, nil
+	return []Message{s.msg}, nil
 }
 
 func (s *stubBackend) Ack(_ context.Context, _ int64) (int64, error) {
@@ -47,7 +45,7 @@ func (s *stubBackend) Ack(_ context.Context, _ int64) (int64, error) {
 	return 1, nil
 }
 
-func (s *stubBackend) Nack(_ context.Context, _ int64, _ pgque.Message, _ ...pgque.NackOption) error {
+func (s *stubBackend) Nack(_ context.Context, _ int64, _ Message, _ NackOptions) error {
 	atomic.AddInt32(&s.nackCount, 1)
 	return s.nackErr
 }
@@ -58,10 +56,10 @@ func (s *stubBackend) Nack(_ context.Context, _ int64, _ pgque.Message, _ ...pgq
 // was never recorded. With the fix in place, a Nack error must leave
 // the batch unacked so that PgQue redelivers it on the next Receive.
 func TestConsumer_NackFailure_DoesNotAck(t *testing.T) {
-	var client *pgque.Client
+	client := &Client{}
 
 	stub := &stubBackend{
-		msg: pgque.Message{
+		msg: Message{
 			MsgID:   1,
 			BatchID: 42,
 			Type:    "no.handler.registered",
@@ -71,8 +69,8 @@ func TestConsumer_NackFailure_DoesNotAck(t *testing.T) {
 	}
 
 	c := client.NewConsumer("dummy_queue", "dummy_consumer",
-		pgque.WithPollInterval(50*time.Millisecond))
-	pgque.SetConsumerBackend(c, stub)
+		WithPollInterval(50*time.Millisecond))
+	c.backend = stub
 	// No Handle() call — the message will hit the unknown-type path,
 	// which Nacks under the default policy.
 
@@ -91,10 +89,10 @@ func TestConsumer_NackFailure_DoesNotAck(t *testing.T) {
 // TestConsumer_NackSuccess_StillAcks confirms the green case: when the
 // per-message Nack succeeds, the batch is acked exactly once.
 func TestConsumer_NackSuccess_StillAcks(t *testing.T) {
-	var client *pgque.Client
+	client := &Client{}
 
 	stub := &stubBackend{
-		msg: pgque.Message{
+		msg: Message{
 			MsgID:   1,
 			BatchID: 7,
 			Type:    "still.unknown",
@@ -104,8 +102,8 @@ func TestConsumer_NackSuccess_StillAcks(t *testing.T) {
 	}
 
 	c := client.NewConsumer("dummy_queue", "dummy_consumer",
-		pgque.WithPollInterval(50*time.Millisecond))
-	pgque.SetConsumerBackend(c, stub)
+		WithPollInterval(50*time.Millisecond))
+	c.backend = stub
 
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
 	defer cancel()
@@ -124,10 +122,10 @@ func TestConsumer_NackSuccess_StillAcks(t *testing.T) {
 // for unhandled types: the batch is acked, the unknown message is
 // effectively dropped (consumer-side ignored).
 func TestConsumer_AckUnknownPolicy_SkipsNack(t *testing.T) {
-	var client *pgque.Client
+	client := &Client{}
 
 	stub := &stubBackend{
-		msg: pgque.Message{
+		msg: Message{
 			MsgID:   1,
 			BatchID: 99,
 			Type:    "ignored.type",
@@ -136,9 +134,9 @@ func TestConsumer_AckUnknownPolicy_SkipsNack(t *testing.T) {
 	}
 
 	c := client.NewConsumer("dummy_queue", "dummy_consumer",
-		pgque.WithPollInterval(50*time.Millisecond),
-		pgque.WithUnknownHandlerPolicy(pgque.AckUnknown))
-	pgque.SetConsumerBackend(c, stub)
+		WithPollInterval(50*time.Millisecond),
+		WithUnknownHandlerPolicy(AckUnknown))
+	c.backend = stub
 
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
 	defer cancel()
@@ -153,12 +151,12 @@ func TestConsumer_AckUnknownPolicy_SkipsNack(t *testing.T) {
 }
 
 func TestConsumer_DefaultMaxMessagesRequestsWholeBatch(t *testing.T) {
-	var client *pgque.Client
+	client := &Client{}
 	stub := &stubBackend{}
 
 	c := client.NewConsumer("dummy_queue", "dummy_consumer",
-		pgque.WithPollInterval(10*time.Millisecond))
-	pgque.SetConsumerBackend(c, stub)
+		WithPollInterval(10*time.Millisecond))
+	c.backend = stub
 
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
@@ -170,13 +168,13 @@ func TestConsumer_DefaultMaxMessagesRequestsWholeBatch(t *testing.T) {
 }
 
 func TestConsumer_WithMaxMessagesPassesReceiveLimit(t *testing.T) {
-	var client *pgque.Client
+	client := &Client{}
 	stub := &stubBackend{}
 
 	c := client.NewConsumer("dummy_queue", "dummy_consumer",
-		pgque.WithPollInterval(10*time.Millisecond),
-		pgque.WithMaxMessages(123))
-	pgque.SetConsumerBackend(c, stub)
+		WithPollInterval(10*time.Millisecond),
+		WithMaxMessages(123))
+	c.backend = stub
 
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()

@@ -111,13 +111,14 @@ _, err = client.Pool().Exec(ctx, "select pgque.ticker()")
 
 ## Nack options
 
-`Client.Nack` takes optional, variadic `NackOption`s:
+`Client.Nack` takes a `NackOptions` struct. Pointer fields default to the
+SQL-side defaults when nil (60-second retry delay, NULL reason):
 
 ```go
-err := client.Nack(ctx, batchID, msg,
-    pgque.WithRetryAfter(5*time.Minute), // override 60s default
-    pgque.WithReason("payment-declined"), // recorded on the dead_letter row
-)
+err := client.Nack(ctx, batchID, msg, pgque.NackOptions{
+    RetryAfter: ptr(5 * time.Minute),
+    Reason:     ptr("payment-declined"),
+})
 ```
 
 Calls without options preserve the historical defaults: 60-second retry
