@@ -15,6 +15,11 @@ on:
         options:
           - testpypi
           - pypi
+      dry_run:
+        description: "Build and validate without publishing"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -62,15 +67,28 @@ jobs:
           python -m build
           python -m twine check dist/*
 
+      - name: Verify built wheel installs
+        run: |
+          set -Eeuo pipefail
+          python -m venv /tmp/pgque-python-wheel-check
+          . /tmp/pgque-python-wheel-check/bin/activate
+          python -m pip install dist/*.whl
+          python - <<'PY'
+          import importlib.metadata as md
+          import pgque
+          assert md.version('pgque-py')
+          assert hasattr(pgque, 'PgqueClient')
+          PY
+
       - name: Publish to TestPyPI
-        if: inputs.repository == 'testpypi'
+        if: ${{ !inputs.dry_run && inputs.repository == 'testpypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: clients/python/dist
           repository-url: https://test.pypi.org/legacy/
 
       - name: Publish to PyPI
-        if: inputs.repository == 'pypi'
+        if: ${{ !inputs.dry_run && inputs.repository == 'pypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: clients/python/dist

@@ -74,6 +74,17 @@ jobs:
             fi
           fi
 
+      - name: Validate mirror-root tree
+        run: |
+          set -Eeuo pipefail
+          tmp=$(mktemp -d)
+          git worktree add --detach "$tmp" "$split_sha"
+          trap 'git worktree remove --force "$tmp"' EXIT
+          cd "$tmp"
+          test "$(go list -m)" = "github.com/NikolayS/pgque-go"
+          go list ./...
+          go test ./...
+
       - name: Show mirror update dry run
         if: inputs.dry_run
         run: |

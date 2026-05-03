@@ -62,6 +62,7 @@ jobs:
           set -Eeuo pipefail
           bun install --frozen-lockfile
           bun run check
+          bun run test
           bun run build
 
       - name: Pack smoke test
