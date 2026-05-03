@@ -38,14 +38,23 @@ Configure repository secret `PGQUE_GO_MIRROR_TOKEN` in this repo. The token must
 be able to push branches/tags and create GitHub Releases in `NikolayS/pgque-go`.
 A fine-grained PAT scoped only to the mirror repository is preferred.
 
+## GitHub environment prerequisite
+
+Before the first real release, create GitHub environment `go-release` in
+`NikolayS/pgque`. Protect it as appropriate for releases (for example, required
+reviewers and `main` branch restrictions). The workflow also checks that it is
+running from `main`, but environment protection is the human approval gate.
+
 ## Release process
 
 The release workflow is `.github/workflows/release-go.yml`.
 
 1. Update `clients/go` docs/code as needed and merge the release prep PR.
-2. Run **Release Go client** from `main` with `version=vX.Y.Z` and `dry_run=true`.
-3. If the dry run is clean, run it again with `dry_run=false`.
-4. The workflow runs `go test ./...`, splits `clients/go`, pushes the mirror's
+2. Ensure the `go-release` GitHub environment exists and is protected.
+3. Ensure `PGQUE_GO_MIRROR_TOKEN` is configured.
+4. Run **Release Go client** from `main` with `version=vX.Y.Z` and `dry_run=true`.
+5. If the dry run is clean, run it again with `dry_run=false`.
+6. The workflow runs `go test ./...`, splits `clients/go`, pushes the mirror's
    `main`, creates annotated tag `vX.Y.Z` in the mirror, and optionally creates
    a GitHub Release in `NikolayS/pgque-go`.
-5. pkg.go.dev indexes the module after the tag is visible through the Go proxy.
+7. pkg.go.dev indexes the module after the tag is visible through the Go proxy.

@@ -47,9 +47,10 @@ jobs:
       - name: Verify version input
         run: |
           set -Eeuo pipefail
-          case "$VERSION" in
-            *[!0-9.]*|*..*|.*|*.) echo "version must look like 0.2.0"; exit 1 ;;
-          esac
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must look like 0.2.0"
+            exit 1
+          fi
           actual=$(python - <<'PY'
           import tomllib
           print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])
