@@ -56,6 +56,14 @@ def handle_unknown(msg: pgque.Message) -> None:
 consumer.start()  # blocks until SIGTERM / SIGINT
 ```
 
+### Consumer options
+
+`Consumer(..., max_messages=...)` controls the per-`receive` limit. By
+default the consumer requests PostgreSQL's `int` maximum, so it drains
+the whole PgQ batch before acknowledging it. If you lower this value
+below the real batch size, `ack()` still finishes the batch and
+unreturned rows are skipped.
+
 ### Handling unknown event types
 
 By default the consumer **nacks** any message whose type has no

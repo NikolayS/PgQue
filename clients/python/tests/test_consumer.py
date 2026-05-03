@@ -23,6 +23,16 @@ def _run_consumer_for(consumer: pgque.Consumer, seconds: float) -> threading.Thr
     return t
 
 
+def test_consumer_default_max_messages_requests_whole_batch(dsn):
+    cons = pgque.Consumer(dsn=dsn, queue="q", name="c")
+    assert cons.max_messages == 2_147_483_647
+
+
+def test_consumer_configured_max_messages_is_preserved(dsn):
+    cons = pgque.Consumer(dsn=dsn, queue="q", name="c", max_messages=123)
+    assert cons.max_messages == 123
+
+
 def test_consumer_dispatches_by_event_type(dsn, conn, setup_queue):
     queue, consumer_name = setup_queue
     client = pgque.PgqueClient(conn)

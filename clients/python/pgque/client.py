@@ -191,7 +191,10 @@ class PgqueClient:
         Maps to ``pgque.receive(queue, consumer, max_messages)``, which
         opens a batch via ``next_batch`` internally. The caller must
         ``ack()`` the batch (with the ``batch_id`` from any returned
-        message) to advance the consumer past it.
+        message) to advance the consumer past it. ``ack()`` finishes the
+        whole underlying PgQ batch, including rows beyond ``max_messages``;
+        direct callers should pass a value large enough for the queue's
+        possible batch size before acknowledging.
 
         Args:
             queue: Queue name.

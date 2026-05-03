@@ -5,6 +5,7 @@
 """Consumer -- event-driven message consumer with LISTEN/NOTIFY support."""
 
 import logging
+import select
 import signal
 import threading
 import time
@@ -19,8 +20,9 @@ from .types import Message
 logger = logging.getLogger("pgque")
 
 # Maximum time the LISTEN wait blocks before re-checking the stop flag.
-# Bounds shutdown latency to roughly this many seconds. See issue #158.
+# Bounds shutdown latency to roughly this many seconds.
 _WAIT_SLICE_SECONDS = 0.5
+_DEFAULT_MAX_MESSAGES = 2_147_483_647  # PostgreSQL int4 max; request the whole batch by default.
 
 
 class Consumer:
@@ -63,7 +65,7 @@ class Consumer:
         queue: str,
         name: str,
         poll_interval: int = 30,
-        max_messages: int = 500,
+        max_messages: int = _DEFAULT_MAX_MESSAGES,
         retry_after: int = 60,
         unknown_handler: Literal["nack", "ack"] = "nack",
     ):
@@ -150,8 +152,8 @@ class Consumer:
                     # Wait for NOTIFY or poll_interval timeout in short
                     # bounded slices. psycopg's conn.notifies() can
                     # block uninterruptibly for the full timeout, which
-                    # makes stop() slow and can miss prompt wakeups
-                    # (issue #158). Polling the underlying socket with
+                    # makes stop() slow and can miss prompt wakeups.
+                    # Polling the underlying socket with
                     # select() lets us re-check _running every SLICE
                     # seconds and drain any pending NOTIFY immediately.
                     self._wait_for_notify_or_stop(conn)
@@ -176,7 +178,7 @@ class Consumer:
           * ``poll_interval`` elapses cumulatively.
 
         Each slice is at most ``_WAIT_SLICE_SECONDS`` so ``stop()`` is
-        observed within ~SLICE seconds of the call. Issue #158.
+        observed within ~SLICE seconds of the call.
         """
         # Drain any NOTIFY already buffered in libpq from the prior
         # _poll_once (e.g. delivered alongside query results). Without
