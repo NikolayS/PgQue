@@ -1,4 +1,4 @@
--- test_pg_tle_install.sql -- End-to-end pg_tle install path.
+-- test_tle_install.sql -- End-to-end pg_tle install path.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- Pre-conditions for the caller:
@@ -14,11 +14,11 @@
 --   6. \i sql/pgque-tle-uninstall.sql     -- unregister from pg_tle
 --
 -- Run from the repo root:
---   psql -d pgque_pgtle_test -v ON_ERROR_STOP=1 -f tests/test_pg_tle_install.sql
+--   psql -d pgque_tle_test -v ON_ERROR_STOP=1 -f tests/test_tle_install.sql
 
 \set ON_ERROR_STOP on
 
-\echo '=== test_pg_tle_install (e2e against real pg_tle) ==='
+\echo '=== test_tle_install (e2e against real pg_tle) ==='
 
 create extension if not exists pg_tle;
 
@@ -96,4 +96,4 @@ begin
     raise notice 'PASS: pg_tle uninstall script is idempotent';
 end $$;
 
-\echo '=== test_pg_tle_install: ALL PASSED ==='
+\echo '=== test_tle_install: ALL PASSED ==='

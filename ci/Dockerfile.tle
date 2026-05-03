@@ -1,6 +1,6 @@
-# ci/Dockerfile.pg_tle -- PostgreSQL with pg_tle compiled in.
+# ci/Dockerfile.tle -- PostgreSQL with pg_tle compiled in.
 #
-# Used only by the pg_tle-test CI job. The image is throwaway (built per CI run,
+# Used only by the tle-test CI job. The image is throwaway (built per CI run,
 # never pushed), so we keep build deps in the final layer rather than spending
 # time stripping them.
 #

@@ -98,7 +98,7 @@ jobs:
             --build-arg PG_VERSION=${PG_VERSION} \
             --build-arg PGTLE_TAG=${PGTLE_TAG} \
             -t pgque-pgtle:test \
-            -f ci/Dockerfile.pg_tle .
+            -f ci/Dockerfile.tle .
 
       - name: Start PostgreSQL with pg_tle preloaded
         run: |
@@ -119,7 +119,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_pg_tle_install.sql
+            -v ON_ERROR_STOP=1 -f tests/test_tle_install.sql
 
       - name: Run full regression suite via pg_tle install
         run: |
