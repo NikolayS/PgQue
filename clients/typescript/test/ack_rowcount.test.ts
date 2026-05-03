@@ -27,8 +27,10 @@ const skipIfNoDb = TEST_DSN ? it : it.skip;
 describe('Client.ack returns rowcount (unit stubs)', () => {
   it('returns 1 when SQL returns { ack: 1 }', async () => {
     // Construct a Client with a stubbed pool that returns ack=1.
+    // The `pg` driver returns OID-23 (integer) columns as JS `number`, not
+    // `bigint`, so the stub uses plain numeric literals to match real behaviour.
     const fakePool = {
-      query: vi.fn().mockResolvedValue({ rows: [{ ack: 1n }] }),
+      query: vi.fn().mockResolvedValue({ rows: [{ ack: 1 }] }),
       end: vi.fn().mockResolvedValue(undefined),
     } as unknown as import('pg').Pool;
 
@@ -44,7 +46,7 @@ describe('Client.ack returns rowcount (unit stubs)', () => {
 
   it('returns 0 when SQL returns { ack: 0 } (stale/double ack)', async () => {
     const fakePool = {
-      query: vi.fn().mockResolvedValue({ rows: [{ ack: 0n }] }),
+      query: vi.fn().mockResolvedValue({ rows: [{ ack: 0 }] }),
       end: vi.fn().mockResolvedValue(undefined),
     } as unknown as import('pg').Pool;
 

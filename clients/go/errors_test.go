@@ -146,16 +146,24 @@ func TestReceive_ContextCancelled(t *testing.T) {
 	}
 }
 
-// TestAck_NonExistentBatch: acking a non-existent batch must surface an
-// error rather than silently succeeding.
-func TestAck_NonExistentBatch(t *testing.T) {
+// TestAck_NonExistentBatch_ReturnsZero verifies the new contract: acking a
+// batch_id that does not exist returns (0, nil). pgque.finish_batch is
+// defined to return the count of rows updated; a non-existent batch_id
+// matches no rows, so the count is 0 and no SQL error is raised. Callers
+// should treat a 0 rowcount as a warn-level log, not a hard error.
+func TestAck_NonExistentBatch_ReturnsZero(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
 	ctx := context.Background()
 
-	_, err := client.Ack(ctx, 9_999_999_999)
-	if err == nil {
-		t.Skip("Ack of non-existent batch did not error — backend treats this as no-op (acceptable)")
+	// 999_999_999 is far outside the range of any real batch_id that could
+	// exist in a freshly-initialised test database.
+	n, err := client.Ack(ctx, 999_999_999)
+	if err != nil {
+		t.Fatalf("expected (0, nil) for non-existent batch, got err: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected rowcount 0 for non-existent batch, got %d", n)
 	}
 }
 
