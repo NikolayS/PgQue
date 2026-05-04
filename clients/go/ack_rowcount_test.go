@@ -76,6 +76,9 @@ func TestAck_StubReturnsOne(t *testing.T) {
 	if got := atomic.LoadInt32(&stub.ackCount); got == 0 {
 		t.Fatal("expected Ack to be called at least once")
 	}
+	if got := atomic.LoadInt32(&stub.nackCalled); got != 0 {
+		t.Fatalf("Nack must not be called on the success path; got %d", got)
+	}
 }
 
 // TestAck_StubReturnsZero confirms the consumer logs (not errors) when Ack
@@ -102,6 +105,9 @@ func TestAck_StubReturnsZero(t *testing.T) {
 
 	if got := atomic.LoadInt32(&stub.ackCount); got == 0 {
 		t.Fatal("expected Ack to be called at least once")
+	}
+	if got := atomic.LoadInt32(&stub.nackCalled); got != 0 {
+		t.Fatalf("Nack must not be called on the success path (rowcount 0 is informational); got %d", got)
 	}
 }
 
