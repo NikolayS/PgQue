@@ -568,44 +568,102 @@ sedi 's/b\.ev_id, b\.ev_time, NULL::int8, _s\.sub_id,/b.ev_id, b.ev_time, NULL::
 
 echo "PASS: batch_retry NULL::int8 -> NULL::xid8 for ev_txid (xid8) column"
 
-# Inject SECURITY header on get_batch_cursor(4-arg). The upstream PgQ source
-# concatenates i_extra_where into dynamic SQL verbatim, so the parameter is a
-# trusted-SQL fragment rather than a value. Both overloads are admin-only via
-# the grants block, but the contract must travel with the function body so
-# anyone reading sql/pgque.sql understands why.
+# Drop the 4-arg pgque.get_batch_cursor(bigint, text, int4, text) overload.
+# Upstream PgQ concatenates i_extra_where into the cursor's SELECT verbatim,
+# so any caller (including pgque_admin) can inject arbitrary predicates and
+# forge rows in the returned stream (#108). pgque has no internal use of the
+# 4-arg overload, so we remove it entirely and inline the cursor logic into
+# the 3-arg overload (which used to delegate to the 4-arg).
 GET_BATCH_CURSOR_FILE="${OUTPUT_DIR}/functions/pgque.get_batch_cursor.sql"
-awk '
-BEGIN { header_done = 0; param_done = 0 }
-!header_done && /^create or replace function pgque\.get_batch_cursor\(/ {
-  print "-- ----------------------------------------------------------------------"
-  print "-- Advanced PgQ-compatible primitive. Application roles should use"
-  print "-- pgque.receive(); get_batch_cursor is kept admin-only in the grants block."
-  print "--"
-  print "-- SECURITY: i_extra_where is concatenated into dynamic SQL verbatim. It is a"
-  print "-- trusted-SQL fragment, NOT a parameter. A caller can inject arbitrary"
-  print "-- predicates (including UNION ALL) and forge rows in the returned stream."
-  print "-- This behavior is inherited from upstream PgQ; it is acceptable here only"
-  print "-- because both overloads are revoked from public, pgque_reader, and"
-  print "-- pgque_writer and granted to pgque_admin only. NEVER pass user-controlled"
-  print "-- input as i_extra_where, even from admin code paths."
-  print "-- ----------------------------------------------------------------------"
-  header_done = 1
-}
-!param_done && /^--      i_extra_where   - optional where clause to filter events$/ {
-  print "--      i_extra_where   - optional where clause to filter events."
-  print "--                        Trusted SQL fragment, not a parameter; never pass"
-  print "--                        user-controlled text. Function is admin-only."
-  param_done = 1
-  next
-}
-{ print }
-END {
-  if (!header_done) { print "ERROR: get_batch_cursor 4-arg signature not found" > "/dev/stderr"; exit 1 }
-  if (!param_done)  { print "ERROR: i_extra_where parameter doc line not found"   > "/dev/stderr"; exit 1 }
-}
-' "${GET_BATCH_CURSOR_FILE}" > "${GET_BATCH_CURSOR_FILE}.tmp" && mv "${GET_BATCH_CURSOR_FILE}.tmp" "${GET_BATCH_CURSOR_FILE}"
+cat > "${GET_BATCH_CURSOR_FILE}" <<'GBC_EOF'
+-- ----------------------------------------------------------------------
+-- Advanced PgQ-compatible primitive. Application roles should use
+-- pgque.receive(); get_batch_cursor is kept admin-only in the grants block.
+--
+-- SECURITY (#108): the 4-arg overload (i_extra_where) is intentionally
+-- removed in pgque. Upstream PgQ concatenated the extra_where text
+-- verbatim into the cursor's SELECT, so any caller (even pgque_admin)
+-- could inject arbitrary predicates (including UNION ALL) and forge
+-- rows into the returned stream. There is no current pgque code path
+-- that needs caller-supplied SQL fragments — pgque.receive() and
+-- pgque.get_batch_events() cover the supported access patterns — so we
+-- drop the overload entirely rather than try to sanitise a free-form
+-- SQL string. If a future use case truly needs filtering driven by the
+-- caller, add a parameterised variant that takes typed predicates, not
+-- a text fragment.
+-- ----------------------------------------------------------------------
 
-echo "PASS: get_batch_cursor SECURITY header injected (extra_where is trusted SQL)"
+-- Drop any pre-existing 4-arg overload (e.g. left over from upstream PgQ
+-- or from an older pgque install). Single-file install is run with
+-- `\i pgque.sql`, sometimes against a non-empty schema, so the explicit
+-- DROP IF EXISTS is required for idempotency.
+drop function if exists pgque.get_batch_cursor(bigint, text, int4, text);
+
+create or replace function pgque.get_batch_cursor(
+    in i_batch_id       bigint,
+    in i_cursor_name    text,
+    in i_quick_limit    int4,
+
+    out ev_id       bigint,
+    out ev_time     timestamptz,
+    out ev_txid     bigint,
+    out ev_retry    int4,
+    out ev_type     text,
+    out ev_data     text,
+    out ev_extra1   text,
+    out ev_extra2   text,
+    out ev_extra3   text,
+    out ev_extra4   text)
+returns setof record as $$
+-- ----------------------------------------------------------------------
+-- Function: pgque.get_batch_cursor(3)
+--
+--      Get events in batch using a cursor.
+--
+-- Parameters:
+--      i_batch_id      - ID of active batch.
+--      i_cursor_name   - Name for new cursor
+--      i_quick_limit   - Number of events to return immediately
+--
+-- Returns:
+--      List of events.
+-- Calls:
+--      pgque.batch_event_sql(i_batch_id) - internal function which
+--      generates SQL optimised specially for getting events in this batch.
+-- ----------------------------------------------------------------------
+declare
+    _cname  text;
+    _sql    text;
+begin
+    if i_batch_id is null or i_cursor_name is null or i_quick_limit is null then
+        return;
+    end if;
+
+    _cname := quote_ident(i_cursor_name);
+    _sql := pgque.batch_event_sql(i_batch_id);
+
+    -- create cursor
+    execute 'declare ' || _cname || ' no scroll cursor for ' || _sql;
+
+    -- if no events wanted, don't bother with execute
+    if i_quick_limit <= 0 then
+        return;
+    end if;
+
+    -- return first block of events
+    for ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
+        ev_extra1, ev_extra2, ev_extra3, ev_extra4
+        in execute 'fetch ' || i_quick_limit::text || ' from ' || _cname
+    loop
+        return next;
+    end loop;
+
+    return;
+end;
+$$ language plpgsql strict; -- no perms needed
+GBC_EOF
+
+echo "PASS: get_batch_cursor 4-arg overload dropped (#108)"
 
 # -- Assembly: build sql/pgque.sql ------------------------------------
 
@@ -947,14 +1005,27 @@ if [[ -d "${API_DIR}" ]]; then
   fi
 fi
 
-# Verify the get_batch_cursor SECURITY contract reached the assembled file.
-# The per-function awk patch above runs before assembly; this guards against
-# a future assembly change that strips comments or reorders sections.
-if grep -q 'SECURITY: i_extra_where is concatenated' "${INSTALL_FILE}" \
-   && grep -q 'Trusted SQL fragment, not a parameter' "${INSTALL_FILE}"; then
-  echo "PASS: get_batch_cursor SECURITY contract present in install script"
+# Verify the get_batch_cursor injection fix (#108) reached the assembled file.
+# The per-function rewrite above runs before assembly; this guards against
+# a future assembly change that reintroduces the 4-arg overload or omits the
+# safety drop function statement.
+if grep -q 'SECURITY (#108)' "${INSTALL_FILE}" \
+   && grep -q 'drop function if exists pgque.get_batch_cursor(bigint, text, int4, text);' "${INSTALL_FILE}"; then
+  echo "PASS: get_batch_cursor 4-arg overload removal present in install script"
 else
-  echo "FAIL: get_batch_cursor SECURITY contract missing from install script"
+  echo "FAIL: get_batch_cursor 4-arg overload removal missing from install script"
+  asm_errors=$((asm_errors + 1))
+fi
+
+# And belt-and-braces: the 4-arg create or replace must NOT be in the assembled
+# file (would re-introduce the SQL forgery vector).
+if grep -nE 'create or replace function pgque\.get_batch_cursor\(' "${INSTALL_FILE}" \
+   | wc -l \
+   | grep -q '^1$'; then
+  echo "PASS: only one get_batch_cursor function definition (3-arg) in install script"
+else
+  echo "FAIL: more than one get_batch_cursor definition found — 4-arg overload may have leaked back in"
+  grep -n 'create or replace function pgque\.get_batch_cursor\(' "${INSTALL_FILE}"
   asm_errors=$((asm_errors + 1))
 fi
 

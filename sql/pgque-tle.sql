@@ -2301,7 +2301,6 @@ begin
 end;
 $$ language plpgsql; -- no perms needed
 
-
 -- ----------------------------------------------------------------------
 -- Advanced PgQ-compatible primitive. Application roles should use
 -- pgque.receive(); get_batch_cursor is kept admin-only in the grants block.
