@@ -120,7 +120,7 @@ case errors.Is(err, pgque.ErrConnection):
     // pool closed, network drop, bad DSN
 case err != nil:
     // generic SQL error — extract SQLSTATE if needed
-    var sqlErr *pgque.SqlError
+    var sqlErr *pgque.SQLError
     if errors.As(err, &sqlErr) {
         log.Printf("pgque %s failed: %s [SQLSTATE %s]",
             sqlErr.Op, sqlErr.Err, sqlErr.SQLSTATE)
@@ -128,13 +128,14 @@ case err != nil:
 }
 ```
 
-`context.Canceled` and `context.DeadlineExceeded` pass through unwrapped,
-so `errors.Is(err, context.Canceled)` continues to work.
+`context.Canceled` and `context.DeadlineExceeded` are preserved through
+the chain, so `errors.Is(err, context.Canceled)` continues to work.
 
 The same typed surface is exposed by the Python client (`PgqueQueueNotFound`,
 `PgqueConsumerNotFound`, `PgqueBatchNotFound`, `PgqueConnectionError`) and
 TypeScript client (`PgqueQueueNotFoundError`, `PgqueConsumerNotFoundError`,
-`PgqueSqlError`).
+`PgqueSqlError`). Go uses the standard acronym-uppercase convention
+(`SQLError` rather than `SqlError`).
 
 ## Tests
 

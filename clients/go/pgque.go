@@ -28,11 +28,11 @@ type Client struct {
 func Connect(ctx context.Context, dsn string) (*Client, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("pgque: connect: %w: %w", ErrConnection, err)
+		return nil, wrapConnectError(err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("pgque: connect: %w: %w", ErrConnection, err)
+		return nil, wrapConnectError(err)
 	}
 	return &Client{pool: pool}, nil
 }
@@ -63,7 +63,7 @@ func (c *Client) Send(ctx context.Context, queue string, ev Event) (int64, error
 		"SELECT pgque.send($1, $2, $3::jsonb)", queue, typ, string(payload),
 	).Scan(&eid)
 	if err != nil {
-		return 0, wrapSqlError("send", err)
+		return 0, wrapSQLError("send", err)
 	}
 	return eid, nil
 }
@@ -90,7 +90,7 @@ func (c *Client) SendBatch(ctx context.Context, queue, typ string, payloads []an
 		"select pgque.send_batch($1, $2, $3::jsonb[])", queue, typ, jsonPayloads,
 	).Scan(&ids)
 	if err != nil {
-		return nil, wrapSqlError("send batch", err)
+		return nil, wrapSQLError("send batch", err)
 	}
 	return ids, nil
 }
@@ -104,7 +104,7 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 	rows, err := c.pool.Query(ctx,
 		"SELECT * FROM pgque.receive($1, $2, $3)", queue, consumer, maxMessages)
 	if err != nil {
-		return nil, wrapSqlError("receive", err)
+		return nil, wrapSQLError("receive", err)
 	}
 	defer rows.Close()
 
@@ -124,7 +124,7 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 		msgs = append(msgs, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, wrapSqlError("receive", err)
+		return nil, wrapSQLError("receive rows", err)
 	}
 	return msgs, nil
 }
@@ -135,7 +135,7 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 func (c *Client) Ack(ctx context.Context, batchID int64) error {
 	_, err := c.pool.Exec(ctx, "SELECT pgque.ack($1)", batchID)
 	if err != nil {
-		return wrapSqlError("ack", err)
+		return wrapSQLError("ack", err)
 	}
 	return nil
 }
@@ -173,7 +173,7 @@ func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts ...N
 		msg.Extra1, msg.Extra2, msg.Extra3, msg.Extra4,
 		interval, reason)
 	if err != nil {
-		return wrapSqlError("nack", err)
+		return wrapSQLError("nack", err)
 	}
 	return nil
 }

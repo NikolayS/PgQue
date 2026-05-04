@@ -58,10 +58,10 @@ func TestTypedError_ConnectionError(t *testing.T) {
 	}
 }
 
-// TestTypedError_SqlErrorCarriesSqlstate: a generic SQL error (e.g. unknown
+// TestTypedError_SQLErrorCarriesSqlstate: a generic SQL error (e.g. unknown
 // queue raised by PgQ as a P0001 raise_exception) must be unwrappable to a
-// *pgque.SqlError that exposes the SQLSTATE.
-func TestTypedError_SqlErrorCarriesSqlstate(t *testing.T) {
+// *pgque.SQLError that exposes the SQLSTATE.
+func TestTypedError_SQLErrorCarriesSqlstate(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
 	ctx := context.Background()
@@ -72,11 +72,11 @@ func TestTypedError_SqlErrorCarriesSqlstate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error sending to missing queue")
 	}
-	var sqlErr *pgque.SqlError
+	var sqlErr *pgque.SQLError
 	if !errors.As(err, &sqlErr) {
-		t.Fatalf("expected errors.As to extract *SqlError, got: %v", err)
+		t.Fatalf("expected errors.As to extract *SQLError, got: %v", err)
 	}
 	if sqlErr.SQLSTATE == "" {
-		t.Errorf("expected non-empty SQLSTATE on SqlError, got empty")
+		t.Errorf("expected non-empty SQLSTATE on SQLError, got empty")
 	}
 }
