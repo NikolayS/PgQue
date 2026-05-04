@@ -1,6 +1,10 @@
 # Generated output from build/transform.sh
 build/output/
 
+# Python bytecode caches
+__pycache__/
+*.pyc
+
 # Client build artifacts
 clients/python/*.egg-info/
 clients/typescript/node_modules/
