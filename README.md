@@ -436,8 +436,6 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Cross-database `pg_cron` scheduling |  |
 | Message TTL / expiry |  |
 | Per-tenant isolation / multi-schema installs |  |
-| Transactional receive helpers in clients |  |
-| Priority / multi-queue client processing |  |
 | `pg_tle` extension package | ✅ |
 | Migration guides |  |
 
