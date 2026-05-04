@@ -423,12 +423,7 @@ Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 Declares a server-side cursor over the batch and returns the first `quick_limit` events. Remaining events can be fetched with `fetch … from <cursor_name>`.
 Grant: `pgque_admin` only. Source: `sql/pgque.sql`.
 
-#### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4, extra_where text) → setof record`
-
-Same as above with an additional `where` filter applied inside the cursor.
-Grant: `pgque_admin` only. Source: `sql/pgque.sql`.
-
-> **Security:** `extra_where` is a **trusted SQL fragment**, not a parameter — it is concatenated verbatim into the cursor's `select`. A caller that controls `extra_where` can inject arbitrary predicates (including `UNION ALL`) and forge rows in the returned stream. This behavior is inherited from upstream PgQ and is gated behind `pgque_admin` for that reason. **Never pass user-controlled text as `extra_where`**, even from admin code paths; if you need filtering driven by application input, fetch the batch with `pgque.get_batch_events()` and filter in the application or in a separate parameterized query.
+> **No `extra_where` overload.** Upstream PgQ ships a 4-argument overload that takes a free-form `extra_where` SQL fragment and concatenates it into the cursor query. pgque does not expose that overload — a caller-controlled SQL fragment is a forgery vector regardless of role grants. To filter the events you stream out of a batch, use `pgque.get_batch_events()` and filter in your application, or use a parameterised query that selects directly from the batch event tables.
 
 #### `pgque.finish_batch(batch_id bigint) → integer`
 

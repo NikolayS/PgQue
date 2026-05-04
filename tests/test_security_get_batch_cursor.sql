@@ -2,10 +2,11 @@
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
 -- Posture asserted:
---   1. PUBLIC cannot call either get_batch_cursor overload.
---   2. pgque_reader cannot call either get_batch_cursor overload.
---   3. pgque_writer cannot call either get_batch_cursor overload.
---   4. pgque_admin (or members) can call both overloads.
+--   1. PUBLIC cannot call get_batch_cursor.
+--   2. pgque_reader cannot call get_batch_cursor.
+--   3. pgque_writer cannot call get_batch_cursor.
+--   4. pgque_admin (or members) can call get_batch_cursor.
+--   5. The 4-arg overload (extra_where) does not exist (#108).
 
 -- =========================================================================
 -- Setup: probe roles
@@ -54,24 +55,17 @@ begin
   raise notice 'PASS: security_get_batch_cursor/A0.1 - PUBLIC blocked from get_batch_cursor/3';
 end $$;
 
+-- The 4-arg overload (extra_where) was removed (#108). Confirm it is not
+-- present in the catalog so we can never resurrect the SQL forgery vector
+-- without an explicit code change here.
 do $$
 declare
-  v_sqlstate text;
+  v_proc oid;
 begin
-  set role pgque_test_public;
-  begin
-    perform pgque.get_batch_cursor(1::bigint, 'probe_cursor_public4', 0, 'true');
-    raise exception 'expected insufficient_privilege calling get_batch_cursor/4 as PUBLIC, got success';
-  exception
-    when insufficient_privilege then
-      v_sqlstate := sqlstate;
-  end;
-  reset role;
-
-  assert v_sqlstate = '42501',
-    'expected sqlstate 42501 (insufficient_privilege) for public/4, got ' || coalesce(v_sqlstate, 'NULL');
-
-  raise notice 'PASS: security_get_batch_cursor/A0.2 - PUBLIC blocked from get_batch_cursor/4';
+  v_proc := to_regprocedure('pgque.get_batch_cursor(bigint, text, int4, text)');
+  assert v_proc is null,
+    'pgque.get_batch_cursor/4 unexpectedly exists; the extra_where overload must stay removed (#108)';
+  raise notice 'PASS: security_get_batch_cursor/A0.2 - 4-arg overload (extra_where) is absent';
 end $$;
 
 -- =========================================================================
@@ -98,25 +92,8 @@ begin
   raise notice 'PASS: security_get_batch_cursor/A1 - pgque_reader blocked from get_batch_cursor/3';
 end $$;
 
-do $$
-declare
-  v_sqlstate text;
-begin
-  set role pgque_test_reader;
-  begin
-    perform pgque.get_batch_cursor(1::bigint, 'probe_cursor_r4', 0, 'true');
-    raise exception 'expected insufficient_privilege calling get_batch_cursor/4 as pgque_reader, got success';
-  exception
-    when insufficient_privilege then
-      v_sqlstate := sqlstate;
-  end;
-  reset role;
-
-  assert v_sqlstate = '42501',
-    'expected sqlstate 42501 (insufficient_privilege) for reader/4, got ' || coalesce(v_sqlstate, 'NULL');
-
-  raise notice 'PASS: security_get_batch_cursor/A2 - pgque_reader blocked from get_batch_cursor/4 (extra_where overload)';
-end $$;
+-- (4-arg overload absence is verified above in A0.2; reader cannot reach a
+-- function that does not exist, so no separate per-role probe is needed.)
 
 -- =========================================================================
 -- Test B: pgque_writer is blocked from get_batch_cursor (both overloads)
@@ -142,25 +119,8 @@ begin
   raise notice 'PASS: security_get_batch_cursor/B1 - pgque_writer blocked from get_batch_cursor/3';
 end $$;
 
-do $$
-declare
-  v_sqlstate text;
-begin
-  set role pgque_test_writer;
-  begin
-    perform pgque.get_batch_cursor(1::bigint, 'probe_cursor_w4', 0, 'true');
-    raise exception 'expected insufficient_privilege calling get_batch_cursor/4 as pgque_writer, got success';
-  exception
-    when insufficient_privilege then
-      v_sqlstate := sqlstate;
-  end;
-  reset role;
-
-  assert v_sqlstate = '42501',
-    'expected sqlstate 42501 (insufficient_privilege) for writer/4, got ' || coalesce(v_sqlstate, 'NULL');
-
-  raise notice 'PASS: security_get_batch_cursor/B2 - pgque_writer blocked from get_batch_cursor/4 (extra_where overload)';
-end $$;
+-- (4-arg overload absence is verified above in A0.2; writer cannot reach a
+-- function that does not exist, so no separate per-role probe is needed.)
 
 -- =========================================================================
 -- Test C: pgque_admin can still call get_batch_cursor (positive path)
@@ -201,18 +161,7 @@ begin
 
   raise notice 'PASS: security_get_batch_cursor/C1 - pgque_admin can call get_batch_cursor/3 (rows=%)', v_count_admin;
 
-  -- 4-arg overload should also remain callable by admin.
-  perform 1
-    from pgque.get_batch_cursor(
-      v_batch_id,
-      'security_cursor_admin_c4',
-      100,
-      'true');
-  execute 'close security_cursor_admin_c4';
-
   reset role;
-
-  raise notice 'PASS: security_get_batch_cursor/C2 - pgque_admin can call get_batch_cursor/4';
 end $$;
 
 -- =========================================================================

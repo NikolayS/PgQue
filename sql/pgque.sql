@@ -2218,87 +2218,24 @@ $$ language plpgsql; -- no perms needed
 -- Advanced PgQ-compatible primitive. Application roles should use
 -- pgque.receive(); get_batch_cursor is kept admin-only in the grants block.
 --
--- SECURITY: i_extra_where is concatenated into dynamic SQL verbatim. It is a
--- trusted-SQL fragment, NOT a parameter. A caller can inject arbitrary
--- predicates (including UNION ALL) and forge rows in the returned stream.
--- This behavior is inherited from upstream PgQ; it is acceptable here only
--- because both overloads are revoked from public, pgque_reader, and
--- pgque_writer and granted to pgque_admin only. NEVER pass user-controlled
--- input as i_extra_where, even from admin code paths.
+-- SECURITY (#108): the 4-arg overload (i_extra_where) is intentionally
+-- removed in pgque. Upstream PgQ concatenated the extra_where text
+-- verbatim into the cursor's SELECT, so any caller (even pgque_admin)
+-- could inject arbitrary predicates (including UNION ALL) and forge
+-- rows into the returned stream. There is no current pgque code path
+-- that needs caller-supplied SQL fragments — pgque.receive() and
+-- pgque.get_batch_events() cover the supported access patterns — so we
+-- drop the overload entirely rather than try to sanitise a free-form
+-- SQL string. If a future use case truly needs filtering driven by the
+-- caller, add a parameterised variant that takes typed predicates, not
+-- a text fragment.
 -- ----------------------------------------------------------------------
-create or replace function pgque.get_batch_cursor(
-    in i_batch_id       bigint,
-    in i_cursor_name    text,
-    in i_quick_limit    int4,
-    in i_extra_where    text,
 
-    out ev_id       bigint,
-    out ev_time     timestamptz,
-    out ev_txid     bigint,
-    out ev_retry    int4,
-    out ev_type     text,
-    out ev_data     text,
-    out ev_extra1   text,
-    out ev_extra2   text,
-    out ev_extra3   text,
-    out ev_extra4   text)
-returns setof record as $$
--- ----------------------------------------------------------------------
--- Function: pgque.get_batch_cursor(4)
---
---      Get events in batch using a cursor.
---
--- Parameters:
---      i_batch_id      - ID of active batch.
---      i_cursor_name   - Name for new cursor
---      i_quick_limit   - Number of events to return immediately
---      i_extra_where   - optional where clause to filter events.
---                        Trusted SQL fragment, not a parameter; never pass
---                        user-controlled text. Function is admin-only.
---
--- Returns:
---      List of events.
--- Calls:
---      pgque.batch_event_sql(i_batch_id) - internal function which generates SQL optimised specially for getting events in this batch
--- ----------------------------------------------------------------------
-declare
-    _cname  text;
-    _sql    text;
-begin
-    if i_batch_id is null or i_cursor_name is null or i_quick_limit is null then
-        return;
-    end if;
-
-    _cname := quote_ident(i_cursor_name);
-    _sql := pgque.batch_event_sql(i_batch_id);
-
-    -- apply extra where
-    if i_extra_where is not null then
-        _sql := replace(_sql, ' order by 1', '');
-        _sql := 'select * from (' || _sql
-            || ') _evs where ' || i_extra_where
-            || ' order by 1';
-    end if;
-
-    -- create cursor
-    execute 'declare ' || _cname || ' no scroll cursor for ' || _sql;
-
-    -- if no events wanted, don't bother with execute
-    if i_quick_limit <= 0 then
-        return;
-    end if;
-
-    -- return first block of events
-    for ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
-        ev_extra1, ev_extra2, ev_extra3, ev_extra4
-        in execute 'fetch ' || i_quick_limit::text || ' from ' || _cname
-    loop
-        return next;
-    end loop;
-
-    return;
-end;
-$$ language plpgsql; -- no perms needed
+-- Drop any pre-existing 4-arg overload (e.g. left over from upstream PgQ
+-- or from an older pgque install). Single-file install is run with
+-- `\i pgque.sql`, sometimes against a non-empty schema, so the explicit
+-- DROP IF EXISTS is required for idempotency.
+drop function if exists pgque.get_batch_cursor(bigint, text, int4, text);
 
 create or replace function pgque.get_batch_cursor(
     in i_batch_id       bigint,
@@ -2329,17 +2266,36 @@ returns setof record as $$
 -- Returns:
 --      List of events.
 -- Calls:
---      pgque.get_batch_cursor(4)
+--      pgque.batch_event_sql(i_batch_id) - internal function which
+--      generates SQL optimised specially for getting events in this batch.
 -- ----------------------------------------------------------------------
+declare
+    _cname  text;
+    _sql    text;
 begin
+    if i_batch_id is null or i_cursor_name is null or i_quick_limit is null then
+        return;
+    end if;
+
+    _cname := quote_ident(i_cursor_name);
+    _sql := pgque.batch_event_sql(i_batch_id);
+
+    -- create cursor
+    execute 'declare ' || _cname || ' no scroll cursor for ' || _sql;
+
+    -- if no events wanted, don't bother with execute
+    if i_quick_limit <= 0 then
+        return;
+    end if;
+
+    -- return first block of events
     for ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
         ev_extra1, ev_extra2, ev_extra3, ev_extra4
-    in
-        select * from pgque.get_batch_cursor(i_batch_id,
-            i_cursor_name, i_quick_limit, null)
+        in execute 'fetch ' || i_quick_limit::text || ' from ' || _cname
     loop
         return next;
     end loop;
+
     return;
 end;
 $$ language plpgsql strict; -- no perms needed
@@ -4363,9 +4319,10 @@ end $$;
 
 
 -- get_batch_cursor is an advanced PgQ-compatible primitive.
--- Keep both overloads admin-only; application roles should use pgque.receive().
-revoke execute on function pgque.get_batch_cursor(bigint, text, int4)        from public, pgque_reader, pgque_writer;
-revoke execute on function pgque.get_batch_cursor(bigint, text, int4, text)  from public, pgque_reader, pgque_writer;
+-- Keep the surviving 3-arg overload admin-only; application roles should
+-- use pgque.receive(). The 4-arg overload has been removed (#108) — its
+-- i_extra_where parameter was a SQL forgery vector.
+revoke execute on function pgque.get_batch_cursor(bigint, text, int4) from public, pgque_reader, pgque_writer;
 
 -- pgque-additions/dlq.sql
 -- pgque dead letter queue (DLQ) -- table + helper functions

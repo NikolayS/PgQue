@@ -149,6 +149,7 @@ end $$;
 
 
 -- get_batch_cursor is an advanced PgQ-compatible primitive.
--- Keep both overloads admin-only; application roles should use pgque.receive().
-revoke execute on function pgque.get_batch_cursor(bigint, text, int4)        from public, pgque_reader, pgque_writer;
-revoke execute on function pgque.get_batch_cursor(bigint, text, int4, text)  from public, pgque_reader, pgque_writer;
+-- Keep the surviving 3-arg overload admin-only; application roles should
+-- use pgque.receive(). The 4-arg overload has been removed (#108) — its
+-- i_extra_where parameter was a SQL forgery vector.
+revoke execute on function pgque.get_batch_cursor(bigint, text, int4) from public, pgque_reader, pgque_writer;
