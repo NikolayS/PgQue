@@ -9,7 +9,7 @@ import (
 	"os"
 	"testing"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // freshDSN returns the DSN for the integration test database.

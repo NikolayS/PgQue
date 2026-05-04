@@ -6,8 +6,10 @@ universal PostgreSQL queue. A thin, idiomatic wrapper over the
 
 ## Install
 
+After the first Go client release:
+
 ```bash
-go get github.com/NikolayS/pgque/clients/go
+go get github.com/NikolayS/pgque-go@latest
 ```
 
 Requires Go 1.21+ and PostgreSQL 14+ with the PgQue schema installed
@@ -22,7 +24,7 @@ import (
     "context"
     "log"
 
-    pgque "github.com/NikolayS/pgque/clients/go"
+    pgque "github.com/NikolayS/pgque-go"
 )
 
 func main() {
@@ -100,6 +102,41 @@ so PgQue redelivers it on the next Receive. Acking a batch whose Nack
 failed would silently drop the failure information — the Go consumer
 prefers redelivery and lets the at-least-once retry path do its job.
 
+## Typed errors
+
+Client methods wrap PostgreSQL-side failures so callers can route on
+recoverable conditions with `errors.Is`:
+
+```go
+_, err := client.Send(ctx, "orders", pgque.Event{Type: "x", Payload: nil})
+switch {
+case errors.Is(err, pgque.ErrQueueNotFound):
+    // create the queue, retry
+case errors.Is(err, pgque.ErrConsumerNotFound):
+    // re-register the consumer
+case errors.Is(err, pgque.ErrBatchNotFound):
+    // batch already finished — usually safe to ignore
+case errors.Is(err, pgque.ErrConnection):
+    // pool closed, network drop, bad DSN
+case err != nil:
+    // generic SQL error — extract SQLSTATE if needed
+    var sqlErr *pgque.SQLError
+    if errors.As(err, &sqlErr) {
+        log.Printf("pgque %s failed: %s [SQLSTATE %s]",
+            sqlErr.Op, sqlErr.Err, sqlErr.SQLSTATE)
+    }
+}
+```
+
+`context.Canceled` and `context.DeadlineExceeded` are preserved through
+the chain, so `errors.Is(err, context.Canceled)` continues to work.
+
+The same typed surface is exposed by the Python client (`PgqueQueueNotFound`,
+`PgqueConsumerNotFound`, `PgqueBatchNotFound`, `PgqueConnectionError`) and
+TypeScript client (`PgqueQueueNotFoundError`, `PgqueConsumerNotFoundError`,
+`PgqueSqlError`). Go uses the standard acronym-uppercase convention
+(`SQLError` rather than `SqlError`).
+
 ## Tests
 
 The integration tests require a running PostgreSQL with the PgQue schema
@@ -111,6 +148,15 @@ PGQUE_TEST_DSN=postgres://postgres:pgque_test@localhost/pgque_test \
 ```
 
 Without `PGQUE_TEST_DSN`, the tests skip.
+
+## Distribution
+
+This client is published as the Go module
+`github.com/NikolayS/pgque-go`. Source lives in this monorepo under
+`clients/go`; releases sync that subtree to the mirror repository and use
+normal Go module tags such as `vX.Y.Z`.
+
+See [RELEASE.md](RELEASE.md) for publishing steps.
 
 ## More
 

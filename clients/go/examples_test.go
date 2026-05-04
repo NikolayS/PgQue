@@ -6,7 +6,7 @@ import (
 	"context"
 	"log"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // Example showing the canonical send / receive / ack flow.

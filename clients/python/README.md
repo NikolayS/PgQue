@@ -7,8 +7,10 @@ universal PostgreSQL queue. Thin wrapper over `pgque-api` SQL functions:
 
 ## Install
 
+After the first Python client release:
+
 ```bash
-pip install pgque
+pip install pgque-py
 ```
 
 Requires Python 3.10+ and PostgreSQL 14+ with the PgQue schema installed
@@ -93,6 +95,16 @@ PGQUE_TEST_DSN=postgresql://postgres:pgque_test@localhost/pgque_test \
 ```
 
 Without `PGQUE_TEST_DSN`, the tests skip.
+
+## Distribution
+
+The PyPI distribution is `pgque-py`; the import package is `pgque`:
+
+```python
+import pgque
+```
+
+See [RELEASE.md](RELEASE.md) for publishing steps.
 
 ## More
 

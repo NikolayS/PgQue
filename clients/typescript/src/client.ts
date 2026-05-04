@@ -13,14 +13,31 @@ import type { ConsumerOptions, Event, Message, NackOptions } from './types.js';
 
 const { Pool, types } = pg;
 
-// PostgreSQL `bigint` (oid 20) is parsed by `pg` as string by default to
+// PostgreSQL `bigint` (OID 20) is parsed by `pg` as string by default to
 // avoid silent precision loss above Number.MAX_SAFE_INTEGER. We promote to
 // JS `bigint` for safety AND ergonomics — `bigint` is the natural type for
 // PG `bigint`, matches the Go driver's `int64`, and round-trips losslessly.
 //
-// This mutates a process-global parser table. We do it once at module load
-// and document the side effect in the README.
-types.setTypeParser(20, (val) => BigInt(val));
+// We do NOT touch the process-global parser table. Instead, each Pool created
+// by pgque is given a per-pool CustomTypesConfig that overrides OID 20 only
+// for queries issued by pgque. Unrelated pg pools in the same process are
+// unaffected.
+/**
+ * Per-pool type overrides used by pgque's `connect()`.
+ * Parses PostgreSQL `bigint` (OID 20) as JS `bigint` without touching the
+ * process-global `pg.types` table.
+ *
+ * @internal — exported for testing only; do not depend on this in application code.
+ */
+export const pgqueTypes: pg.CustomTypesConfig = {
+  getTypeParser(oid: number, format?: string) {
+    if (oid === 20) {
+      // int8 / bigint → JS bigint
+      return (val: string) => BigInt(val);
+    }
+    return types.getTypeParser(oid, format as 'text' | 'binary');
+  },
+};
 
 const PG_RAISE_EXCEPTION_CODE = 'P0001';
 
@@ -142,10 +159,6 @@ export class Client {
   /**
    * Fetch up to `maxMessages` from the next batch for `consumer` on `queue`.
    * Returns an empty array when no batch is currently available.
-   *
-   * WARNING: `ack(batchId)` finishes the whole underlying PgQ batch, including
-   * rows beyond `maxMessages`. Direct receive callers should pass a value large
-   * enough for the queue's possible batch size before acknowledging the batch.
    */
   async receive(queue: string, consumer: string, maxMessages = 100): Promise<Message[]> {
     if (!queue) {
@@ -268,27 +281,80 @@ export class Client {
   }
 
   /**
-   * Wrapper for pgque.ticker(): if `queue` is given, runs the per-queue
-   * overload (`pgque.ticker(queue text)`); otherwise runs the no-arg global
-   * overload. Resolves after the ticker call completes.
+   * Run the per-queue ticker for `queue`. Wraps `pgque.ticker(queue text)`
+   * (the one-argument SQL overload).
+   *
+   * Returns the new tick id (`bigint`) when a tick was created, or `null`
+   * when no tick was needed (e.g. the queue is idle or the max-lag threshold
+   * has not been reached yet). Mirrors the SQL function's `returns bigint`
+   * contract where the function returns `NULL` on no-op.
+   *
+   * Throws if the queue does not exist or has an external ticker configured.
+   *
+   * For the global (all-queues) ticker use {@link tickerAll}.
    */
-  async ticker(queue?: string): Promise<void> {
+  async ticker(queue: string): Promise<bigint | null> {
     try {
-      if (queue !== undefined) {
-        await this.pool.query('select pgque.ticker($1)', [queue]);
-      } else {
-        await this.pool.query('select pgque.ticker()');
+      const result = await this.pool.query<{ ticker: bigint | null }>(
+        'select pgque.ticker($1) as ticker',
+        [queue],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new PgqueSqlError('ticker', { cause: new Error('no row returned') });
       }
+      return row.ticker !== null ? BigInt(row.ticker) : null;
     } catch (err) {
-      throw mapPgError('ticker', err, queue !== undefined ? { queue } : undefined);
+      if (err instanceof PgqueError) throw err;
+      throw mapPgError('ticker', err, { queue });
     }
   }
 
-  /** Exact wrapper for pgque.force_tick(queue). Bumps the event-seq threshold so the next ticker run produces a tick. */
-  async forceTick(queue: string): Promise<void> {
+  /**
+   * Run the global ticker across all eligible queues. Wraps the zero-argument
+   * `pgque.ticker()` SQL overload.
+   *
+   * Returns the number of queues that had a tick inserted during this call.
+   * The SQL function returns `bigint`; this method narrows to JS `number`
+   * because the queue count is always well within `Number.MAX_SAFE_INTEGER`.
+   */
+  async tickerAll(): Promise<number> {
     try {
-      await this.pool.query('select pgque.force_tick($1)', [queue]);
+      const result = await this.pool.query<{ ticker: bigint }>(
+        'select pgque.ticker() as ticker',
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new PgqueSqlError('tickerAll', { cause: new Error('no row returned') });
+      }
+      return Number(row.ticker);
     } catch (err) {
+      if (err instanceof PgqueError) throw err;
+      throw mapPgError('tickerAll', err);
+    }
+  }
+
+  /**
+   * Bump the event-seq threshold for `queue` so the next `ticker(queue)` call
+   * produces a tick. Wraps `pgque.force_tick(queue text)`.
+   *
+   * Returns the current last tick id (`bigint`) for the queue, or `null` if
+   * the queue has no ticks yet (brand-new queue) or if the queue is paused /
+   * has an external ticker (the SQL function silently skips those cases).
+   */
+  async forceTick(queue: string): Promise<bigint | null> {
+    try {
+      const result = await this.pool.query<{ force_tick: bigint | null }>(
+        'select pgque.force_tick($1) as force_tick',
+        [queue],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new PgqueSqlError('force_tick', { cause: new Error('no row returned') });
+      }
+      return row.force_tick !== null ? BigInt(row.force_tick) : null;
+    } catch (err) {
+      if (err instanceof PgqueError) throw err;
       throw mapPgError('force_tick', err, { queue });
     }
   }
@@ -298,6 +364,9 @@ export class Client {
  * Connect to PostgreSQL and return a ready-to-use {@link Client}. Verifies
  * the connection eagerly; rejects with {@link PgqueConnectionError} on
  * failure.
+ *
+ * The `types` parser config is reserved for pgque's internal bigint parsing;
+ * user-supplied `types` is ignored.
  *
  * @example
  * ```ts
@@ -311,9 +380,16 @@ export class Client {
  */
 export async function connect(
   dsn: string,
-  poolOptions: Omit<pg.PoolConfig, 'connectionString'> = {},
+  poolOptions: Omit<pg.PoolConfig, 'connectionString' | 'types'> = {},
 ): Promise<Client> {
-  const pool = new Pool({ connectionString: dsn, ...poolOptions });
+  // Defensively strip `types` from poolOptions before spreading. The
+  // `Omit<..., 'types'>` already rejects this at compile time, but JS
+  // callers (or `as` casts) can still smuggle one in. Dropping it here
+  // makes the pgque types config impossible to override regardless of
+  // spread order — see REV review on PR #189.
+  const { types: _userTypes, ...restPoolOptions } = poolOptions as pg.PoolConfig;
+  void _userTypes;
+  const pool = new Pool({ connectionString: dsn, ...restPoolOptions, types: pgqueTypes });
   let probe: pg.PoolClient;
   try {
     probe = await pool.connect();
@@ -323,6 +399,21 @@ export async function connect(
   }
   probe.release();
   return new Client(pool);
+}
+
+function rowToMessage(row: RawMessageRow): Message {
+  return {
+    msgId: row.msg_id,
+    batchId: row.batch_id,
+    type: row.type,
+    payload: row.payload,
+    retryCount: row.retry_count,
+    createdAt: row.created_at,
+    extra1: row.extra1,
+    extra2: row.extra2,
+    extra3: row.extra3,
+    extra4: row.extra4,
+  };
 }
 
 function serializePayload(payload: unknown): string {
@@ -347,21 +438,6 @@ function serializePayload(payload: unknown): string {
     });
   }
   return encoded;
-}
-
-function rowToMessage(row: RawMessageRow): Message {
-  return {
-    msgId: row.msg_id,
-    batchId: row.batch_id,
-    type: row.type,
-    payload: row.payload,
-    retryCount: row.retry_count,
-    createdAt: row.created_at,
-    extra1: row.extra1,
-    extra2: row.extra2,
-    extra3: row.extra3,
-    extra4: row.extra4,
-  };
 }
 
 function mapPgError(op: string, err: unknown, ctx?: { queue?: string }): PgqueError {

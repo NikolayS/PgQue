@@ -1,0 +1,29 @@
+# ci/Dockerfile.tle -- PostgreSQL with pg_tle compiled in.
+#
+# Used only by the tle-test CI job. The image is throwaway (built per CI run,
+# never pushed), so we keep build deps in the final layer rather than spending
+# time stripping them.
+#
+# Build args:
+#   PG_VERSION  -- Postgres major (e.g. 18). Must match an available
+#                  postgresql-server-dev-XX package in apt.
+#   PGTLE_TAG   -- pg_tle git tag, e.g. v1.5.2.
+
+ARG PG_VERSION=18
+FROM postgres:${PG_VERSION}
+
+ARG PG_VERSION
+ARG PGTLE_TAG=v1.5.2
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       build-essential \
+       postgresql-server-dev-${PG_VERSION} \
+       ca-certificates \
+       git \
+       flex \
+       bison \
+       libkrb5-dev \
+  && git clone --depth=1 --branch=${PGTLE_TAG} https://github.com/aws/pg_tle.git /tmp/pg_tle \
+  && cd /tmp/pg_tle && make && make install \
+  && rm -rf /tmp/pg_tle /var/lib/apt/lists/*

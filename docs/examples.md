@@ -37,6 +37,8 @@ select pgque.subscribe('orders', 'audit_logger');
 select pgque.subscribe('orders', 'notification_sender');
 select pgque.subscribe('orders', 'analytics_pipeline');
 
+-- send / force_tick / ticker / receive are separate transactions in psql
+-- autocommit. Do not wrap them in begin/commit — the snapshot rule applies.
 select pgque.send('orders', 'order.created', '{"order_id": 1}'::jsonb);
 select pgque.force_tick('orders');
 select pgque.ticker();
@@ -53,18 +55,19 @@ Wrap the receive, your writes, and the ack in one transaction — either all com
 
 ```sql
 begin;
-  create temp table msgs as
-    select * from pgque.receive('orders', 'processor', 100);
-
-  insert into processed_orders (order_id, status)
-  select (payload::jsonb->>'order_id')::int, 'done'
-  from msgs;
-
+  with msgs as (
+    select * from pgque.receive('orders', 'processor', 100)
+  ),
+  inserted as (
+    insert into processed_orders (order_id, status)
+    select (payload::jsonb->>'order_id')::int, 'done'
+    from msgs
+  )
   select pgque.ack((select batch_id from msgs limit 1));
 commit;
 ```
 
-Every row in `msgs` shares the same `batch_id`. **Batch-ownership caveat:** `pgque.ack(batch_id)` advances the consumer past the entire underlying batch, even if `receive()` returned fewer rows than the batch contains (due to `max_return`). Either consume the full batch before acking, or use `max_return >= ticker_max_count` (default 500) to ensure all rows are returned.
+The `inserted` CTE runs to completion even though the main query does not reference it (data-modifying CTEs always execute). Every row in `msgs` shares the same `batch_id`, so the scalar subquery picks any one of them and `pgque.ack` runs exactly once. **Batch-ownership caveat:** `pgque.ack(batch_id)` advances the consumer past the entire underlying batch, even if `receive()` returned fewer rows than the batch contains (due to `max_return`). Either consume the full batch before acking, or use `max_return >= ticker_max_count` (default 500) to ensure all rows are returned.
 
 ## Recurring jobs with pg_cron
 

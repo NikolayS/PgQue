@@ -4,6 +4,10 @@
   "description": "TypeScript client for PgQue — the PgQ-based universal PostgreSQL queue",
   "license": "Apache-2.0",
   "packageManager": "bun@1.3.8",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "author": "Nikolay Samokhvalov",
   "homepage": "https://github.com/NikolayS/pgque",
   "repository": {
@@ -34,8 +38,8 @@
   },
   "files": [
     "dist",
-    "src",
     "README.md",
+    "RELEASE.md",
     "LICENSE"
   ],
   "engines": {

@@ -61,4 +61,4 @@ Key takeaways:
 > `synchronous_commit=off` can be set per session or per transaction for
 > queue-heavy workloads if that trade-off makes sense for your system.
 
-These numbers are preliminary, from a single laptop. Server-class numbers to follow.
+These numbers are preliminary, from a single laptop.

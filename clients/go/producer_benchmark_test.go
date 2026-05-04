@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // TestProducerBenchmarks compares send-loop and SendBatch producer paths.

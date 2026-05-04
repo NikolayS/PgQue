@@ -39,7 +39,22 @@ select pgque.version();
  [[your version]]
 ```
 
-The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. See the [reference](reference.md) for the full surface.
+The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. The roles are siblings: `pgque_writer` produces (`send`, `send_batch`); `pgque_reader` consumes (`subscribe`, `receive`, `ack`, `nack`); `pgque_admin` is a member of both.
+
+**Skip the next snippet if you are following this tutorial as the install owner** — the rest of the tutorial works without any extra grants. The block below is the typical app-role setup you would do in production, where `app_orders` / `app_webhook` / `metrics` are app-role names you create yourself:
+
+```sql
+-- Produce + consume:
+grant pgque_reader, pgque_writer to app_orders;
+
+-- Pure producer:
+grant pgque_writer to app_webhook;
+
+-- Pure consumer / dashboard / metrics:
+grant pgque_reader to metrics;
+```
+
+See the [reference](reference.md) for the full surface.
 
 ## Step 2: Create the queue and the consumer
 
@@ -106,6 +121,8 @@ See the [concepts glossary](pgq-concepts.md) for the full definitions of event, 
 For demos and tests, PgQue provides `pgque.force_tick` to bypass the tick thresholds for one queue. It does **not** create the tick by itself — you still have to call `pgque.ticker()` afterwards to produce the tick:
 
 ```sql
+-- separate transactions (psql autocommit). Do not wrap in begin/commit:
+-- ticker() must see the prior send committed before it can include it in a batch.
 select pgque.force_tick('orders');
 select pgque.ticker();
 ```
@@ -131,7 +148,7 @@ select * from pgque.receive('orders', 'processor', 100);
 ```
  msg_id | batch_id | type    | payload                            | retry_count | created_at
 --------+----------+---------+------------------------------------+-------------+----------------------
-      1 |        1 | default | {"order_id": 42, "total": 99.95}   |             | 2026-04-17 10:00:00+00
+      1 |        1 | default | {"total": 99.95, "order_id": 42}   |             | 2026-04-17 10:00:00+00
 (1 row)
 ```
 
@@ -201,6 +218,8 @@ The parameter is `max_retries`, not `queue_max_retries` — `set_queue_config` p
 Send another event, tick, and receive:
 
 ```sql
+-- send / force_tick / ticker / receive are four separate transactions in psql
+-- autocommit. Do not wrap them in begin/commit — the snapshot rule still applies.
 select pgque.send('orders', '{"order_id": 43, "total": 10.00}'::jsonb);
 select pgque.force_tick('orders');
 select pgque.ticker();
@@ -210,7 +229,7 @@ select * from pgque.receive('orders', 'processor', 100);
 ```
  msg_id | batch_id | type    | payload                            | retry_count | ...
 --------+----------+---------+------------------------------------+-------------+----
-      2 |        2 | default | {"order_id": 43, "total": 10.00}   |             |
+      2 |        2 | default | {"total": 10.00, "order_id": 43}   |             |
 (1 row)
 ```
 
@@ -232,6 +251,7 @@ end $$;
 The event is now in PgQ's retry queue. Moving it back into the main event stream is a separate maintenance step: `pgque.maint_retry_events()`. After that, the next tick makes it visible again:
 
 ```sql
+-- four separate transactions (psql autocommit). Do not wrap in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_tick('orders');
 select pgque.ticker();
@@ -243,7 +263,7 @@ In production, `pgque.start()` schedules `maint_retry_events` on its own cadence
 ```
  msg_id | batch_id | type    | payload                            | retry_count | ...
 --------+----------+---------+------------------------------------+-------------+----
-      2 |        3 | default | {"order_id": 43, "total": 10.00}   |           1 |
+      2 |        3 | default | {"total": 10.00, "order_id": 43}   |           1 |
 (1 row)
 ```
 
@@ -265,6 +285,8 @@ begin
     perform pgque.ack(v_msg.batch_id);
 end $$;
 
+-- the do-block above is one transaction; the three statements below are
+-- three more, in psql autocommit. Do not wrap them in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_tick('orders');
 select pgque.ticker();
@@ -282,7 +304,7 @@ from pgque.dlq_inspect('orders');
 ```
  dl_id | dl_reason     | ev_id | ev_retry | ev_data
 -------+---------------+-------+----------+----------------------------------
-     1 | still failing |     2 |        2 | {"order_id": 43, "total": 10.00}
+     1 | still failing |     2 |        2 | {"total": 10.00, "order_id": 43}
 (1 row)
 ```
 

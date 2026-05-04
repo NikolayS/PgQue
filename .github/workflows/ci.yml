@@ -77,6 +77,76 @@ jobs:
         if: always()
         run: docker rm -f pgque-test
 
+  pg_tle-test:
+    name: pg_tle install path
+    runs-on: ubuntu-latest
+    env:
+      PG_VERSION: '18'
+      PGTLE_TAG: v1.5.2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Build PG image with pg_tle
+        run: |
+          set -Eeuo pipefail
+          docker build \
+            --build-arg "PG_VERSION=${PG_VERSION}" \
+            --build-arg "PGTLE_TAG=${PGTLE_TAG}" \
+            -t pgque-tle:test \
+            -f ci/Dockerfile.tle .
+
+      - name: Start PostgreSQL with pg_tle preloaded
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name pgque-tle-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            pgque-tle:test \
+            -c shared_preload_libraries=pg_tle
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec pgque-tle-test pg_isready -U postgres; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 30 seconds"
+            exit 1
+          fi
+
+      - name: Run pg_tle e2e test
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_tle_install.sql
+
+      - name: Run full regression suite via pg_tle install
+        run: |
+          set -Eeuo pipefail
+          # Fresh database so the e2e drop above does not interfere.
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c 'create database pgque_tle_regress'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_regress \
+            -v ON_ERROR_STOP=1 \
+            -c 'create extension pg_tle;' \
+            -f sql/pgque-tle.sql \
+            -c 'create extension pgque;'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_regress \
+            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pgque-tle-test
+
   python-client-tests:
     name: Python client tests
     runs-on: ubuntu-latest
@@ -118,6 +188,16 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e 'clients/python[dev]'
           pytest -v clients/python/tests/
+
+      - name: Python package smoke
+        run: |
+          set -Eeuo pipefail
+          python3 -m venv /tmp/pgque-python-package-venv
+          . /tmp/pgque-python-package-venv/bin/activate
+          python -m pip install -U pip build twine
+          cd clients/python
+          python -m build
+          python -m twine check dist/*
 
       - name: Cleanup Python test DB
         if: always()
@@ -212,6 +292,13 @@ jobs:
           bun run check
           bun run test
 
+      - name: TypeScript package smoke
+        run: |
+          set -Eeuo pipefail
+          cd clients/typescript
+          bun run build
+          npm pack --dry-run
+
       - name: Cleanup TypeScript test DB
         if: always()
         run: docker rm -f pgque-ts-test
@@ -253,3 +340,18 @@ jobs:
             exit 1
           fi
           echo "PASS: No remaining txid_ references"
+
+      - name: Verify generated SQL files are committed (drift check)
+        run: |
+          # build/transform.sh has already run in the previous step.
+          # The committed sql/pgque.sql and sql/pgque-tle.sql must equal
+          # what it just produced; otherwise users cloning the repo and
+          # running \i sql/pgque.sql (or \i sql/pgque-tle.sql) get a stale
+          # file. CI's other jobs rebuild the install file from sources
+          # before running tests, so they would not catch the drift.
+          if ! git diff --exit-code -- sql/pgque.sql sql/pgque-tle.sql; then
+            echo "FAIL: sql/pgque.sql or sql/pgque-tle.sql is out of sync with build/transform.sh output."
+            echo "Run: bash build/transform.sh && git add sql/pgque.sql sql/pgque-tle.sql && git commit"
+            exit 1
+          fi
+          echo "PASS: sql/pgque.sql and sql/pgque-tle.sql are in sync with build/transform.sh"

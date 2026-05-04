@@ -29,13 +29,12 @@
  * }
  * ```
  *
- * **Side effect on import:** registers a global `pg-types` parser for
- * `bigint` (oid 20) that promotes the column to JS `bigint`. This avoids
- * silent precision loss but also affects any other `pg`-using code in
- * the same process. Documented here for transparency.
+ * **bigint columns:** `msg_id`, `batch_id`, and `send()` / `sendBatch()`
+ * return values are JS `bigint`. The parser is scoped to pgque's own pool
+ * and does not affect other `pg` clients in the same process.
  */
 
-export { Client, connect } from './client.js';
+export { Client, connect, pgqueTypes } from './client.js';
 export { Consumer } from './consumer.js';
 export {
   PgqueConnectionError,

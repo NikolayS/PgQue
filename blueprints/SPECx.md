@@ -2771,7 +2771,7 @@ Examples:
 **`pgque status` output example:**
 
 ```
-pgque v1.0.0 | PostgreSQL 16.2 | pg_cron 1.6
+pgque v0.2.0-dev | PostgreSQL 16.2 | pg_cron 1.6
 
 System:
   Ticker:  running (job 42, every 2s, last run 1.2s ago)

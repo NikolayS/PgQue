@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	pgque "github.com/NikolayS/pgque/clients/go"
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 // TestConsumer_StartStop_Clean: Start should return ctx.Err() promptly when
