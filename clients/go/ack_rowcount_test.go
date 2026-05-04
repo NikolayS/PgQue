@@ -126,7 +126,7 @@ func TestAck_DirectCall_ReturnsRowcount(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(msgs) == 0 {
-		t.Skip("no messages received — queue may not have ticked")
+		t.Fatal("no messages received after tick — harness bug, not a skip-worthy condition")
 	}
 
 	batchID := msgs[0].BatchID
