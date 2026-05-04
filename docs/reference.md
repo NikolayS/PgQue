@@ -383,40 +383,42 @@ Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 Inserts one event with the four `ev_extra*` columns populated.
 Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 
+> **Trusted-operator-only primitives.** `register_consumer_at`, `get_batch_events`, and both `event_retry` overloads are gated behind `pgque_admin`. They take a consumer name or raw batch id and do **not** validate caller context, so a role with the grant can reposition any consumer's cursor, leak any consumer's active batch payloads, or push any consumer's events into the retry queue. Application code should use `pgque.subscribe`, `pgque.receive`, `pgque.ack`, and `pgque.nack` — those wrappers are `SECURITY DEFINER` and reach the primitives via the function owner, so they keep working under `pgque_reader`.
+
 #### `pgque.register_consumer(queue_name text, consumer_id text) → integer`
 
 Registers `consumer_id` on `queue_name`, starting from the most recent tick. Returns `1` for new, `0` if already registered.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.register_consumer_at(queue_name text, consumer_name text, tick_pos bigint) → integer`
 
-Registers a consumer at a specific historical tick id. Raises if the tick is not found.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Registers a consumer at a specific historical tick id, or repositions an existing consumer cursor when the consumer is already registered. Raises if the tick is not found.
+Grant: `pgque_admin` only. Source: `sql/pgque.sql`. **Trusted-operator only** — does not validate caller ownership of the consumer.
 
 #### `pgque.unregister_consumer(queue_name text, consumer_name text) → integer`
 
 Removes the subscription and retry-queue entries owned by this consumer on `queue_name`. Returns the number of subscriptions removed.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch(queue_name text, consumer_name text) → bigint`
 
 Activates the next batch for this consumer and returns its id, or `NULL` if no events are ready.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch_info(queue_name text, consumer_name text) → record`
 
 Same as `next_batch` but returns tick bounds alongside `batch_id`. Out columns: `batch_id`, `cur_tick_id`, `prev_tick_id`, `cur_tick_time`, `prev_tick_time`, `cur_tick_event_seq`, `prev_tick_event_seq`.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch_custom(queue_name text, consumer_name text, min_lag interval, min_count int4, min_interval interval) → record`
 
 Activates the next batch with custom size/age constraints. Same out columns as `next_batch_info`.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_events(batch_id bigint) → setof record`
 
 Streams the events in a batch. Out columns: `ev_id bigint`, `ev_time timestamptz`, `ev_txid bigint`, `ev_retry int4`, `ev_type text`, `ev_data text`, `ev_extra1..4 text`.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_admin` only. Source: `sql/pgque.sql`. **Trusted-operator only** — returns any active batch's payloads by id without validating caller ownership.
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4) → setof record`
 
@@ -433,17 +435,17 @@ Grant: `pgque_admin` only. Source: `sql/pgque.sql`.
 #### `pgque.finish_batch(batch_id bigint) → integer`
 
 Closes the batch and advances the subscription's `last_tick`. Returns `1` on success, `0` with a warning if the batch was not found.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.event_retry(batch_id bigint, event_id bigint, retry_time timestamptz) → integer`
 
 Puts one event back onto the retry queue with an absolute re-delivery time. Returns `1` on success, `0` if already queued for retry.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_admin` only. Source: `sql/pgque.sql`. **Trusted-operator only** — operates by raw batch id without validating caller ownership.
 
 #### `pgque.event_retry(batch_id bigint, event_id bigint, retry_seconds integer) → integer`
 
 Same as above but takes a relative delay in seconds.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_admin` only. Source: `sql/pgque.sql`. **Trusted-operator only** — operates by raw batch id without validating caller ownership.
 
 #### `pgque.batch_retry(batch_id bigint, retry_seconds integer) → integer`
 
@@ -511,9 +513,9 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 
 | Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`)                        |
+| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `finish_batch`); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`)                        |
 | `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
-| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
+| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus the trusted-operator primitives (`register_consumer_at`, `get_batch_events`, both `event_retry` overloads, `get_batch_cursor`, `batch_retry`), `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
 
 `pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
 

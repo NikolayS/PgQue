@@ -4394,19 +4394,67 @@ revoke execute on function pgque.event_retry(bigint, bigint, integer) from pgque
 
 -- consumer registration (consumer side: create/move/drop a subscription cursor)
 grant execute on function pgque.register_consumer(text, text) to pgque_reader;
-grant execute on function pgque.register_consumer_at(text, text, bigint) to pgque_reader;
 grant execute on function pgque.unregister_consumer(text, text) to pgque_reader;
 
 -- batch processing
 grant execute on function pgque.next_batch(text, text) to pgque_reader;
 grant execute on function pgque.next_batch_info(text, text) to pgque_reader;
 grant execute on function pgque.next_batch_custom(text, text, interval, int4, interval) to pgque_reader;
-grant execute on function pgque.get_batch_events(bigint) to pgque_reader;
 grant execute on function pgque.finish_batch(bigint) to pgque_reader;
 
--- event retry — timestamptz and integer overloads
-grant execute on function pgque.event_retry(bigint, bigint, timestamptz) to pgque_reader;
-grant execute on function pgque.event_retry(bigint, bigint, integer) to pgque_reader;
+-- ---------------------------------------------------------------------------
+-- Trusted-operator-only primitives (#106)
+--
+-- The PgQ-compatible primitives below operate on (queue, consumer) name pairs
+-- or on raw batch ids and do NOT validate caller context. That means any role
+-- holding the grant can reach into another consumer's active batch / cursor:
+--
+--   - register_consumer_at(queue, victim, tick) repositions any consumer's
+--     cursor (clears sub_batch, rewrites sub_last_tick).
+--   - event_retry(batch_id, ev_id, n) pushes any consumer's events into
+--     the retry queue.
+--   - get_batch_events(batch_id) leaks any consumer's active payloads.
+--
+-- v0.2.0 mitigation: keep these as pgque_admin only. The high-level API
+-- (pgque.receive, pgque.ack, pgque.nack) is SECURITY DEFINER and reaches
+-- the primitives via the function owner, so application code that uses
+-- the modern API is unaffected. Apps that genuinely need the PgQ-compatible
+-- primitive layer must run as pgque_admin (or a role granted pgque_admin).
+--
+-- Per-queue / per-consumer ACLs would close the consumer-vs-consumer
+-- boundary in a finer-grained way; that is a multi-week design exercise
+-- and is tracked separately. For v0.2.0 the smallest-blast-radius fix is
+-- the trusted-operator gate plus an explicit comment on each function.
+-- ---------------------------------------------------------------------------
+
+-- Upgrade path: pre-#106-fix installs granted these to pgque_reader. Postgres
+-- preserves function-level grants across `create or replace function`, so a
+-- re-install silently retains the old grants. Revoke from pgque_reader
+-- explicitly. The earlier revoke from pgque_writer above is also still
+-- needed for installs that pre-date #163.
+revoke execute on function pgque.register_consumer_at(text, text, bigint) from pgque_reader;
+revoke execute on function pgque.get_batch_events(bigint)                 from pgque_reader;
+revoke execute on function pgque.event_retry(bigint, bigint, timestamptz) from pgque_reader;
+revoke execute on function pgque.event_retry(bigint, bigint, integer)     from pgque_reader;
+
+-- Document the trust contract on the functions themselves so anyone
+-- inspecting via \df+ sees it without having to read docs/reference.md.
+comment on function pgque.register_consumer_at(text, text, bigint) is
+    'Trusted-operator only (pgque_admin). Repositions a consumer cursor and '
+    'does not validate caller ownership of the consumer. Apps should use '
+    'pgque.subscribe()/pgque.receive() instead.';
+comment on function pgque.get_batch_events(bigint) is
+    'Trusted-operator only (pgque_admin). Returns the events of any active '
+    'batch by id and does not validate caller ownership of the batch. Apps '
+    'should use pgque.receive() instead.';
+comment on function pgque.event_retry(bigint, bigint, timestamptz) is
+    'Trusted-operator only (pgque_admin). Re-queues an event of any active '
+    'batch by id and does not validate caller ownership. Apps should use '
+    'pgque.nack() instead.';
+comment on function pgque.event_retry(bigint, bigint, integer) is
+    'Trusted-operator only (pgque_admin). Re-queues an event of any active '
+    'batch by id and does not validate caller ownership. Apps should use '
+    'pgque.nack() instead.';
 
 -- ---------------------------------------------------------------------------
 -- Writer: produce events. Strictly producer-side primitives.
