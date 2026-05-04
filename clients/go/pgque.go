@@ -132,12 +132,20 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 // Ack finishes a batch, advancing the consumer's position past it. PgQue
 // delivers at-least-once: failing to Ack a batch causes redelivery on
 // the next Receive.
-func (c *Client) Ack(ctx context.Context, batchID int64) error {
-	_, err := c.pool.Exec(ctx, "SELECT pgque.ack($1)", batchID)
+//
+// The returned int64 is the row-count from pgque.finish_batch:
+//   - 1: the batch was active and has been finished (normal success).
+//   - 0: no active batch was finished — the batch_id was not found,
+//     already finished (stale/double ack), or belongs to a different
+//     consumer. Callers should log this at warn level; it is not a SQL
+//     error and does not indicate a connection problem.
+func (c *Client) Ack(ctx context.Context, batchID int64) (int64, error) {
+	var n int64
+	err := c.pool.QueryRow(ctx, "SELECT pgque.ack($1)", batchID).Scan(&n)
 	if err != nil {
-		return wrapSQLError("ack", err)
+		return 0, wrapSQLError("ack", err)
 	}
-	return nil
+	return n, nil
 }
 
 // Nack negatively acknowledges a single message, routing it to retry or DLQ.

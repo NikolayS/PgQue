@@ -59,7 +59,7 @@ func TestRace_ConcurrentSend(t *testing.T) {
 			break
 		}
 		total += len(msgs)
-		if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+		if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -131,7 +131,7 @@ func TestRace_SendReceiveLoop(t *testing.T) {
 			}
 			if len(msgs) > 0 {
 				atomic.AddInt64(&received, int64(len(msgs)))
-				client.Ack(ctx, msgs[0].BatchID)
+				_, _ = client.Ack(ctx, msgs[0].BatchID)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}

@@ -42,9 +42,9 @@ func (s *stubBackend) Receive(_ context.Context, _, _ string, maxMessages int) (
 	return []pgque.Message{s.msg}, nil
 }
 
-func (s *stubBackend) Ack(_ context.Context, _ int64) error {
+func (s *stubBackend) Ack(_ context.Context, _ int64) (int64, error) {
 	atomic.AddInt32(&s.ackCount, 1)
-	return nil
+	return 1, nil
 }
 
 func (s *stubBackend) Nack(_ context.Context, _ int64, _ pgque.Message, _ ...pgque.NackOption) error {

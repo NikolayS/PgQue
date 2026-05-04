@@ -65,8 +65,8 @@ try {
 | `connect(dsn, poolOptions?)` | Connect via `pg.Pool`. Eagerly probes the connection. |
 | `client.send(queue, event)` | Publish; returns event id (`bigint`). |
 | `client.sendBatch(queue, type, payloads)` | Publish a same-type batch atomically; returns event ids (`bigint[]`). |
-| `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. |
-| `client.ack(batchId)` | Finish the batch. |
+| `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. If you later call `ack(batchId)`, PgQue finishes the whole underlying batch, including rows beyond `max`; size `max` for your queue or use the high-level consumer default. |
+| `client.ack(batchId)` | Finish the batch. Returns `1` on success, `0` if the batch was already finished or not found (stale/double ack — log at warn level, not an error). |
 | `client.nack(batchId, msg, opts?)` | Single-message retry/DLQ. |
 | `client.subscribe(queue, consumer)` | Wraps `pgque.register_consumer`. |
 | `client.unsubscribe(queue, consumer)` | Wraps `pgque.unregister_consumer`. |
@@ -92,6 +92,15 @@ All errors derive from `PgqueError`:
 - `PgqueSqlError` — generic SQL failure (with `cause`)
 
 ## Caveats
+
+### `ack()` returns a rowcount, not void
+
+`client.ack(batchId)` returns `Promise<number>`. The value is `1` when the
+batch was active and has been finished, or `0` when the batch was not found or
+had already been finished (stale/double ack). A `0` result is not a SQL error —
+the promise resolves normally. Callers that need to detect double-ack should
+check the return value; the high-level `Consumer` logs a warning when it sees
+`0`.
 
 ### bigint columns
 

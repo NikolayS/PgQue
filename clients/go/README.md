@@ -95,6 +95,25 @@ err := client.Nack(ctx, batchID, msg,
 Calls without options preserve the historical defaults: 60-second retry
 delay, NULL reason.
 
+## Ack rowcount
+
+`Client.Ack` returns `(int64, error)`. The `int64` is the row-count from
+`pgque.finish_batch`:
+
+- `1` — batch was active and has been finished (normal success).
+- `0` — no active batch was finished: the `batchID` was not found, was already
+  finished (stale/double ack), or belongs to a different consumer. This is not a
+  SQL error — the `error` return is nil. Log it at warn level if you see it.
+
+```go
+n, err := client.Ack(ctx, batchID)
+if err != nil {
+    log.Printf("ack SQL error: %v", err)
+} else if n == 0 {
+    log.Printf("ack returned 0 — stale or double ack for batch %d", batchID)
+}
+```
+
 ## At-least-once contract
 
 If a per-message Nack call fails, the Consumer leaves the batch unacked
