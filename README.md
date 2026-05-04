@@ -425,8 +425,17 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Rust library |  |
 | Java library |  |
 | Ruby library |  |
-| Basic observability views | ✅ |
-| Prometheus exporter |  |
+| Basic queue/consumer info views | ✅ |
+| Advanced observability / health views |  |
+| LISTEN/NOTIFY consumer wakeups on tick |  |
+| Delayed / scheduled delivery (`send_at`) |  |
+| Queue config JSON API |  |
+| Queue pause / resume |  |
+| OpenTelemetry / Prometheus metrics export |  |
+| Admin CLI |  |
+| Cross-database `pg_cron` scheduling |  |
+| Message TTL / expiry |  |
+| Per-tenant isolation / multi-schema installs |  |
 | `pg_tle` extension package | ✅ |
 | Migration guides |  |
 
