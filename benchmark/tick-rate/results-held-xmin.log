@@ -1,0 +1,38 @@
+=== Baseline: no held-xmin, 60s @ 1000 ev/s, tick=100ms ===
+running held-xmin scenario, tick_period_ms=100, rate=1000 ev/s, duration=60.0s ...
+
+=== Scenario: held-xmin ===
+| tick_period_ms | rate_eps |  sent  | recvd |   p50 |   p95 |   p99 |   max |  mean |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+|   100 |  1000 | 60000 | 60000 | 52.60 | 98.96 | 103.40 | 143.76 | 52.75 |
+
+wrote results-baseline.json
+
+=== Starting RR-held-xmin holder in background ===
+holder shell pid: 22130; sleeping 3s for it to settle ...
+backend snapshot of holder:
+  pid  | state  |          query_start          |          xact_start           
+-------+--------+-------------------------------+-------------------------------
+ 22510 | active | 2026-05-04 23:49:46.553183+00 | 2026-05-04 23:49:46.553183+00
+ 22133 | active | 2026-05-04 23:49:43.551462+00 | 2026-05-04 23:49:43.551462+00
+ 22506 | active | 2026-05-04 23:49:45.734026+00 | 2026-05-04 23:49:45.734026+00
+(3 rows)
+
+
+=== Held-xmin: 300s @ 1000 ev/s, tick=100ms ===
+running held-xmin scenario, tick_period_ms=100, rate=1000 ev/s, duration=300.0s ...
+
+=== Scenario: held-xmin ===
+| tick_period_ms | rate_eps |  sent  | recvd |   p50 |   p95 |   p99 |   max |  mean |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+|   100 |  1000 | 300000 | 300000 | 53.83 | 100.18 | 104.73 | 235.56 | 54.03 |
+
+wrote results-held-xmin.json
+
+=== Killing holder ===
+ pg_terminate_backend 
+----------------------
+(0 rows)
+
+
+=== Done. ===

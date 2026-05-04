@@ -1,0 +1,11 @@
+BEGIN
+ holder_pid 
+------------
+      22133
+(1 row)
+
+ pg_sleep 
+----------
+ 
+(1 row)
+

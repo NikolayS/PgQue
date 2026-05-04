@@ -1,0 +1,22 @@
+running tick_period_ms=10000, rate=100 ev/s, duration=30.0s ...
+running tick_period_ms=1000, rate=100 ev/s, duration=30.0s ...
+running tick_period_ms=100, rate=100 ev/s, duration=30.0s ...
+running tick_period_ms=10, rate=100 ev/s, duration=30.0s ...
+running tick_period_ms=1, rate=100 ev/s, duration=30.0s ...
+
+=== Scenario: idle ===
+| tick_period_ms | rate_eps |  sent  | recvd |   p50 |   p95 |   p99 |   max |  mean |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10000 |   100 |  3000 |  3000 | 503.97 | 953.56 | 993.55 | 1003.24 | 503.71 |
+|  1000 |   100 |  3000 |  3000 | 503.32 | 953.87 | 993.89 | 1004.16 | 503.32 |
+|   100 |   100 |  3000 |  3000 | 52.62 | 98.86 | 103.48 | 105.28 | 52.74 |
+|    10 |   100 |  3000 |  3000 |  8.05 | 263.53 | 863.50 | 1013.39 | 41.86 |
+|     1 |   100 |  3000 |  3000 |  3.26 | 161.67 | 460.47 | 547.91 | 22.07 |
+Traceback (most recent call last):
+  File "/home/user/pgque/benchmark/tick-rate/bench.py", line 247, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/user/pgque/benchmark/tick-rate/bench.py", line 240, in main
+    with open(args.out_json, "w") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: 'benchmark/tick-rate/results-idle.json'
