@@ -93,28 +93,13 @@ All errors derive from `PgqueError`:
 
 ## Caveats
 
-### Global BIGINT parser mutation
+### bigint columns
 
-Importing `pgque` calls `types.setTypeParser(20, ...)` at module load
-time. This mutates the process-global `pg-types` parser table so that
-**all** `pg.Pool` / `pg.Client` instances in the same Node.js process
-will return PostgreSQL `bigint` columns as JS `bigint` instead of the
-default string representation.
-
-Practical impact:
-
-- If other code in your process uses `pg` and relies on `bigint` coming
-  back as a string (the `pg` default), those columns will silently change
-  type after `pgque` is imported.
-- The change is intentional: JS `bigint` is the correct representation for
-  PostgreSQL `bigint` and avoids silent precision loss above
-  `Number.MAX_SAFE_INTEGER`. The Go and Python pgque drivers behave the
-  same way.
-- If you cannot accept this side effect, do not import this package.
-
-There is no opt-out once the module is loaded — Node.js module caches
-mean the parser is set exactly once, regardless of how many times the
-package is imported.
+`Message.msgId`, `Message.batchId`, and the return values of `send()` /
+`sendBatch()` are JS `bigint`. The `int8` → `bigint` parser is registered
+only on pgque's internal pool via a per-pool `CustomTypesConfig` — it
+does **not** touch the process-global `pg-types` table. Other `pg.Pool`
+or `pg.Client` instances in the same process are unaffected.
 
 ## Tests
 

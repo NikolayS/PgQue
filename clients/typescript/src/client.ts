@@ -13,14 +13,31 @@ import type { ConsumerOptions, Event, Message, NackOptions } from './types.js';
 
 const { Pool, types } = pg;
 
-// PostgreSQL `bigint` (oid 20) is parsed by `pg` as string by default to
+// PostgreSQL `bigint` (OID 20) is parsed by `pg` as string by default to
 // avoid silent precision loss above Number.MAX_SAFE_INTEGER. We promote to
 // JS `bigint` for safety AND ergonomics — `bigint` is the natural type for
 // PG `bigint`, matches the Go driver's `int64`, and round-trips losslessly.
 //
-// This mutates a process-global parser table. We do it once at module load
-// and document the side effect in the README.
-types.setTypeParser(20, (val) => BigInt(val));
+// We do NOT touch the process-global parser table. Instead, each Pool created
+// by pgque is given a per-pool CustomTypesConfig that overrides OID 20 only
+// for queries issued by pgque. Unrelated pg pools in the same process are
+// unaffected.
+/**
+ * Per-pool type overrides used by pgque's `connect()`.
+ * Parses PostgreSQL `bigint` (OID 20) as JS `bigint` without touching the
+ * process-global `pg.types` table.
+ *
+ * @internal — exported for testing only; do not depend on this in application code.
+ */
+export const pgqueTypes: pg.CustomTypesConfig = {
+  getTypeParser(oid: number, format?: string) {
+    if (oid === 20) {
+      // int8 / bigint → JS bigint
+      return (val: string) => BigInt(val);
+    }
+    return types.getTypeParser(oid, format as 'text' | 'binary');
+  },
+};
 
 const PG_RAISE_EXCEPTION_CODE = 'P0001';
 
@@ -348,6 +365,9 @@ export class Client {
  * the connection eagerly; rejects with {@link PgqueConnectionError} on
  * failure.
  *
+ * The `types` parser config is reserved for pgque's internal bigint parsing;
+ * user-supplied `types` is ignored.
+ *
  * @example
  * ```ts
  * const client = await connect('postgres://user:pass@localhost/mydb');
@@ -360,9 +380,16 @@ export class Client {
  */
 export async function connect(
   dsn: string,
-  poolOptions: Omit<pg.PoolConfig, 'connectionString'> = {},
+  poolOptions: Omit<pg.PoolConfig, 'connectionString' | 'types'> = {},
 ): Promise<Client> {
-  const pool = new Pool({ connectionString: dsn, ...poolOptions });
+  // Defensively strip `types` from poolOptions before spreading. The
+  // `Omit<..., 'types'>` already rejects this at compile time, but JS
+  // callers (or `as` casts) can still smuggle one in. Dropping it here
+  // makes the pgque types config impossible to override regardless of
+  // spread order — see REV review on PR #189.
+  const { types: _userTypes, ...restPoolOptions } = poolOptions as pg.PoolConfig;
+  void _userTypes;
+  const pool = new Pool({ connectionString: dsn, ...restPoolOptions, types: pgqueTypes });
   let probe: pg.PoolClient;
   try {
     probe = await pool.connect();
