@@ -213,6 +213,10 @@ jobs:
         with:
           submodules: recursive
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: clients/go/go.mod
+
       - name: Start PostgreSQL 18
         run: |
           set -Eeuo pipefail
