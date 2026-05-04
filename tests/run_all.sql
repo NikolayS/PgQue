@@ -61,6 +61,9 @@
 \echo 'Running: test_pgcron_lifecycle'
 \i tests/test_pgcron_lifecycle.sql
 
+\echo 'Running: test_tick_period'
+\i tests/test_tick_period.sql
+
 \echo 'Running: test_install_idempotency'
 \i tests/test_install_idempotency.sql
 

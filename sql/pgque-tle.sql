@@ -4040,12 +4040,28 @@ create table if not exists pgque.config (
     singleton       bool primary key default true check (singleton),
     ticker_job_id   bigint,
     maint_job_id    bigint,
+    tick_period_ms  integer not null default 100
+        check (tick_period_ms between 1 and 60000),
     installed_at    timestamptz not null default clock_timestamp()
 );
 
 -- Idempotent insert
 insert into pgque.config (singleton) values (true)
 on conflict (singleton) do nothing;
+
+-- Add tick_period_ms on upgrade from a pre-tick-period install.
+do $$
+begin
+    if not exists (
+        select 1 from information_schema.columns
+        where table_schema = 'pgque' and table_name = 'config'
+          and column_name = 'tick_period_ms'
+    ) then
+        alter table pgque.config
+            add column tick_period_ms integer not null default 100
+                check (tick_period_ms between 1 and 60000);
+    end if;
+end $$;
 
 -- pgque-additions/queue_max_retries.sql
 -- Add queue_max_retries column to pgque.queue
@@ -4111,6 +4127,80 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- pgque lifecycle functions
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
+-- pgque.ticker_loop()
+--
+-- Sub-second tick driver: runs inside one pg_cron slot (1 second cadence) and
+-- internally invokes pgque.ticker() at the rate configured in
+-- pgque.config.tick_period_ms (default 100 ms = 10 Hz).
+--
+-- Implemented as a PROCEDURE so it can `commit` between iterations: every
+-- pgque.ticker() call thereby gets its own transaction and the per-iteration
+-- xmin is released, preserving the rotation behaviour the metadata tables
+-- depend on.
+-- Note: a procedure that uses COMMIT cannot also carry a SET clause (Postgres
+-- restriction), so search_path is not pinned at the procedure level.  All
+-- references inside the body are fully schema-qualified, and the procedure
+-- only invokes SECURITY DEFINER functions (pgque.ticker / pgque.config) that
+-- pin their own search_path. ticker_loop itself is SECURITY INVOKER and
+-- callable only by pgque_admin / superuser (see grants below).
+create or replace procedure pgque.ticker_loop()
+language plpgsql
+as $$
+declare
+    v_period_ms     integer;
+    v_window_ms     constant integer := 1000;
+    v_started_at    timestamptz := clock_timestamp();
+    v_elapsed_ms    double precision;
+    v_iter_budget   integer;
+    i               integer;
+begin
+    select tick_period_ms into v_period_ms from pgque.config;
+    if v_period_ms is null or v_period_ms < 1 then
+        v_period_ms := 100;
+    end if;
+    if v_period_ms > v_window_ms then
+        v_period_ms := v_window_ms;
+    end if;
+
+    v_iter_budget := greatest(1, v_window_ms / v_period_ms);
+
+    for i in 1 .. v_iter_budget loop
+        perform pgque.ticker();
+        commit;
+
+        if i = v_iter_budget then
+            exit;
+        end if;
+
+        v_elapsed_ms := extract(epoch from (clock_timestamp() - v_started_at)) * 1000.0;
+        if v_elapsed_ms + v_period_ms >= v_window_ms then
+            exit;
+        end if;
+
+        perform pg_sleep(v_period_ms / 1000.0);
+    end loop;
+end;
+$$;
+
+-- pgque.set_tick_period_ms(ms)
+--
+-- Configure how often pgque.ticker_loop() invokes pgque.ticker(). Default is
+-- 100 ms (10 Hz). Lower values cut producer→consumer latency for non-LISTEN
+-- consumers; higher values reduce WAL volume and metadata churn.
+--
+-- Takes effect on the next pg_cron slot (≤1 s) without rescheduling.
+create or replace function pgque.set_tick_period_ms(p_period_ms integer)
+returns integer as $$
+begin
+    if p_period_ms is null or p_period_ms < 1 or p_period_ms > 60000 then
+        raise exception 'tick_period_ms must be between 1 and 60000 (got %)',
+            coalesce(p_period_ms::text, 'NULL');
+    end if;
+    update pgque.config set tick_period_ms = p_period_ms;
+    return p_period_ms;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
 create or replace function pgque.start()
 returns void as $$
 declare
@@ -4119,6 +4209,7 @@ declare
     v_maint_id bigint;
     v_step2_id bigint;
     v_dbname text;
+    v_period_ms integer;
 begin
     -- pg_cron is optional; start() specifically requires it because it schedules jobs.
     if not exists (select 1 from pg_extension where extname = 'pg_cron') then
@@ -4131,13 +4222,15 @@ begin
     perform pgque.stop();
 
     v_dbname := current_database();
+    select tick_period_ms into v_period_ms from pgque.config;
 
-    -- Ticker: every 1 second (matches pgqd cadence; requires pg_cron >= 1.5
-    -- for sub-minute scheduling)
+    -- Ticker: pg_cron fires every 1 second; pgque.ticker_loop() then
+    -- internally re-ticks at pgque.config.tick_period_ms cadence (default
+    -- 100 ms = 10 Hz). Tune via pgque.set_tick_period_ms(ms).
     select cron.schedule_in_database(
         'pgque_ticker',
         '1 second',
-        $sql$SET statement_timeout = '950ms'; SELECT pgque.ticker()$sql$,
+        $sql$CALL pgque.ticker_loop()$sql$,
         v_dbname
     ) into v_ticker_id;
 
@@ -4175,8 +4268,9 @@ begin
     set ticker_job_id = v_ticker_id,
         maint_job_id = v_maint_id;
 
-    raise notice 'pgque started: ticker=%, retry_events=%, maint=%, rotate_step2=%',
-        v_ticker_id, v_retry_id, v_maint_id, v_step2_id;
+    raise notice 'pgque started: ticker=% (% Hz), retry_events=%, maint=%, rotate_step2=%',
+        v_ticker_id, (1000.0 / v_period_ms)::numeric(10, 2),
+        v_retry_id, v_maint_id, v_step2_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -4272,7 +4366,10 @@ begin
             case when c.ticker_job_id is not null then 'scheduled' else 'stopped' end,
             case when c.ticker_job_id is not null
                 then 'job_id=' || c.ticker_job_id::text
-                else 'not scheduled'
+                    || ', tick_period_ms=' || c.tick_period_ms::text
+                    || ' (' || (1000.0 / c.tick_period_ms)::numeric(10, 2)::text || ' Hz)'
+                else 'not scheduled (tick_period_ms='
+                    || c.tick_period_ms::text || ')'
             end
         from pgque.config c;
 
@@ -4508,6 +4605,11 @@ end $$;
 -- Keep both overloads admin-only; application roles should use pgque.receive().
 revoke execute on function pgque.get_batch_cursor(bigint, text, int4)        from public, pgque_reader, pgque_writer;
 revoke execute on function pgque.get_batch_cursor(bigint, text, int4, text)  from public, pgque_reader, pgque_writer;
+
+-- Procedure grants. "execute on all functions" / public-revoke above does NOT
+-- cover procedures, so admin-only grants are spelled out explicitly.
+revoke execute on procedure pgque.ticker_loop() from public;
+grant execute on procedure pgque.ticker_loop() to pgque_admin;
 
 -- pgque-additions/dlq.sql
 -- pgque dead letter queue (DLQ) -- table + helper functions

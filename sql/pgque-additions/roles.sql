@@ -152,3 +152,8 @@ end $$;
 -- Keep both overloads admin-only; application roles should use pgque.receive().
 revoke execute on function pgque.get_batch_cursor(bigint, text, int4)        from public, pgque_reader, pgque_writer;
 revoke execute on function pgque.get_batch_cursor(bigint, text, int4, text)  from public, pgque_reader, pgque_writer;
+
+-- Procedure grants. "execute on all functions" / public-revoke above does NOT
+-- cover procedures, so admin-only grants are spelled out explicitly.
+revoke execute on procedure pgque.ticker_loop() from public;
+grant execute on procedure pgque.ticker_loop() to pgque_admin;
