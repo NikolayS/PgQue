@@ -74,30 +74,18 @@ declare
     v_bid   bigint;
     v_eid   bigint;
 begin
-    select count(*) into v_count from pgque.receive('q_cc', 'cons_a', 10);
+    -- Open cons_a's batch and capture the msg_id in a single receive() call.
+    -- A second receive on the same open batch returns nothing.
+    select count(*), max(msg_id) into v_count, v_eid
+      from pgque.receive('q_cc', 'cons_a', 10);
     assert v_count = 1, format('cons_a should have received 1 message, got %s', v_count);
+    assert v_eid is not null, 'expected to discover an ev_id for the secret event';
 
     select sub_batch into v_bid
       from pgque.subscription s
       join pgque.consumer c on c.co_id = s.sub_consumer
      where c.co_name = 'cons_a';
     assert v_bid is not null, 'cons_a should have an active batch_id';
-
-    -- Look up the ev_id while still acting as cons_a (it has the active batch).
-    -- pgque.receive() does not return ev_id directly here, so use the message type.
-    select msg_id into v_eid
-      from pgque.receive('q_cc', 'cons_a', 10)
-     limit 1;
-    -- Note: a second receive returns nothing because the batch is already open.
-    -- Fall back to looking up the event id from the queue data tables, which
-    -- pgque_reader can SELECT from.
-    if v_eid is null then
-        select ev_id into v_eid
-          from pgque.event_1 -- queue data table -- pgque_reader has SELECT
-         where ev_type = 'secret'
-         limit 1;
-    end if;
-    assert v_eid is not null, 'expected to discover an ev_id for the secret event';
 
     perform set_config('pgque_test.cc_bid', v_bid::text, false);
     perform set_config('pgque_test.cc_eid', v_eid::text, false);
