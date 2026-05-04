@@ -102,6 +102,40 @@ so PgQue redelivers it on the next Receive. Acking a batch whose Nack
 failed would silently drop the failure information — the Go consumer
 prefers redelivery and lets the at-least-once retry path do its job.
 
+## Typed errors
+
+Client methods wrap PostgreSQL-side failures so callers can route on
+recoverable conditions with `errors.Is`:
+
+```go
+_, err := client.Send(ctx, "orders", pgque.Event{Type: "x", Payload: nil})
+switch {
+case errors.Is(err, pgque.ErrQueueNotFound):
+    // create the queue, retry
+case errors.Is(err, pgque.ErrConsumerNotFound):
+    // re-register the consumer
+case errors.Is(err, pgque.ErrBatchNotFound):
+    // batch already finished — usually safe to ignore
+case errors.Is(err, pgque.ErrConnection):
+    // pool closed, network drop, bad DSN
+case err != nil:
+    // generic SQL error — extract SQLSTATE if needed
+    var sqlErr *pgque.SqlError
+    if errors.As(err, &sqlErr) {
+        log.Printf("pgque %s failed: %s [SQLSTATE %s]",
+            sqlErr.Op, sqlErr.Err, sqlErr.SQLSTATE)
+    }
+}
+```
+
+`context.Canceled` and `context.DeadlineExceeded` pass through unwrapped,
+so `errors.Is(err, context.Canceled)` continues to work.
+
+The same typed surface is exposed by the Python client (`PgqueQueueNotFound`,
+`PgqueConsumerNotFound`, `PgqueBatchNotFound`, `PgqueConnectionError`) and
+TypeScript client (`PgqueQueueNotFoundError`, `PgqueConsumerNotFoundError`,
+`PgqueSqlError`).
+
 ## Tests
 
 The integration tests require a running PostgreSQL with the PgQue schema
