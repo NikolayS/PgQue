@@ -17,7 +17,7 @@ def test_smoke_send_receive_ack(dsn, queue_name, consumer_name):
             client.conn.commit()
 
             client.conn.execute("select pgque.force_tick(%s)", (queue_name,))
-            client.conn.execute("select pgque.ticker()")
+            client.conn.execute("select pgque.ticker(%s)", (queue_name,))
             client.conn.commit()
 
             msgs = client.receive(queue_name, consumer_name, max_messages=10)
