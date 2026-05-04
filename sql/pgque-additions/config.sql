@@ -6,7 +6,7 @@ create table if not exists pgque.config (
     ticker_job_id   bigint,
     maint_job_id    bigint,
     tick_period_ms  integer not null default 100
-        check (tick_period_ms between 1 and 60000),
+        check (tick_period_ms between 1 and 1000),
     installed_at    timestamptz not null default clock_timestamp()
 );
 
@@ -24,6 +24,6 @@ begin
     ) then
         alter table pgque.config
             add column tick_period_ms integer not null default 100
-                check (tick_period_ms between 1 and 60000);
+                check (tick_period_ms between 1 and 1000);
     end if;
 end $$;

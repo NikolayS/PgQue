@@ -22,7 +22,7 @@ select pgque.set_tick_period_ms(10);    -- 100 ticks/sec
 select pgque.set_tick_period_ms(1);     -- 1000 ticks/sec
 ```
 
-Range: `1`..`60000` ms. Effective on the next pg_cron slot (≤1 s); no rescheduling needed. Inspect the current rate with `select * from pgque.status();`.
+Range: `1`..`1000` ms. Effective on the next pg_cron slot (≤1 s); no rescheduling needed. Inspect the current rate with `select * from pgque.status();`.
 
 Trade-offs at high tick rates:
 - **WAL volume.** Every tick UPDATEs `pgque.tick` and writes to per-queue tick partitions. 10 ticks/sec is ~10× the WAL of 1 tick/sec; 1000 ticks/sec is ~1000×. Bench against your workload before pushing the rate up.

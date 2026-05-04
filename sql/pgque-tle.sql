@@ -4041,7 +4041,7 @@ create table if not exists pgque.config (
     ticker_job_id   bigint,
     maint_job_id    bigint,
     tick_period_ms  integer not null default 100
-        check (tick_period_ms between 1 and 60000),
+        check (tick_period_ms between 1 and 1000),
     installed_at    timestamptz not null default clock_timestamp()
 );
 
@@ -4059,7 +4059,7 @@ begin
     ) then
         alter table pgque.config
             add column tick_period_ms integer not null default 100
-                check (tick_period_ms between 1 and 60000);
+                check (tick_period_ms between 1 and 1000);
     end if;
 end $$;
 
@@ -4192,8 +4192,12 @@ $$;
 create or replace function pgque.set_tick_period_ms(p_period_ms integer)
 returns integer as $$
 begin
-    if p_period_ms is null or p_period_ms < 1 or p_period_ms > 60000 then
-        raise exception 'tick_period_ms must be between 1 and 60000 (got %)',
+    -- 1..1000 ms: pg_cron's minimum schedule is 1 s, so any value > 1000
+    -- collapses to "one tick per pg_cron slot" (i.e. 1 tick/sec). Reject
+    -- it explicitly rather than silently clamping. To tick less often than
+    -- once per second, change the pg_cron schedule string directly.
+    if p_period_ms is null or p_period_ms < 1 or p_period_ms > 1000 then
+        raise exception 'tick_period_ms must be between 1 and 1000 (got %)',
             coalesce(p_period_ms::text, 'NULL');
     end if;
     update pgque.config set tick_period_ms = p_period_ms;
@@ -4227,6 +4231,13 @@ begin
     -- Ticker: pg_cron fires every 1 second; pgque.ticker_loop() then
     -- internally re-ticks at pgque.config.tick_period_ms cadence (default
     -- 100 ms = 10 ticks/sec). Tune via pgque.set_tick_period_ms(ms).
+    --
+    -- The pg_cron command is a bare CALL, with NO `SET ...;` prefix:
+    -- pg_cron concatenates SET + CALL into a single multi-statement
+    -- transaction, and a procedure that issues COMMIT inside such a tx
+    -- raises "invalid transaction termination". ticker_loop self-bounds
+    -- to ~1 s of wall time, so an external statement_timeout is not
+    -- required for safety here.
     select cron.schedule_in_database(
         'pgque_ticker',
         '1 second',
@@ -4383,7 +4394,8 @@ begin
         from pgque.config c;
     else
         return query select 'pg_cron'::text, 'unavailable'::text,
-            'pg_cron not installed -- call pgque.ticker() and pgque.maint() manually'::text;
+            format('pg_cron not installed -- call pgque.ticker() and pgque.maint() manually (current tick_period_ms=%s)',
+                (select tick_period_ms from pgque.config));
     end if;
 
     -- Queue count

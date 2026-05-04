@@ -37,10 +37,10 @@ begin
     assert v_caught, 'set_tick_period_ms(0) should raise';
 
     v_caught := false;
-    begin perform pgque.set_tick_period_ms(60001);
+    begin perform pgque.set_tick_period_ms(1001);
     exception when others then v_caught := true;
     end;
-    assert v_caught, 'set_tick_period_ms(60001) should raise';
+    assert v_caught, 'set_tick_period_ms(1001) should raise (range is 1..1000)';
 
     v_caught := false;
     begin perform pgque.set_tick_period_ms(null);

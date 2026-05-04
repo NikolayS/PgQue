@@ -78,7 +78,7 @@ If your top priority is single-digit-millisecond dispatch, PgQue is the wrong to
 
 1. **Producer latency** — `send` / `insert_event`. Sub-ms.
 2. **Subscriber latency** — `next_batch` over a pre-built batch. Sub-ms.
-3. **End-to-end delivery** — `send` → consumer visibility. ≈ tick period (default 100 ms). Tunable from 1 ms to 60 000 ms via `pgque.set_tick_period_ms(ms)`. Does not grow with load.
+3. **End-to-end delivery** — `send` → consumer visibility. ≈ tick period (default 100 ms). Tunable from 1 ms to 1000 ms via `pgque.set_tick_period_ms(ms)`. Does not grow with load.
 
 See [docs/three-latencies.md](docs/three-latencies.md) for the breakdown, tick-cadence trade-off table, and comparison with UPDATE/DELETE-based designs.
 
@@ -166,12 +166,13 @@ select pgque.set_tick_period_ms(10);    -- 100 ticks/sec, ~5 ms median e2e
 select pgque.set_tick_period_ms(1000);  -- 1 tick/sec, the pgqd-compatible cadence
 ```
 
-Range: `1`..`60000` ms. Inspect the current rate with `select * from pgque.status();`.
+Range: `1`..`1000` ms. Inspect the current rate with `select * from pgque.status();`.
 
 Trade-offs to keep in mind when raising the rate:
 - **WAL volume.** Every tick is one INSERT into a per-queue tick table plus a metadata UPDATE — at 10 ticks/sec that's ~10× the WAL of a 1 tick/sec cadence. Cheap on a small workload; not free on tight WAL budgets or slow logical-replication subscribers.
 - **NOTIFY rate.** `pgque.ticker()` emits `pg_notify('pgque_<queue>', ...)` per tick. Postgres's NOTIFY queue is global (8 GiB SLRU); slow LISTEN consumers can fall behind at very high rates.
 - **Metadata-table dead tuples.** `pgque.tick` and `pgque.subscription` are UPDATEd on every tick. PgQue rotates these tables to keep dead-tuple peaks bounded; at sub-50 ms tick periods, drop the rotation period proportionally.
+- **`pg_cron` background workers.** `pgque.ticker_loop()` holds one pg_cron worker for ~1 s per slot (vs. ~10 ms for the previous 1-second-cadence ticker). With pg_cron's default `cron.max_running_jobs = 32`, that bounds roughly **30 pgque-bearing databases per cluster** before the worker pool saturates. Not a per-database concern; matters if you fan PgQue across many databases on one instance.
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker_loop()`, `pgque.maint_retry_events()`, and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 

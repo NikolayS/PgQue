@@ -200,7 +200,7 @@ Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.set_tick_period_ms(ms integer) → integer`
 
-Sets `pgque.config.tick_period_ms`. Default is 100 ms (10 ticks/sec). Range: 1..60 000 ms. Returns the value that was set; raises if out of range or NULL. Effective on the next pg_cron slot (≤1 s) without rescheduling.
+Sets `pgque.config.tick_period_ms`. Default is 100 ms (10 ticks/sec). Range: 1..1000 ms. Returns the value that was set; raises if out of range or NULL. Effective on the next pg_cron slot (≤1 s) without rescheduling.
 
 ```sql
 select pgque.set_tick_period_ms(50);    -- 20 ticks/sec
