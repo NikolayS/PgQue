@@ -184,7 +184,8 @@ func TestNack_AfterClose(t *testing.T) {
 			t.Fatalf("Nack after Close panicked: %v", r)
 		}
 	}()
-	msg := pgque.Message{MsgID: 1, BatchID: 1, Type: "x"}
+	typ := "x"
+	msg := pgque.Message{MsgID: 1, BatchID: 1, Type: &typ}
 	if err := client.Nack(context.Background(), 1, msg); err == nil {
 		t.Fatal("expected error from Nack after Close")
 	}

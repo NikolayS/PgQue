@@ -31,8 +31,8 @@ func TestSend_DefaultEventType(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].Type != "default" {
-		t.Fatalf("expected default type, got %q", msgs[0].Type)
+	if msgs[0].Type == nil || *msgs[0].Type != "default" {
+		t.Fatalf("expected default type, got %v", msgs[0].Type)
 	}
 	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
 		t.Fatal(err)
@@ -240,8 +240,10 @@ func TestSendReceive_PayloadRoundTrip(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Payload, `"string"`) || !strings.Contains(msgs[0].Payload, `"hello"`) {
-		t.Fatalf("payload missing expected fields: %s", msgs[0].Payload)
+	if msgs[0].Payload == nil ||
+		!strings.Contains(*msgs[0].Payload, `"string"`) ||
+		!strings.Contains(*msgs[0].Payload, `"hello"`) {
+		t.Fatalf("payload missing expected fields: %v", msgs[0].Payload)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
 }
@@ -281,8 +283,8 @@ func TestSendBatch_RoundTrip(t *testing.T) {
 		t.Fatalf("expected %d messages, got %d", len(payloads), len(msgs))
 	}
 	for _, m := range msgs {
-		if m.Type != "batch.type" {
-			t.Fatalf("expected batch.type, got %q", m.Type)
+		if m.Type == nil || *m.Type != "batch.type" {
+			t.Fatalf("expected batch.type, got %v", m.Type)
 		}
 	}
 	if err := client.Ack(ctx, msgs[0].BatchID); err != nil {

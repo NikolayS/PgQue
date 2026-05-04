@@ -30,8 +30,8 @@ func TestEvent_EmptyPayload(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Payload, "null") {
-		t.Logf("payload for nil Payload is %q (acceptable as long as Receive does not panic)", msgs[0].Payload)
+	if msgs[0].Payload == nil || !strings.Contains(*msgs[0].Payload, "null") {
+		t.Logf("payload for nil Payload is %v (acceptable as long as Receive does not panic)", msgs[0].Payload)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
 }
@@ -59,8 +59,12 @@ func TestEvent_LargePayload(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Payload, big) {
-		t.Fatalf("large payload truncated: received %d bytes, expected ≥ %d", len(msgs[0].Payload), size)
+	if msgs[0].Payload == nil || !strings.Contains(*msgs[0].Payload, big) {
+		got := 0
+		if msgs[0].Payload != nil {
+			got = len(*msgs[0].Payload)
+		}
+		t.Fatalf("large payload truncated: received %d bytes, expected ≥ %d", got, size)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
 }
@@ -87,11 +91,13 @@ func TestEvent_UnicodeEverything(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].Type != "事件.test.🚀" {
-		t.Fatalf("type unicode mangled: %q", msgs[0].Type)
+	if msgs[0].Type == nil || *msgs[0].Type != "事件.test.🚀" {
+		t.Fatalf("type unicode mangled: %v", msgs[0].Type)
 	}
-	if !strings.Contains(msgs[0].Payload, "中文") || !strings.Contains(msgs[0].Payload, "🎉") {
-		t.Fatalf("payload unicode mangled: %s", msgs[0].Payload)
+	if msgs[0].Payload == nil ||
+		!strings.Contains(*msgs[0].Payload, "中文") ||
+		!strings.Contains(*msgs[0].Payload, "🎉") {
+		t.Fatalf("payload unicode mangled: %v", msgs[0].Payload)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
 }
@@ -128,7 +134,9 @@ func TestEvent_TypeWithSpecialChars(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, m := range msgs {
-		got[m.Type] = true
+		if m.Type != nil {
+			got[*m.Type] = true
+		}
 	}
 	for _, want := range cases {
 		if !got[want] {
@@ -223,8 +231,8 @@ func TestEvent_PayloadIsString(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].Payload != `"just a string"` {
-		t.Fatalf("expected JSON-quoted string payload, got %q", msgs[0].Payload)
+	if msgs[0].Payload == nil || *msgs[0].Payload != `"just a string"` {
+		t.Fatalf("expected JSON-quoted string payload, got %v", msgs[0].Payload)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
 }
@@ -250,8 +258,8 @@ func TestEvent_PayloadIsArray(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].Payload != "[1, 2, 3]" {
-		t.Fatalf("expected [1, 2, 3], got %q", msgs[0].Payload)
+	if msgs[0].Payload == nil || *msgs[0].Payload != "[1, 2, 3]" {
+		t.Fatalf("expected [1, 2, 3], got %v", msgs[0].Payload)
 	}
 	client.Ack(ctx, msgs[0].BatchID)
 }

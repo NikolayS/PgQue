@@ -60,12 +60,14 @@ func (s *stubBackend) Nack(_ context.Context, _ int64, _ pgque.Message, _ ...pgq
 func TestConsumer_NackFailure_DoesNotAck(t *testing.T) {
 	var client *pgque.Client
 
+	typ := "no.handler.registered"
+	payload := `{"x":1}`
 	stub := &stubBackend{
 		msg: pgque.Message{
 			MsgID:   1,
 			BatchID: 42,
-			Type:    "no.handler.registered",
-			Payload: `{"x":1}`,
+			Type:    &typ,
+			Payload: &payload,
 		},
 		nackErr: errors.New("simulated nack failure"),
 	}
@@ -93,12 +95,14 @@ func TestConsumer_NackFailure_DoesNotAck(t *testing.T) {
 func TestConsumer_NackSuccess_StillAcks(t *testing.T) {
 	var client *pgque.Client
 
+	typ := "still.unknown"
+	payload := `{}`
 	stub := &stubBackend{
 		msg: pgque.Message{
 			MsgID:   1,
 			BatchID: 7,
-			Type:    "still.unknown",
-			Payload: `{}`,
+			Type:    &typ,
+			Payload: &payload,
 		},
 		nackErr: nil,
 	}
@@ -126,12 +130,14 @@ func TestConsumer_NackSuccess_StillAcks(t *testing.T) {
 func TestConsumer_AckUnknownPolicy_SkipsNack(t *testing.T) {
 	var client *pgque.Client
 
+	typ := "ignored.type"
+	payload := `{}`
 	stub := &stubBackend{
 		msg: pgque.Message{
 			MsgID:   1,
 			BatchID: 99,
-			Type:    "ignored.type",
-			Payload: `{}`,
+			Type:    &typ,
+			Payload: &payload,
 		},
 	}
 

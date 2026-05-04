@@ -64,7 +64,11 @@ func main() {
         pgque.WithUnknownHandlerPolicy(pgque.NackUnknown), // also the default
     )
     consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) error {
-        log.Printf("got %s: %s", msg.Type, msg.Payload)
+        // msg.Type and msg.Payload are *string: events enqueued via
+        // pgque.insert_event(queue, null, null) carry SQL-NULL fields.
+        // Code that only consumes pgque.Send-produced events sees
+        // non-nil values and can deref directly.
+        log.Printf("got %s: %s", *msg.Type, *msg.Payload)
         return nil
     })
     if err := consumer.Start(ctx); err != nil {

@@ -127,11 +127,14 @@ func TestSendBatch(t *testing.T) {
 	}
 	sort.Slice(msgs, func(i, j int) bool { return msgs[i].MsgID < msgs[j].MsgID })
 	for i, msg := range msgs {
-		if msg.Type != "batch.test" {
-			t.Fatalf("expected type batch.test, got %s", msg.Type)
+		if msg.Type == nil || *msg.Type != "batch.test" {
+			t.Fatalf("expected type batch.test, got %v", msg.Type)
+		}
+		if msg.Payload == nil {
+			t.Fatalf("expected non-nil payload, got nil")
 		}
 		var payload map[string]int
-		if err := json.Unmarshal([]byte(msg.Payload), &payload); err != nil {
+		if err := json.Unmarshal([]byte(*msg.Payload), &payload); err != nil {
 			t.Fatal(err)
 		}
 		if payload["n"] != i+1 {
@@ -173,7 +176,7 @@ func TestSendBatchEmptyTypeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 || msgs[0].Type != "default" {
+	if len(msgs) != 1 || msgs[0].Type == nil || *msgs[0].Type != "default" {
 		t.Fatalf("expected one default message, got %#v", msgs)
 	}
 }
@@ -190,7 +193,7 @@ func TestSendBatchNilPayloadProducesJSONNull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 || msgs[0].Payload != "null" {
+	if len(msgs) != 1 || msgs[0].Payload == nil || *msgs[0].Payload != "null" {
 		t.Fatalf("expected JSON null payload, got %#v", msgs)
 	}
 }
@@ -246,8 +249,8 @@ func TestSendAndReceive(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].Type != "test.type" {
-		t.Fatalf("expected type test.type, got %s", msgs[0].Type)
+	if msgs[0].Type == nil || *msgs[0].Type != "test.type" {
+		t.Fatalf("expected type test.type, got %v", msgs[0].Type)
 	}
 
 	// Ack
@@ -567,8 +570,8 @@ func TestConsumerHandlerDispatch(t *testing.T) {
 
 	select {
 	case msg := <-received:
-		if msg.Type != "dispatch.test" {
-			t.Fatalf("expected dispatch.test, got %s", msg.Type)
+		if msg.Type == nil || *msg.Type != "dispatch.test" {
+			t.Fatalf("expected dispatch.test, got %v", msg.Type)
 		}
 	case <-ctx.Done():
 		t.Fatal("timeout waiting for message")

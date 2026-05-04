@@ -108,23 +108,31 @@ func (c *Consumer) Start(ctx context.Context) error {
 		nackFailed := false
 		for _, msg := range msgs {
 			batchID = msg.BatchID
-			handler, ok := c.handlers[msg.Type]
+			// Messages enqueued via the low-level pgque.insert_event(...,
+			// null, null) primitive carry a nil Type. Look up the empty
+			// string handler for those rows so callers can register a
+			// fallback explicitly via consumer.Handle("", fn).
+			typeKey := ""
+			if msg.Type != nil {
+				typeKey = *msg.Type
+			}
+			handler, ok := c.handlers[typeKey]
 			if !ok {
 				if c.unknownPolicy == AckUnknown {
-					log.Printf("pgque: no handler registered for event type %q, skipping message %d (AckUnknown policy)", msg.Type, msg.MsgID)
+					log.Printf("pgque: no handler registered for event type %q, skipping message %d (AckUnknown policy)", typeKey, msg.MsgID)
 					continue
 				}
-				log.Printf("pgque: no handler registered for event type %q, nacking message %d", msg.Type, msg.MsgID)
+				log.Printf("pgque: no handler registered for event type %q, nacking message %d", typeKey, msg.MsgID)
 				if nackErr := c.backend.Nack(ctx, batchID, msg); nackErr != nil {
-					log.Printf("pgque: nack error for unhandled type %s: %v", msg.Type, nackErr)
+					log.Printf("pgque: nack error for unhandled type %s: %v", typeKey, nackErr)
 					nackFailed = true
 				}
 				continue
 			}
 			if handlerErr := c.dispatchWithRecover(ctx, handler, msg); handlerErr != nil {
-				log.Printf("pgque: handler error for %s: %v", msg.Type, handlerErr)
+				log.Printf("pgque: handler error for %s: %v", typeKey, handlerErr)
 				if nackErr := c.backend.Nack(ctx, batchID, msg); nackErr != nil {
-					log.Printf("pgque: nack error for %s: %v", msg.Type, nackErr)
+					log.Printf("pgque: nack error for %s: %v", typeKey, nackErr)
 					nackFailed = true
 				}
 				continue

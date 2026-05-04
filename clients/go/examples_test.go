@@ -35,7 +35,11 @@ func Example_sendReceiveAck() {
 		log.Fatal(err)
 	}
 	for _, msg := range msgs {
-		log.Printf("got %s: %s", msg.Type, msg.Payload)
+		// msg.Type and msg.Payload are *string: rows produced by the
+		// low-level pgque.insert_event(queue, null, null) primitive
+		// arrive with nil values. Pure pgque.Send producers always
+		// see non-nil pointers.
+		log.Printf("got %v: %v", msg.Type, msg.Payload)
 	}
 	if len(msgs) > 0 {
 		if err := client.Ack(ctx, msgs[0].BatchID); err != nil {
@@ -57,7 +61,7 @@ func ExampleClient_NewConsumer() {
 
 	consumer := client.NewConsumer("orders", "order_worker")
 	consumer.Handle("order.created", func(ctx context.Context, msg pgque.Message) error {
-		log.Printf("processing %s", msg.Type)
+		log.Printf("processing %v", msg.Type)
 		return nil
 	})
 
