@@ -24,8 +24,11 @@ import { pgqueTypes } from '../src/index.js';
 // ---------------------------------------------------------------------------
 
 describe('pgque import must not mutate global pg-types parser (OID 20)', () => {
-  it('global int8 parser is string-returning before pgque import', () => {
-    // pg's built-in default: parse int8 as string.
+  it('global int8 parser is string-returning even after pgque is imported (top-of-file import)', () => {
+    // pgque is already imported at the top of this file. If pgque had
+    // mutated the process-global pg.types parser, this assertion would
+    // fail. The fact that it still returns `string` is exactly the
+    // property under test.
     const parser = pg.types.getTypeParser(20, 'text');
     const result = parser('9007199254740993'); // larger than MAX_SAFE_INTEGER
     expect(typeof result).toBe('string');

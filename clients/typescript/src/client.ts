@@ -333,7 +333,14 @@ export async function connect(
   dsn: string,
   poolOptions: Omit<pg.PoolConfig, 'connectionString' | 'types'> = {},
 ): Promise<Client> {
-  const pool = new Pool({ connectionString: dsn, ...poolOptions, types: pgqueTypes });
+  // Defensively strip `types` from poolOptions before spreading. The
+  // `Omit<..., 'types'>` already rejects this at compile time, but JS
+  // callers (or `as` casts) can still smuggle one in. Dropping it here
+  // makes the pgque types config impossible to override regardless of
+  // spread order — see REV review on PR #189.
+  const { types: _userTypes, ...restPoolOptions } = poolOptions as pg.PoolConfig;
+  void _userTypes;
+  const pool = new Pool({ connectionString: dsn, ...restPoolOptions, types: pgqueTypes });
   let probe: pg.PoolClient;
   try {
     probe = await pool.connect();
