@@ -372,7 +372,7 @@ select * from pgque.status();
 
 ### Production cadence: use pg_cron
 
-You have been driving the ticker by hand. In production you want a scheduler calling it every second. The recommended default is `pg_cron` — pre-installed or one-command available on every major managed Postgres provider (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). For self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
+You have been driving the ticker by hand. In production you want a scheduler driving it. The recommended default is `pg_cron` — pre-installed or one-command available on every major managed Postgres provider (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). For self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
 
 With `pg_cron` available in the same database as PgQue:
 
@@ -382,9 +382,22 @@ select pgque.start();
 
 That one call schedules four cron jobs: `pgque_ticker` every second, `pgque_retry_events` every thirty seconds (moves `nack`'d events back into the main stream), `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
 
-**pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker()` and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
+**Sub-second ticking, by default.** `pg_cron`'s minimum schedule is 1 second, but PgQue's `pgque_ticker` job calls `CALL pgque.ticker_loop()`, a procedure that re-invokes `pgque.ticker()` every `tick_period_ms` ms inside that one slot, committing between iterations. The default is **100 ms (10 Hz)**, so end-to-end delivery typically lands within ~50 ms median.
 
-**pg_cron log hygiene.** `pg_cron` logs every job execution to `cron.job_run_details`. At the one-second ticker cadence, that table grows by roughly 3,600 rows per hour from PgQue alone, with no built-in purge.
+Tune the rate at runtime — no need to re-run `start()`, the change applies on the next pg_cron slot (≤1 s):
+
+```sql
+select pgque.set_tick_period_ms(50);    -- 20 Hz
+select pgque.set_tick_period_ms(1000);  -- 1 Hz (the original pgqd cadence)
+```
+
+Why a procedure with `commit` between iterations: each `pgque.ticker()` call has to run in its own transaction (it records a `pg_snapshot` to mark the batch boundary, and the snapshot must be committed before the next tick records its own). Without per-iteration commits, all the ticks in the 1-second slot would share one snapshot and the held xmin would block PgQ's metadata rotation.
+
+**pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker_loop()`, `pgque.maint_retry_events()`, and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
+
+**pg_cron log hygiene.** `pg_cron` logs every job execution to `cron.job_run_details`. PgQue's four scheduled jobs together add roughly **5,000 rows per hour**, with no built-in purge — the table grows forever otherwise.
+
+Worth knowing: PgQue's sub-second ticker does **not** make this worse. The internal loop runs inside a single 1-second pg_cron slot, so the per-second `cron.job_run_details` row count is the same whether `tick_period_ms` is 1000 or 1.
 
 Recommended: disable successful-run logging globally.
 
@@ -406,7 +419,7 @@ select cron.schedule(
 
 *Todo: a future `pgque.start()` will warn about this overhead and offer to schedule the purge job.*
 
-Without `pg_cron` at all, call `pgque.ticker()` and `pgque.maint()` from your application or an external scheduler (system `cron`, systemd, a worker loop) on the same cadence. The install is still useful — you provide the heartbeat yourself.
+Without `pg_cron` at all, call `pgque.ticker()` and `pgque.maint()` from your application or an external scheduler (system `cron`, systemd, a worker loop) on the cadence you want. `tick_period_ms` is only consulted by `pgque.ticker_loop()` — outside the pg_cron path, your driver chooses the rate.
 
 ### Where to go from here
 

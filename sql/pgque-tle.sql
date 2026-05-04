@@ -4365,11 +4365,11 @@ begin
         select 'ticker'::text,
             case when c.ticker_job_id is not null then 'scheduled' else 'stopped' end,
             case when c.ticker_job_id is not null
-                then 'job_id=' || c.ticker_job_id::text
-                    || ', tick_period_ms=' || c.tick_period_ms::text
-                    || ' (' || (1000.0 / c.tick_period_ms)::numeric(10, 2)::text || ' Hz)'
-                else 'not scheduled (tick_period_ms='
-                    || c.tick_period_ms::text || ')'
+                then format('job_id=%s, tick_period_ms=%s (%s Hz)',
+                    c.ticker_job_id,
+                    c.tick_period_ms,
+                    (1000.0 / c.tick_period_ms)::numeric(10, 2))
+                else format('not scheduled (tick_period_ms=%s)', c.tick_period_ms)
             end
         from pgque.config c;
 
@@ -4377,7 +4377,7 @@ begin
         select 'maintenance'::text,
             case when c.maint_job_id is not null then 'scheduled' else 'stopped' end,
             case when c.maint_job_id is not null
-                then 'job_id=' || c.maint_job_id::text
+                then format('job_id=%s', c.maint_job_id)
                 else 'not scheduled'
             end
         from pgque.config c;

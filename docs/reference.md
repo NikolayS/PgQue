@@ -187,6 +187,27 @@ Functions in this section are deny-by-default: the schema-wide blanket `revoke e
 #### `pgque.start() → void`
 
 Schedules four pg_cron jobs in the current database: `pgque_ticker` (every 1 s), `pgque_retry_events` (every 30 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — errors if missing. Idempotent: calls `stop()` first.
+
+The `pgque_ticker` job calls `CALL pgque.ticker_loop()` (not `SELECT pgque.ticker()`). `ticker_loop` is the sub-second driver: pg_cron's minimum schedule is 1 s, but the procedure internally re-ticks every `pgque.config.tick_period_ms` (default 100 ms = 10 Hz) and commits between iterations. To change the rate, call `pgque.set_tick_period_ms(ms)` — no need to call `start()` again.
+Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
+
+#### `pgque.ticker_loop() → procedure`
+
+Sub-second tick driver. Runs inside one pg_cron slot (1-second cadence) and re-invokes `pgque.ticker()` every `pgque.config.tick_period_ms` ms, committing between iterations so each tick gets its own transaction. Defined as a `PROCEDURE` (not a function) because Postgres only allows mid-flight `COMMIT` inside procedures — and forbids combining `COMMIT` with a `SET` clause, which is why the body is fully schema-qualified rather than pinning `search_path`.
+
+Not normally called by hand; `pgque.start()` schedules it on pg_cron. Use `select pgque.set_tick_period_ms(ms)` to change cadence, or call `pgque.ticker()` directly to force a single tick out-of-band.
+Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
+
+#### `pgque.set_tick_period_ms(ms integer) → integer`
+
+Sets `pgque.config.tick_period_ms`. Default is 100 ms (10 Hz). Range: 1..60 000 ms. Returns the value that was set; raises if out of range or NULL. Effective on the next pg_cron slot (≤1 s) without rescheduling.
+
+```sql
+select pgque.set_tick_period_ms(50);    -- 20 Hz
+select pgque.set_tick_period_ms(1000);  -- 1 Hz (the pg_cron floor; pgqd-compatible)
+```
+
+Trade-offs at higher rates: more WAL per second, more metadata-table churn, more NOTIFY traffic. See [docs/three-latencies.md](three-latencies.md) for the table.
 Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.stop() → void`
@@ -226,7 +247,9 @@ Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.ticker() → bigint`
 
-Issues ticks for all unpaused, non-external queues. Returns the number of queues ticked. Call this from your scheduler (every 1 s by default) when not using pg_cron.
+Issues ticks for all unpaused, non-external queues. Returns the number of queues ticked. Each call must run in its own transaction (it records a `pg_snapshot` for batch visibility, and the snapshot must be committed before the next tick records its own).
+
+Under `pg_cron`, this is invoked from `pgque.ticker_loop()` at the configured `tick_period_ms` cadence. When driving the scheduler manually, loop this at your target rate (default in PgQue's pg_cron path: every 100 ms).
 Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.ticker(queue text) → bigint`
