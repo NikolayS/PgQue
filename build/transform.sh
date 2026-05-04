@@ -789,7 +789,7 @@ echo "-- Section 6: pgque additions (NEW — not derived from PgQ)" >> "${INSTAL
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
-for addition_file in config.sql queue_max_retries.sql lifecycle.sql roles.sql dlq.sql; do
+for addition_file in config.sql queue_max_retries.sql lifecycle.sql roles.sql dlq.sql metadata_rotation.sql; do
   echo "-- pgque-additions/${addition_file}" >> "${INSTALL_FILE}"
   cat "${ADDITIONS_DIR}/${addition_file}" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"

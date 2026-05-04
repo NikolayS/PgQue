@@ -56,7 +56,8 @@ begin
     select cron.schedule_in_database(
         'pgque_rotate_step2',
         '10 seconds',
-        $sql$SELECT pgque.maint_rotate_tables_step2()$sql$,
+        $sql$SELECT pgque.maint_rotate_tables_step2();
+             SELECT pgque.maint_rotate_metadata_step2();$sql$,
         v_dbname
     ) into v_step2_id;
 
