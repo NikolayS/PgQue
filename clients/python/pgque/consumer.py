@@ -296,4 +296,13 @@ class Consumer:
                 # Do NOT ack -- redeliver on next poll.
                 return
 
-            client.ack(batch_id)
+            # pgque.ack returns 1 on success, 0 if the batch was already
+            # finished or not found (stale/double ack, cross-consumer
+            # race). Mirror the TS+Go consumers and log warn on 0; do
+            # not treat it as an error.
+            if client.ack(batch_id) == 0:
+                logger.warning(
+                    "pgque: ack batch %d returned 0 -- stale or double ack "
+                    "(batch already finished or not found)",
+                    batch_id,
+                )
