@@ -95,12 +95,25 @@ err := client.Nack(ctx, batchID, msg,
 Calls without options preserve the historical defaults: 60-second retry
 delay, NULL reason.
 
-## At-least-once contract
+## Handler contract
 
-If a per-message Nack call fails, the Consumer leaves the batch unacked
-so PgQue redelivers it on the next Receive. Acking a batch whose Nack
-failed would silently drop the failure information — the Go consumer
-prefers redelivery and lets the at-least-once retry path do its job.
+The Consumer dispatches each message to its registered handler and
+acts on the outcome individually before acking the batch:
+
+| Handler outcome                         | Action on the message                                            |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| returns `nil`                           | nothing (succeeds quietly)                                       |
+| returns a non-nil `error`               | `Nack` the message (retry, then DLQ)                             |
+| panics                                  | recovered, treated identically to a returned error               |
+| no handler registered, `NackUnknown`    | log + `Nack` the message                                         |
+| no handler registered, `AckUnknown`     | log + skip                                                       |
+
+After every message has been processed, the batch is `Ack`'d. The one
+exception is when a per-message `Nack` call itself fails: in that case
+the Consumer leaves the batch unacked so PgQue redelivers it on the
+next `Receive`. Acking a batch whose `Nack` failed would silently drop
+the failure information — the Go consumer prefers redelivery and lets
+the at-least-once retry path do its job.
 
 ## Tests
 

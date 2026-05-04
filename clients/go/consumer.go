@@ -14,8 +14,10 @@ import (
 // causes the Consumer to issue a per-message Nack for that message
 // (routing it to retry_queue or, once max_retries is exceeded, to the
 // dead_letter table). Other messages in the same batch are still
-// dispatched to their handlers; the batch as a whole is acked only if
-// every required Nack succeeded.
+// dispatched to their own handlers; the batch as a whole is Ack'd
+// only if every per-message Nack call returned without error. A
+// panic raised inside the handler is recovered and routed identically
+// to a returned error.
 type HandlerFunc func(ctx context.Context, msg Message) error
 
 // consumerBackend is the subset of Client used by Consumer. Defining
@@ -40,11 +42,12 @@ type Consumer struct {
 }
 
 // Handle registers fn as the handler for messages whose Type matches
-// eventType. Messages with no registered handler are dispatched per
-// the consumer's UnknownHandlerPolicy: by default each is Nack'd
-// individually (routing it to retry_queue or eventually the DLQ);
-// with WithUnknownHandlerPolicy(AckUnknown) they are logged and
-// silently skipped instead.
+// eventType. Messages with no registered handler are dispatched
+// according to the Consumer's UnknownHandlerPolicy: by default
+// (NackUnknown) each is logged and Nack'd individually, routing it to
+// retry_queue or eventually the DLQ; with
+// WithUnknownHandlerPolicy(AckUnknown) each is logged and silently
+// skipped (the surrounding batch is still Ack'd).
 func (c *Consumer) Handle(eventType string, fn HandlerFunc) {
 	c.handlers[eventType] = fn
 }
@@ -61,21 +64,25 @@ func (c *Consumer) dispatchWithRecover(ctx context.Context, fn HandlerFunc, msg 
 }
 
 // Start begins the poll loop and blocks until ctx is cancelled. On
-// receive errors it logs and retries after the configured poll
+// Receive errors it logs and retries after the configured poll
 // interval.
 //
-// Per-batch dispatch semantics:
+// Per-batch dispatch semantics (the runtime contract of this loop):
 //
-//   - Each message is delivered to its registered handler. If the
-//     handler returns a non-nil error or panics, the message is
+//   - Each message is delivered to its registered handler. A handler
+//     that returns a non-nil error, or panics, has its message
 //     individually Nack'd (routed to retry_queue, eventually the DLQ).
-//   - Messages with no registered handler are Nack'd or skipped
-//     depending on the configured UnknownHandlerPolicy (default: Nack).
-//   - If every required Nack call succeeded (or none were needed), the
-//     batch is Ack'd. If any Nack fails, the batch is left unacked so
-//     that PgQue redelivers it on the next Receive — losing the Nack
-//     would otherwise mean losing the failure information for that
-//     message.
+//     The handler error is logged and dispatch continues to the next
+//     message in the batch.
+//   - Messages with no registered handler follow the configured
+//     UnknownHandlerPolicy: NackUnknown (default) logs and Nacks each;
+//     AckUnknown logs and skips each, leaving the batch Ack to handle
+//     them.
+//   - After every message has been processed, the batch is Ack'd —
+//     unless one of the per-message Nack calls returned an error, in
+//     which case the batch is left unacked so PgQue redelivers it on
+//     the next Receive. Acking a batch whose Nack failed would silently
+//     drop the failure information.
 func (c *Consumer) Start(ctx context.Context) error {
 	for {
 		select {
