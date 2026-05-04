@@ -437,7 +437,6 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Message TTL / expiry |  |
 | Per-tenant isolation / multi-schema installs |  |
 | Transactional receive helpers in clients |  |
-| Ordered / FIFO-key client processing |  |
 | Priority / multi-queue client processing |  |
 | `pg_tle` extension package | ✅ |
 | Migration guides |  |
