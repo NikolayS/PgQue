@@ -216,6 +216,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: clients/go/go.mod
+          cache-dependency-path: clients/go/go.sum
 
       - name: Start PostgreSQL 18
         run: |
