@@ -76,17 +76,22 @@ export class Consumer {
       let anyNackFailed = false;
       for (const msg of msgs) {
         batchId = msg.batchId;
-        const handler = this.handlers.get(msg.type);
+        // msg.type is `string | null`: rows enqueued via the low-level
+        // pgque.insert_event(queue, null, null) primitive arrive with
+        // type=null. Look up handlers using the empty string for those
+        // rows so callers can register a fallback explicitly.
+        const lookupType = msg.type ?? '';
+        const handler = this.handlers.get(lookupType);
         if (!handler) {
           if (this.unknownHandlerPolicy === 'ack') {
             this.logger.warn(
-              `pgque: no handler registered for event type "${msg.type}", acking msg ${msg.msgId} (unknownHandlerPolicy='ack')`,
+              `pgque: no handler registered for event type "${lookupType}", acking msg ${msg.msgId} (unknownHandlerPolicy='ack')`,
             );
             // Fall through; the batch ack at the end of the loop covers it.
             continue;
           }
           this.logger.warn(
-            `pgque: no handler registered for event type "${msg.type}", nacking msg ${msg.msgId}`,
+            `pgque: no handler registered for event type "${lookupType}", nacking msg ${msg.msgId}`,
           );
           if (!(await this.tryNack(batchId, msg, 'unknown event type'))) {
             anyNackFailed = true;
@@ -96,7 +101,7 @@ export class Consumer {
         try {
           await handler(msg);
         } catch (err) {
-          this.logger.error(`pgque: handler error for "${msg.type}": ${formatErr(err)}`);
+          this.logger.error(`pgque: handler error for "${lookupType}": ${formatErr(err)}`);
           if (!(await this.tryNack(batchId, msg, 'handler error'))) {
             anyNackFailed = true;
           }

@@ -33,11 +33,11 @@ describe('Consumer (env-gated)', () => {
     });
     const seen: Array<{ type: string; v: number }> = [];
     consumer.handle('a', async (msg) => {
-      const p = JSON.parse(msg.payload) as { v: number };
+      const p = JSON.parse(msg.payload!) as { v: number };
       seen.push({ type: 'a', v: p.v });
     });
     consumer.handle('b', async (msg) => {
-      const p = JSON.parse(msg.payload) as { v: number };
+      const p = JSON.parse(msg.payload!) as { v: number };
       seen.push({ type: 'b', v: p.v });
     });
 

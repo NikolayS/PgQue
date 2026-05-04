@@ -7,13 +7,19 @@
  *
  * `msgId` and `batchId` are `bigint` (JavaScript native) because the
  * underlying PostgreSQL `bigint` columns can exceed `Number.MAX_SAFE_INTEGER`.
+ *
+ * `type` and `payload` are nullable because PgQ's low-level
+ * `pgque.insert_event(queue, null, null)` primitive can enqueue rows
+ * whose `ev_type` / `ev_data` are SQL-NULL. Code that produced events
+ * via `Client.send` always sees non-null strings; consumers reading
+ * from queues fed by raw `insert_event` calls must null-check.
  */
 export interface Message {
   msgId: bigint;
   batchId: bigint;
-  type: string;
+  type: string | null;
   /** Raw `ev_data` text. Caller may `JSON.parse()` if the producer used `Event.payload`. */
-  payload: string;
+  payload: string | null;
   /** Number of prior retry attempts. `null` on the first delivery. */
   retryCount: number | null;
   createdAt: Date;

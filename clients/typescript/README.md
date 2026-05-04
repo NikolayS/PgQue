@@ -43,9 +43,14 @@ try {
   console.log('published', eventId, batchIds);
 
   // High-level consumer with per-event-type dispatch.
-  // msg.payload is raw JSON text — call JSON.parse() to get the object back.
+  // msg.type and msg.payload are `string | null`: rows enqueued via the
+  // low-level pgque.insert_event(queue, null, null) primitive arrive
+  // with both fields set to null. Pure Client.send producers always
+  // see non-null strings, so a single null check before JSON.parse is
+  // enough for typical apps.
   const consumer = client.newConsumer('orders', 'order_worker');
   consumer.handle('order.created', async (msg) => {
+    if (msg.payload === null) return;
     const data = JSON.parse(msg.payload) as { id: number };
     console.log('got', msg.type, data);
   });

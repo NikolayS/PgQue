@@ -32,12 +32,17 @@ function isPgError(e: unknown): e is PgError {
   return e instanceof Error && typeof (e as PgError).code === 'string';
 }
 
-/** Internal: row shape returned by `pgque.receive` after type parsers run. */
+/** Internal: row shape returned by `pgque.receive` after type parsers run.
+ *
+ * `type` and `payload` are nullable because the low-level
+ * `pgque.insert_event(queue, null, null)` primitive can produce rows
+ * whose `ev_type` / `ev_data` are SQL-NULL.
+ */
 interface RawMessageRow {
   msg_id: bigint;
   batch_id: bigint;
-  type: string;
-  payload: string;
+  type: string | null;
+  payload: string | null;
   retry_count: number | null;
   created_at: Date;
   extra1: string | null;

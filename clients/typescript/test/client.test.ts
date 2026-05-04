@@ -53,7 +53,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     expect(msgs).toHaveLength(1);
     const m = msgs[0]!;
     expect(m.type).toBe('created');
-    expect(JSON.parse(m.payload)).toEqual({ id: 42, hello: 'world' });
+    expect(JSON.parse(m.payload!)).toEqual({ id: 42, hello: 'world' });
     expect(typeof m.msgId).toBe('bigint');
     expect(typeof m.batchId).toBe('bigint');
     expect(m.createdAt).toBeInstanceOf(Date);
@@ -81,7 +81,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     const msgs = await env.client.receive(env.queue, env.consumer, 10);
     expect(msgs).toHaveLength(3);
     expect(msgs.map((m) => m.type)).toEqual(['batch.test', 'batch.test', 'batch.test']);
-    expect(msgs.map((m) => JSON.parse(m.payload))).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+    expect(msgs.map((m) => JSON.parse(m.payload!))).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
     await env.client.ack(msgs[0]!.batchId);
   });
 
@@ -195,7 +195,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     for (const [type, payload] of cases) {
       const m = byType.get(type);
       expect(m, `missing message of type ${type}`).toBeDefined();
-      expect(JSON.parse(m!.payload)).toEqual(payload);
+      expect(JSON.parse(m!.payload!)).toEqual(payload);
     }
     await env.client.ack(msgs[0]!.batchId);
   });
@@ -211,7 +211,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     expect(m!.type).toBe('undef.explicit');
     // Strong assertion: the stored value is the JSON literal `null`.
     expect(m!.payload).toBe('null');
-    expect(JSON.parse(m!.payload)).toBeNull();
+    expect(JSON.parse(m!.payload!)).toBeNull();
     await env.client.ack(m!.batchId);
   });
 
@@ -223,7 +223,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     expect(m).toBeDefined();
     expect(m!.type).toBe('undef.omitted');
     expect(m!.payload).toBe('null');
-    expect(JSON.parse(m!.payload)).toBeNull();
+    expect(JSON.parse(m!.payload!)).toBeNull();
     await env.client.ack(m!.batchId);
   });
 
@@ -236,7 +236,7 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     const [m] = await env.client.receive(env.queue, env.consumer, 10);
     expect(m).toBeDefined();
     expect(m!.type).toBe('undef.nested');
-    expect(JSON.parse(m!.payload)).toEqual({ a: 1 });
+    expect(JSON.parse(m!.payload!)).toEqual({ a: 1 });
     await env.client.ack(m!.batchId);
   });
 
