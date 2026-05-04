@@ -4043,7 +4043,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 --
 -- Sub-second tick driver: runs inside one pg_cron slot (1 second cadence) and
 -- internally invokes pgque.ticker() at the rate configured in
--- pgque.config.tick_period_ms (default 100 ms = 10 Hz).
+-- pgque.config.tick_period_ms (default 100 ms = 10 ticks/sec).
 --
 -- Implemented as a PROCEDURE so it can `commit` between iterations: every
 -- pgque.ticker() call thereby gets its own transaction and the per-iteration
@@ -4097,7 +4097,7 @@ $$;
 -- pgque.set_tick_period_ms(ms)
 --
 -- Configure how often pgque.ticker_loop() invokes pgque.ticker(). Default is
--- 100 ms (10 Hz). Lower values cut producer→consumer latency for non-LISTEN
+-- 100 ms (10 ticks/sec). Lower values cut producer→consumer latency for non-LISTEN
 -- consumers; higher values reduce WAL volume and metadata churn.
 --
 -- Takes effect on the next pg_cron slot (≤1 s) without rescheduling.
@@ -4138,7 +4138,7 @@ begin
 
     -- Ticker: pg_cron fires every 1 second; pgque.ticker_loop() then
     -- internally re-ticks at pgque.config.tick_period_ms cadence (default
-    -- 100 ms = 10 Hz). Tune via pgque.set_tick_period_ms(ms).
+    -- 100 ms = 10 ticks/sec). Tune via pgque.set_tick_period_ms(ms).
     select cron.schedule_in_database(
         'pgque_ticker',
         '1 second',
@@ -4180,7 +4180,7 @@ begin
     set ticker_job_id = v_ticker_id,
         maint_job_id = v_maint_id;
 
-    raise notice 'pgque started: ticker=% (% Hz), retry_events=%, maint=%, rotate_step2=%',
+    raise notice 'pgque started: ticker=% (% ticks/sec), retry_events=%, maint=%, rotate_step2=%',
         v_ticker_id, (1000.0 / v_period_ms)::numeric(10, 2),
         v_retry_id, v_maint_id, v_step2_id;
 end;
@@ -4277,7 +4277,7 @@ begin
         select 'ticker'::text,
             case when c.ticker_job_id is not null then 'scheduled' else 'stopped' end,
             case when c.ticker_job_id is not null
-                then format('job_id=%s, tick_period_ms=%s (%s Hz)',
+                then format('job_id=%s, tick_period_ms=%s (%s ticks/sec)',
                     c.ticker_job_id,
                     c.tick_period_ms,
                     (1000.0 / c.tick_period_ms)::numeric(10, 2))

@@ -1,15 +1,15 @@
 -- test_tick_period.sql -- Verify configurable tick period
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
--- Test 1: default tick_period_ms is 100 (10 Hz)
+-- Test 1: default tick_period_ms is 100 (10 ticks/sec)
 do $$
 declare
     v_period integer;
 begin
     select tick_period_ms into v_period from pgque.config;
     assert v_period = 100,
-        'expected default tick_period_ms = 100 (10 Hz), got ' || coalesce(v_period::text, 'NULL');
-    raise notice 'PASS: default tick_period_ms is 100 ms (10 Hz)';
+        'expected default tick_period_ms = 100 (10 ticks/sec), got ' || coalesce(v_period::text, 'NULL');
+    raise notice 'PASS: default tick_period_ms is 100 ms (10 ticks/sec)';
 end $$;
 
 -- Test 2: pgque.set_tick_period_ms updates the config

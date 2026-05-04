@@ -188,7 +188,7 @@ Functions in this section are deny-by-default: the schema-wide blanket `revoke e
 
 Schedules four pg_cron jobs in the current database: `pgque_ticker` (every 1 s), `pgque_retry_events` (every 30 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — errors if missing. Idempotent: calls `stop()` first.
 
-The `pgque_ticker` job calls `CALL pgque.ticker_loop()` (not `SELECT pgque.ticker()`). `ticker_loop` is the sub-second driver: pg_cron's minimum schedule is 1 s, but the procedure internally re-ticks every `pgque.config.tick_period_ms` (default 100 ms = 10 Hz) and commits between iterations. To change the rate, call `pgque.set_tick_period_ms(ms)` — no need to call `start()` again.
+The `pgque_ticker` job calls `CALL pgque.ticker_loop()` (not `SELECT pgque.ticker()`). `ticker_loop` is the sub-second driver: pg_cron's minimum schedule is 1 s, but the procedure internally re-ticks every `pgque.config.tick_period_ms` (default 100 ms = 10 ticks/sec) and commits between iterations. To change the rate, call `pgque.set_tick_period_ms(ms)` — no need to call `start()` again.
 Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.ticker_loop() → procedure`
@@ -200,11 +200,11 @@ Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.set_tick_period_ms(ms integer) → integer`
 
-Sets `pgque.config.tick_period_ms`. Default is 100 ms (10 Hz). Range: 1..60 000 ms. Returns the value that was set; raises if out of range or NULL. Effective on the next pg_cron slot (≤1 s) without rescheduling.
+Sets `pgque.config.tick_period_ms`. Default is 100 ms (10 ticks/sec). Range: 1..60 000 ms. Returns the value that was set; raises if out of range or NULL. Effective on the next pg_cron slot (≤1 s) without rescheduling.
 
 ```sql
-select pgque.set_tick_period_ms(50);    -- 20 Hz
-select pgque.set_tick_period_ms(1000);  -- 1 Hz (the pg_cron floor; pgqd-compatible)
+select pgque.set_tick_period_ms(50);    -- 20 ticks/sec
+select pgque.set_tick_period_ms(1000);  -- 1 tick/sec (the pg_cron floor; pgqd-compatible)
 ```
 
 Trade-offs at higher rates: more WAL per second, more metadata-table churn, more NOTIFY traffic. See [docs/three-latencies.md](three-latencies.md) for the table.

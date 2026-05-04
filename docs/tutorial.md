@@ -382,13 +382,13 @@ select pgque.start();
 
 That one call schedules four cron jobs: `pgque_ticker` every second, `pgque_retry_events` every thirty seconds (moves `nack`'d events back into the main stream), `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
 
-**Sub-second ticking, by default.** `pg_cron`'s minimum schedule is 1 second, but PgQue's `pgque_ticker` job calls `CALL pgque.ticker_loop()`, a procedure that re-invokes `pgque.ticker()` every `tick_period_ms` ms inside that one slot, committing between iterations. The default is **100 ms (10 Hz)**, so end-to-end delivery typically lands within ~50 ms median.
+**Sub-second ticking, by default.** `pg_cron`'s minimum schedule is 1 second, but PgQue's `pgque_ticker` job calls `CALL pgque.ticker_loop()`, a procedure that re-invokes `pgque.ticker()` every `tick_period_ms` ms inside that one slot, committing between iterations. The default is **100 ms (10 ticks/sec)**, so end-to-end delivery typically lands within ~50 ms median.
 
 Tune the rate at runtime — no need to re-run `start()`, the change applies on the next pg_cron slot (≤1 s):
 
 ```sql
-select pgque.set_tick_period_ms(50);    -- 20 Hz
-select pgque.set_tick_period_ms(1000);  -- 1 Hz (the original pgqd cadence)
+select pgque.set_tick_period_ms(50);    -- 20 ticks/sec
+select pgque.set_tick_period_ms(1000);  -- 1 tick/sec (the original pgqd cadence)
 ```
 
 Why a procedure with `commit` between iterations: each `pgque.ticker()` call has to run in its own transaction (it records a `pg_snapshot` to mark the batch boundary, and the snapshot must be committed before the next tick records its own). Without per-iteration commits, all the ticks in the 1-second slot would share one snapshot and the held xmin would block PgQ's metadata rotation.

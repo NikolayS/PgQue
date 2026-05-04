@@ -125,7 +125,7 @@ Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autova
 
 ## Installation
 
-**Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 Hz)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
+**Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 ticks/sec)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
 Get the source — `\i sql/pgque.sql` resolves relative to the cwd, so run psql from the repo root:
 
@@ -161,21 +161,21 @@ PgQue ticks **10 times per second by default** (every 100 ms), even though `pg_c
 Tune at runtime — no need to call `start()` again, the change picks up on the next pg_cron slot (≤1 s):
 
 ```sql
-select pgque.set_tick_period_ms(50);    -- 20 Hz, ~25 ms median e2e
-select pgque.set_tick_period_ms(10);    -- 100 Hz, ~5 ms median e2e
-select pgque.set_tick_period_ms(1000);  -- 1 Hz, the pgqd-compatible cadence
+select pgque.set_tick_period_ms(50);    -- 20 ticks/sec, ~25 ms median e2e
+select pgque.set_tick_period_ms(10);    -- 100 ticks/sec, ~5 ms median e2e
+select pgque.set_tick_period_ms(1000);  -- 1 tick/sec, the pgqd-compatible cadence
 ```
 
 Range: `1`..`60000` ms. Inspect the current rate with `select * from pgque.status();`.
 
 Trade-offs to keep in mind when raising the rate:
-- **WAL volume.** Every tick is one INSERT into a per-queue tick table plus a metadata UPDATE — at 10 Hz that's ~10× the WAL of a 1 Hz cadence. Cheap on a small workload; not free on tight WAL budgets or slow logical-replication subscribers.
+- **WAL volume.** Every tick is one INSERT into a per-queue tick table plus a metadata UPDATE — at 10 ticks/sec that's ~10× the WAL of a 1 tick/sec cadence. Cheap on a small workload; not free on tight WAL budgets or slow logical-replication subscribers.
 - **NOTIFY rate.** `pgque.ticker()` emits `pg_notify('pgque_<queue>', ...)` per tick. Postgres's NOTIFY queue is global (8 GiB SLRU); slow LISTEN consumers can fall behind at very high rates.
 - **Metadata-table dead tuples.** `pgque.tick` and `pgque.subscription` are UPDATEd on every tick. PgQue rotates these tables to keep dead-tuple peaks bounded; at sub-50 ms tick periods, drop the rotation period proportionally.
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker_loop()`, `pgque.maint_retry_events()`, and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 
-**pg_cron log hygiene.** Every `pg_cron` job execution writes a row to `cron.job_run_details`, with no built-in purge. PgQue's internal sub-second loop does **not** make this worse — there is still only **one** `pg_cron` slot per second per job, regardless of `tick_period_ms`, so the per-second row count is the same as a 1 Hz schedule. Across PgQue's four scheduled jobs (ticker, retry, maint, rotate_step2), that is roughly **5,000 rows per hour** on top of any other pg_cron jobs, growing forever unless you intervene. Set `alter system set cron.log_run = off;` globally, or schedule a periodic purge — see [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes. *(Independent issue: `pg_cron` itself has no per-job log toggle as of 1.6.)*
+**pg_cron log hygiene.** Every `pg_cron` job execution writes a row to `cron.job_run_details`, with no built-in purge. PgQue's internal sub-second loop does **not** make this worse — there is still only **one** `pg_cron` slot per second per job, regardless of `tick_period_ms`, so the per-second row count is the same as a 1 tick/sec schedule. Across PgQue's four scheduled jobs (ticker, retry, maint, rotate_step2), that is roughly **5,000 rows per hour** on top of any other pg_cron jobs, growing forever unless you intervene. Set `alter system set cron.log_run = off;` globally, or schedule a periodic purge — see [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes. *(Independent issue: `pg_cron` itself has no per-job log toggle as of 1.6.)*
 
 Without `pg_cron`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
 
@@ -431,7 +431,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Managed Postgres support | ✅ |
 | No daemon / no C extension | ✅ |
 | `pg_cron` or external ticking | ✅ |
-| Sub-second ticking with `pg_cron` (default 10 Hz, tunable 1–1000 Hz) | ✅ |
+| Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable 1–1000 ticks/sec) | ✅ |
 | System-table rotation / bloat mitigation |  |
 | Subconsumers / coop consumers |  |
 | Queue splitter |  |
