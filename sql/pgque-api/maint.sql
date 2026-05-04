@@ -27,7 +27,10 @@ begin
 
     for f in select func_name, func_arg from pgque.maint_operations()
     loop
-        if f.func_name = 'pgque.maint_rotate_tables_step2' then
+        if f.func_name in (
+            'pgque.maint_rotate_tables_step2',
+            'pgque.maint_rotate_metadata_step2'
+        ) then
             continue;
         elsif f.func_name = 'vacuum' then
             continue;
