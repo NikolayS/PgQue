@@ -7,12 +7,18 @@ PgQ-based universal PostgreSQL queue. Thin, idiomatic wrapper over the
 
 ## Install
 
+After the first TypeScript client release, install the published package with
+any npm-compatible package manager:
+
 ```bash
 npm install pgque
+# or: bun add pgque
+# or: pnpm add pgque
+# or: yarn add pgque
 ```
 
-Requires Node.js 20+ and PostgreSQL 14+ with the PgQue schema installed
-(`\i pgque.sql` — no extension required).
+Runtime requirements: Node.js 20+ and PostgreSQL 14+ with the PgQue schema
+installed (`\i pgque.sql` — no extension required).
 
 ## Quickstart
 
@@ -26,10 +32,15 @@ try {
   await client.subscribe('orders', 'order_worker');
 
   // Producer
-  await client.send('orders', {
+  const eventId = await client.send('orders', {
     type: 'order.created',
     payload: { id: 42 },
   });
+  const batchIds = await client.sendBatch('orders', 'order.created', [
+    { id: 43 },
+    { id: 44 },
+  ]);
+  console.log('published', eventId, batchIds);
 
   // High-level consumer with per-event-type dispatch.
   // msg.payload is raw JSON text — call JSON.parse() to get the object back.
@@ -53,6 +64,7 @@ try {
 |---|---|
 | `connect(dsn, poolOptions?)` | Connect via `pg.Pool`. Eagerly probes the connection. |
 | `client.send(queue, event)` | Publish; returns event id (`bigint`). |
+| `client.sendBatch(queue, type, payloads)` | Publish a same-type batch atomically; returns event ids (`bigint[]`). |
 | `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. |
 | `client.ack(batchId)` | Finish the batch. |
 | `client.nack(batchId, msg, opts?)` | Single-message retry/DLQ. |
@@ -67,8 +79,8 @@ try {
 | `client.close()` | Drain the pool. |
 
 `Message.msgId`, `Message.batchId`, and the return values of `send()`,
-`ticker(queue)`, and `forceTick(queue)` are JS `bigint` to match PostgreSQL
-`bigint` losslessly.
+`sendBatch()`, `ticker(queue)`, and `forceTick(queue)` are JS `bigint` to
+match PostgreSQL `bigint` losslessly.
 
 ## Errors
 
@@ -106,15 +118,24 @@ package is imported.
 
 ## Tests
 
-The integration tests need a running PostgreSQL with the PgQue schema
+The repository standardizes on Bun for TypeScript client development and CI
+commands. The integration tests need a running PostgreSQL with the PgQue schema
 installed and `pgque_admin`-equivalent privileges:
 
 ```bash
-PGQUE_TEST_DSN=postgres://postgres:pgque_test@localhost/pgque_test \
-  npm test
+bun install --frozen-lockfile
+PGQUE_TEST_DSN=postgresql://postgres:pgque_test@localhost/pgque_test \
+  bun run test
 ```
 
 Without `PGQUE_TEST_DSN` the integration tests skip.
+
+## Distribution
+
+The npm package is `pgque`. It publishes ESM JavaScript and TypeScript
+declarations from `dist/`, built from the Bun-managed source tree.
+
+See [RELEASE.md](RELEASE.md) for publishing steps.
 
 ## License
 
