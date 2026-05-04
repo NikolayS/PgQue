@@ -407,6 +407,59 @@ def test_consumer_does_not_ack_when_handler_error_nack_fails(
         conn.commit()
 
 
+def test_consumer_warns_on_stale_ack(dsn, conn, setup_queue, caplog):
+    """If ``client.ack(batch_id)`` returns 0 (stale/double ack), the
+    Consumer must log a WARNING -- matching the TS+Go consumers, which
+    log a warn on ``n == 0`` from the new ack-rowcount surface.
+
+    Simulated by monkey-patching the per-poll ``PgqueClient`` so its
+    ``ack`` returns 0 instead of delegating to the SQL function. The
+    test does not exercise the real stale path (which requires a race
+    between two consumers); it locks the warn-log behavior.
+    """
+    queue, consumer_name = setup_queue
+    client = pgque.PgqueClient(conn)
+    client.send(queue, {"x": 1}, type="order.created")
+    conn.commit()
+    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.ticker()")
+    conn.commit()
+
+    cons = pgque.Consumer(
+        dsn=dsn, queue=queue, name=consumer_name, poll_interval=1
+    )
+
+    @cons.on("order.created")
+    def _ok(msg):
+        return None
+
+    real_client_init = pgque.PgqueClient.__init__
+    ack_returns: list[int] = []
+
+    def fake_init(self, c):
+        real_client_init(self, c)
+
+        def fake_ack(batch_id):
+            ack_returns.append(0)
+            return 0
+
+        self.ack = fake_ack  # type: ignore[method-assign]
+
+    with mock.patch.object(pgque.PgqueClient, "__init__", fake_init):
+        with caplog.at_level(logging.WARNING, logger="pgque"):
+            t = _run_consumer_for(cons, 3.0)
+            t.join(timeout=5.0)
+
+    assert ack_returns, "ack was never called by the consumer"
+
+    warning_lines = [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ]
+    assert any("stale" in m.lower() or "double" in m.lower() for m in warning_lines), (
+        f"expected a WARNING mentioning stale or double ack; got {warning_lines}"
+    )
+
+
 def test_consumer_stop_returns_within_2s_while_waiting(dsn, setup_queue):
     """``stop()`` must unblock the LISTEN/NOTIFY wait promptly, even when
     no notifications arrive and ``poll_interval`` is large.
