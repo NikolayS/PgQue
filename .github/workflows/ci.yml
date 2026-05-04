@@ -242,17 +242,26 @@ jobs:
           cd clients/go
           go env GOROOT GOMOD GOPATH GOFLAGS
           go version
-          # Tee test output so failures are visible in the step summary, not
-          # only in the raw log.
           set +e
           go test -race -v ./... 2>&1 | tee /tmp/gotest.log
           exit_code=${PIPESTATUS[0]}
           set -e
           if [[ "${exit_code}" -ne 0 ]]; then
-            echo "::group::Last 80 lines of test output (failure)"
-            tail -80 /tmp/gotest.log
+            # Emit each --- FAIL: / FAIL line as an explicit error annotation
+            # so the specific failing tests show up in the GitHub UI without
+            # needing access to the raw log.
+            grep -E '^(--- FAIL|FAIL|=== RUN.*FAIL)' /tmp/gotest.log | while read -r line; do
+              echo "::error::${line}"
+            done
+            # Also emit the surrounding compile / panic context if present.
+            if grep -qE '^(\\./|FAIL\s|panic|cannot find|undefined:)' /tmp/gotest.log; then
+              grep -nE '^(\\./|FAIL\s|panic|cannot find|undefined:)' /tmp/gotest.log | head -20 | while read -r line; do
+                echo "::error::${line}"
+              done
+            fi
+            echo "::group::Full test output tail (last 200 lines)"
+            tail -200 /tmp/gotest.log
             echo "::endgroup::"
-            echo "::error::go test exited with code ${exit_code}"
           fi
           exit "${exit_code}"
 
