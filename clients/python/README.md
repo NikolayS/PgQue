@@ -44,6 +44,10 @@ consumer = pgque.Consumer(
 
 @consumer.on("order.created")
 def handle_order(msg: pgque.Message) -> None:
+    # msg.type and msg.payload are Optional: events enqueued via the
+    # low-level pgque.insert_event(queue, null, null) primitive carry
+    # type=None / payload=None. Pure Client.send producers always see
+    # non-None values.
     print(f"got {msg.type}: {msg.payload}")
 
 # Optional: catch-all handler for types with no specific handler.

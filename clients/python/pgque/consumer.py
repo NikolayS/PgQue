@@ -241,7 +241,13 @@ class Consumer:
             nack_failed = False
 
             for msg in msgs:
-                handler = self._handlers.get(msg.type, self._default_handler)
+                # msg.type is Optional[str]: rows enqueued via the
+                # low-level pgque.insert_event(queue, null, null)
+                # primitive arrive with type=None. Look up handlers
+                # using the empty string for those rows so callers
+                # can register a fallback explicitly.
+                lookup_type = msg.type if msg.type is not None else ""
+                handler = self._handlers.get(lookup_type, self._default_handler)
                 if handler is None:
                     if self._unknown_handler == "ack":
                         self._log.warning(

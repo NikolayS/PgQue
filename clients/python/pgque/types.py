@@ -16,17 +16,26 @@ class Message:
     Maps to the ``pgque.message`` composite type:
         msg_id      -- ev_id
         batch_id    -- batch containing this message
-        type        -- ev_type
-        payload     -- ev_data (jsonb auto-decoded by psycopg, otherwise text)
+        type        -- ev_type (``None`` if enqueued via raw
+                       ``pgque.insert_event(queue, null, null)``)
+        payload     -- ev_data (jsonb auto-decoded by psycopg, otherwise
+                       text; ``None`` if raw insert_event passed null)
         retry_count -- ev_retry (None for first delivery)
         created_at  -- ev_time
         extra1..4   -- ev_extra1..ev_extra4
+
+    ``type`` and ``payload`` are ``Optional`` because the low-level PgQ
+    primitive ``pgque.insert_event(queue, null, null)`` can produce rows
+    whose ``ev_type`` and ``ev_data`` are SQL-NULL. ``Client.send`` and
+    ``Client.send_batch`` always emit non-NULL values, so most consumers
+    will never observe ``None`` here -- but consumers that read from
+    queues fed by raw ``insert_event`` calls must handle it.
     """
 
     msg_id: int
     batch_id: int
-    type: str
-    payload: Any
+    type: Optional[str]
+    payload: Optional[Any]
     retry_count: Optional[int]
     created_at: datetime
     extra1: Optional[str] = None
