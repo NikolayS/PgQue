@@ -240,7 +240,21 @@ jobs:
         run: |
           set -Eeuo pipefail
           cd clients/go
-          go test -race -v ./...
+          go env GOROOT GOMOD GOPATH GOFLAGS
+          go version
+          # Tee test output so failures are visible in the step summary, not
+          # only in the raw log.
+          set +e
+          go test -race -v ./... 2>&1 | tee /tmp/gotest.log
+          exit_code=${PIPESTATUS[0]}
+          set -e
+          if [[ "${exit_code}" -ne 0 ]]; then
+            echo "::group::Last 80 lines of test output (failure)"
+            tail -80 /tmp/gotest.log
+            echo "::endgroup::"
+            echo "::error::go test exited with code ${exit_code}"
+          fi
+          exit "${exit_code}"
 
       - name: Cleanup Go test DB
         if: always()
