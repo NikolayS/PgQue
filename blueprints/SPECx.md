@@ -2003,6 +2003,10 @@ keeps the upstream relationship clean.
 - `pgque_reader` can call `get_queue_info()` but not `insert_event()`
 - `pgque_writer` can call `insert_event()` but not `drop_queue()`
 - `pgque_admin` can call all functions including `drop_queue()`
+- `pgque_reader` and `pgque_writer` are siblings (neither inherits the other);
+  `pgque_admin` is a member of both. A producer-only role cannot ack or
+  inspect a consumer's batch — see issues #102, #106, #163 for the rationale
+  and `tests/test_security_producer_isolation.sql` for the regression test.
 - All `SECURITY DEFINER` functions have `search_path` pinned (automated grep check)
 
 **Verification:** The test from `sql/switch_plonly.sql` proves the PL/pgSQL

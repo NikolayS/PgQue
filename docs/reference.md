@@ -147,12 +147,12 @@ perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed')
 #### `pgque.subscribe(queue text, consumer text) → integer`
 
 Registers `consumer` on `queue`. Modern alias for `pgque.register_consumer`. Returns `1` on new registration, `0` if already registered.
-Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql` (despite the file name, the grant is `pgque_reader` — subscription management is a consumer-side operation; the file historically co-locates produce wrappers and subscription wrappers).
 
 #### `pgque.unsubscribe(queue text, consumer text) → integer`
 
 Removes the consumer (and its retry-queue entries) from `queue`. Modern alias for `pgque.unregister_consumer`.
-Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql` (see note above).
 
 ## Queue management
 
@@ -350,7 +350,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-additions/dlq.sql`.
 #### `pgque.dlq_replay(dead_letter_id bigint) → bigint`
 
 Re-inserts one dead-letter entry into its original queue and deletes it from `pgque.dead_letter`. Returns the new event id.
-Grant: `pgque_writer`. Source: `sql/pgque-additions/dlq.sql`.
+Grant: `pgque_writer` (replay is a produce action — it calls `insert_event` to put the event back on the queue). Source: `sql/pgque-additions/dlq.sql`.
 
 #### `pgque.dlq_replay_all(queue text) → (replayed bigint, failed bigint, first_error text)`
 
@@ -362,7 +362,7 @@ Read the result with the columns by name:
 select replayed, failed, first_error from pgque.dlq_replay_all('orders');
 ```
 
-Grant: `pgque_writer`. Source: `sql/pgque-additions/dlq.sql`.
+Grant: `pgque_writer` (replay is a produce action — it calls `insert_event` for each replayed entry). Source: `sql/pgque-additions/dlq.sql`.
 
 #### `pgque.dlq_purge(queue text, older_than interval default '30 days') → integer`
 
@@ -386,37 +386,37 @@ Grant: `pgque_writer`. Source: `sql/pgque.sql`.
 #### `pgque.register_consumer(queue_name text, consumer_id text) → integer`
 
 Registers `consumer_id` on `queue_name`, starting from the most recent tick. Returns `1` for new, `0` if already registered.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.register_consumer_at(queue_name text, consumer_name text, tick_pos bigint) → integer`
 
 Registers a consumer at a specific historical tick id. Raises if the tick is not found.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.unregister_consumer(queue_name text, consumer_name text) → integer`
 
 Removes the subscription and retry-queue entries owned by this consumer on `queue_name`. Returns the number of subscriptions removed.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch(queue_name text, consumer_name text) → bigint`
 
 Activates the next batch for this consumer and returns its id, or `NULL` if no events are ready.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch_info(queue_name text, consumer_name text) → record`
 
 Same as `next_batch` but returns tick bounds alongside `batch_id`. Out columns: `batch_id`, `cur_tick_id`, `prev_tick_id`, `cur_tick_time`, `prev_tick_time`, `cur_tick_event_seq`, `prev_tick_event_seq`.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch_custom(queue_name text, consumer_name text, min_lag interval, min_count int4, min_interval interval) → record`
 
 Activates the next batch with custom size/age constraints. Same out columns as `next_batch_info`.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_events(batch_id bigint) → setof record`
 
 Streams the events in a batch. Out columns: `ev_id bigint`, `ev_time timestamptz`, `ev_txid bigint`, `ev_retry int4`, `ev_type text`, `ev_data text`, `ev_extra1..4 text`.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4) → setof record`
 
@@ -433,17 +433,17 @@ Grant: `pgque_admin` only. Source: `sql/pgque.sql`.
 #### `pgque.finish_batch(batch_id bigint) → integer`
 
 Closes the batch and advances the subscription's `last_tick`. Returns `1` on success, `0` with a warning if the batch was not found.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.event_retry(batch_id bigint, event_id bigint, retry_time timestamptz) → integer`
 
 Puts one event back onto the retry queue with an absolute re-delivery time. Returns `1` on success, `0` if already queued for retry.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.event_retry(batch_id bigint, event_id bigint, retry_seconds integer) → integer`
 
 Same as above but takes a relative delay in seconds.
-Grant: `pgque_writer`. Source: `sql/pgque.sql`.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.batch_retry(batch_id bigint, retry_seconds integer) → integer`
 
