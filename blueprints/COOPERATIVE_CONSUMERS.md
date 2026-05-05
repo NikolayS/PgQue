@@ -1,11 +1,12 @@
 # Cooperative consumers
 
-Blueprint version: `0.2-draft.3`
+Blueprint version: `0.2-draft.4`
 
 ## Change log
 
 | Version | Date | Notes |
 |---|---|---|
+| `0.2-draft.4` | 2026-05-05 | Tighten active subconsumer unregister semantics: force unregister must retry/DLQ active messages, never drop them; add lock-contention warning and mixed-version/downgrade notes. |
 | `0.2-draft.3` | 2026-05-05 | Harden TypeScript release guidance: SQL compatibility checks, npm Trusted Publishing caveats, release runner requirements, package shape, and oldest-supported SQL integration tests. |
 | `0.2-draft.2` | 2026-05-05 | Mark feature experimental everywhere; add release-note requirements; track blueprint version and change log. |
 | `0.2-draft.1` | 2026-05-05 | Initial clean-room implementation plan for PgQue core, Go, Python, TypeScript, docs, tests, and parallel worktree split. |
@@ -115,6 +116,18 @@ because retry rows already use `ev_owner = subscription.sub_id`.
 Do not add a `pgque.subconsumer` table for 0.2. It would only duplicate state
 that already exists in `pgque.subscription`, and it would add upgrade and bloat
 surface before the feature has proved itself.
+
+Mixed-version behavior must be explicit. A PgQue 0.1 client should not be
+expected to understand cooperative rows. PgQue 0.2 docs must say cooperative
+consumers require PgQue 0.2-aware clients, and downgrade after creating
+subconsumers is unsupported unless subconsumers are unregistered first.
+
+Before implementation, decide whether to add a lightweight marker column such as
+`subscription.sub_cooperative boolean not null default false` or expose the state
+only through derived introspection. A marker makes mixed-version diagnostics and
+filtering simpler, but it is still a schema change. If skipped, docs and
+introspection functions must clearly identify subconsumer rows using the shared
+`sub_id` invariant.
 
 ## SQL API
 
@@ -269,6 +282,39 @@ Recommended stale takeover query behavior:
 Prefer clearing stale sibling batch state over deleting the sibling row during
 automatic takeover. Deletion should be reserved for explicit unsubscribe.
 
+Batch allocation is serialized on the main subscription row. That is the right
+correctness tradeoff, but it is not infinite scaling. Documentation must warn
+that high worker counts can bottleneck on the `for update` lock, and that users
+should tune batch size / tick cadence so each allocation does meaningful work.
+Adding 50 subconsumers that each poll tiny batches will mostly benchmark row-lock
+churn, not queue throughput.
+
+## Active batch unregistration
+
+The active-batch force path must never drop messages.
+
+`unregister_subconsumer(..., batch_handling = 0)`:
+
+- If the subconsumer has no active batch, unregister it.
+- If the subconsumer has an active batch, raise an exception and leave all state
+  unchanged.
+
+`unregister_subconsumer(..., batch_handling = 1)`:
+
+- If the subconsumer has no active batch, unregister it.
+- If the subconsumer has an active batch, atomically route every message in that
+  batch through retry/dead-letter handling for the shared `sub_id`, then clear
+  the batch state and unregister the subconsumer.
+- If retry/DLQ routing fails for any message, abort the transaction and leave
+  the subconsumer registered with its active batch intact.
+
+The implementation may use an internal batch-level helper, but the semantics
+should be equivalent to nacking each message with a reason such as
+`subconsumer unregistered`: messages under retry budget go to immediate retry;
+terminal messages go to `dead_letter`. A plain "clear active batch" operation is
+data loss because the main group cursor was already advanced when the batch was
+assigned.
+
 ## Name handling
 
 The SQL layer should validate queue, consumer, and subconsumer names with the
@@ -384,6 +430,12 @@ Document:
 - `max_return` still has the existing partial-batch caveat
 - `dead_interval` enables stale-worker takeover
 - `nack()` behavior is unchanged
+- forced subconsumer unregister retries or dead-letters active messages; it does
+  not discard them
+- cooperative consumer throughput can bottleneck on the main subscription row
+  lock if many workers poll tiny batches
+- PgQue 0.1 clients and downgrade paths do not understand cooperative rows;
+  unregister subconsumers before downgrade or mixed-version rollback
 
 ## Test plan
 
@@ -400,16 +452,22 @@ SQL tests:
 6. Stale takeover moves an active batch from a dead sibling to the current
    subconsumer.
 7. Unregistering an active subconsumer fails with `batch_handling = 0`.
-8. Unregistering an active subconsumer succeeds and drops the active batch with
-   `batch_handling = 1`.
-9. Unregistering the main consumer removes all sibling subconsumers.
-10. `nack()` from a cooperative batch writes retry or dead-letter state using
+8. Unregistering an active subconsumer with `batch_handling = 1` routes all
+   active-batch messages to immediate retry or dead letter, then unregisters the
+   subconsumer. No message is skipped.
+9. A forced unregister that fails during retry/DLQ routing leaves the active
+   batch and subconsumer intact.
+10. Unregistering the main consumer removes all sibling subconsumers only after
+    applying the same active-batch safety rule to any active sibling batches.
+11. `nack()` from a cooperative batch writes retry or dead-letter state using
     the shared `sub_id` and redelivery works.
-11. Existing normal fan-out consumers still each receive all events.
-12. Existing `receive()`, `ack()`, `nack()`, `subscribe()`, and `unsubscribe()`
+12. Existing normal fan-out consumers still each receive all events.
+13. Existing `receive()`, `ack()`, `nack()`, `subscribe()`, and `unsubscribe()`
     behavior remains unchanged.
-13. Two-session allocation test proves concurrent subconsumers cannot allocate
+14. Two-session allocation test proves concurrent subconsumers cannot allocate
     the same new batch.
+15. High-poll worker test documents main subscription lock contention without
+    duplicate or skipped batches.
 
 Client tests for each library:
 
