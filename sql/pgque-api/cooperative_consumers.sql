@@ -241,7 +241,7 @@ as $$
 --      prev_tick_time      - Start tick time.
 --      prev_tick_event_seq - value from event id sequence at the time tick was issued.
 -- Calls:
---      pgque.insert_event_raw(11)
+--      pgque.find_tick_helper
 -- Tables directly manipulated:
 --      update - pgque.subscription
 -- ----------------------------------------------------------------------

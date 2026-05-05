@@ -263,6 +263,37 @@ begin
   where sub_queue = v_queue_id and sub_consumer = v_main_co_id;
 end $$;
 
+-- subscribe_subconsumer / unsubscribe_subconsumer are documented public-API
+-- aliases for register_subconsumer / unregister_subconsumer. Make sure they
+-- still resolve and round-trip so a future signature/grant drift on the
+-- aliases is not silently invisible because no test calls them.
+do $$
+begin
+  perform pgque.create_queue('coop_alias');
+  assert pgque.subscribe_subconsumer('coop_alias', 'alias_main', 'alias_w1') = 1,
+    'subscribe_subconsumer should register a fresh subconsumer';
+  assert exists (
+    select 1
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where q.queue_name = 'coop_alias'
+      and c.co_name = 'alias_main.alias_w1'
+      and s.sub_role = 'coop_member'
+  ), 'subscribe_subconsumer must produce a coop_member row';
+
+  assert pgque.unsubscribe_subconsumer('coop_alias', 'alias_main', 'alias_w1') = 1,
+    'unsubscribe_subconsumer should remove the subconsumer';
+  assert not exists (
+    select 1
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where q.queue_name = 'coop_alias'
+      and c.co_name = 'alias_main.alias_w1'
+  ), 'unsubscribe_subconsumer must drop the subscription row';
+end $$;
+
 do $$
 begin
   raise notice 'PASS: cooperative ultrareview regressions';
