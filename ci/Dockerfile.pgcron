@@ -1,0 +1,21 @@
+# ci/Dockerfile.pgcron -- PostgreSQL with pg_cron + pgque preloaded.
+#
+# Used only by the pgcron-test CI job. The image is throwaway (built per CI
+# run, never pushed). Same packaging style as Dockerfile.tle.
+#
+# Build arg:
+#   PG_VERSION  -- Postgres major (e.g. 18). Must match an available
+#                  postgresql-NN-cron package on apt.postgresql.org.
+
+ARG PG_VERSION=18
+FROM postgres:${PG_VERSION}
+
+ARG PG_VERSION
+
+# postgresql-NN-cron lives in the PGDG apt repo, which is already configured
+# in the official postgres:NN image since PG12. apt-get update + install is
+# enough.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       postgresql-${PG_VERSION}-cron \
+  && rm -rf /var/lib/apt/lists/*

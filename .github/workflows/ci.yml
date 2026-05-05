@@ -147,6 +147,94 @@ jobs:
         if: always()
         run: docker rm -f pgque-tle-test
 
+  pgcron-test:
+    name: pg_cron install path
+    runs-on: ubuntu-latest
+    env:
+      PG_VERSION: '18'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Build PG image with pg_cron
+        run: |
+          set -Eeuo pipefail
+          docker build \
+            --build-arg "PG_VERSION=${PG_VERSION}" \
+            -t pgque-pgcron:test \
+            -f ci/Dockerfile.pgcron .
+
+      - name: Start PostgreSQL with pg_cron preloaded
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name pgque-pgcron-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            pgque-pgcron:test \
+            -c shared_preload_libraries=pg_cron \
+            -c cron.database_name=pgque_test \
+            -c cron.use_background_workers=on
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec pgque-pgcron-test pg_isready -U postgres; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 30 seconds"
+            docker logs pgque-pgcron-test
+            exit 1
+          fi
+
+      - name: Create pg_cron extension
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -c "create extension pg_cron;"
+
+      - name: Install pgque
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+
+      - name: Run full regression suite (pg_cron-skipped tests now run)
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+
+      - name: Verify pgque.start() schedules ticker_loop
+        run: |
+          set -Eeuo pipefail
+          # Belt-and-braces: run the pg_cron-only tests directly, fail loud on
+          # SKIP. test_tick_period.sql and test_pgcron_lifecycle.sql both have
+          # branches that print SKIP when pg_cron is missing; here it isn't,
+          # so the SKIP path is itself a regression signal.
+          out=$(PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_tick_period.sql 2>&1)
+          echo "$out"
+          if echo "$out" | grep -q 'SKIP: pg_cron not installed'; then
+            echo "FAIL: pg_cron-dependent test was skipped despite pg_cron being installed"
+            exit 1
+          fi
+          if ! echo "$out" | grep -q 'PASS: pgque.start() schedules CALL pgque.ticker_loop()'; then
+            echo "FAIL: ticker_loop schedule assertion did not run"
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pgque-pgcron-test
+
   python-client-tests:
     name: Python client tests
     runs-on: ubuntu-latest

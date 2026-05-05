@@ -4143,6 +4143,22 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- only invokes SECURITY DEFINER functions (pgque.ticker / pgque.config) that
 -- pin their own search_path. ticker_loop itself is SECURITY INVOKER and
 -- callable only by pgque_admin / superuser (see grants below).
+--
+-- statement_timeout: NOT enforced from inside this procedure. Two reasons:
+-- (a) statement_timeout is a top-level-statement timer — the CALL is the
+--     statement, and its timer is fixed at invocation, so set_config inside
+--     the body changes the GUC value but does not restart or apply the
+--     timer to mid-procedure work; pg_sleep / ticker() run unguarded.
+-- (b) the obvious workaround of "SET statement_timeout = ...; CALL ..." in
+--     the pg_cron command is rejected at runtime: pg_cron concatenates the
+--     two statements into one multi-statement transaction, and the
+--     procedure's COMMIT then raises "invalid transaction termination".
+-- The loop's clock_timestamp()-based budget below limits how many additional
+-- iterations a slow run can chain together, but it cannot cancel a stuck
+-- ticker() call. A hung ticker() will pin the pg_cron worker until an admin
+-- pg_cancel_backend()s it. ticker() is short, well-trodden, and has no
+-- code paths that block indefinitely under normal operation; we accept the
+-- residual risk rather than ship a guardrail that doesn't actually fire.
 create or replace procedure pgque.ticker_loop()
 language plpgsql
 as $$
@@ -4232,12 +4248,12 @@ begin
     -- internally re-ticks at pgque.config.tick_period_ms cadence (default
     -- 100 ms = 10 ticks/sec). Tune via pgque.set_tick_period_ms(ms).
     --
-    -- The pg_cron command is a bare CALL, with NO `SET ...;` prefix:
-    -- pg_cron concatenates SET + CALL into a single multi-statement
-    -- transaction, and a procedure that issues COMMIT inside such a tx
-    -- raises "invalid transaction termination". ticker_loop self-bounds
-    -- to ~1 s of wall time, so an external statement_timeout is not
-    -- required for safety here.
+    -- Bare CALL: NO `SET statement_timeout = ...;` prefix. pg_cron
+    -- concatenates SET + CALL into one multi-statement transaction, and a
+    -- procedure that issues COMMIT inside that wrapper raises "invalid
+    -- transaction termination". See ticker_loop's source comment for the
+    -- full reasoning on why a per-iteration statement_timeout cannot be
+    -- enforced from inside the procedure either.
     select cron.schedule_in_database(
         'pgque_ticker',
         '1 second',
