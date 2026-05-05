@@ -806,6 +806,7 @@ if [[ -d "${API_DIR}" ]]; then
   DEFAULT_API_FILES=(
     maint.sql
     receive.sql
+    cooperative_consumers.sql
     send.sql
   )
 

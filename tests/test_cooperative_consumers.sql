@@ -1,0 +1,374 @@
+\set ON_ERROR_STOP on
+
+-- SQL-core regression tests for experimental cooperative consumers.
+
+-- 1, 2, 12, 18, 19, 21, 22: registration, auto-create, normal isolation,
+-- mixed normal/cooperative rejection, dotted names, heartbeat, migration default.
+do $$
+declare
+  v_before timestamptz;
+  v_after timestamptz;
+begin
+  perform pgque.create_queue('coop_meta');
+  perform pgque.register_consumer('coop_meta', 'normal_c');
+
+  assert exists (
+    select 1
+    from pgque.subscription s
+    join pgque.queue q on q.queue_id = s.sub_queue
+    join pgque.consumer c on c.co_id = s.sub_consumer
+    where q.queue_name = 'coop_meta'
+      and c.co_name = 'normal_c'
+      and s.sub_role = 'normal'
+  ), 'existing/default subscription role must be normal';
+
+  assert pgque.register_subconsumer('coop_meta', 'main_c', 'w1') = 1,
+    'first subconsumer registration should create rows';
+  assert pgque.register_subconsumer('coop_meta', 'main_c', 'w1') = 0,
+    'register_subconsumer should be idempotent';
+
+  begin
+    perform pgque.register_subconsumer('coop_meta', 'bad.main', 'w1');
+    raise exception 'expected dotted consumer rejection';
+  exception when others then
+    if sqlerrm = 'expected dotted consumer rejection' then raise; end if;
+  end;
+
+  begin
+    perform pgque.register_subconsumer('coop_meta', 'main_c', 'bad.w1');
+    raise exception 'expected dotted subconsumer rejection';
+  exception when others then
+    if sqlerrm = 'expected dotted subconsumer rejection' then raise; end if;
+  end;
+
+  select s.sub_active into v_before
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_meta'
+    and c.co_name = 'main_c.w1';
+
+  perform pg_sleep(0.01);
+  assert pgque.touch_subconsumer('coop_meta', 'main_c', 'w1') = 1,
+    'touch_subconsumer should update existing idle coop_member';
+  assert pgque.touch_subconsumer('coop_meta', 'main_c', 'missing') = 0,
+    'touch_subconsumer must not create missing subconsumer';
+
+  select s.sub_active into v_after
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_meta'
+    and c.co_name = 'main_c.w1';
+  assert v_after > v_before, 'touch_subconsumer should refresh sub_active';
+
+  begin
+    perform pgque.receive('coop_meta', 'main_c', 10);
+    raise exception 'expected normal receive rejection for coop_main';
+  exception when others then
+    if sqlerrm = 'expected normal receive rejection for coop_main' then raise; end if;
+  end;
+
+  assert (select count(*) from pgque.receive('coop_meta', 'normal_c', 10)) = 0,
+    'other normal consumers must be unaffected';
+end $$;
+
+-- Auto-created cooperative receive should create rows and start from current tick.
+do $$
+begin
+  perform pgque.create_queue('coop_auto');
+end $$;
+select count(*) as auto_empty from pgque.receive_coop('coop_auto', 'main_c', 'w1', 10);
+do $$
+begin
+  assert exists (
+    select 1
+    from pgque.subscription s
+    join pgque.queue q on q.queue_id = s.sub_queue
+    join pgque.consumer c on c.co_id = s.sub_consumer
+    where q.queue_name = 'coop_auto'
+      and c.co_name = 'main_c'
+      and s.sub_role = 'coop_main'
+  ), 'receive_coop should auto-create coop_main';
+  assert exists (
+    select 1
+    from pgque.subscription s
+    join pgque.queue q on q.queue_id = s.sub_queue
+    join pgque.consumer c on c.co_id = s.sub_consumer
+    where q.queue_name = 'coop_auto'
+      and c.co_name = 'main_c.w1'
+      and s.sub_role = 'coop_member'
+  ), 'receive_coop should auto-create coop_member';
+end $$;
+
+-- 3, 4, 5: split batches, active subconsumer receives same batch, ack clears member cursor.
+do $$
+begin
+  perform pgque.create_queue('coop_split');
+  perform pgque.register_subconsumer('coop_split', 'main_c', 'w1');
+  perform pgque.register_subconsumer('coop_split', 'main_c', 'w2');
+end $$;
+select pgque.send('coop_split', 't', 'one');
+select pgque.force_tick('coop_split');
+select pgque.ticker('coop_split');
+select pgque.send('coop_split', 't', 'two');
+select pgque.force_tick('coop_split');
+select pgque.ticker('coop_split');
+do $$
+declare
+  m1 pgque.message;
+  m1_repeat pgque.message;
+  m2 pgque.message;
+  v_member record;
+begin
+  select * into m1 from pgque.receive_coop('coop_split', 'main_c', 'w1', 10) limit 1;
+  select * into m1_repeat from pgque.receive_coop('coop_split', 'main_c', 'w1', 10) limit 1;
+  select * into m2 from pgque.receive_coop('coop_split', 'main_c', 'w2', 10) limit 1;
+
+  assert m1.batch_id is not null, 'w1 should receive first batch';
+  assert m1_repeat.batch_id = m1.batch_id,
+    'repeated receive by active subconsumer should return same batch';
+  assert m2.batch_id is not null and m2.batch_id <> m1.batch_id,
+    'two subconsumers should split distinct batches';
+  assert m1.payload = 'one' and m2.payload = 'two',
+    'split batches should preserve cursor order';
+
+  perform pgque.ack(m1.batch_id);
+
+  select s.* into v_member
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_split'
+    and c.co_name = 'main_c.w1';
+  assert v_member.sub_batch is null, 'ack should clear coop_member batch';
+  assert v_member.sub_last_tick is null, 'ack should not advance coop_member cursor';
+
+  perform pgque.ack(m2.batch_id);
+end $$;
+
+-- 6, 15, 16: stale takeover uses fresh token and invalidates late ack/nack old token.
+do $$
+begin
+  perform pgque.create_queue('coop_stale');
+  perform pgque.register_subconsumer('coop_stale', 'main_c', 'w1');
+  perform pgque.register_subconsumer('coop_stale', 'main_c', 'w2');
+end $$;
+select pgque.send('coop_stale', 't', 'stale-one');
+select pgque.force_tick('coop_stale');
+select pgque.ticker('coop_stale');
+do $$
+declare
+  old_msg pgque.message;
+  new_msg pgque.message;
+  old_batch bigint;
+  new_batch bigint;
+  still_active bigint;
+begin
+  select * into old_msg from pgque.receive_coop('coop_stale', 'main_c', 'w1', 10) limit 1;
+  old_batch := old_msg.batch_id;
+
+  update pgque.subscription s
+     set sub_active = now() - interval '10 minutes'
+    from pgque.queue q, pgque.consumer c
+   where q.queue_name = 'coop_stale'
+     and c.co_name = 'main_c.w1'
+     and s.sub_queue = q.queue_id
+     and s.sub_consumer = c.co_id;
+
+  select * into new_msg
+  from pgque.receive_coop('coop_stale', 'main_c', 'w2', 10, interval '1 minute')
+  limit 1;
+  new_batch := new_msg.batch_id;
+
+  assert new_batch is not null and new_batch <> old_batch,
+    'stale takeover must allocate a fresh batch_id';
+  assert new_msg.msg_id = old_msg.msg_id,
+    'stale takeover should move the same message window';
+
+  assert pgque.ack(old_batch) = 0,
+    'late ack(old_batch) after stale takeover must not finish new owner';
+
+  select s.sub_batch into still_active
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_stale'
+    and c.co_name = 'main_c.w2';
+  assert still_active = new_batch,
+    'late ack(old_batch) must leave new owner active';
+
+  begin
+    perform pgque.nack(old_batch, new_msg, interval '1 second', 'late nack');
+    raise exception 'expected late nack rejection';
+  exception when others then
+    if sqlerrm = 'expected late nack rejection' then raise; end if;
+  end;
+
+  assert pgque.ack(new_batch) = 1,
+    'new owner batch should remain ackable';
+end $$;
+
+-- 7, 8, 17: forced unregister retries active messages and invalidates old token.
+do $$
+begin
+  perform pgque.create_queue('coop_force');
+  perform pgque.register_subconsumer('coop_force', 'main_c', 'w1');
+end $$;
+select pgque.send('coop_force', 't', 'retry-me');
+select pgque.force_tick('coop_force');
+select pgque.ticker('coop_force');
+do $$
+declare
+  m pgque.message;
+  old_batch bigint;
+begin
+  select * into m from pgque.receive_coop('coop_force', 'main_c', 'w1', 10) limit 1;
+  old_batch := m.batch_id;
+
+  begin
+    perform pgque.unregister_subconsumer('coop_force', 'main_c', 'w1', 0);
+    raise exception 'expected active unregister rejection';
+  exception when others then
+    if sqlerrm = 'expected active unregister rejection' then raise; end if;
+  end;
+
+  assert pgque.unregister_subconsumer('coop_force', 'main_c', 'w1', 1) = 1,
+    'forced unregister should remove active subconsumer';
+  assert exists (select 1 from pgque.retry_queue rq where rq.ev_id = m.msg_id),
+    'forced unregister should route active message to retry queue';
+  assert pgque.ack(old_batch) = 0,
+    'late ack after forced unregister must not affect anything';
+  begin
+    perform pgque.nack(old_batch, m, interval '1 second', 'late nack');
+    raise exception 'expected late nack after unregister rejection';
+  exception when others then
+    if sqlerrm = 'expected late nack after unregister rejection' then raise; end if;
+  end;
+end $$;
+
+-- 9: retry/DLQ routing failure during forced unregister leaves state intact.
+create or replace function pgque._test_fail_dead_letter()
+returns trigger as $$
+begin
+  raise exception 'forced test dead_letter failure';
+end;
+$$ language plpgsql;
+
+create trigger coop_test_fail_dead_letter
+before insert on pgque.dead_letter
+for each row execute function pgque._test_fail_dead_letter();
+
+do $$
+begin
+  perform pgque.create_queue('coop_force_fail');
+  update pgque.queue set queue_max_retries = 0 where queue_name = 'coop_force_fail';
+  perform pgque.register_subconsumer('coop_force_fail', 'main_c', 'w1');
+end $$;
+select pgque.send('coop_force_fail', 't', 'dlq-fail');
+select pgque.force_tick('coop_force_fail');
+select pgque.ticker('coop_force_fail');
+do $$
+declare
+  m pgque.message;
+  active_batch bigint;
+begin
+  select * into m from pgque.receive_coop('coop_force_fail', 'main_c', 'w1', 10) limit 1;
+
+  begin
+    perform pgque.unregister_subconsumer('coop_force_fail', 'main_c', 'w1', 1);
+    raise exception 'expected forced unregister failure';
+  exception when others then
+    if sqlerrm = 'expected forced unregister failure' then raise; end if;
+  end;
+
+  select s.sub_batch into active_batch
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_force_fail'
+    and c.co_name = 'main_c.w1';
+  assert active_batch = m.batch_id,
+    'failed forced unregister should leave active batch intact';
+end $$;
+
+drop trigger coop_test_fail_dead_letter on pgque.dead_letter;
+drop function pgque._test_fail_dead_letter();
+
+-- 10, 11, 13, 18, 21, 23: main unregister safety, cooperative nack owner,
+-- unchanged normal behavior, idle stale ignore, active-normal conversion rejection.
+do $$
+begin
+  perform pgque.create_queue('coop_misc');
+  perform pgque.register_consumer('coop_misc', 'normal_active');
+end $$;
+select pgque.send('coop_misc', 't', 'n1');
+select pgque.force_tick('coop_misc');
+select pgque.ticker('coop_misc');
+do $$
+declare
+  normal_msg pgque.message;
+begin
+  select * into normal_msg from pgque.receive('coop_misc', 'normal_active', 10) limit 1;
+  begin
+    perform pgque.register_subconsumer('coop_misc', 'normal_active', 'w1');
+    raise exception 'expected active normal conversion rejection';
+  exception when others then
+    if sqlerrm = 'expected active normal conversion rejection' then raise; end if;
+  end;
+  perform pgque.ack(normal_msg.batch_id);
+end $$;
+
+do $$
+begin
+  perform pgque.register_subconsumer('coop_misc', 'main_c', 'w1');
+  perform pgque.register_subconsumer('coop_misc', 'main_c', 'w2');
+  perform pgque.register_subconsumer('coop_misc', 'main_c', 'w3');
+end $$;
+select pgque.send('coop_misc', 't', 'coop-nack');
+select pgque.force_tick('coop_misc');
+select pgque.ticker('coop_misc');
+do $$
+declare
+  m pgque.message;
+  shared_sub_id int4;
+  no_batch bigint;
+begin
+  select * into m from pgque.receive_coop('coop_misc', 'main_c', 'w2', 10) limit 1;
+  perform pgque.nack(m.batch_id, m, interval '1 second', 'test nack');
+
+  select s.sub_id into shared_sub_id
+  from pgque.subscription s
+  join pgque.queue q on q.queue_id = s.sub_queue
+  join pgque.consumer c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_misc'
+    and c.co_name = 'main_c';
+  assert exists (
+    select 1 from pgque.retry_queue rq
+    where rq.ev_id = m.msg_id
+      and rq.ev_owner = shared_sub_id
+  ), 'cooperative nack should write retry state with shared sub_id';
+
+  update pgque.subscription s
+     set sub_active = now() - interval '10 minutes'
+    from pgque.queue q, pgque.consumer c
+   where q.queue_name = 'coop_misc'
+     and c.co_name = 'main_c.w1'
+     and s.sub_queue = q.queue_id
+     and s.sub_consumer = c.co_id
+     and s.sub_batch is null;
+  no_batch := pgque.next_batch('coop_misc', 'main_c', 'w3', interval '1 minute');
+  assert no_batch is null,
+    'stale takeover must ignore idle coop_member rows';
+
+  begin
+    perform pgque.unregister_consumer('coop_misc', 'main_c');
+    raise exception 'expected main unregister active sibling rejection';
+  exception when others then
+    if sqlerrm = 'expected main unregister active sibling rejection' then raise; end if;
+  end;
+end $$;
+
+do $$ begin
+  raise notice 'PASS: cooperative consumer SQL-core semantics';
+end $$;
