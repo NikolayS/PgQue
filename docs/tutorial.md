@@ -6,7 +6,7 @@ By the end, you will have a working `orders` queue with a `processor` consumer, 
 
 Prerequisites: Postgres 14 or newer, a database to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker manually so it works anywhere.
 
-Each step shows the exact SQL and the expected output. Your `msg_id` / `ev_id` / `pending_events` / `ev_new` numbers will differ from the examples — every `pgque.force_tick` call skips the event sequence forward by about 1000, so exact numeric output depends on when you call it. Treat those numbers as illustrative. When transaction boundaries matter (and they matter — PgQue is snapshot-based), the text calls that out.
+Each step shows the exact SQL and the expected output. Your `msg_id` / `ev_id` / `pending_events` / `ev_new` numbers will differ from the examples — every `pgque.prime_tick` call skips the event sequence forward by about 1000, so exact numeric output depends on when you call it. Treat those numbers as illustrative. When transaction boundaries matter (and they matter — PgQue is snapshot-based), the text calls that out.
 
 You can run every snippet in `psql` with `--no-psqlrc` and `PAGER=cat` if you want reproducible output. From the cloned repo, so `\i sql/pgque.sql` resolves:
 
@@ -116,19 +116,19 @@ In normal operation, a scheduler (`pg_cron` or an external loop) calls `pgque.ti
 
 See the [concepts glossary](pgq-concepts.md) for the full definitions of event, batch, tick, and consumer.
 
-## Step 5: Force a tick, then receive
+## Step 5: Prime a tick, then receive
 
-For demos and tests, PgQue provides `pgque.force_tick` to bypass the tick thresholds for one queue. It does **not** create the tick by itself — you still have to call `pgque.ticker()` afterwards to produce the tick:
+For demos and tests, PgQue provides `pgque.prime_tick` to bypass the tick thresholds for one queue. It does **not** create the tick by itself — you still have to call `pgque.ticker()` afterwards to produce the tick:
 
 ```sql
 -- separate transactions (psql autocommit). Do not wrap in begin/commit:
 -- ticker() must see the prior send committed before it can include it in a batch.
-select pgque.force_tick('orders');
+select pgque.prime_tick('orders');
 select pgque.ticker();
 ```
 
 ```
- force_tick
+ prime_tick
 ------------
           1
 
@@ -137,7 +137,7 @@ select pgque.ticker();
       1
 ```
 
-`force_tick` returns the current tick id (the queue was seeded with tick `1` by `create_queue`). `ticker()` returns the number of queues it processed.
+`prime_tick` returns the current tick id (the queue was seeded with tick `1` by `create_queue`). `ticker()` returns the number of queues it processed.
 
 Now try receiving again:
 
@@ -154,7 +154,7 @@ select * from pgque.receive('orders', 'processor', 100);
 
 The event is back. `retry_count` is null because this is the first delivery attempt. The `batch_id` is the important value for the next step.
 
-In production, `pg_cron` (or a small worker loop) calls `pgque.ticker()` every second. `force_tick` exists for the situation here: advancing the queue without waiting on the ticker's lag threshold.
+In production, `pg_cron` (or a small worker loop) calls `pgque.ticker()` every second. `prime_tick` exists for the situation here: advancing the queue without waiting on the ticker's lag threshold.
 
 ## Step 6: Ack the batch
 
@@ -218,10 +218,10 @@ The parameter is `max_retries`, not `queue_max_retries` — `set_queue_config` p
 Send another event, tick, and receive:
 
 ```sql
--- send / force_tick / ticker / receive are four separate transactions in psql
+-- send / prime_tick / ticker / receive are four separate transactions in psql
 -- autocommit. Do not wrap them in begin/commit — the snapshot rule still applies.
 select pgque.send('orders', '{"order_id": 43, "total": 10.00}'::jsonb);
-select pgque.force_tick('orders');
+select pgque.prime_tick('orders');
 select pgque.ticker();
 select * from pgque.receive('orders', 'processor', 100);
 ```
@@ -253,7 +253,7 @@ The event is now in PgQ's retry queue. Moving it back into the main event stream
 ```sql
 -- four separate transactions (psql autocommit). Do not wrap in begin/commit.
 select pgque.maint_retry_events();
-select pgque.force_tick('orders');
+select pgque.prime_tick('orders');
 select pgque.ticker();
 select * from pgque.receive('orders', 'processor', 100);
 ```
@@ -288,7 +288,7 @@ end $$;
 -- the do-block above is one transaction; the three statements below are
 -- three more, in psql autocommit. Do not wrap them in begin/commit.
 select pgque.maint_retry_events();
-select pgque.force_tick('orders');
+select pgque.prime_tick('orders');
 select pgque.ticker();
 ```
 

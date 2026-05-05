@@ -236,9 +236,20 @@ Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 > Note: a 4-argument `ticker(queue, tick_id, timestamp, event_seq)` overload exists for queues configured with `external_ticker = true` (pushing ticks from an external clock source). Not covered here.
 
+#### `pgque.prime_tick(queue text) → bigint`
+
+Primes the queue's event sequence so the next `pgque.ticker()` call materialises a tick without waiting for the `ticker_max_count` or `ticker_max_lag` thresholds. Bumps `queue_event_seq` by `ticker_max_count * 2 + 1000` to simulate a burst of events. Does **not** insert a tick itself — call `pgque.ticker()` (or `pgque.ticker(queue)`) afterwards to materialise the tick. Returns the current last tick id (from the most recent existing tick, not a new one). Useful in tests and demos; not for production hot paths. Canonical idiom:
+
+```sql
+select pgque.prime_tick('orders');
+select pgque.ticker();
+```
+
+Grant: `pgque_admin`. Source: `sql/pgque-additions/tick_helpers.sql`.
+
 #### `pgque.force_tick(queue text) → bigint`
 
-Simulates a burst of events on `queue` by advancing the queue's event sequence counter past the `ticker_max_count` threshold, causing the next `pgque.ticker()` call to insert a tick. Does not insert a tick itself — call `pgque.ticker()` (or `pgque.ticker(queue)`) after `force_tick()` to materialise the tick. Returns the current last tick id (from the most recent existing tick, not a new one). Useful in tests and demos; not for production hot paths.
+Alias for `pgque.prime_tick`. Retained for compatibility with upstream PgQ (the historical name); identical behavior. The name is misleading — the function does not insert a tick by itself, it only primes the event sequence so the next `pgque.ticker()` call inserts one. Prefer `prime_tick` in new code.
 Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.uninstall() → void`
@@ -515,7 +526,7 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 | `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
 | `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
 
-`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_tick`, and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
+`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `prime_tick` (and its alias `force_tick`), and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
 
 ## Experimental (not in default install)
 

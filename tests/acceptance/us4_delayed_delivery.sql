@@ -34,7 +34,7 @@ end $$;
 
 -- Ticker (should produce no events yet -- delayed event not due)
 do $$ begin
-  perform pgque.force_tick('us4_reminders');
+  perform pgque.prime_tick('us4_reminders');
   perform pgque.ticker();
 end $$;
 
@@ -79,9 +79,9 @@ do $$ begin
   perform pgque.maint();
 end $$;
 
--- Ticker to capture the now-delivered event (force_tick bypasses throttle)
+-- Ticker to capture the now-delivered event (prime_tick bypasses throttle)
 do $$ begin
-  perform pgque.force_tick('us4_reminders');
+  perform pgque.prime_tick('us4_reminders');
   perform pgque.ticker();
 end $$;
 

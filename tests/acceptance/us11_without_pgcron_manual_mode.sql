@@ -42,7 +42,7 @@ end $$;
 
 do $$
 begin
-  perform pgque.force_tick('us11_manual');
+  perform pgque.prime_tick('us11_manual');
   perform pgque.ticker();
   perform pgque.maint();
 end $$;

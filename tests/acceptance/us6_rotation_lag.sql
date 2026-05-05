@@ -24,7 +24,7 @@ end $$;
 
 -- Tick
 do $$ begin
-  perform pgque.force_tick('us6_stream');
+  perform pgque.prime_tick('us6_stream');
   perform pgque.ticker();
 end $$;
 
@@ -56,7 +56,7 @@ end $$;
 
 -- Tick again
 do $$ begin
-  perform pgque.force_tick('us6_stream');
+  perform pgque.prime_tick('us6_stream');
   perform pgque.ticker();
 end $$;
 
@@ -138,7 +138,7 @@ end $$;
 
 -- Tick to advance after slow ack
 do $$ begin
-  perform pgque.force_tick('us6_stream');
+  perform pgque.prime_tick('us6_stream');
   perform pgque.ticker();
 end $$;
 
