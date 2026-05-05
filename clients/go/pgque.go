@@ -172,26 +172,19 @@ func (c *Client) ForceTick(ctx context.Context, queue string) (*int64, error) {
 // pgque.message has 10 fields: msg_id, batch_id, type, payload, retry_count,
 // created_at, extra1, extra2, extra3, extra4 — placeholders $2..$11.
 //
-// Optional NackOptions tune the call:
+// NackOptions tunes the call:
 //
-//   - WithRetryAfter overrides the default 60s redelivery delay.
-//   - WithReason overrides the default NULL reason recorded on the
-//     dead_letter row when the retry budget is exhausted.
-//
-// Calls without options preserve the historical defaults (60s, NULL
-// reason) so existing callers do not need changes.
-func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts ...NackOption) error {
-	var no nackOptions
-	for _, opt := range opts {
-		opt(&no)
-	}
+//   - opts.RetryAfter overrides the default 60s redelivery delay (nil = 60s).
+//   - opts.Reason sets the reason recorded on the dead_letter row when the
+//     retry budget is exhausted (nil = SQL NULL).
+func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts NackOptions) error {
 	retryAfter := 60 * time.Second
-	if no.retryAfterSet {
-		retryAfter = no.retryAfter
+	if opts.RetryAfter != nil {
+		retryAfter = *opts.RetryAfter
 	}
 	var reason any
-	if no.reasonSet {
-		reason = no.reason
+	if opts.Reason != nil {
+		reason = *opts.Reason
 	}
 	interval := pgtype.Interval{Microseconds: retryAfter.Microseconds(), Valid: true}
 	_, err := c.pool.Exec(ctx,
