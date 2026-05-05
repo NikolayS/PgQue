@@ -434,7 +434,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | `pg_cron` or external ticking | ✅ |
 | Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable with exact-divisor periods from 1–1000 ticks/sec) | ✅ |
 | System-table rotation / bloat mitigation |  |
-| Subconsumers / coop consumers | 🔬 |
+| Subconsumers / coop consumers |  |
 | Queue splitter |  |
 | Queue mover |  |
 | Modern `send`, `receive`, `ack`, `nack` API | ✅ |
