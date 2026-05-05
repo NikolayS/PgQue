@@ -166,7 +166,9 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 
 #### `pgque.receive_coop(queue text, consumer text, subconsumer text, max_return int default 100, dead_interval interval default null) → setof pgque.message`
 
-Receives messages for one subconsumer. `max_return` must be >= 1. `dead_interval` enables stale-batch takeover from another inactive member; takeover allocates a fresh `batch_id`, so old tokens cannot ack/nack the new owner's state.
+Receives messages for one subconsumer. `max_return` must be >= 1. `dead_interval` enables stale-batch takeover from another inactive member; takeover allocates a fresh `batch_id`, so old tokens cannot ack/nack the new owner's state. The cooperative group is a trust boundary: callers allowed to use the same `(queue, consumer)` can steal stale batches from each other by design, so do not share one cooperative group across mutually untrusted workers.
+
+**Batch-ownership caveat.** As with `receive()`, `max_return` limits only returned rows; `ack(batch_id)` advances the cooperative cursor past the whole underlying batch. Use `max_return >= ticker_max_count` or consume the full batch before acking.
 Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 
 #### `pgque.next_batch(queue text, consumer text, subconsumer text, dead_interval interval default null) → bigint`
@@ -184,7 +186,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 Updates a registered subconsumer heartbeat without creating rows. Returns the number of rows touched.
 Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 
-**Cooperative-aware inherited functions.** `pgque.unregister_consumer()` refuses to unregister a cooperative main while subconsumers are registered; unregister subconsumers explicitly. Normal `pgque.next_batch*()` / `pgque.receive()` for a `coop_main` with members raise because the main row is the group cursor. `pgque.finish_batch()` rejects `coop_main` batches and clears member-owned cooperative batches on ack.
+**Cooperative-aware inherited functions.** `pgque.unregister_consumer()` refuses to unregister a cooperative main while subconsumers are registered; unregister subconsumers explicitly. Normal `pgque.next_batch*()` / `pgque.receive()` for a `coop_main` with members raise because the main row is the group cursor. `pgque.finish_batch()` rejects `coop_main` batches and clears member-owned cooperative batches on ack. Batch ids are bearer tokens, matching inherited PgQ behavior: a caller that learns a valid batch id can finish it, so keep batch ids inside trusted consumer code.
 
 #### `pgque.subscribe(queue text, consumer text) → integer`
 
