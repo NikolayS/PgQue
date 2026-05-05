@@ -42,6 +42,11 @@ These rules are the source of truth for agentic engineering in this repo. Agents
 - Lowercase SQL keywords: `select`, `create function`, not `SELECT`, `CREATE FUNCTION`
 - `snake_case` for all identifiers
 - Schema-qualify all internal references: `pgque.queue`, not just `queue`
+- **Root SQL keywords must be left-aligned within the statement.** Do not use
+  decorative vertical indentation like `select` / `from` / `where` shifted by
+  different amounts. This is non-negotiable for generated and source SQL.
+- Put `and` / `or` at the start of continuation lines, aligned under the
+  statement's `where` clause indentation.
 - All `SECURITY DEFINER` functions MUST include
   `SET search_path = pgque, pg_catalog`
 - Use `xid8` for transaction ID columns, `pg_snapshot` for snapshot columns

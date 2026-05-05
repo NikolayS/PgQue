@@ -5245,9 +5245,9 @@ do $$
 begin
     if not exists (
         select 1
-          from pg_catalog.pg_constraint
-         where conrelid = 'pgque.subscription'::regclass
-           and conname = 'subscription_sub_role_check'
+        from pg_catalog.pg_constraint
+        where conrelid = 'pgque.subscription'::regclass
+            and conname = 'subscription_sub_role_check'
     ) then
         alter table pgque.subscription
             add constraint subscription_sub_role_check
@@ -5434,10 +5434,12 @@ begin
     end if;
 
     if sub_role = 'coop_main' and exists (
-        select 1 from pgque.subscription sx
-         where sx.sub_queue = queue_id
-           and sx.sub_id = cur_sub_id
-           and sx.sub_role = 'coop_member') then
+        select 1
+        from pgque.subscription sx
+        where sx.sub_queue = queue_id
+            and sx.sub_id = cur_sub_id
+            and sx.sub_role = 'coop_member'
+    ) then
         raise exception 'consumer % on queue % is a cooperative main consumer; use cooperative receive/next_batch with a subconsumer', i_consumer_name, i_queue_name;
     end if;
 
