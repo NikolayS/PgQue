@@ -121,5 +121,8 @@
 \echo 'Running: test_receive_coop_contracts'
 \i tests/test_receive_coop_contracts.sql
 
+\echo 'Running: test_coop_ultrareview'
+\i tests/test_coop_ultrareview.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

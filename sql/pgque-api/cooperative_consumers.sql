@@ -80,6 +80,27 @@ begin
         delete from pgque.subscription
               where sub_id = x_sub_id
                 and sub_consumer = _consumer_id;
+
+        perform 1 from pgque.subscription
+            where sub_consumer = _consumer_id;
+        if not found then
+            delete from pgque.consumer
+                where co_id = _consumer_id;
+        end if;
+
+        if not exists (
+            select 1
+            from pgque.subscription
+            where sub_id = x_sub_id
+                and sub_role = 'coop_member'
+        ) then
+            update pgque.subscription
+            set sub_role = 'normal',
+                sub_active = now()
+            where sub_id = x_sub_id
+                and sub_role = 'coop_main';
+        end if;
+
         return 1;
     else
         -- delete main consumer (including possible subconsumers)
@@ -617,11 +638,11 @@ begin
          order by tick_queue asc, tick_id asc
          limit 1;
     else
-        select next_tick_id, next_tick_time, next_tick_seq
+        select h.next_tick_id, h.next_tick_time, h.next_tick_seq
           into next_tick_id, v_next_tick_time, v_next_tick_event_seq
           from pgque.find_tick_helper(v_queue_id, v_main.sub_last_tick,
                                       v_prev_tick_time, v_prev_tick_event_seq,
-                                      i_min_count, i_min_interval);
+                                      i_min_count, i_min_interval) as h;
     end if;
 
     if i_min_lag is not null and next_tick_id is not null then
@@ -686,7 +707,7 @@ declare
     v_member_name text;
     v_main record;
     v_member record;
-    v_msg pgque.message;
+    v_ev record;
     v_max_retries int4;
     v_remaining integer;
 begin
@@ -738,18 +759,19 @@ begin
             raise exception 'cannot unregister active cooperative subconsumer %/%/% without batch_handling = 1', i_queue, i_consumer, i_subconsumer;
         end if;
 
-        for v_msg in
-            select ev_id, v_member.sub_batch, ev_type, ev_data, ev_retry, ev_time,
+        for v_ev in
+            select ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
                    ev_extra1, ev_extra2, ev_extra3, ev_extra4
               from pgque.get_batch_events(v_member.sub_batch)
         loop
-            if coalesce(v_msg.retry_count, 0) >= v_max_retries then
-                perform pgque.event_dead(v_member.sub_batch, v_msg.msg_id,
-                    'subconsumer unregistered', v_msg.created_at, null::xid8,
-                    v_msg.retry_count, v_msg.type, v_msg.payload,
-                    v_msg.extra1, v_msg.extra2, v_msg.extra3, v_msg.extra4);
+            if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
+                perform pgque.event_dead(v_member.sub_batch, v_ev.ev_id,
+                    'subconsumer unregistered', v_ev.ev_time,
+                    v_ev.ev_txid::text::xid8, v_ev.ev_retry,
+                    v_ev.ev_type, v_ev.ev_data,
+                    v_ev.ev_extra1, v_ev.ev_extra2, v_ev.ev_extra3, v_ev.ev_extra4);
             else
-                perform pgque.event_retry(v_member.sub_batch, v_msg.msg_id, 60);
+                perform pgque.event_retry(v_member.sub_batch, v_ev.ev_id, 60);
             end if;
         end loop;
 
