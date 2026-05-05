@@ -34,6 +34,30 @@ comments, structure files, tests, or documentation from it.
 The implementation should reuse PgQue's existing PgQ-derived, already licensed
 core model and reimplement cooperative behavior from first principles.
 
+## Experimental status
+
+Cooperative consumers must ship as **experimental** everywhere in 0.2:
+
+- SQL/API reference docs
+- tutorials and examples
+- client README files
+- release notes for PgQue core and all client packages
+- roadmap table
+- function comments where users are likely to discover the API
+
+Recommended wording:
+
+```text
+Experimental in PgQue 0.2. Function names, edge-case behavior, and client API
+shape may change before this feature is marked stable. Do not use this as the
+only processing path for critical workloads without idempotent handlers and
+stale-worker takeover tests.
+```
+
+The implementation should still be production-minded, but the public contract
+must be explicitly unstable until PgQue has real-world feedback on concurrency,
+stale takeover, and client ergonomics.
+
 ## Non-goals
 
 - No client-side fake cooperative mode by manually concatenating names.
@@ -335,8 +359,11 @@ Update:
 - `docs/examples.md`
 - `docs/reference.md`
 - client README files
+- release notes for PgQue core and each client package that exposes the API
 
 Add a section named "Fan-out vs cooperative consumers".
+
+Every user-facing mention must mark the feature **experimental** for 0.2.
 
 Document:
 
@@ -387,12 +414,13 @@ Client tests for each library:
 1. SQL core functions and grants.
 2. Cooperative-aware `finish_batch()`.
 3. SQL regression tests.
-4. Reference docs and examples.
-5. Go client API and tests.
-6. Python client API and tests.
-7. TypeScript client API and tests.
-8. README roadmap update.
-9. Full SQL and client test suite.
+4. Reference docs and examples, all marked experimental.
+5. Release notes, marked experimental.
+6. Go client API and tests, docs marked experimental.
+7. Python client API and tests, docs marked experimental.
+8. TypeScript client API and tests, docs marked experimental.
+9. README roadmap update showing experimental status.
+10. Full SQL and client test suite.
 
 ## Parallelization plan
 

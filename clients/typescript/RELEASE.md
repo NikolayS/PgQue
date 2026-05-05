@@ -16,6 +16,12 @@ The TypeScript client version is independent from the SQL/server
 `pgque.version()`. Bump this package when the TypeScript API, runtime behavior,
 or packaging changes; server-only SQL changes do not require an npm release.
 
+## Release notes
+
+If a release exposes cooperative consumers / subconsumers, mark the feature as
+**experimental** in release notes and public docs. The API and edge-case behavior
+are not stable until PgQue explicitly graduates the feature.
+
 ## Package shape
 
 - Runtime: Node.js 20+

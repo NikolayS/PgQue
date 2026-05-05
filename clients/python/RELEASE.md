@@ -19,6 +19,12 @@ The Python client version is independent from the SQL/server
 `pgque.version()`. Bump this package when the Python API or packaging changes;
 server-only SQL changes do not require a Python client release.
 
+## Release notes
+
+If a release exposes cooperative consumers / subconsumers, mark the feature as
+**experimental** in release notes and public docs. The API and edge-case behavior
+are not stable until PgQue explicitly graduates the feature.
+
 ## GitHub environment prerequisite
 
 Before the first real publish, create GitHub environments in `NikolayS/pgque`:
