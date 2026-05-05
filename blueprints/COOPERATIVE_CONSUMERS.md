@@ -52,7 +52,7 @@ Cooperative consumers must ship as **experimental** everywhere in 0.2:
 - SQL/API reference docs
 - tutorials and examples
 - client README files
-- roadmap table
+- roadmap table, using `🔬` for experimental status instead of `✅`
 - function comments where users are likely to discover the API
 
 Recommended wording:
