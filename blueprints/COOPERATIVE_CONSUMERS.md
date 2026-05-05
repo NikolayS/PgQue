@@ -1,11 +1,12 @@
 # Cooperative consumers
 
-Blueprint version: `0.2-draft.4`
+Blueprint version: `0.2-draft.5`
 
 ## Change log
 
 | Version | Date | Notes |
 |---|---|---|
+| `0.2-draft.5` | 2026-05-05 | Make `subscription.sub_cooperative` the recommended marker column and clarify cooperative-consumer workload fit vs high-frequency fan-out. |
 | `0.2-draft.4` | 2026-05-05 | Tighten active subconsumer unregister semantics: force unregister must retry/DLQ active messages, never drop them; add lock-contention warning and mixed-version/downgrade notes. |
 | `0.2-draft.3` | 2026-05-05 | Harden TypeScript release guidance: SQL compatibility checks, npm Trusted Publishing caveats, release runner requirements, package shape, and oldest-supported SQL integration tests. |
 | `0.2-draft.2` | 2026-05-05 | Mark feature experimental everywhere; add release-note requirements; track blueprint version and change log. |
@@ -121,12 +122,25 @@ expected to understand cooperative rows. PgQue 0.2 docs must say cooperative
 consumers require PgQue 0.2-aware clients, and downgrade after creating
 subconsumers is unsupported unless subconsumers are unregistered first.
 
-Before implementation, decide whether to add a lightweight marker column such as
-`subscription.sub_cooperative boolean not null default false` or expose the state
-only through derived introspection. A marker makes mixed-version diagnostics and
-filtering simpler, but it is still a schema change. If skipped, docs and
-introspection functions must clearly identify subconsumer rows using the shared
-`sub_id` invariant.
+Add a lightweight marker column:
+
+```sql
+alter table pgque.subscription
+  add column sub_cooperative boolean not null default false;
+```
+
+Use `sub_cooperative = true` on subconsumer rows and keep the main logical
+consumer row as `false`. The shared `sub_id` remains the ownership invariant;
+the marker is for safety, diagnostics, filtering, and performance.
+
+Reasons:
+
+- Safety: cooperative scans can explicitly target subconsumer rows instead of
+  inferring state from nullable tick columns.
+- Performance: checking a boolean is cheaper and clearer than repeated self-join
+  or count checks on `sub_id`.
+- Migration clarity: PgQue 0.2 introduces the feature, so an explicit schema
+  marker is cleaner than hiding the state in legacy PgQ field combinations.
 
 ## SQL API
 
@@ -287,6 +301,11 @@ that high worker counts can bottleneck on the `for update` lock, and that users
 should tune batch size / tick cadence so each allocation does meaningful work.
 Adding 50 subconsumers that each poll tiny batches will mostly benchmark row-lock
 churn, not queue throughput.
+
+Cooperative consumers fit CPU-bound or I/O-bound handlers where message
+processing dominates allocation cost. Normal fan-out consumers remain better for
+ultra-high-frequency, low-latency streams where each consumer should advance its
+own cursor without coordinating with sibling workers.
 
 ## Active batch unregistration
 
