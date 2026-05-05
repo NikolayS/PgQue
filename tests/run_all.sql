@@ -118,5 +118,8 @@
 \echo 'Running: test_cooperative_consumers'
 \i tests/test_cooperative_consumers.sql
 
+\echo 'Running: test_receive_coop_contracts'
+\i tests/test_receive_coop_contracts.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

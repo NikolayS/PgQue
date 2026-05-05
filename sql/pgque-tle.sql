@@ -6129,6 +6129,10 @@ declare
     ev record;
     cnt int := 0;
 begin
+    if i_max_return < 1 then
+        raise exception 'pgque.receive_coop: max_return must be >= 1, got %', i_max_return;
+    end if;
+
     v_batch_id := pgque.next_batch(i_queue, i_consumer, i_subconsumer, i_dead_interval);
     if v_batch_id is null then
         return;
@@ -6147,6 +6151,15 @@ begin
         cnt := cnt + 1;
         exit when cnt >= i_max_return;
     end loop;
+
+    -- Empty batch: release the member token so the subconsumer is not wedged
+    -- on a tick window with no visible events. finish_batch on a coop_member
+    -- clears sub_batch + sub_last_tick + sub_next_tick (it does not advance
+    -- the main cursor, which already moved when the batch was allocated).
+    if cnt = 0 then
+        perform pgque.finish_batch(v_batch_id);
+    end if;
+
     return;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
