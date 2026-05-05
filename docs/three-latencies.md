@@ -25,7 +25,7 @@ select pgque.set_tick_period_ms(1);     -- 1000 ticks/sec
 Allowed values: exact divisors of `1000` in the `1`..`1000` ms range. Effective on the next pg_cron slot (≤1 s); no rescheduling needed. Inspect the current rate with `select * from pgque.status();`.
 
 Trade-offs at high tick rates:
-- **WAL volume.** Every tick UPDATEs `pgque.tick` and writes to per-queue tick partitions. 10 ticks/sec is ~10× the WAL of 1 tick/sec; 1000 ticks/sec is ~1000×. Bench against your workload before pushing the rate up.
+- **Idle queues are cheap; active ticks cost WAL.** The 100 ms default is a check cadence. If no events are coming, most checks return `NULL` and PgQue backs off toward `ticker_idle_period`; inactive queues do not burn hundreds of MiB/day. A forced-tick PG18 measurement isolated about **280 bytes of WAL per materialized tick per queue**. If a queue materializes continuously, that projects to roughly **240 MiB/day** at 10 materialized ticks/sec versus **24 MiB/day** at 1 materialized tick/sec; see [tick-frequency.md](tick-frequency.md) for `full_page_writes = on` / full-page-image caveats, idle backoff, pg_cron logging, and tuning guidance.
 - **Metadata dead tuples.** `pgque.tick` and `pgque.subscription` are UPDATEd on every tick. PgQue rotates these tables to keep peak dead-tuple counts bounded; at sub-50 ms ticks, scale the rotation period down proportionally.
 - **NOTIFY pressure.** `pgque.ticker()` emits one `pg_notify` per ticked queue. The NOTIFY queue is a single global SLRU (8 GiB ceiling) — slow LISTEN consumers can fall behind at very high rates.
 - **`pg_cron` log hygiene.** *Not* a new problem at high rates: PgQue still uses **one** pg_cron slot per second regardless of `tick_period_ms`, so `cron.job_run_details` grows at the same per-second rate as a 1 tick/sec schedule. The pre-existing log-hygiene recipe (`alter system set cron.log_run = off`, or a periodic purge job) is unchanged — see [tutorial.md](tutorial.md#production-cadence-use-pg_cron).
@@ -34,8 +34,8 @@ Rough guidance:
 
 | `tick_period_ms` | Effective rate | Median e2e | Notes |
 |---|---|---|---|
-| `1000` | 1 tick/sec | ~500 ms | pgqd-compatible, minimal WAL/metadata churn |
-| `100` (**default**) | 10 ticks/sec | ~50 ms | sweet spot for non-LISTEN consumers |
+| `1000` | 1 tick/sec | ~500 ms | pgqd-compatible, lower WAL for continuously active queues |
+| `100` (**default**) | 10 ticks/sec | ~50 ms | lower latency; idle queues still back off |
 | `25` | 40 ticks/sec | ~12 ms | ~4× WAL of default; consider rotation tuning |
 | `10` | 100 ticks/sec | ~5 ms | tighten metadata rotation cadence |
 | `1` | 1000 ticks/sec | low single-digit ms in current bench | bench WAL + NOTIFY + metadata bloat first |

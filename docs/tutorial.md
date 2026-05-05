@@ -395,28 +395,42 @@ select pgque.set_tick_period_ms(1000);  -- 1 tick/sec (the original pgqd cadence
 
 Why a procedure with `commit` between iterations: each `pgque.ticker()` call has to run in its own transaction (it records a `pg_snapshot` to mark the batch boundary, and the snapshot must be committed before the next tick records its own). Without per-iteration commits, all the ticks in the 1-second slot would share one snapshot and the held xmin would block PgQ's metadata rotation.
 
+WAL budget: inactive queues are cheap. The 100 ms default is a check cadence; with no events, most checks return `NULL` and PgQue backs off toward `ticker_idle_period` (default 1 minute). The larger WAL estimates apply only to queues that materialize ticks continuously. A forced-tick PG18 measurement isolated about **280 bytes of WAL per materialized tick per queue**; if a queue materializes continuously, that projects to roughly **240 MiB/day** at 10 materialized ticks/sec, or **24 MiB/day** at 1 materialized tick/sec. For small projects, WAL-constrained systems, or slow logical-replication subscribers, `pgque.set_tick_period_ms(1000)` is a reasonable starting point if ~500 ms median delivery latency is acceptable. See [tick-frequency.md](tick-frequency.md) for details.
+
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker_loop()`, `pgque.maint_retry_events()`, and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 
 **pg_cron log hygiene.** `pg_cron` logs every job execution to `cron.job_run_details`. PgQue's four scheduled jobs together add roughly **5,000 rows per hour**, with no built-in purge — the table grows forever otherwise.
 
 Worth knowing: PgQue's sub-second ticker does **not** make this worse. The internal loop runs inside a single 1-second pg_cron slot, so the per-second `cron.job_run_details` row count is the same whether `tick_period_ms` is 1000 or 1.
 
-Recommended: disable successful-run logging globally.
-
-```sql
-alter system set cron.log_run = off;
--- requires a Postgres restart; errors from failed jobs still land in
--- the Postgres server log via cron.log_min_messages (default WARNING)
-```
-
-If other pg_cron jobs on the instance need run history (pg_cron has no per-job logging toggle as of 1.6), schedule a periodic purge instead:
+Recommended: keep pg_cron logging enabled if you want run history for other jobs, and purge only PgQue's high-volume job records:
 
 ```sql
 select cron.schedule(
   'pgque_purge_cron_log',
   '0 * * * *',
-  $$delete from cron.job_run_details where end_time < now() - interval '1 day'$$
+  $$
+  delete from cron.job_run_details d
+  using cron.job j
+  where d.jobid = j.jobid
+    and j.jobname in (
+      'pgque_ticker',
+      'pgque_retry_events',
+      'pgque_maint',
+      'pgque_rotate_step2',
+      'pgque_purge_cron_log'
+    )
+    and d.end_time < now() - interval '1 day'
+  $$
 );
+```
+
+If you do not need successful-run history for any pg_cron job on the instance, you can disable it globally instead:
+
+```sql
+alter system set cron.log_run = off;
+-- requires a Postgres restart; errors from failed jobs still land in
+-- the Postgres server log via cron.log_min_messages (default WARNING)
 ```
 
 *Todo: a future `pgque.start()` will warn about this overhead and offer to schedule the purge job.*

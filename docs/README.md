@@ -15,6 +15,8 @@ Short docs for users, plus a contributor primer.
 - **[Three latencies](three-latencies.md)** — producer latency, subscriber
   latency, and end-to-end delivery explained; tick-cadence trade-off table;
   comparison with UPDATE/DELETE-based designs.
+- **[Tick frequency tuning](tick-frequency.md)** — choosing `tick_period_ms`,
+  WAL planning numbers, idle backoff, and pg_cron logging caveats.
 - **[PgQ concepts](pgq-concepts.md)** — glossary of the core vocabulary
   (event, batch, tick, rotation, ticker rule). Useful alongside the
   tutorial.

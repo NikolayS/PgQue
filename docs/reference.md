@@ -211,7 +211,7 @@ select pgque.set_tick_period_ms(50);    -- 20 ticks/sec
 select pgque.set_tick_period_ms(1000);  -- 1 tick/sec (the pg_cron floor; pgqd-compatible)
 ```
 
-Trade-offs at higher rates: more WAL per second, more metadata-table churn, more NOTIFY traffic. See [docs/three-latencies.md](three-latencies.md) for the table.
+Trade-offs at higher rates: more WAL per second, more metadata-table churn, more NOTIFY traffic. Inactive queues are cheap: if no events are coming, most ticker calls return `NULL` and PgQue backs off toward `ticker_idle_period`. A forced-tick PG18 measurement isolated about 280 bytes of WAL per materialized tick per queue; the ~240 MiB/day estimate only applies to a queue materializing 10 ticks/sec continuously. See [tick-frequency.md](tick-frequency.md) for caveats and [three-latencies.md](three-latencies.md) for the latency table.
 Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.stop() → void`
