@@ -1,5 +1,14 @@
 # Cooperative consumers
 
+Blueprint version: `0.2-draft.2`
+
+## Change log
+
+| Version | Date | Notes |
+|---|---|---|
+| `0.2-draft.2` | 2026-05-05 | Mark feature experimental everywhere; add release-note requirements; track blueprint version and change log. |
+| `0.2-draft.1` | 2026-05-05 | Initial clean-room implementation plan for PgQue core, Go, Python, TypeScript, docs, tests, and parallel worktree split. |
+
 ## Goal
 
 Add cooperative consumers to PgQue 0.2 so several workers can share one
