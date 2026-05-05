@@ -66,7 +66,7 @@ PgQue gives you queue semantics **inside** Postgres, with Postgres durability an
 
 PgQue is built around **snapshot-based batching**, not row-by-row claiming. That's what gives it zero bloat in the hot path, stable behavior under sustained load, and clean ACID semantics inside Postgres.
 
-The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. In the default configuration, end-to-end delivery typically lands within ~100–300 ms: PgQue ticks **10 times per second** (every 100 ms) by default, so there's at most ~100 ms wait for the next tick, plus the consumer's poll interval. Per-call latency (the `send` / `receive` / `ack` functions themselves) stays in the microsecond range.
+The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. In the default configuration, end-to-end delivery typically lands around ~50–150 ms: PgQue ticks **10 times per second** (every 100 ms) by default, so the wait for the next tick is ~50 ms on average and at most ~100 ms, plus the consumer's poll interval. Per-call latency (the `send` / `receive` / `ack` functions themselves) stays in the microsecond range.
 
 Ways to reduce delivery latency: tune the tick period (for example `pgque.set_tick_period_ms(50)` for 20 ticks/sec; accepted periods are exact divisors of 1000 ms) and queue thresholds; use `force_next_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-millisecond delivery without burning more WAL on ticking.
 
