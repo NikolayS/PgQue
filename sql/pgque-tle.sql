@@ -5412,14 +5412,10 @@ begin
     end if;
 
     -- consumer + subconsumer count
-    select
-        count(*)
-    into
-        _sub_id_cnt
-    from
-        pgque.subscription
-    where
-        sub_id = x_sub_id;
+    select count(*)
+    into _sub_id_cnt
+    from pgque.subscription
+    where sub_id = x_sub_id;
 
     -- delete only one cooperative subconsumer
     if _sub_id_cnt > 1 and _sub_role = 'coop_member' then
@@ -5852,26 +5848,18 @@ begin
     perform pgque._validate_coop_names(i_queue, i_consumer, i_subconsumer);
     v_member_name := i_consumer || '.' || i_subconsumer;
 
-    select
-        queue_id
-    into
-        v_queue_id
-    from
-        pgque.queue
-    where
-        queue_name = i_queue;
+    select queue_id
+    into v_queue_id
+    from pgque.queue
+    where queue_name = i_queue;
     if not found then
         raise exception 'Event queue not created yet';
     end if;
 
-    select
-        co_id
-    into
-        v_main_consumer_id
-    from
-        pgque.consumer
-    where
-        co_name = i_consumer
+    select co_id
+    into v_main_consumer_id
+    from pgque.consumer
+    where co_name = i_consumer
     for update;
     if not found then
         insert into pgque.consumer (co_name)
@@ -5890,14 +5878,10 @@ begin
         and sub_consumer = v_main_consumer_id
     for update;
     if not found then
-        select
-            tick_id
-        into
-            v_last_tick
-        from
-            pgque.tick
-        where
-            tick_queue = v_queue_id
+        select tick_id
+        into v_last_tick
+        from pgque.tick
+        where tick_queue = v_queue_id
         order by
             tick_queue desc,
             tick_id desc
@@ -5940,14 +5924,10 @@ begin
         raise exception 'consumer % on queue % is not a cooperative main consumer', i_consumer, i_queue;
     end if;
 
-    select
-        co_id
-    into
-        v_member_consumer_id
-    from
-        pgque.consumer
-    where
-        co_name = v_member_name
+    select co_id
+    into v_member_consumer_id
+    from pgque.consumer
+    where co_name = v_member_name
     for update;
     if not found then
         insert into pgque.consumer (co_name)
@@ -6099,14 +6079,10 @@ begin
         raise exception 'cooperative main consumer not found: %/%', i_queue, i_consumer;
     end if;
 
-    select
-        co_id
-    into
-        v_member_consumer_id
-    from
-        pgque.consumer
-    where
-        co_name = v_member_name;
+    select co_id
+    into v_member_consumer_id
+    from pgque.consumer
+    where co_name = v_member_name;
 
     select
         *
@@ -6281,12 +6257,9 @@ returns bigint as $$
 declare
     v_batch_id bigint;
 begin
-    select
-        batch_id
-    into
-        v_batch_id
-    from
-        pgque.next_batch_custom(
+    select batch_id
+    into v_batch_id
+    from pgque.next_batch_custom(
             i_queue,
             i_consumer,
             i_subconsumer,
@@ -6355,14 +6328,10 @@ begin
         return 0;
     end if;
 
-    select
-        co_id
-    into
-        v_member_consumer_id
-    from
-        pgque.consumer
-    where
-        co_name = v_member_name;
+    select co_id
+    into v_member_consumer_id
+    from pgque.consumer
+    where co_name = v_member_name;
     if not found then
         return 0;
     end if;
@@ -6443,14 +6412,10 @@ begin
             co_id = v_member_consumer_id;
     end if;
 
-    select
-        count(*)
-    into
-        v_remaining
-    from
-        pgque.subscription
-    where
-        sub_queue = v_queue_id
+    select count(*)
+    into v_remaining
+    from pgque.subscription
+    where sub_queue = v_queue_id
         and sub_id = v_main.sub_id
         and sub_role = 'coop_member';
     if v_remaining = 0 then
