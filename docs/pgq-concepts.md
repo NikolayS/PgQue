@@ -15,7 +15,9 @@ Vocabulary adapted from the 2009 PgCon talk by Kreen & Pihlak
   Any number of consumers can subscribe to the same queue; each has its
   own cursor and independently sees every event (fan-out by default).
 - **Ticker** — creates ticks, vacuums, rotates, reschedules retries.
-  In PgQue: `pg_cron` calling `pgque.ticker()`.
+  In PgQue's default `pg_cron` path: one 1-second cron slot calls
+  `pgque.ticker_loop()`, which invokes `pgque.ticker()` every
+  `tick_period_ms` ms (100 ms / 10 ticks/sec by default).
 - **Tick** — position marker in the event stream; delimits batches.
 - **Roles** — three database roles, all created by the install:
   - `pgque_reader` (consume side: `receive`, `ack`, `nack`, `subscribe`, `unsubscribe`, plus the underlying PgQ batch primitives)
@@ -55,9 +57,10 @@ Payload format is a producer/consumer contract — PgQue does not interpret it.
 
 ## Per-queue tuning
 
-Stored on `pgque.queue`, read by `pgque.ticker()` (pg_cron). Set via
-`pgque.set_queue_config(queue, param, value)` — `param` is the short name
-below; the function auto-prefixes `queue_` internally.
+Stored on `pgque.queue`, read by `pgque.ticker()` regardless of whether
+it is driven by `pgque.ticker_loop()` / `pg_cron` or an external scheduler.
+Set via `pgque.set_queue_config(queue, param, value)` — `param` is the
+short name below; the function auto-prefixes `queue_` internally.
 
 - `ticker_max_lag` — max wall time between ticks.
 - `ticker_idle_period` — tick interval when idle.
@@ -82,8 +85,9 @@ combining any chain in one explicit `begin`/`commit` block silently
 produces empty batches and dropped messages.
 
 - **Producer → consumer.** `pgque.send` (or `pgque.insert_event`) →
-  `pgque.ticker` (or `pgque.force_tick` + `pgque.ticker`) →
-  `pgque.receive` (or `pgque.next_batch`).
+  `pgque.ticker` (or canonical `pgque.force_next_tick` + `pgque.ticker`;
+  legacy `pgque.force_tick` is a compatibility alias) → `pgque.receive`
+  (or `pgque.next_batch`).
 - **Retry pump.** `pgque.maint_retry_events` (re-inserts retry rows
   into event tables with `pg_current_xact_id()`) → `pgque.ticker`
   (must run in a later tx so the new `ev_txid`s are visible in its

@@ -279,7 +279,7 @@ Grant: `pgque_admin`. Source: `sql/pgque-additions/tick_helpers.sql`.
 Alias for `pgque.force_next_tick`. Retained for compatibility with upstream PgQ (the historical name); identical behavior. The name is misleading — the function does not insert a tick by itself, it only bumps the event sequence so the next `pgque.ticker()` call inserts one. Raises if the queue is missing, ticker-paused, or configured for an external ticker. Prefer `force_next_tick` in new code.
 Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
-> The `force_tick` → `ticker` → `receive` chain must run across separate transactions for the consumer to see the events you just sent. See the [snapshot rule](#snapshot-rule).
+> The `force_next_tick` → `ticker` → `receive` chain (or legacy `force_tick` alias) must run across separate transactions for the consumer to see the events you just sent. See the [snapshot rule](#snapshot-rule).
 
 #### `pgque.uninstall() → void`
 

@@ -112,7 +112,7 @@ Zero rows. This surprises every first-time user. Here is why.
 
 PgQue is **tick-based**, not row-claiming. Producers append events to the queue, but consumers do not see rows directly — they see **batches**. A batch is the set of events between two ticks. Until a tick happens, there is no batch boundary, so `pgque.receive` has nothing to return.
 
-In normal operation, a scheduler (`pg_cron` or an external loop) calls `pgque.ticker()` every second and ticks happen continuously. In this tutorial you have not started a scheduler, so no tick has run yet.
+In normal operation, a scheduler (`pg_cron` or an external loop) drives ticks continuously. With the default `pg_cron` path, PgQue ticks every 100 ms (10 ticks/sec) inside a single 1-second cron slot. In this tutorial you have not started a scheduler, so no tick has run yet.
 
 See the [concepts glossary](pgq-concepts.md) for the full definitions of event, batch, tick, and consumer.
 
@@ -156,7 +156,7 @@ select * from pgque.receive('orders', 'processor', 100);
 
 The event is back. `retry_count` is null because this is the first delivery attempt. The `batch_id` is the important value for the next step.
 
-In production, `pg_cron` (or a small worker loop) calls `pgque.ticker()` every second. `force_next_tick` exists for the situation here: advancing the queue without waiting on the ticker's lag threshold.
+In production, `pg_cron` calls `pgque.ticker_loop()` once per second, and that procedure calls `pgque.ticker()` every `tick_period_ms` ms (100 ms by default). An external worker loop can call `pgque.ticker()` at whatever cadence you choose. `force_next_tick` exists for the situation here: advancing the queue without waiting on the ticker's lag threshold.
 
 ## Step 6: Ack the batch
 
