@@ -97,13 +97,17 @@ when you want exactly-once effects on the same database (see the
 The asymmetry: producer-to-consumer flow needs commit boundaries between
 steps; consume-to-side-effect flow needs them merged.
 
-The default modes of every shipped client (`pgxpool` / `pg.Pool` /
-`psycopg(autocommit=True)`) run each call in its own implicit
-transaction, so the rule is satisfied transparently. The footgun is
-reaching for the underlying pool/connection (`Client.Pool()`,
-`client.rawPool`, `client.conn`) to wrap `send` and `receive` in one
-explicit transaction — the consumer side will not see what the producer
-just sent.
+For the shipped clients: Go (`pgxpool`) and TypeScript (`pg.Pool`) run
+each call in its own implicit transaction, so the rule is satisfied
+transparently. The Python client requires care — `pgque.connect(dsn)`
+is **not** autocommit by default, so producers must commit explicitly
+between `send` and the consumer side; the high-level Python `Consumer`
+already handles this internally (autocommit + an explicit
+`conn.transaction()` around `receive + dispatch + ack`). The footgun
+in every driver is reaching for the underlying pool/connection
+(`Client.Pool()`, `client.rawPool`, `client.conn`) to wrap `send` and
+`receive` in one explicit transaction — the consumer side will not see
+what the producer just sent.
 
 ## Three latencies
 

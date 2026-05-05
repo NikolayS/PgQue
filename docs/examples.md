@@ -69,13 +69,13 @@ commit;
 
 The `inserted` CTE runs to completion even though the main query does not reference it (data-modifying CTEs always execute). Every row in `msgs` shares the same `batch_id`, so the scalar subquery picks any one of them and `pgque.ack` runs exactly once. **Batch-ownership caveat:** `pgque.ack(batch_id)` advances the consumer past the entire underlying batch, even if `receive()` returned fewer rows than the batch contains (due to `max_return`). Either consume the full batch before acking, or use `max_return >= ticker_max_count` (default 500) to ensure all rows are returned.
 
-> **Anti-pattern: send + receive in one transaction.** Above merges `receive` + writes + `ack` into one tx — correct. Do **not** also merge `send` / `force_tick` / `ticker` into the same tx; the ticker's snapshot must be taken *after* `send` commits.
+> **Anti-pattern: send + receive in one transaction.** Above merges `receive` + writes + `ack` into one tx — correct. Do **not** also merge `send` / `force_next_tick` / `ticker` into the same tx; the ticker's snapshot must be taken *after* `send` commits.
 >
 > ```sql
 > -- WRONG -- consumer sees 0 rows
 > begin;
 >   select pgque.send('orders', 'order.created', '{"id": 1}'::jsonb);
->   select pgque.force_tick('orders');
+>   select pgque.force_next_tick('orders');
 >   select pgque.ticker();
 >   select * from pgque.receive('orders', 'processor', 100);  -- 0 rows
 > commit;
