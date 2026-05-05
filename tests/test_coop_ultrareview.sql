@@ -171,6 +171,54 @@ begin
   ), 'legacy unregister_consumer(last member) should revert main to normal';
 end $$;
 
+-- merged_bug_001: forced unregister DLQ row must survive the function call.
+-- event_dead() looks up dl_consumer_id via subscription.sub_batch, which
+-- resolves to the coop_member's co_id. unregister_subconsumer then deletes
+-- the member subscription and (when the member has no other subscriptions)
+-- the pgque.consumer row. dead_letter.dl_consumer_id has on delete cascade,
+-- so without a fix the freshly inserted DLQ row is wiped before commit.
+-- Use unique consumer/subconsumer names so the member co_id is not shared
+-- with sibling tests in this file -- sharing accidentally averts the cascade.
+do $$
+begin
+  perform pgque.create_queue('coop_dlq_survive');
+  update pgque.queue
+  set queue_max_retries = 0
+  where queue_name = 'coop_dlq_survive';
+  perform pgque.register_subconsumer('coop_dlq_survive', 'dlq_survive_main', 'dlq_survive_w1');
+end $$;
+
+select pgque.send('coop_dlq_survive', 't', 'must-not-vanish');
+select pgque.force_tick('coop_dlq_survive');
+select pgque.ticker('coop_dlq_survive');
+
+do $$
+declare
+  v_msg pgque.message;
+  v_dlq_count int;
+begin
+  select *
+  into v_msg
+  from pgque.receive_coop('coop_dlq_survive', 'dlq_survive_main', 'dlq_survive_w1', 10)
+  limit 1;
+
+  assert v_msg.msg_id is not null,
+    'test setup should yield a message';
+
+  assert pgque.unregister_subconsumer('coop_dlq_survive', 'dlq_survive_main', 'dlq_survive_w1', 1) = 1,
+    'forced unregister should succeed';
+
+  select count(*)
+  into v_dlq_count
+  from pgque.dead_letter as dl
+  join pgque.queue as q on q.queue_id = dl.dl_queue_id
+  where q.queue_name = 'coop_dlq_survive'
+    and dl.ev_id = v_msg.msg_id;
+
+  assert v_dlq_count = 1,
+    format('forced unregister DLQ row was lost to consumer-row cascade; expected 1, got %s', v_dlq_count);
+end $$;
+
 do $$
 begin
   raise notice 'PASS: cooperative ultrareview regressions';

@@ -4788,9 +4788,23 @@ returns integer as $$
 declare
     v_sub record;
 begin
-    -- Look up subscription from batch
-    select sub_queue, sub_consumer into v_sub
-    from pgque.subscription where sub_batch = i_batch_id;
+    -- Look up subscription from batch. For cooperative subconsumers, route
+    -- the DLQ row to the coop_main's co_id rather than the member's. Member
+    -- consumer rows are ephemeral (workers come and go); the main is the
+    -- persistent consumer-group identity. Anchoring DLQ rows to the member
+    -- would let unregister_subconsumer (which deletes the orphan member
+    -- consumer row) cascade-delete a freshly inserted DLQ row before commit.
+    select
+        s.sub_queue,
+        coalesce(m.sub_consumer, s.sub_consumer) as sub_consumer
+    into v_sub
+    from pgque.subscription s
+    left join pgque.subscription m
+        on s.sub_role = 'coop_member'
+        and m.sub_id = s.sub_id
+        and m.sub_queue = s.sub_queue
+        and m.sub_role = 'coop_main'
+    where s.sub_batch = i_batch_id;
     if not found then
         raise exception 'batch not found: %', i_batch_id;
     end if;
