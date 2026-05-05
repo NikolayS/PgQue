@@ -3,8 +3,7 @@
 -- Test: cooperative consumers serialize concurrent batch allocation.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
-select current_database() as dbname \gset
-\setenv PGDATABASE :dbname
+create extension if not exists dblink;
 
 create table public.coop_concurrency_results (
   worker text primary key,
@@ -30,8 +29,43 @@ select pgque.send('coop_concurrent_alloc', 't', 'event-2');
 select pgque.force_tick('coop_concurrent_alloc');
 select pgque.ticker('coop_concurrent_alloc');
 
-\! psql --no-psqlrc -v ON_ERROR_STOP=1 -c "begin; insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count) select 'w1', coalesce(array_agg(msg_id order by msg_id), '{}'), coalesce(array_agg(distinct batch_id order by batch_id), '{}'), count(*) from pgque.receive_coop('coop_concurrent_alloc', 'main_c', 'w1', 10); select pg_sleep(1); commit;" >/tmp/pgque_coop_w1.out 2>/tmp/pgque_coop_w1.err &
-\! sleep 0.2; psql --no-psqlrc -v ON_ERROR_STOP=1 -c "set statement_timeout = '10s'; insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count) select 'w2', coalesce(array_agg(msg_id order by msg_id), '{}'), coalesce(array_agg(distinct batch_id order by batch_id), '{}'), count(*) from pgque.receive_coop('coop_concurrent_alloc', 'main_c', 'w2', 10);" >/tmp/pgque_coop_w2.out 2>/tmp/pgque_coop_w2.err; wait
+select dblink_connect('coop_w1', 'dbname=' || current_database());
+select dblink_send_query('coop_w1', $dblink$
+with ins as (
+  insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count)
+  select 'w1',
+         coalesce(array_agg(msg_id order by msg_id), '{}'),
+         coalesce(array_agg(distinct batch_id order by batch_id), '{}'),
+         count(*)
+  from pgque.receive_coop('coop_concurrent_alloc', 'main_c', 'w1', 10)
+  returning 1
+), hold_lock as (
+  select pg_sleep(1)
+)
+select count(*)
+from ins, hold_lock;
+$dblink$);
+
+select pg_sleep(0.2);
+
+insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count)
+select 'w2',
+       coalesce(array_agg(msg_id order by msg_id), '{}'),
+       coalesce(array_agg(distinct batch_id order by batch_id), '{}'),
+       count(*)
+from pgque.receive_coop('coop_concurrent_alloc', 'main_c', 'w2', 10);
+
+do $$
+begin
+  while dblink_is_busy('coop_w1') = 1 loop
+    perform pg_sleep(0.1);
+  end loop;
+end $$;
+
+select *
+from dblink_get_result('coop_w1') as t(done bigint);
+
+select dblink_disconnect('coop_w1');
 
 do $$
 declare
