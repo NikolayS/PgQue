@@ -32,12 +32,6 @@ example:
 |---|---|---|
 | `0.2.x` | `pgque.version() >= 0.2.0` | Includes experimental cooperative consumers if enabled. |
 
-## Experimental features
-
-If a release exposes cooperative consumers / subconsumers, mark the feature as
-**experimental** in release notes and public docs. The API and edge-case behavior
-are not stable until PgQue explicitly graduates the feature.
-
 ## Package shape
 
 - Runtime support: Node.js 20+.

@@ -45,12 +45,6 @@ Before the first real release, create GitHub environment `go-release` in
 reviewers and `main` branch restrictions). The workflow also checks that it is
 running from `main`, but environment protection is the human approval gate.
 
-## Release notes
-
-If a release exposes cooperative consumers / subconsumers, mark the feature as
-**experimental** in release notes and public docs. The API and edge-case behavior
-are not stable until PgQue explicitly graduates the feature.
-
 ## Release process
 
 The release workflow is `.github/workflows/release-go.yml`.
