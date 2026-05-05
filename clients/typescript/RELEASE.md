@@ -14,17 +14,25 @@ bun add pgque
 
 The TypeScript client version is independent from the SQL/server
 `pgque.version()`. Bump this package when the TypeScript API, runtime behavior,
-or packaging changes; server-only SQL changes do not require an npm release.
+generated types, or packaging changes. Server-only SQL changes do not require an
+npm release unless they change behavior expected by the TypeScript client.
 
-Every release that depends on new SQL functions must document the compatible
-PgQue SQL/server versions in the client README and release notes. Use an
-explicit compatibility table, for example:
+The TypeScript package declares the minimum compatible PgQue SQL API/server
+version in docs and tests. If a client feature requires a newer SQL API, client
+code should fail with a clear compatibility error rather than surfacing a raw
+missing-function SQL error.
+
+This matters especially for experimental cooperative consumers / subconsumers:
+the client must not silently call SQL functions that may not exist.
+
+Use an explicit compatibility table in the client README and release notes, for
+example:
 
 | npm package | PgQue SQL/server | Notes |
 |---|---|---|
 | `0.2.x` | `pgque.version() >= 0.2.0` | Includes experimental cooperative consumers if enabled. |
 
-## Release notes
+## Experimental features
 
 If a release exposes cooperative consumers / subconsumers, mark the feature as
 **experimental** in release notes and public docs. The API and edge-case behavior
@@ -68,25 +76,31 @@ The release workflow is `.github/workflows/release-typescript.yml`.
 Before the first real publish:
 
 1. Create GitHub environment `npm` in `NikolayS/pgque`. Protect it as
-   appropriate for releases, for example with required reviewers and `main`
-   branch restrictions. The workflow also checks that it is running from
-   `main`, but environment protection is the human approval gate.
-2. In npm, configure Trusted Publishing for:
-   - package: `pgque`
-   - repository: `NikolayS/pgque`
-   - workflow: `release-typescript.yml`
-   - environment: `npm`
-3. Verify `package.json#repository.url` and `repository.directory` exactly match
-   the GitHub repository and package location expected by npm.
-4. Ensure the publish job uses GitHub-hosted runners. npm Trusted Publishing
-   does not currently support self-hosted runners.
-5. Ensure the publish job has OIDC permissions:
+   appropriate for releases, for example:
+   - required reviewers
+   - deployment branch restriction to `main`
+   - no self-approval, if practical
+2. Ensure the release workflow runs on GitHub-hosted runners. npm Trusted
+   Publishing does not currently support self-hosted runners.
+3. Ensure the publish job has OIDC permissions:
 
    ```yaml
    permissions:
      contents: read
      id-token: write
    ```
+
+4. In npm, configure Trusted Publishing for:
+   - package: `pgque`
+   - repository owner: `NikolayS`
+   - repository: `pgque`
+   - workflow filename: `release-typescript.yml`
+   - environment: `npm`
+5. Verify `package.json#repository.url` and `repository.directory` exactly match
+   the GitHub repository and package location expected by npm.
+
+The workflow also checks that it is running from `main`, but GitHub environment
+protection is the human approval gate.
 
 ### First publish caveat
 
@@ -95,28 +109,41 @@ configuring Trusted Publishing before initial publication. If it does not, do a
 one-time manual/token-based initial publish by a trusted maintainer, immediately
 configure Trusted Publishing, then disable token publishing.
 
+After Trusted Publishing is configured, prefer npm's publishing-access setting
+that requires 2FA and disallows traditional tokens.
+
 Do not assume first package creation through OIDC is deterministic across npm
 policy changes.
 
 ## Per-release workflow
 
-1. Update `clients/typescript/package.json` version and release notes/changelog.
-2. Update the client README compatibility table when SQL/server compatibility
+1. Update `clients/typescript/package.json` version.
+2. Update release notes/changelog if present.
+3. Update the client README compatibility table when SQL/server compatibility
    changes.
-3. Merge the release prep PR.
-4. Run **Release TypeScript client** with `dry_run=true` first.
-5. Verify the packed file list and build output.
-6. Run the workflow again with `dry_run=false`.
+4. Merge the release prep PR to `main`.
+5. Ensure the `npm` GitHub environment exists and is protected.
+6. Ensure npm Trusted Publishing is configured exactly for this repository,
+   workflow filename, and environment.
+7. Run **Release TypeScript client** with `dry_run=true`.
+8. Verify:
+   - build output
+   - generated `dist/`
+   - packed file list
+   - package metadata
+   - no tests, source-only internals, local config, or secrets are included
+9. Before publishing, run the TypeScript integration tests against the oldest
+   supported PgQue SQL/server version and the current `main` SQL version.
+10. Run the workflow again with `dry_run=false`.
 
-`dry_run=true` verifies build/package contents only. It does not fully prove npm
-Trusted Publishing is configured correctly. The real publish may still fail if
-npm's Trusted Publisher fields, GitHub environment, workflow filename, branch,
-GitHub runner type, OIDC permissions, or `package.json#repository.url` do not
-match exactly.
+`dry_run=true` verifies build/package contents only. It does not fully validate
+npm Trusted Publishing. The real publish may still fail if npm's Trusted
+Publisher configuration, GitHub environment, workflow filename, branch, runner
+type, OIDC permissions, or `package.json#repository.url` do not match exactly.
 
 The workflow installs with `bun install --frozen-lockfile`, runs `bun run check`,
-`bun run test`, builds `dist/`, ensures npm >= 11.5.1 for Trusted Publishing,
-and publishes with npm provenance via OIDC. No long-lived npm token is needed.
+runs `bun run test`, builds `dist/`, verifies npm >= 11.5.1, and publishes via
+npm Trusted Publishing / OIDC. No long-lived npm token is needed.
 
 ## Future automation
 

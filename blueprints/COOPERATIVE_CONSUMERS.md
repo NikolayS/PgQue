@@ -1,11 +1,12 @@
 # Cooperative consumers
 
-Blueprint version: `0.2-draft.2`
+Blueprint version: `0.2-draft.3`
 
 ## Change log
 
 | Version | Date | Notes |
 |---|---|---|
+| `0.2-draft.3` | 2026-05-05 | Harden TypeScript release guidance: SQL compatibility checks, npm Trusted Publishing caveats, release runner requirements, package shape, and oldest-supported SQL integration tests. |
 | `0.2-draft.2` | 2026-05-05 | Mark feature experimental everywhere; add release-note requirements; track blueprint version and change log. |
 | `0.2-draft.1` | 2026-05-05 | Initial clean-room implementation plan for PgQue core, Go, Python, TypeScript, docs, tests, and parallel worktree split. |
 
