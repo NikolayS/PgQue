@@ -84,6 +84,48 @@ begin
     || ', expected ' || v_original_txid::text;
 end $$;
 
+-- REV high: normal consumers must not be silently converted to coop mains.
+do $$
+begin
+  perform pgque.create_queue('coop_convert_guard');
+  perform pgque.register_consumer('coop_convert_guard', 'normal_idle');
+
+  begin
+    perform pgque.register_subconsumer('coop_convert_guard', 'normal_idle', 'w1');
+    raise exception 'expected normal consumer conversion rejection';
+  exception when others then
+    if sqlerrm = 'expected normal consumer conversion rejection' then raise; end if;
+  end;
+
+  assert pgque.register_subconsumer('coop_convert_guard', 'normal_idle', 'w1', true) = 1,
+    'explicit normal-to-coop conversion should succeed';
+end $$;
+
+-- REV high: legacy unregister_consumer(main) must not cascade-delete members.
+do $$
+begin
+  perform pgque.create_queue('coop_no_main_cascade');
+  perform pgque.register_subconsumer('coop_no_main_cascade', 'cascade_main', 'w1');
+  perform pgque.register_subconsumer('coop_no_main_cascade', 'cascade_main', 'w2');
+
+  begin
+    perform pgque.unregister_consumer('coop_no_main_cascade', 'cascade_main');
+    raise exception 'expected cooperative main unregister rejection';
+  exception when others then
+    if sqlerrm = 'expected cooperative main unregister rejection' then raise; end if;
+  end;
+
+  assert exists (
+    select 1
+    from pgque.subscription s
+    join pgque.queue q on q.queue_id = s.sub_queue
+    join pgque.consumer c on c.co_id = s.sub_consumer
+    where q.queue_name = 'coop_no_main_cascade'
+      and c.co_name = 'cascade_main.w1'
+      and s.sub_role = 'coop_member'
+  ), 'rejected main unregister must preserve member w1';
+end $$;
+
 -- bug_002: legacy unregister_consumer(member) must remove orphan consumer row.
 do $$
 declare

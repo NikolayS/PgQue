@@ -146,6 +146,46 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed');
 ```
 
+## Cooperative consumers / subconsumers
+
+**Experimental in PgQue 0.2.** Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.
+
+Cooperative consumers let several subconsumers share one logical consumer cursor. The main consumer row (`sub_role = 'coop_main'`) owns the group cursor; member rows (`sub_role = 'coop_member'`) own active batches. The feature is bundled in the default SQL install, but downgrade after creating subconsumers is unsupported unless subconsumers are unregistered first.
+
+#### `pgque.register_subconsumer(queue text, consumer text, subconsumer text, convert_normal boolean default false) → integer`
+
+Registers `subconsumer` under logical `consumer`. Returns `1` for a new registration and `0` when already registered. If `consumer` already exists as a normal consumer, conversion is refused unless `convert_normal = true`, and active normal consumers cannot be converted.
+Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
+
+#### `pgque.unregister_subconsumer(queue text, consumer text, subconsumer text, batch_handling integer default 0) → integer`
+
+Unregisters one subconsumer. Active batches are rejected by default; `batch_handling = 1` routes active messages through retry/DLQ policy equivalent to `nack()` before unregistering. When the last member is removed, the main row returns to `sub_role = 'normal'`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
+
+`pgque.subscribe_subconsumer(...)` and `pgque.unsubscribe_subconsumer(...)` are aliases for the two functions above.
+
+#### `pgque.receive_coop(queue text, consumer text, subconsumer text, max_return int default 100, dead_interval interval default null) → setof pgque.message`
+
+Receives messages for one subconsumer. `max_return` must be >= 1. `dead_interval` enables stale-batch takeover from another inactive member; takeover allocates a fresh `batch_id`, so old tokens cannot ack/nack the new owner's state.
+Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
+
+#### `pgque.next_batch(queue text, consumer text, subconsumer text, dead_interval interval default null) → bigint`
+
+Low-level cooperative batch allocation. Prefer `receive_coop()` unless the client explicitly needs PgQ-style batch primitives.
+Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
+
+#### `pgque.next_batch_custom(queue text, consumer text, subconsumer text, min_lag interval, min_count int4, min_interval interval, dead_interval interval default null) → record`
+
+Cooperative custom batch allocation. Out columns: `batch_id`, `prev_tick_id`, `next_tick_id`.
+Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
+
+#### `pgque.touch_subconsumer(queue text, consumer text, subconsumer text) → integer`
+
+Updates a registered subconsumer heartbeat without creating rows. Returns the number of rows touched.
+Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
+
+**Cooperative-aware inherited functions.** `pgque.unregister_consumer()` refuses to unregister a cooperative main while subconsumers are registered; unregister subconsumers explicitly. Normal `pgque.next_batch*()` / `pgque.receive()` for a `coop_main` with members raise because the main row is the group cursor. `pgque.finish_batch()` rejects `coop_main` batches and clears member-owned cooperative batches on ack.
+
 #### `pgque.subscribe(queue text, consumer text) → integer`
 
 Registers `consumer` on `queue`. Modern alias for `pgque.register_consumer`. Returns `1` on new registration, `0` if already registered.
@@ -435,7 +475,7 @@ Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.unregister_consumer(queue_name text, consumer_name text) → integer`
 
-Removes the subscription and retry-queue entries owned by this consumer on `queue_name`. Returns the number of subscriptions removed.
+Removes the subscription and retry-queue entries owned by this consumer on `queue_name`. Returns the number of subscriptions removed. Cooperative-aware: calling this on a `coop_main` with registered subconsumers raises; unregister subconsumers explicitly.
 Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch(queue_name text, consumer_name text) → bigint`
@@ -450,7 +490,7 @@ Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch_custom(queue_name text, consumer_name text, min_lag interval, min_count int4, min_interval interval) → record`
 
-Activates the next batch with custom size/age constraints. Same out columns as `next_batch_info`.
+Activates the next batch with custom size/age constraints. Same out columns as `next_batch_info`. Cooperative-aware: normal inherited batch allocation raises for `coop_main` consumers while member rows exist.
 Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_events(batch_id bigint) → setof record`
@@ -472,7 +512,7 @@ Grant: `pgque_admin` only. Source: `sql/pgque.sql`.
 
 #### `pgque.finish_batch(batch_id bigint) → integer`
 
-Closes the batch and advances the subscription's `last_tick`. Returns `1` on success, `0` with a warning if the batch was not found.
+Closes the batch and advances the subscription's `last_tick`. Returns `1` on success, `0` with a warning if the batch was not found. Cooperative-aware: `coop_member` batches clear the member cursor; `coop_main` batches are rejected.
 Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.event_retry(batch_id bigint, event_id bigint, retry_time timestamptz) → integer`
@@ -551,7 +591,7 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 
 | Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`)                        |
+| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`); experimental cooperative API (`register_subconsumer`, `unregister_subconsumer`, `subscribe_subconsumer`, `unsubscribe_subconsumer`, cooperative `next_batch`, cooperative `next_batch_custom`, `receive_coop`, `touch_subconsumer`)                        |
 | `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
 | `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
 

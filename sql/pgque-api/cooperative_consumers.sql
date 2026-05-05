@@ -1,7 +1,8 @@
 -- pgque-api/cooperative_consumers.sql -- Experimental cooperative consumers API layer
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- Clean-room PgQue implementation. No code copied from pgq-coop.
+-- Cooperative-aware overrides extend PgQ-derived primitives.
+-- New cooperative APIs are clean-room; no code copied from pgq-coop.
 
 -- Cooperative consumer state marker. Existing rows remain normal on upgrade.
 alter table pgque.subscription
@@ -103,7 +104,20 @@ begin
 
         return 1;
     else
-        -- delete main consumer (including possible subconsumers)
+        -- Refuse implicit cooperative teardown through the legacy main
+        -- consumer API. Members must be unregistered explicitly so one
+        -- caller cannot wipe sibling subconsumers by guessing the main name.
+        if _sub_role = 'coop_main' then
+            perform 1
+            from pgque.subscription
+            where sub_id = x_sub_id
+                and sub_role = 'coop_member';
+            if found then
+                raise exception 'cannot unregister cooperative main consumer with registered subconsumers';
+            end if;
+        end if;
+
+        -- delete main consumer (or a legacy single-row subscription)
         perform 1
           from pgque.subscription
          where sub_id = x_sub_id
@@ -261,9 +275,9 @@ begin
     if i_min_lag is not null then
         -- enforce min lag
         if now() - cur_tick_time < i_min_lag then
-            cur_tick_id := NULL;
-            cur_tick_time := NULL;
-            cur_tick_event_seq := NULL;
+            cur_tick_id := null;
+            cur_tick_time := null;
+            cur_tick_event_seq := null;
         end if;
     end if;
 
@@ -379,10 +393,14 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
+drop function if exists pgque.subscribe_subconsumer(text, text, text);
+drop function if exists pgque.register_subconsumer(text, text, text);
+
 create or replace function pgque.register_subconsumer(
     i_queue text,
     i_consumer text,
-    i_subconsumer text)
+    i_subconsumer text,
+    i_convert_normal boolean default false)
 returns integer as $$
 declare
     v_queue_id int4;
@@ -432,6 +450,9 @@ begin
         returning * into v_main;
         v_created := 1;
     elsif v_main.sub_role = 'normal' then
+        if not i_convert_normal then
+            raise exception 'consumer % on queue % is already a normal consumer; explicit conversion is required', i_consumer, i_queue;
+        end if;
         if v_main.sub_batch is not null then
             raise exception 'cannot convert active normal consumer % on queue % to cooperative main', i_consumer, i_queue;
         end if;
@@ -483,10 +504,11 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.subscribe_subconsumer(
     i_queue text,
     i_consumer text,
-    i_subconsumer text)
+    i_subconsumer text,
+    i_convert_normal boolean default false)
 returns integer as $$
 begin
-    return pgque.register_subconsumer(i_queue, i_consumer, i_subconsumer);
+    return pgque.register_subconsumer(i_queue, i_consumer, i_subconsumer, i_convert_normal);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -865,14 +887,31 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- ---------------------------------------------------------------------------
--- Grants
+-- Experimental API comments + grants
 -- ---------------------------------------------------------------------------
 -- Cooperative consumer functions are consumer-side and go to pgque_reader.
 -- See sql/pgque-additions/roles.sql for the producer/consumer split.
 
-grant execute on function pgque.register_subconsumer(text, text, text)                 to pgque_reader;
+comment on function pgque.register_subconsumer(text, text, text, boolean) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+comment on function pgque.unregister_subconsumer(text, text, text, integer) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+comment on function pgque.subscribe_subconsumer(text, text, text, boolean) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+comment on function pgque.unsubscribe_subconsumer(text, text, text, integer) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+comment on function pgque.next_batch(text, text, text, interval) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+comment on function pgque.next_batch_custom(text, text, text, interval, int4, interval, interval) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+comment on function pgque.receive_coop(text, text, text, int, interval) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+comment on function pgque.touch_subconsumer(text, text, text) is
+    'Experimental in PgQue 0.2. Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.';
+
+grant execute on function pgque.register_subconsumer(text, text, text, boolean)        to pgque_reader;
 grant execute on function pgque.unregister_subconsumer(text, text, text, integer)      to pgque_reader;
-grant execute on function pgque.subscribe_subconsumer(text, text, text)                to pgque_reader;
+grant execute on function pgque.subscribe_subconsumer(text, text, text, boolean)       to pgque_reader;
 grant execute on function pgque.unsubscribe_subconsumer(text, text, text, integer)     to pgque_reader;
 grant execute on function pgque.next_batch(text, text, text, interval)                to pgque_reader;
 grant execute on function pgque.next_batch_custom(text, text, text, interval, int4, interval, interval) to pgque_reader;

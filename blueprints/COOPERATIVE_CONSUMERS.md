@@ -71,6 +71,12 @@ The implementation should still be production-minded, but the public contract
 must be explicitly unstable until PgQue has real-world feedback on concurrency,
 stale takeover, and client ergonomics.
 
+For PgQue 0.2, cooperative consumers are experimental but bundled in the default
+SQL install (`sql/pgque.sql` and `sql/pgque-tle.sql`). This makes upgrade and
+client testing straightforward, but docs and function comments must still mark
+the API as experimental and downgrade after creating subconsumers is unsupported
+unless subconsumers are unregistered first.
+
 ## Non-goals
 
 - No client-side fake cooperative mode by manually concatenating names.

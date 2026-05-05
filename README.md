@@ -224,7 +224,7 @@ PgQue mirrors upstream PgQ's split: `pgque_reader` (consume) and `pgque_writer` 
 
 | Role | Purpose | Granted access |
 |---|---|---|
-| `pgque_reader` | Consumers, dashboards, metrics, debugging | Read-only info (`get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, `select` on all tables) **and** the consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) plus the underlying PgQ primitives (`next_batch*`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer*`, `unregister_consumer`). |
+| `pgque_reader` | Consumers, dashboards, metrics, debugging | Read-only info (`get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, `select` on all tables) **and** the consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) plus the underlying PgQ primitives (`next_batch*`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer*`, `unregister_consumer`) and experimental cooperative consumer functions. |
 | `pgque_writer` | Producers | The produce API (`send`, `send_batch`) and the underlying primitive (`insert_event`). Does **not** inherit `pgque_reader` — a producer-only role cannot ack/finish/inspect consumer batches. |
 | `pgque_admin`  | Operators, migrations | Member of both `pgque_reader` and `pgque_writer`, plus full schema/table/sequence access. `uninstall()` is revoked from both `pgque_admin` and PUBLIC (superuser-only — it drops the schema). |
 
@@ -434,7 +434,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | `pg_cron` or external ticking | ✅ |
 | Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable with exact-divisor periods from 1–1000 ticks/sec) | ✅ |
 | System-table rotation / bloat mitigation |  |
-| Subconsumers / coop consumers |  |
+| Cooperative consumers / subconsumers | 🔬 experimental |
 | Queue splitter |  |
 | Queue mover |  |
 | Modern `send`, `receive`, `ack`, `nack` API | ✅ |
