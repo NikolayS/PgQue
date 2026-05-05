@@ -97,5 +97,23 @@
 \echo 'Running: test_config_hardening'
 \i tests/test_config_hardening.sql
 
+\echo 'Running: test_ack_rowcount_contract'
+\i tests/test_ack_rowcount_contract.sql
+
+\echo 'Running: test_ticker_returns_contract'
+\i tests/test_ticker_returns_contract.sql
+
+\echo 'Running: test_redelivery_contract'
+\i tests/test_redelivery_contract.sql
+
+\echo 'Running: test_dlq_edge_cases'
+\i tests/test_dlq_edge_cases.sql
+
+\echo 'Running: test_snapshot_visibility_contract'
+\i tests/test_snapshot_visibility_contract.sql
+
+\echo 'Running: test_e2e_role_split'
+\i tests/test_e2e_role_split.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
