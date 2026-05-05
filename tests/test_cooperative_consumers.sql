@@ -164,6 +164,7 @@ declare
   old_batch bigint;
   new_batch bigint;
   still_active bigint;
+  v_late_nack_err text;
 begin
   select * into old_msg from pgque.receive_coop('coop_stale', 'main_c', 'w1', 10) limit 1;
   old_batch := old_msg.batch_id;
@@ -199,12 +200,26 @@ begin
   assert still_active = new_batch,
     'late ack(old_batch) must leave new owner active';
 
+  v_late_nack_err := null;
   begin
     perform pgque.nack(old_batch, new_msg, interval '1 second', 'late nack');
     raise exception 'expected late nack rejection';
   exception when others then
     if sqlerrm = 'expected late nack rejection' then raise; end if;
+    v_late_nack_err := sqlerrm;
   end;
+  assert v_late_nack_err is not null and v_late_nack_err like 'batch not found:%',
+    format('late nack(old_batch) must raise "batch not found"; got %L', v_late_nack_err);
+
+  -- Late nack must not clobber the new owner's active batch state.
+  select s.sub_batch into still_active
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_stale'
+    and c.co_name = 'main_c.w2';
+  assert still_active = new_batch,
+    format('late nack(old_batch) clobbered new owner sub_batch (%s -> %s)', new_batch, still_active);
 
   assert pgque.ack(new_batch) = 1,
     'new owner batch should remain ackable';
@@ -223,6 +238,7 @@ do $$
 declare
   m pgque.message;
   old_batch bigint;
+  v_late_nack_err text;
 begin
   select * into m from pgque.receive_coop('coop_force', 'main_c', 'w1', 10) limit 1;
   old_batch := m.batch_id;
@@ -240,12 +256,17 @@ begin
     'forced unregister should route active message to retry queue';
   assert pgque.ack(old_batch) = 0,
     'late ack after forced unregister must not affect anything';
+
+  v_late_nack_err := null;
   begin
     perform pgque.nack(old_batch, m, interval '1 second', 'late nack');
     raise exception 'expected late nack after unregister rejection';
   exception when others then
     if sqlerrm = 'expected late nack after unregister rejection' then raise; end if;
+    v_late_nack_err := sqlerrm;
   end;
+  assert v_late_nack_err is not null and v_late_nack_err like 'batch not found:%',
+    format('late nack after forced unregister must raise "batch not found"; got %L', v_late_nack_err);
 end $$;
 
 -- 9: retry/DLQ routing failure during forced unregister leaves state intact.
@@ -370,6 +391,72 @@ begin
     if sqlerrm = 'expected main unregister active sibling rejection' then raise; end if;
   end;
 end $$;
+
+-- 11 (full cycle): nack must make the message redeliverable, not just write
+-- a retry_queue row. retry_after = 0 lets maint_retry_events promote the row
+-- immediately. Each phase runs as its own top-level statement so that
+-- maint_retry_events, ticker, and the second receive_coop see one another's
+-- effects (cf. snapshot visibility contract: same-xact maint+tick+receive
+-- returns 0; committed maint+tick+receive delivers).
+do $$
+begin
+  perform pgque.create_queue('coop_redeliver');
+  perform pgque.register_subconsumer('coop_redeliver', 'main_c', 'w1');
+end $$;
+select pgque.send('coop_redeliver', 't', 'redeliver-me');
+select pgque.force_tick('coop_redeliver');
+select pgque.ticker('coop_redeliver');
+
+-- Stash the first delivery so the redelivery DO block can compare against it.
+create temp table coop_redeliver_first(msg_id bigint, batch_id bigint, retry_count int4);
+
+do $$
+declare
+  m1 pgque.message;
+begin
+  select * into m1 from pgque.receive_coop('coop_redeliver', 'main_c', 'w1', 10) limit 1;
+  assert m1.msg_id is not null,
+    'redelivery test setup: first receive should yield the seeded message';
+  assert coalesce(m1.retry_count, 0) = 0,
+    'first delivery should have retry_count=0';
+
+  perform pgque.nack(m1.batch_id, m1, interval '0 seconds', 'force redelivery');
+  -- Close the now-empty active batch so the next receive_coop allocates fresh.
+  perform pgque.ack(m1.batch_id);
+
+  insert into coop_redeliver_first values (m1.msg_id, m1.batch_id, coalesce(m1.retry_count, 0));
+end $$;
+
+-- Promote the nacked row, advance the tick window (separate xacts).
+do $$
+declare v_promoted int;
+begin
+  v_promoted := pgque.maint_retry_events();
+  assert v_promoted >= 1,
+    format('maint_retry_events should promote the nacked row, got %s', v_promoted);
+end $$;
+select pgque.force_tick('coop_redeliver');
+select pgque.ticker('coop_redeliver');
+
+do $$
+declare
+  m2 pgque.message;
+  first_msg_id bigint;
+  first_retry int4;
+begin
+  select msg_id, retry_count into first_msg_id, first_retry from coop_redeliver_first;
+
+  select * into m2 from pgque.receive_coop('coop_redeliver', 'main_c', 'w1', 10) limit 1;
+  assert m2.msg_id is not null,
+    'nack(retry_after=0) must make the message redeliverable';
+  assert m2.msg_id = first_msg_id,
+    format('redelivered msg_id should match original (got %s, expected %s)', m2.msg_id, first_msg_id);
+  assert coalesce(m2.retry_count, 0) > first_retry,
+    format('redelivered message should have incremented retry_count (got %s, was %s)', m2.retry_count, first_retry);
+
+  perform pgque.ack(m2.batch_id);
+end $$;
+drop table coop_redeliver_first;
 
 do $$ begin
   raise notice 'PASS: cooperative consumer SQL-core semantics';

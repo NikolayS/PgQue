@@ -219,6 +219,50 @@ begin
     format('forced unregister DLQ row was lost to consumer-row cascade; expected 1, got %s', v_dlq_count);
 end $$;
 
+-- finish_batch: defensive guard against running on a coop_main row with a
+-- non-null sub_batch (a state that should never arise in normal operation).
+-- Force the corrupt state via direct UPDATE and verify finish_batch raises.
+do $$
+declare
+  v_main_sub_id int4;
+  v_main_co_id int4;
+  v_queue_id int4;
+  v_corrupt_batch bigint;
+  v_caught text := null;
+begin
+  perform pgque.create_queue('coop_finish_guard');
+  perform pgque.register_subconsumer('coop_finish_guard', 'finish_main', 'finish_w1');
+
+  select s.sub_id, s.sub_consumer, s.sub_queue
+  into v_main_sub_id, v_main_co_id, v_queue_id
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_finish_guard'
+    and c.co_name = 'finish_main';
+  assert v_main_sub_id is not null, 'test setup must locate coop_main row';
+
+  v_corrupt_batch := nextval('pgque.batch_id_seq');
+  update pgque.subscription
+  set sub_batch = v_corrupt_batch
+  where sub_queue = v_queue_id and sub_consumer = v_main_co_id;
+
+  begin
+    perform pgque.finish_batch(v_corrupt_batch);
+    raise exception 'expected coop_main finish guard to fire';
+  exception when others then
+    if sqlerrm = 'expected coop_main finish guard to fire' then raise; end if;
+    v_caught := sqlerrm;
+  end;
+  assert v_caught is not null and v_caught like 'cannot finish cooperative main consumer batch%',
+    format('finish_batch should reject a coop_main batch; got %L', v_caught);
+
+  -- Restore so unregister_subconsumer can clean up.
+  update pgque.subscription
+  set sub_batch = null
+  where sub_queue = v_queue_id and sub_consumer = v_main_co_id;
+end $$;
+
 do $$
 begin
   raise notice 'PASS: cooperative ultrareview regressions';
