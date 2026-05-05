@@ -24,9 +24,9 @@ begin
   raise notice 'US-5: inserted 10,000 events';
 end $$;
 
--- Tick (prime_tick bypasses throttle)
+-- Tick (force_next_tick bypasses throttle)
 do $$ begin
-  perform pgque.prime_tick('us5_ingest');
+  perform pgque.force_next_tick('us5_ingest');
   perform pgque.ticker();
 end $$;
 

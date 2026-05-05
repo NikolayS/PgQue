@@ -68,7 +68,7 @@ PgQue is built around **snapshot-based batching**, not row-by-row claiming. That
 
 The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. In the default configuration, end-to-end delivery typically lands within ~1–2 seconds: up to 1 s for the next tick, plus the consumer's poll interval. Per-call latency (the `send` / `receive` / `ack` functions themselves) stays in the microsecond range.
 
-Ways to reduce delivery latency: tune tick frequency and queue thresholds; use `prime_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-second delivery without cutting the tick interval.
+Ways to reduce delivery latency: tune tick frequency and queue thresholds; use `force_next_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-second delivery without cutting the tick interval.
 
 If your top priority is single-digit-millisecond dispatch, PgQue is the wrong tool. If your priority is **stability under load without bloat**, that is where PgQue fits.
 
@@ -226,7 +226,7 @@ create user metrics with password '...';              -- replace with a real pas
 grant pgque_reader to metrics;
 ```
 
-DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `maint_retry_events`, `ticker`, `prime_tick`, `set_queue_config`) are not granted to either `pgque_reader` or `pgque_writer`. The schema-wide blanket `revoke execute … from public` strips PUBLIC, and `pgque_admin` is the only role that retains `execute` on these helpers — perform them as an admin / migration role.
+DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `maint_retry_events`, `ticker`, `force_next_tick`, `set_queue_config`) are not granted to either `pgque_reader` or `pgque_writer`. The schema-wide blanket `revoke execute … from public` strips PUBLIC, and `pgque_admin` is the only role that retains `execute` on these helpers — perform them as an admin / migration role.
 
 **Roles are global, not per-queue.** A `pgque_reader` granted to an app can ack any consumer's batch and read any other consumer's active batch payloads. Do not grant `pgque_reader` to mutually untrusted applications sharing one database unless you add your own schema-level or database-level isolation. See [docs/reference.md — Roles scope](docs/reference.md#roles-are-global-not-per-queue) for details and recommended isolation patterns.
 
@@ -256,10 +256,10 @@ select pgque.subscribe('orders', 'processor');
 select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
 
 -- tx 3: advance the queue if you are not using pg_cron
--- prime_tick bumps the event-seq threshold; ticker() then inserts the tick.
+-- force_next_tick bumps the event-seq threshold; ticker() then inserts the tick.
 -- Each select below is its own implicit transaction in psql autocommit —
 -- do NOT wrap these in begin/commit (the tick must see the send committed).
-select pgque.prime_tick('orders');
+select pgque.force_next_tick('orders');
 select pgque.ticker();
 
 -- tx 4: receive — every returned row carries the same batch_id
@@ -274,7 +274,7 @@ select * from pgque.receive('orders', 'processor', 100);
 select pgque.ack(1);
 ```
 
-Send, tick, and receive **must** run in separate transactions — that's a hard requirement of PgQ's snapshot-based design, not a recommendation. A `tick` records a snapshot of committed transaction IDs; a `send` in the same xact is still in-progress at that moment and gets excluded from the next batch's visibility window, so the event never surfaces. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `prime_tick()` is mainly for demos, tests, and manual operation. In application code, capture `batch_id` from any returned row and pass it to `ack`.
+Send, tick, and receive **must** run in separate transactions — that's a hard requirement of PgQ's snapshot-based design, not a recommendation. A `tick` records a snapshot of committed transaction IDs; a `send` in the same xact is still in-progress at that moment and gets excluded from the next batch's visibility window, so the event never surfaces. In normal operation, `pg_cron` or an external scheduler drives `pgque.ticker()`; `force_next_tick()` is mainly for demos, tests, and manual operation. In application code, capture `batch_id` from any returned row and pass it to `ack`.
 
 The scriptable psql idiom (replaces tx 4 + tx 5 above):
 
@@ -371,7 +371,7 @@ select pgque.send('orders', '{"order_id": 42}'::jsonb);
 
 -- without pg_cron, advance the queue manually (omit if a ticker is running).
 -- Run as separate transactions — do not wrap in begin/commit.
-select pgque.prime_tick('orders');
+select pgque.force_next_tick('orders');
 select pgque.ticker();
 
 -- receive returns rows; every row carries the same batch_id

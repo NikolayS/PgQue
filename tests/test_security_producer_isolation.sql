@@ -54,7 +54,7 @@ select pgque.subscribe('q_iso', 'victim');
 
 -- Producer publishes one event and ticks the queue so a batch is available.
 select pgque.send('q_iso', 'evt', '{"k":1}'::jsonb);
-select pgque.force_tick('q_iso');
+select pgque.force_next_tick('q_iso');
 select pgque.ticker('q_iso');
 
 -- Victim opens a batch (under pgque_reader privileges).

@@ -74,7 +74,7 @@ end $$;
 
 do $$
 begin
-  perform pgque.force_tick('test_recv_partial');
+  perform pgque.force_next_tick('test_recv_partial');
   perform pgque.ticker();
 end $$;
 
@@ -137,7 +137,7 @@ end $$;
 
 do $$
 begin
-  perform pgque.force_tick('test_recv_text');
+  perform pgque.force_next_tick('test_recv_text');
   perform pgque.ticker();
 end $$;
 

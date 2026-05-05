@@ -35,8 +35,8 @@ end $$;
 
 -- Tick to create proper state
 do $$ begin
-  perform pgque.prime_tick('us10_orders');
-  perform pgque.prime_tick('us10_logs');
+  perform pgque.force_next_tick('us10_orders');
+  perform pgque.force_next_tick('us10_logs');
   perform pgque.ticker();
 end $$;
 
@@ -164,7 +164,7 @@ end $$;
 
 -- ticker still works
 do $$ begin
-  perform pgque.prime_tick('us10_orders');
+  perform pgque.force_next_tick('us10_orders');
   perform pgque.ticker();
   raise notice 'PASS: US-10 ticker() works after reinstall';
 end $$;

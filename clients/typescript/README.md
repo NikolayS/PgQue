@@ -83,14 +83,14 @@ try {
 | `client.unsubscribe(queue, consumer)` | Wraps `pgque.unregister_consumer`. |
 | `client.ticker(queue)` | Per-queue ticker; returns the new tick id (`bigint`) or `null` when no tick was needed. Wraps `pgque.ticker(queue text)`. |
 | `client.tickerAll()` | Global ticker across all eligible queues; returns count of queues ticked (`number`). Wraps `pgque.ticker()`. |
-| `client.forceTick(queue)` | Bump event-seq threshold so the next `ticker(queue)` produces a tick; returns the last tick id (`bigint`) or `null` on a brand-new queue. Wraps `pgque.force_tick(queue text)`. |
+| `client.forceNextTick(queue)` | Force the next `ticker(queue)` call to produce a tick; returns the last tick id (`bigint`) or `null` on a brand-new queue. Wraps `pgque.force_next_tick(queue text)`. |
 | `client.newConsumer(queue, name, opts?)` | High-level poll loop. |
 | `consumer.handle(eventType, fn)` | Register a handler. |
 | `consumer.start(signal?)` | Run; resolves when `AbortSignal` aborts. |
 | `client.close()` | Drain the pool. |
 
 `Message.msgId`, `Message.batchId`, and the return values of `send()`,
-`sendBatch()`, `ticker(queue)`, and `forceTick(queue)` are JS `bigint` to
+`sendBatch()`, `ticker(queue)`, and `forceNextTick(queue)` are JS `bigint` to
 match PostgreSQL `bigint` losslessly.
 
 ## Errors

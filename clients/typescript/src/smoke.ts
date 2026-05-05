@@ -33,10 +33,10 @@ async function run(): Promise<void> {
       throw new Error(`send returned unexpected id: ${id}`);
     }
 
-    // forceTick bumps the event-seq threshold; ticker actually creates the tick
+    // forceNextTick bumps the event-seq threshold; ticker actually creates the tick
     // that makes newly sent events visible to receive(). Both calls are required
     // in manual/demo mode.
-    await client.forceTick(queue);
+    await client.forceNextTick(queue);
     await client.ticker(queue);
 
     const msgs = await client.receive(queue, consumer, 1);

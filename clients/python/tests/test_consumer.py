@@ -60,7 +60,7 @@ def test_consumer_dispatches_by_event_type(dsn, conn, setup_queue):
     client.send(queue, {"i": 1}, type="evt.a")
     client.send(queue, {"i": 2}, type="evt.b")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -90,7 +90,7 @@ def test_consumer_default_handler_catches_unknown(dsn, conn, setup_queue):
     client = pgque.PgqueClient(conn)
     client.send(queue, {"x": 99}, type="never.registered.type")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -115,7 +115,7 @@ def test_consumer_nacks_on_handler_error(dsn, conn, setup_queue):
     client = pgque.PgqueClient(conn)
     client.send(queue, {"i": 1}, type="evt.fail")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -174,7 +174,7 @@ def test_consumer_nacks_unhandled_event_type(dsn, conn, setup_queue):
     client = pgque.PgqueClient(conn)
     msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -196,7 +196,7 @@ def test_consumer_nacks_unhandled_event_type(dsn, conn, setup_queue):
     )
 
     # The batch advanced: a fresh receive must not return the same msg_id.
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     follow_up = client.receive(queue, consumer_name, max_messages=10)
@@ -217,7 +217,7 @@ def test_consumer_acks_unhandled_event_type_when_opt_in(
     client = pgque.PgqueClient(conn)
     msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -252,7 +252,7 @@ def test_consumer_acks_unhandled_event_type_when_opt_in(
     )
 
     # The batch advanced: a fresh receive must not return the same msg_id.
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     follow_up = client.receive(queue, consumer_name, max_messages=10)
@@ -299,7 +299,7 @@ def test_consumer_does_not_ack_when_unknown_type_nack_fails(
     client = pgque.PgqueClient(conn)
     msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -357,7 +357,7 @@ def test_consumer_does_not_ack_when_handler_error_nack_fails(
     client = pgque.PgqueClient(conn)
     msg_id = client.send(queue, {"i": 1}, type="evt.fail")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -461,7 +461,7 @@ def test_consumer_wakes_on_pg_notify_before_poll_interval(
     t_send = time.monotonic()
     client.send(queue, {"i": 1}, type="evt.wake")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     conn.execute(f"notify pgque_{queue}, 'go'")

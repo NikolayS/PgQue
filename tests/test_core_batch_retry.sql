@@ -22,7 +22,7 @@ end $$;
 -- Step 3: tick so events are visible to consumers
 do $$
 begin
-  perform pgque.force_tick('test_batch_retry');
+  perform pgque.force_next_tick('test_batch_retry');
   perform pgque.ticker();
 end $$;
 
@@ -89,7 +89,7 @@ end $$;
 -- Step 7: re-tick so reinserted events are visible
 do $$
 begin
-  perform pgque.force_tick('test_batch_retry');
+  perform pgque.force_next_tick('test_batch_retry');
   perform pgque.ticker();
 end $$;
 

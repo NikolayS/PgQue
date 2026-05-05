@@ -88,8 +88,8 @@
 \echo 'Running: test_receive_empty_batch'
 \i tests/test_receive_empty_batch.sql
 
-\echo 'Running: test_force_tick_alias'
-\i tests/test_force_tick_alias.sql
+\echo 'Running: test_force_next_tick_alias'
+\i tests/test_force_next_tick_alias.sql
 
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

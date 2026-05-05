@@ -148,6 +148,26 @@ func (c *Client) Ack(ctx context.Context, batchID int64) (int64, error) {
 	return n, nil
 }
 
+// ForceNextTick bumps the event-seq threshold for queue so the next
+// pgque.ticker(queue) call produces a tick. It wraps pgque.force_next_tick.
+//
+// The function does not insert a tick itself; call pgque.ticker afterwards
+// (via Pool().Exec or a scheduler). It returns the current last tick id, or nil
+// when SQL returns NULL for a brand-new / skipped queue.
+func (c *Client) ForceNextTick(ctx context.Context, queue string) (*int64, error) {
+	var tickID *int64
+	err := c.pool.QueryRow(ctx, "SELECT pgque.force_next_tick($1)", queue).Scan(&tickID)
+	if err != nil {
+		return nil, wrapSQLError("force next tick", err)
+	}
+	return tickID, nil
+}
+
+// ForceTick is a deprecated compatibility alias for ForceNextTick.
+func (c *Client) ForceTick(ctx context.Context, queue string) (*int64, error) {
+	return c.ForceNextTick(ctx, queue)
+}
+
 // Nack negatively acknowledges a single message, routing it to retry or DLQ.
 // pgque.message has 10 fields: msg_id, batch_id, type, payload, retry_count,
 // created_at, extra1, extra2, extra3, extra4 — placeholders $2..$11.

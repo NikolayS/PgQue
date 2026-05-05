@@ -1,7 +1,7 @@
 // pgque -- TypeScript client for PgQue
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 //
-// Tests for ticker(queue), tickerAll(), and forceTick(queue) return values.
+// Tests for ticker(queue), tickerAll(), and forceNextTick(queue) return values.
 // These tests enforce issue #151: the TS client must surface SQL return values
 // rather than discarding them as void.
 
@@ -15,7 +15,7 @@ const skipIfNoDb = TEST_DSN ? it : it.skip;
 // Unit tests — stub pool.query so no DB needed
 // ---------------------------------------------------------------------------
 
-describe('ticker/forceTick unit tests (stubbed pool)', () => {
+describe('ticker/forceNextTick unit tests (stubbed pool)', () => {
   it('ticker(queue) returns bigint | null from canned row', async () => {
     const { Client } = await import('../src/client.js');
     const fakePool = {
@@ -50,26 +50,26 @@ describe('ticker/forceTick unit tests (stubbed pool)', () => {
     expect(result).toBe(3);
   });
 
-  it('forceTick(queue) returns bigint from canned row', async () => {
+  it('forceNextTick(queue) returns bigint from canned row', async () => {
     const { Client } = await import('../src/client.js');
     const fakePool = {
-      query: vi.fn().mockResolvedValue({ rows: [{ force_tick: BigInt(7) }] }),
+      query: vi.fn().mockResolvedValue({ rows: [{ force_next_tick: BigInt(7) }] }),
       end: vi.fn(),
     } as any;
     const client = new Client(fakePool);
-    const result = await client.forceTick('myqueue');
+    const result = await client.forceNextTick('myqueue');
     expect(typeof result).toBe('bigint');
     expect(result).toBe(BigInt(7));
   });
 
-  it('forceTick(queue) returns null when SQL returns null (no ticks yet)', async () => {
+  it('forceNextTick(queue) returns null when SQL returns null (no ticks yet)', async () => {
     const { Client } = await import('../src/client.js');
     const fakePool = {
-      query: vi.fn().mockResolvedValue({ rows: [{ force_tick: null }] }),
+      query: vi.fn().mockResolvedValue({ rows: [{ force_next_tick: null }] }),
       end: vi.fn(),
     } as any;
     const client = new Client(fakePool);
-    const result = await client.forceTick('myqueue');
+    const result = await client.forceNextTick('myqueue');
     expect(result).toBeNull();
   });
 });
@@ -78,7 +78,7 @@ describe('ticker/forceTick unit tests (stubbed pool)', () => {
 // Integration tests — gated on PGQUE_TEST_DSN
 // ---------------------------------------------------------------------------
 
-describe('ticker/forceTick integration (requires PGQUE_TEST_DSN)', () => {
+describe('ticker/forceNextTick integration (requires PGQUE_TEST_DSN)', () => {
   let env: TestEnv;
 
   beforeEach(async () => {
@@ -91,15 +91,15 @@ describe('ticker/forceTick integration (requires PGQUE_TEST_DSN)', () => {
     await teardownTestQueue(env);
   });
 
-  skipIfNoDb('forceTick(queue) returns a bigint or null', async () => {
-    const result = await env.client.forceTick(env.queue);
+  skipIfNoDb('forceNextTick(queue) returns a bigint or null', async () => {
+    const result = await env.client.forceNextTick(env.queue);
     // Before any tick, result may be null (no ticks exist yet) or bigint.
     expect(result === null || typeof result === 'bigint').toBe(true);
   });
 
-  skipIfNoDb('ticker(queue) after forceTick returns a non-null bigint tick id', async () => {
+  skipIfNoDb('ticker(queue) after forceNextTick returns a non-null bigint tick id', async () => {
     // Force threshold so ticker will fire.
-    await env.client.forceTick(env.queue);
+    await env.client.forceNextTick(env.queue);
     const tickId = await env.client.ticker(env.queue);
     expect(typeof tickId).toBe('bigint');
     expect(tickId).toBeGreaterThan(0n);
@@ -107,7 +107,7 @@ describe('ticker/forceTick integration (requires PGQUE_TEST_DSN)', () => {
 
   skipIfNoDb('ticker(queue) with no new events returns null', async () => {
     // Advance once so a tick exists.
-    await env.client.forceTick(env.queue);
+    await env.client.forceNextTick(env.queue);
     await env.client.ticker(env.queue);
     // Immediately again with no new events: ticker returns NULL (no tick needed).
     const second = await env.client.ticker(env.queue);
@@ -116,14 +116,14 @@ describe('ticker/forceTick integration (requires PGQUE_TEST_DSN)', () => {
 
   skipIfNoDb('tickerAll() returns a number >= 1', async () => {
     // At least one queue (env.queue) exists and is eligible.
-    await env.client.forceTick(env.queue);
+    await env.client.forceNextTick(env.queue);
     const count = await env.client.tickerAll();
     expect(typeof count).toBe('number');
     expect(count).toBeGreaterThanOrEqual(1);
   });
 
-  skipIfNoDb('forceTick then ticker returns new tick id, second ticker returns null', async () => {
-    await env.client.forceTick(env.queue);
+  skipIfNoDb('forceNextTick then ticker returns new tick id, second ticker returns null', async () => {
+    await env.client.forceNextTick(env.queue);
     const tick1 = await env.client.ticker(env.queue);
     expect(typeof tick1).toBe('bigint');
 

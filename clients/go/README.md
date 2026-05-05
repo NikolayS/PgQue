@@ -2,7 +2,8 @@
 
 Go client for [PgQue](https://github.com/NikolayS/pgque) — the PgQ-based
 universal PostgreSQL queue. A thin, idiomatic wrapper over the
-`pgque-api` SQL functions: `send`, `receive`, `ack`, `nack`.
+`pgque-api` SQL functions: `send`, `receive`, `ack`, `nack`,
+`force_next_tick`.
 
 ## Install
 
@@ -91,6 +92,22 @@ func main() {
 | `WithPollInterval(d time.Duration)`     | `30s`          | Idle backoff between polls when the queue is empty.                   |
 | `WithMaxMessages(n int)`                | `math.MaxInt32` | Per-Receive limit. The default requests the whole PgQ batch before `Ack`. If you lower it below the real batch size, `Ack` still finishes the batch and unreturned rows are skipped. |
 | `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` logs and skips messages with no registered handler.      |
+
+## Manual ticking
+
+For tests, demos, or manual operation without `pg_cron`, use
+`Client.ForceNextTick(ctx, queue)` to force the **next** `pgque.ticker()` call
+to materialize a tick. It does not insert the tick itself:
+
+```go
+_, err := client.ForceNextTick(ctx, "orders")
+if err != nil {
+    log.Fatal(err)
+}
+_, err = client.Pool().Exec(ctx, "select pgque.ticker()")
+```
+
+`Client.ForceTick(ctx, queue)` remains as a deprecated compatibility alias.
 
 ## Nack options
 

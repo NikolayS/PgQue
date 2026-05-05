@@ -54,9 +54,9 @@ do $$ begin
 end $$;
 
 do $$ begin
-  perform pgque.prime_tick('us8_managed');
+  perform pgque.force_next_tick('us8_managed');
   perform pgque.ticker();
-  perform pgque.prime_tick('us8_managed');
+  perform pgque.force_next_tick('us8_managed');
   perform pgque.ticker();
 end $$;
 

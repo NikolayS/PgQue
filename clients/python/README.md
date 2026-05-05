@@ -2,8 +2,8 @@
 
 Python client for [PgQue](https://github.com/NikolayS/pgque) — the PgQ-based
 universal PostgreSQL queue. Thin wrapper over `pgque-api` SQL functions:
-`send`, `receive`, `ack`, `nack`, plus a polling `Consumer` with
-`LISTEN`/`NOTIFY` wakeup.
+`send`, `receive`, `ack`, `nack`, `force_next_tick`, plus a polling
+`Consumer` with `LISTEN`/`NOTIFY` wakeup.
 
 ## Install
 
@@ -94,6 +94,20 @@ consumer = pgque.Consumer(
     unknown_handler="ack",  # log WARNING and ack; do not nack
 )
 ```
+
+## Manual ticking
+
+For tests, demos, or manual operation without `pg_cron`, use
+`client.force_next_tick(queue)` to force the **next** `pgque.ticker()` call to
+materialize a tick. It does not insert the tick itself:
+
+```python
+client.force_next_tick("orders")
+client.conn.execute("select pgque.ticker()")
+client.conn.commit()
+```
+
+`client.force_tick(queue)` remains as a deprecated compatibility alias.
 
 ## Tests
 

@@ -83,8 +83,8 @@ func setupFreshQueue(t *testing.T, client *pgque.Client) (queue, consumer string
 func tick(t *testing.T, client *pgque.Client, queue string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := client.Pool().Exec(ctx, "select pgque.force_tick($1)", queue); err != nil {
-		t.Fatal("force_tick:", err)
+	if _, err := client.ForceNextTick(ctx, queue); err != nil {
+		t.Fatal("force_next_tick:", err)
 	}
 	if _, err := client.Pool().Exec(ctx, "select pgque.ticker($1)", queue); err != nil {
 		t.Fatal("ticker:", err)

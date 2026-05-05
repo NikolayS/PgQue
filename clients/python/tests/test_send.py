@@ -51,7 +51,7 @@ def test_send_unicode_payload(conn, setup_queue):
     payload = {"text": "héllo wörld 🎉 — ünicode тест"}
     client.send(queue, payload)
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)
@@ -69,7 +69,7 @@ def test_send_large_payload(conn, setup_queue):
     big = {"data": "x" * 100_000}
     client.send(queue, big)
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)
@@ -147,7 +147,7 @@ def test_jsonb_payload_round_trip(conn, setup_queue, payload, expected):
     client = pgque.PgqueClient(conn)
     client.send(queue, payload)
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)
@@ -169,7 +169,7 @@ def test_send_batch_mixed_payloads_preserve_order(conn, setup_queue):
     expected = [{"a": 1}, None, 42]
     ids = client.send_batch(queue, "batch.mixed", payloads)
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -194,7 +194,7 @@ def test_send_batch_none_payload_produces_json_null(conn, setup_queue):
     client = pgque.PgqueClient(conn)
     client.send_batch(queue, "default", [None])
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)

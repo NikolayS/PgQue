@@ -24,7 +24,7 @@ end $$;
 -- Fire a tick that captures zero events (empty tick window).
 do $$
 begin
-  perform pgque.force_tick('test_empty_batch');
+  perform pgque.force_next_tick('test_empty_batch');
   perform pgque.ticker();
 end $$;
 
@@ -71,7 +71,7 @@ end $$;
 
 do $$
 begin
-  perform pgque.force_tick('test_empty_batch');
+  perform pgque.force_next_tick('test_empty_batch');
   perform pgque.ticker();
 end $$;
 

@@ -32,7 +32,7 @@ end $$;
 
 -- Tick
 do $$ begin
-  perform pgque.prime_tick('us7_payments');
+  perform pgque.force_next_tick('us7_payments');
   perform pgque.ticker();
 end $$;
 
@@ -118,7 +118,7 @@ end $$;
 
 -- Tick
 do $$ begin
-  perform pgque.prime_tick('us7_payments');
+  perform pgque.force_next_tick('us7_payments');
   perform pgque.ticker();
 end $$;
 
@@ -180,7 +180,7 @@ do $$ begin
 end $$;
 
 do $$ begin
-  perform pgque.prime_tick('us7_payments');
+  perform pgque.force_next_tick('us7_payments');
   perform pgque.ticker();
 end $$;
 

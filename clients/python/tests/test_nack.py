@@ -10,7 +10,7 @@ import pgque
 def _enqueue_and_receive(client, queue, consumer, payload):
     client.send(queue, payload)
     client.conn.commit()
-    client.conn.execute("select pgque.force_tick(%s)", (queue,))
+    client.conn.execute("select pgque.force_next_tick(%s)", (queue,))
     client.conn.execute("select pgque.ticker(%s)", (queue,))
     client.conn.commit()
     msgs = client.receive(queue, consumer, max_messages=10)

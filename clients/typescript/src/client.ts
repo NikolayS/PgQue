@@ -369,28 +369,36 @@ export class Client {
   }
 
   /**
-   * Bump the event-seq threshold for `queue` so the next `ticker(queue)` call
-   * produces a tick. Wraps `pgque.force_tick(queue text)`.
+   * Force the next `ticker(queue)` call to produce a tick by bumping the
+   * event-seq threshold for `queue`. Wraps `pgque.force_next_tick(queue text)`.
    *
    * Returns the current last tick id (`bigint`) for the queue, or `null` if
    * the queue has no ticks yet (brand-new queue) or if the queue is paused /
    * has an external ticker (the SQL function silently skips those cases).
    */
-  async forceTick(queue: string): Promise<bigint | null> {
+  async forceNextTick(queue: string): Promise<bigint | null> {
     try {
-      const result = await this.pool.query<{ force_tick: bigint | null }>(
-        'select pgque.force_tick($1) as force_tick',
+      const result = await this.pool.query<{ force_next_tick: bigint | null }>(
+        'select pgque.force_next_tick($1) as force_next_tick',
         [queue],
       );
       const row = result.rows[0];
       if (!row) {
-        throw new PgqueSqlError('force_tick', { cause: new Error('no row returned') });
+        throw new PgqueSqlError('forceNextTick', { cause: new Error('no row returned') });
       }
-      return row.force_tick !== null ? BigInt(row.force_tick) : null;
+      return row.force_next_tick !== null ? BigInt(row.force_next_tick) : null;
     } catch (err) {
       if (err instanceof PgqueError) throw err;
-      throw mapPgError('force_tick', err, { queue });
+      throw mapPgError('forceNextTick', err, { queue });
     }
+  }
+
+  /**
+   * @deprecated Use {@link forceNextTick}. Retained for compatibility with
+   * the historical SQL name `pgque.force_tick(queue text)`.
+   */
+  async forceTick(queue: string): Promise<bigint | null> {
+    return this.forceNextTick(queue);
   }
 }
 

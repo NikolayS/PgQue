@@ -248,6 +248,31 @@ class PgqueClient:
             raise _wrap_sql_error(e) from e
         return row[0]
 
+    def force_next_tick(self, queue: str) -> Optional[int]:
+        """Force the next ``pgque.ticker(queue)`` call to insert a tick.
+
+        Maps to ``pgque.force_next_tick(queue)``. The SQL function bumps the
+        queue's event sequence so the next ticker pass skips the normal
+        ``ticker_max_count`` / ``ticker_max_lag`` thresholds. It does **not**
+        insert the tick itself; call ``pgque.ticker`` afterwards (via raw SQL or
+        a scheduler).
+
+        Returns:
+            The current last tick ID, or ``None`` for a brand-new / skipped
+            queue, matching the SQL function.
+        """
+        try:
+            row = self.conn.execute(
+                "select pgque.force_next_tick(%s)", (queue,)
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
+
+    def force_tick(self, queue: str) -> Optional[int]:
+        """Deprecated compatibility alias for ``force_next_tick``."""
+        return self.force_next_tick(queue)
+
     def nack(
         self,
         batch_id: int,

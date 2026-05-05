@@ -12,8 +12,8 @@
 --
 -- Flow:
 --   1. Create queue with max_retries=2, send event, ticker, receive
---   2. Cycle 1: nack -> ack -> maint_retry_events -> prime_tick+ticker -> receive (retry_count=1)
---   3. Cycle 2: nack -> ack -> maint_retry_events -> prime_tick+ticker -> receive (retry_count=2, >= max_retries)
+--   2. Cycle 1: nack -> ack -> maint_retry_events -> force_next_tick+ticker -> receive (retry_count=1)
+--   3. Cycle 2: nack -> ack -> maint_retry_events -> force_next_tick+ticker -> receive (retry_count=2, >= max_retries)
 --   4. Cycle 3: nack -> event goes to DLQ -> ack
 --   5. Verify: event in dead_letter, dlq_inspect shows it
 --   6. dlq_replay -> ticker -> receive (event is back)
@@ -34,9 +34,9 @@ do $$ begin
   perform pgque.send('us3_jobs', 'job.process', '{"task":"test"}'::jsonb);
 end $$;
 
--- Ticker (prime_tick bypasses throttle)
+-- Ticker (force_next_tick bypasses throttle)
 do $$ begin
-  perform pgque.prime_tick('us3_jobs');
+  perform pgque.force_next_tick('us3_jobs');
   perform pgque.ticker();
 end $$;
 
@@ -90,9 +90,9 @@ do $$ begin
   perform pgque.maint_retry_events();
 end $$;
 
--- prime_tick + ticker: create a new tick covering the re-inserted event
+-- force_next_tick + ticker: create a new tick covering the re-inserted event
 do $$ begin
-  perform pgque.prime_tick('us3_jobs');
+  perform pgque.force_next_tick('us3_jobs');
   perform pgque.ticker();
 end $$;
 
@@ -142,9 +142,9 @@ do $$ begin
   perform pgque.maint_retry_events();
 end $$;
 
--- prime_tick + ticker
+-- force_next_tick + ticker
 do $$ begin
-  perform pgque.prime_tick('us3_jobs');
+  perform pgque.force_next_tick('us3_jobs');
   perform pgque.ticker();
 end $$;
 
@@ -240,9 +240,9 @@ begin
   raise notice 'PASS: US-3 dlq_replay re-inserted event';
 end $$;
 
--- Ticker after replay (prime_tick bypasses throttle)
+-- Ticker after replay (force_next_tick bypasses throttle)
 do $$ begin
-  perform pgque.prime_tick('us3_jobs');
+  perform pgque.force_next_tick('us3_jobs');
   perform pgque.ticker();
 end $$;
 

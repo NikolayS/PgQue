@@ -16,9 +16,9 @@ do $$ begin
   perform pgque.send('us1_orders', '{"id":1}'::jsonb);
 end $$;
 
--- Tick (prime_tick bypasses throttle; separate transaction for snapshot visibility)
+-- Tick (force_next_tick bypasses throttle; separate transaction for snapshot visibility)
 do $$ begin
-  perform pgque.prime_tick('us1_orders');
+  perform pgque.force_next_tick('us1_orders');
   perform pgque.ticker();
 end $$;
 

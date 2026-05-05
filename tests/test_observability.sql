@@ -19,7 +19,7 @@ do $$ begin
 end $$;
 
 do $$ begin
-  perform pgque.force_tick('obs_queue');
+  perform pgque.force_next_tick('obs_queue');
   perform pgque.ticker();
 end $$;
 

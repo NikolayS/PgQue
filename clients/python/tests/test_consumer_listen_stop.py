@@ -80,7 +80,7 @@ def test_notify_wakes_consumer_before_poll_interval(dsn, conn, setup_queue):
         #   1. send commits the event row only -- NO NOTIFY fires
         #      (pgque has no insert trigger; the only pg_notify call
         #      lives inside pgque.ticker(queue), see sql/pgque.sql).
-        #   2. force_tick + ticker commits the tick row + pg_notify
+        #   2. force_next_tick + ticker commits the tick row + pg_notify
         #      atomically. This commit both establishes batch
         #      visibility (PgQ requires the tick to be in a separate
         #      transaction from the events; events in the same xact
@@ -94,7 +94,7 @@ def test_notify_wakes_consumer_before_poll_interval(dsn, conn, setup_queue):
             client = pgque.PgqueClient(producer)
             client.send(queue, {"v": 1}, type="evt.wake")
             producer.commit()
-            producer.execute("select pgque.force_tick(%s)", (queue,))
+            producer.execute("select pgque.force_next_tick(%s)", (queue,))
             producer.execute("select pgque.ticker(%s)", (queue,))
             producer.commit()
 

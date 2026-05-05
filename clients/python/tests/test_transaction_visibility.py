@@ -4,7 +4,7 @@
 
 PgQ uses snapshot isolation: events inserted in transaction T are only
 visible to a batch whose tick was taken *after* T committed.  Collapsing
-send + force_tick + receive into one transaction (no intervening commit)
+send + force_next_tick + receive into one transaction (no intervening commit)
 violates this contract -- receive returns 0 rows.
 
 These tests document and enforce that contract so that future authors
@@ -22,12 +22,12 @@ import pgque
 # ---------------------------------------------------------------------------
 
 def test_collapsed_transaction_returns_no_messages(conn, setup_queue):
-    """send → force_tick → receive in ONE transaction must return 0 rows.
+    """send → force_next_tick → receive in ONE transaction must return 0 rows.
 
-    PgQ snapshot isolation: the tick's snapshot is taken at force_tick time.
+    PgQ snapshot isolation: the tick's snapshot is taken at force_next_tick time.
     Events in the *same* transaction are not yet committed at that point, so
     they are invisible to the batch.  A missing ``conn.commit()`` between
-    send and force_tick is the canonical mistake this test guards against.
+    send and force_next_tick is the canonical mistake this test guards against.
 
     If this test starts passing with len > 0, something has changed in the
     PgQ snapshot mechanism and the two-commit ordering assumption is broken.
@@ -37,7 +37,7 @@ def test_collapsed_transaction_returns_no_messages(conn, setup_queue):
 
     # All three operations in the same transaction -- NO commit in between.
     client.send(queue, {"x": 1}, type="collapsed.test")
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     # Deliberately NO conn.commit() here.
     msgs = client.receive(queue, consumer, max_messages=10)
@@ -45,7 +45,7 @@ def test_collapsed_transaction_returns_no_messages(conn, setup_queue):
     assert len(msgs) == 0, (
         "PgQ visibility violation: send/tick/receive in one transaction "
         f"returned {len(msgs)} message(s); expected 0. "
-        "Add conn.commit() between send and force_tick."
+        "Add conn.commit() between send and force_next_tick."
     )
 
     # Rollback so setup_queue teardown sees a clean state.
@@ -84,7 +84,7 @@ def test_unhandled_event_nack_assertion_catches_stale_cursor(
     client = pgque.PgqueClient(conn)
     msg_id = client.send(queue, {"x": 1}, type="totally.unregistered.type")
     conn.commit()
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
 
@@ -106,7 +106,7 @@ def test_unhandled_event_nack_assertion_catches_stale_cursor(
 
     # Because _poll_once was a no-op, the cursor did NOT advance.
     # A fresh receive must still return the original msg_id.
-    conn.execute("select pgque.force_tick(%s)", (queue,))
+    conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     follow_up = client.receive(queue, consumer_name, max_messages=10)

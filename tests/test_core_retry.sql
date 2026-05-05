@@ -44,11 +44,11 @@ begin
 end $$;
 
 -- Step 6: force a tick after the re-insert.
--- force_tick bumps the event sequence so the next ticker() call will
+-- force_next_tick bumps the event sequence so the next ticker() call will
 -- definitely create a tick (bypassing idle period optimization).
 do $$
 begin
-  perform pgque.force_tick('test_retry');
+  perform pgque.force_next_tick('test_retry');
   perform pgque.ticker();
 end $$;
 

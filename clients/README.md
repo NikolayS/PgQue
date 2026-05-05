@@ -17,6 +17,7 @@ SQL primitives. The matrix below tracks the public client API on current
 | `receive` | ✓ | ✓ | ✓ |
 | `ack` returns SQL rowcount (0 stale, 1 success) | ✓ (int) | ✓ (int64) | ✓ (number) |
 | `nack` | ✓ | ✓ | ✓ |
+| `force_next_tick` / `ForceNextTick` / `forceNextTick` | ✓ | ✓ | ✓ |
 | `nack` retry delay + reason options | ✓ | ✗ | ✓ |
 | High-level `Consumer` | ✓ | ✓ | ✓ |
 | Consumer wakeup model | polling + optional LISTEN/NOTIFY wakeup | polling | polling |
@@ -29,5 +30,5 @@ SQL primitives. The matrix below tracks the public client API on current
 
 Legend: ✓ supported by the client API on `main`; ✗ not exposed as a
 first-class client API. Lower-level SQL primitives remain available through raw
-connection/pool escape hatches. TypeScript currently exposes extra convenience
-wrappers for `ticker` / `forceTick`; Python and Go can call them via raw SQL.
+connection/pool escape hatches. TypeScript currently exposes an extra
+convenience wrapper for `ticker`; Python and Go can call it via raw SQL.
