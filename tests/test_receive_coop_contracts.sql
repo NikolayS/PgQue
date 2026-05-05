@@ -43,9 +43,9 @@ begin
     'empty tick window should yield 0 messages, got ' || v_count;
 
   select s.* into v_sub
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_empty_batch'
       and c.co_name = 'main_c.w1';
 

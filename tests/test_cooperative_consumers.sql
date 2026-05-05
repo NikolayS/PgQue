@@ -14,9 +14,9 @@ begin
 
   assert exists (
     select 1
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    join pgque.consumer c on c.co_id = s.sub_consumer
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
     where q.queue_name = 'coop_meta'
       and c.co_name = 'normal_c'
       and s.sub_role = 'normal'
@@ -42,9 +42,9 @@ begin
   end;
 
   select s.sub_active into v_before
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_meta'
     and c.co_name = 'main_c.w1';
 
@@ -55,9 +55,9 @@ begin
     'touch_subconsumer must not create missing subconsumer';
 
   select s.sub_active into v_after
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_meta'
     and c.co_name = 'main_c.w1';
   assert v_after > v_before, 'touch_subconsumer should refresh sub_active';
@@ -83,18 +83,18 @@ do $$
 begin
   assert exists (
     select 1
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    join pgque.consumer c on c.co_id = s.sub_consumer
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
     where q.queue_name = 'coop_auto'
       and c.co_name = 'main_c'
       and s.sub_role = 'coop_main'
   ), 'receive_coop should auto-create coop_main';
   assert exists (
     select 1
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    join pgque.consumer c on c.co_id = s.sub_consumer
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
     where q.queue_name = 'coop_auto'
       and c.co_name = 'main_c.w1'
       and s.sub_role = 'coop_member'
@@ -136,9 +136,9 @@ begin
   perform pgque.ack(m1.batch_id);
 
   select s.* into v_member
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_split'
     and c.co_name = 'main_c.w1';
   assert v_member.sub_batch is null, 'ack should clear coop_member batch';
@@ -168,9 +168,10 @@ begin
   select * into old_msg from pgque.receive_coop('coop_stale', 'main_c', 'w1', 10) limit 1;
   old_batch := old_msg.batch_id;
 
-  update pgque.subscription s
+  update pgque.subscription as s
      set sub_active = now() - interval '10 minutes'
-    from pgque.queue q, pgque.consumer c
+    from pgque.queue as q
+    cross join pgque.consumer as c
    where q.queue_name = 'coop_stale'
      and c.co_name = 'main_c.w1'
      and s.sub_queue = q.queue_id
@@ -190,9 +191,9 @@ begin
     'late ack(old_batch) after stale takeover must not finish new owner';
 
   select s.sub_batch into still_active
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_stale'
     and c.co_name = 'main_c.w2';
   assert still_active = new_batch,
@@ -235,7 +236,7 @@ begin
 
   assert pgque.unregister_subconsumer('coop_force', 'main_c', 'w1', 1) = 1,
     'forced unregister should remove active subconsumer';
-  assert exists (select 1 from pgque.retry_queue rq where rq.ev_id = m.msg_id),
+  assert exists (select 1 from pgque.retry_queue as rq where rq.ev_id = m.msg_id),
     'forced unregister should route active message to retry queue';
   assert pgque.ack(old_batch) = 0,
     'late ack after forced unregister must not affect anything';
@@ -283,9 +284,9 @@ begin
   end;
 
   select s.sub_batch into active_batch
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_force_fail'
     and c.co_name = 'main_c.w1';
   assert active_batch = m.batch_id,
@@ -338,20 +339,21 @@ begin
   perform pgque.nack(m.batch_id, m, interval '1 second', 'test nack');
 
   select s.sub_id into shared_sub_id
-  from pgque.subscription s
-  join pgque.queue q on q.queue_id = s.sub_queue
-  join pgque.consumer c on c.co_id = s.sub_consumer
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_misc'
     and c.co_name = 'main_c';
   assert exists (
-    select 1 from pgque.retry_queue rq
+    select 1 from pgque.retry_queue as rq
     where rq.ev_id = m.msg_id
       and rq.ev_owner = shared_sub_id
   ), 'cooperative nack should write retry state with shared sub_id';
 
-  update pgque.subscription s
+  update pgque.subscription as s
      set sub_active = now() - interval '10 minutes'
-    from pgque.queue q, pgque.consumer c
+    from pgque.queue as q
+    cross join pgque.consumer as c
    where q.queue_name = 'coop_misc'
      and c.co_name = 'main_c.w1'
      and s.sub_queue = q.queue_id

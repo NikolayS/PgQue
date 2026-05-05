@@ -73,8 +73,8 @@ begin
 
   select dl.ev_txid
   into v_dlq_txid
-  from pgque.dead_letter dl
-  join pgque.queue q on q.queue_id = dl.dl_queue_id
+  from pgque.dead_letter as dl
+  join pgque.queue as q on q.queue_id = dl.dl_queue_id
   where q.queue_name = 'coop_force_txid'
     and dl.ev_id = v_msg.msg_id;
 
@@ -117,9 +117,9 @@ begin
 
   assert exists (
     select 1
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    join pgque.consumer c on c.co_id = s.sub_consumer
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
     where q.queue_name = 'coop_no_main_cascade'
       and c.co_name = 'cascade_main.w1'
       and s.sub_role = 'coop_member'
@@ -162,9 +162,9 @@ begin
 
   assert exists (
     select 1
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    join pgque.consumer c on c.co_id = s.sub_consumer
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
     where q.queue_name = 'coop_legacy_unreg'
       and c.co_name = 'legacy_main'
       and s.sub_role = 'normal'
