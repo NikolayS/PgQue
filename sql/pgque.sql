@@ -5534,13 +5534,7 @@ begin
     if v_sub.sub_role = 'coop_main' then
         raise exception 'cannot finish cooperative main consumer batch % as normal active consumer', x_batch_id;
     elsif v_sub.sub_role = 'coop_member' then
-        update pgque.subscription
-           set sub_active = now(),
-               sub_last_tick = null,
-               sub_next_tick = null,
-               sub_batch = null
-         where sub_queue = v_sub.sub_queue
-           and sub_consumer = v_sub.sub_consumer;
+        perform pgque._clear_member_cursor(v_sub.sub_queue, v_sub.sub_consumer);
     else
         update pgque.subscription
            set sub_active = now(),
@@ -5577,6 +5571,24 @@ begin
     if position('.' in i_subconsumer) > 0 then
         raise exception 'cooperative subconsumer name must not contain dot: %', i_subconsumer;
     end if;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- Reset a coop_member subscription's batch token + tick window. Member rows
+-- never advance sub_last_tick on their own — the main consumer owns the
+-- cursor — so clearing both ticks releases the member without losing position.
+create or replace function pgque._clear_member_cursor(
+    p_queue_id int4,
+    p_consumer_id int4)
+returns void as $$
+begin
+    update pgque.subscription
+       set sub_active = now(),
+           sub_last_tick = null,
+           sub_next_tick = null,
+           sub_batch = null
+     where sub_queue = p_queue_id
+       and sub_consumer = p_consumer_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -5807,13 +5819,7 @@ begin
                    sub_batch = batch_id
              where sub_queue = v_member.sub_queue
                and sub_consumer = v_member.sub_consumer;
-            update pgque.subscription
-               set sub_active = now(),
-                   sub_last_tick = null,
-                   sub_next_tick = null,
-                   sub_batch = null
-             where sub_queue = v_victim.sub_queue
-               and sub_consumer = v_victim.sub_consumer;
+            perform pgque._clear_member_cursor(v_victim.sub_queue, v_victim.sub_consumer);
             prev_tick_id := v_victim.sub_last_tick;
             next_tick_id := v_victim.sub_next_tick;
             return;
@@ -5889,22 +5895,8 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.next_batch(
     in i_queue text,
     in i_consumer text,
-    in i_subconsumer text)
-returns bigint as $$
-declare
-    v_batch_id bigint;
-begin
-    select batch_id into v_batch_id
-      from pgque.next_batch_custom(i_queue, i_consumer, i_subconsumer, null, null, null, null);
-    return v_batch_id;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
-create or replace function pgque.next_batch(
-    in i_queue text,
-    in i_consumer text,
     in i_subconsumer text,
-    in i_dead_interval interval)
+    in i_dead_interval interval default null)
 returns bigint as $$
 declare
     v_batch_id bigint;
@@ -5995,13 +5987,7 @@ begin
             end if;
         end loop;
 
-        update pgque.subscription
-           set sub_active = now(),
-               sub_last_tick = null,
-               sub_next_tick = null,
-               sub_batch = null
-         where sub_queue = v_member.sub_queue
-           and sub_consumer = v_member.sub_consumer;
+        perform pgque._clear_member_cursor(v_member.sub_queue, v_member.sub_consumer);
     end if;
 
     delete from pgque.subscription
@@ -6055,11 +6041,7 @@ declare
     ev record;
     cnt int := 0;
 begin
-    if i_dead_interval is null then
-        v_batch_id := pgque.next_batch(i_queue, i_consumer, i_subconsumer);
-    else
-        v_batch_id := pgque.next_batch(i_queue, i_consumer, i_subconsumer, i_dead_interval);
-    end if;
+    v_batch_id := pgque.next_batch(i_queue, i_consumer, i_subconsumer, i_dead_interval);
     if v_batch_id is null then
         return;
     end if;
@@ -6078,139 +6060,19 @@ begin
         exit when cnt >= i_max_return;
     end loop;
     return;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.receive() -- wraps next_batch + get_batch_events
-create or replace function pgque.receive(
-    i_queue text, i_consumer text, i_max_return int default 100)
-returns setof pgque.message as $$
-declare
-    v_batch_id bigint;
-    ev record;
-    cnt int := 0;
-begin
-    if i_max_return < 1 then
-        raise exception 'pgque.receive: max_return must be >= 1, got %', i_max_return;
-    end if;
-
-    -- Get next batch (may return NULL if no tick window is ready)
-    v_batch_id := pgque.next_batch(i_queue, i_consumer);
-    if v_batch_id is null then
-        return;
-    end if;
-
-    -- Yield messages from the batch
-    for ev in
-        select ev_id, ev_type, ev_data, ev_retry, ev_time,
-               ev_extra1, ev_extra2, ev_extra3, ev_extra4
-        from pgque.get_batch_events(v_batch_id)
-    loop
-        return next row(
-            ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,
-            ev.ev_retry, ev.ev_time,
-            ev.ev_extra1, ev.ev_extra2, ev.ev_extra3, ev.ev_extra4
-        )::pgque.message;
-        cnt := cnt + 1;
-        exit when cnt >= i_max_return;
-    end loop;
-
-    -- Empty batch: finish immediately to advance the consumer cursor.
-    if cnt = 0 then
-        perform pgque.finish_batch(v_batch_id);
-    end if;
-
-    return;
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.ack() -- finishes the batch, advances consumer position
-create or replace function pgque.ack(i_batch_id bigint)
-returns integer as $$
-begin
-    return pgque.finish_batch(i_batch_id);
-end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
-
--- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
---
--- Fix #98: re-query the canonical event row from the active batch using
--- msg_id, instead of trusting caller-supplied pgque.message fields.
--- A caller with an active batch could otherwise forge DLQ rows by
--- supplying arbitrary ev_id / ev_type / ev_data in the composite.
---
--- Fix #104: DLQ insert is idempotent via ON CONFLICT in event_dead().
--- Repeated nack() calls for the same terminal message produce exactly one
--- dead_letter row.
-create or replace function pgque.nack(
-    i_batch_id bigint,
-    i_msg pgque.message,
-    i_retry_after interval default '60 seconds',
-    i_reason text default null)
-returns integer as $$
-declare
-    v_max_retries int4;
-    v_ev          record;
-begin
-    -- Lookup: subscription -> queue config
-    select coalesce(q.queue_max_retries, 5) into v_max_retries
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    where s.sub_batch = i_batch_id;
-
-    if not found then
-        raise exception 'batch not found: %', i_batch_id;
-    end if;
-
-    -- Re-query the canonical event from the active batch (#98).
-    -- This ignores caller-supplied payload/type/extras and uses the real
-    -- values stored in the queue data tables.
-    select ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
-           ev_extra1, ev_extra2, ev_extra3, ev_extra4
-    into v_ev
-    from pgque.get_batch_events(i_batch_id)
-    where ev_id = i_msg.msg_id;
-
-    if not found then
-        raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
-    end if;
-
-    if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
-        -- Move to dead letter queue using canonical event data (#98).
-        -- event_dead() uses ON CONFLICT DO NOTHING for idempotency (#104).
-        -- ev_txid is bigint in get_batch_events (legacy PgQ signature); text
-        -- round-trip is the codebase convention to widen to xid8 without loss.
-        perform pgque.event_dead(i_batch_id, v_ev.ev_id,
-            coalesce(i_reason, 'max retries exceeded'),
-            v_ev.ev_time, v_ev.ev_txid::text::xid8, v_ev.ev_retry,
-            v_ev.ev_type, v_ev.ev_data,
-            v_ev.ev_extra1, v_ev.ev_extra2, v_ev.ev_extra3, v_ev.ev_extra4);
-    else
-        -- Retry after delay
-        perform pgque.event_retry(i_batch_id, v_ev.ev_id,
-            extract(epoch from i_retry_after)::integer);
-    end if;
-    return 1;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- ---------------------------------------------------------------------------
 -- Grants
 -- ---------------------------------------------------------------------------
--- receive/ack/nack are consumer-side: they open/close batches and route
--- failed events to retry/DLQ. They go to pgque_reader, not pgque_writer.
--- Apps that both produce and consume must hold both roles. See
--- sql/pgque-additions/roles.sql for the producer/consumer split rationale
--- (refs #102, #106; producer→consumer half. Consumer→consumer ownership
--- is tracked separately in #164.)
---
--- Upgrade path: pre-#163 installs granted these to pgque_writer. Postgres
+-- Cooperative consumer functions are consumer-side and go to pgque_reader.
+-- See sql/pgque-additions/roles.sql for the producer/consumer split.
 
 grant execute on function pgque.register_subconsumer(text, text, text)                 to pgque_reader;
 grant execute on function pgque.unregister_subconsumer(text, text, text, integer)      to pgque_reader;
 grant execute on function pgque.subscribe_subconsumer(text, text, text)                to pgque_reader;
 grant execute on function pgque.unsubscribe_subconsumer(text, text, text, integer)     to pgque_reader;
-grant execute on function pgque.next_batch(text, text, text)                          to pgque_reader;
 grant execute on function pgque.next_batch(text, text, text, interval)                to pgque_reader;
 grant execute on function pgque.next_batch_custom(text, text, text, interval, int4, interval, interval) to pgque_reader;
 grant execute on function pgque.receive_coop(text, text, text, int, interval)         to pgque_reader;
