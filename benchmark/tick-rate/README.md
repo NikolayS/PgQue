@@ -68,7 +68,7 @@ Reads:
   the PR comment — **not measurable**. `ticker_loop` clamps the internal
   period at 1 s (the pg_cron slot length), so any value above 1000 collapses
   to "one tick per slot" = `tick_period_ms = 1000`. The setter now rejects
-  values > 1000.
+  values > 1000 and any value that is not an exact divisor of the 1000 ms slot.
 
 ### Held-xmin (default `tick_period_ms = 100`, 1000 ev/s)
 

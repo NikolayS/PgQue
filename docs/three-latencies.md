@@ -22,7 +22,7 @@ select pgque.set_tick_period_ms(10);    -- 100 ticks/sec
 select pgque.set_tick_period_ms(1);     -- 1000 ticks/sec
 ```
 
-Range: `1`..`1000` ms. Effective on the next pg_cron slot (≤1 s); no rescheduling needed. Inspect the current rate with `select * from pgque.status();`.
+Allowed values: exact divisors of `1000` in the `1`..`1000` ms range. Effective on the next pg_cron slot (≤1 s); no rescheduling needed. Inspect the current rate with `select * from pgque.status();`.
 
 Trade-offs at high tick rates:
 - **WAL volume.** Every tick UPDATEs `pgque.tick` and writes to per-queue tick partitions. 10 ticks/sec is ~10× the WAL of 1 tick/sec; 1000 ticks/sec is ~1000×. Bench against your workload before pushing the rate up.
@@ -36,9 +36,9 @@ Rough guidance:
 |---|---|---|---|
 | `1000` | 1 tick/sec | ~500 ms | pgqd-compatible, minimal WAL/metadata churn |
 | `100` (**default**) | 10 ticks/sec | ~50 ms | sweet spot for non-LISTEN consumers |
-| `25` | 40 ticks/sec | ~12 ms | 25× WAL of default; consider rotation tuning |
+| `25` | 40 ticks/sec | ~12 ms | ~4× WAL of default; consider rotation tuning |
 | `10` | 100 ticks/sec | ~5 ms | tighten metadata rotation cadence |
-| `1` | 1000 ticks/sec | sub-ms | bench WAL + NOTIFY + metadata bloat first |
+| `1` | 1000 ticks/sec | low single-digit ms in current bench | bench WAL + NOTIFY + metadata bloat first |
 
 Per-queue thresholds (`queue_ticker_max_lag` default `3 seconds`, `queue_ticker_max_count` default 500, `queue_ticker_idle_period` default `1 minute` idle-decelerator) go through `pgque.set_queue_config()`.
 

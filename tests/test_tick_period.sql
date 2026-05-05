@@ -25,7 +25,7 @@ begin
     raise notice 'PASS: set_tick_period_ms updates pgque.config';
 end $$;
 
--- Test 3: out-of-range and NULL values are rejected
+-- Test 3: out-of-range, NULL, and non-divisor values are rejected
 do $$
 declare
     v_caught boolean;
@@ -48,7 +48,19 @@ begin
     end;
     assert v_caught, 'set_tick_period_ms(NULL) should raise';
 
-    raise notice 'PASS: set_tick_period_ms rejects out-of-range / NULL values';
+    v_caught := false;
+    begin perform pgque.set_tick_period_ms(251);
+    exception when others then v_caught := true;
+    end;
+    assert v_caught, 'set_tick_period_ms(251) should raise (not an exact divisor of 1000)';
+
+    v_caught := false;
+    begin perform pgque.set_tick_period_ms(750);
+    exception when others then v_caught := true;
+    end;
+    assert v_caught, 'set_tick_period_ms(750) should raise (not an exact divisor of 1000)';
+
+    raise notice 'PASS: set_tick_period_ms rejects out-of-range / NULL / non-divisor values';
 end $$;
 
 -- Test 4: ticker_loop runs ticker() multiple times per pg_cron slot when

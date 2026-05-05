@@ -3953,7 +3953,14 @@ create table if not exists pgque.config (
     ticker_job_id   bigint,
     maint_job_id    bigint,
     tick_period_ms  integer not null default 100
-        check (tick_period_ms between 1 and 1000),
+        constraint config_tick_period_ms_check
+        check (
+            tick_period_ms between 1 and 1000
+            and case
+                when tick_period_ms between 1 and 1000 then 1000 % tick_period_ms = 0
+                else false
+            end
+        ),
     installed_at    timestamptz not null default clock_timestamp()
 );
 
@@ -3970,9 +3977,31 @@ begin
           and column_name = 'tick_period_ms'
     ) then
         alter table pgque.config
-            add column tick_period_ms integer not null default 100
-                check (tick_period_ms between 1 and 1000);
+            add column tick_period_ms integer not null default 100;
     end if;
+
+    -- v0.2.0 safety: ticker_loop runs within pg_cron's 1000 ms slot and uses
+    -- integer iteration counts, so only exact divisors of 1000 produce the
+    -- reported cadence. Normalize any pre-constraint experimental value before
+    -- tightening the check.
+    update pgque.config
+       set tick_period_ms = 100
+     where not case
+        when tick_period_ms between 1 and 1000 then 1000 % tick_period_ms = 0
+        else false
+     end;
+
+    alter table pgque.config
+        drop constraint if exists config_tick_period_ms_check;
+    alter table pgque.config
+        add constraint config_tick_period_ms_check
+        check (
+            tick_period_ms between 1 and 1000
+            and case
+                when tick_period_ms between 1 and 1000 then 1000 % tick_period_ms = 0
+                else false
+            end
+        );
 end $$;
 
 -- pgque-additions/queue_max_retries.sql
@@ -4120,13 +4149,17 @@ $$;
 create or replace function pgque.set_tick_period_ms(p_period_ms integer)
 returns integer as $$
 begin
-    -- 1..1000 ms: pg_cron's minimum schedule is 1 s, so any value > 1000
-    -- collapses to "one tick per pg_cron slot" (i.e. 1 tick/sec). Reject
-    -- it explicitly rather than silently clamping. To tick less often than
-    -- once per second, change the pg_cron schedule string directly.
+    -- 1..1000 ms and an exact divisor of the 1000 ms pg_cron slot: ticker_loop
+    -- uses integer iteration counts, so arbitrary values (for example 251 or
+    -- 750) would report an ideal cadence that cannot actually run in one slot.
+    -- Reject them rather than silently flooring the effective rate.
     if p_period_ms is null or p_period_ms < 1 or p_period_ms > 1000 then
-        raise exception 'tick_period_ms must be between 1 and 1000 (got %)',
+        raise exception 'tick_period_ms must be an exact divisor of 1000 between 1 and 1000 (got %)',
             coalesce(p_period_ms::text, 'NULL');
+    end if;
+    if 1000 % p_period_ms <> 0 then
+        raise exception 'tick_period_ms must be an exact divisor of 1000 between 1 and 1000 (got %)',
+            p_period_ms;
     end if;
     update pgque.config set tick_period_ms = p_period_ms;
     return p_period_ms;

@@ -6,7 +6,14 @@ create table if not exists pgque.config (
     ticker_job_id   bigint,
     maint_job_id    bigint,
     tick_period_ms  integer not null default 100
-        check (tick_period_ms between 1 and 1000),
+        constraint config_tick_period_ms_check
+        check (
+            tick_period_ms between 1 and 1000
+            and case
+                when tick_period_ms between 1 and 1000 then 1000 % tick_period_ms = 0
+                else false
+            end
+        ),
     installed_at    timestamptz not null default clock_timestamp()
 );
 
@@ -23,7 +30,29 @@ begin
           and column_name = 'tick_period_ms'
     ) then
         alter table pgque.config
-            add column tick_period_ms integer not null default 100
-                check (tick_period_ms between 1 and 1000);
+            add column tick_period_ms integer not null default 100;
     end if;
+
+    -- v0.2.0 safety: ticker_loop runs within pg_cron's 1000 ms slot and uses
+    -- integer iteration counts, so only exact divisors of 1000 produce the
+    -- reported cadence. Normalize any pre-constraint experimental value before
+    -- tightening the check.
+    update pgque.config
+       set tick_period_ms = 100
+     where not case
+        when tick_period_ms between 1 and 1000 then 1000 % tick_period_ms = 0
+        else false
+     end;
+
+    alter table pgque.config
+        drop constraint if exists config_tick_period_ms_check;
+    alter table pgque.config
+        add constraint config_tick_period_ms_check
+        check (
+            tick_period_ms between 1 and 1000
+            and case
+                when tick_period_ms between 1 and 1000 then 1000 % tick_period_ms = 0
+                else false
+            end
+        );
 end $$;

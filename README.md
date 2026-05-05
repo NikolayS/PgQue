@@ -166,7 +166,7 @@ select pgque.set_tick_period_ms(10);    -- 100 ticks/sec, ~5 ms median e2e
 select pgque.set_tick_period_ms(1000);  -- 1 tick/sec, the pgqd-compatible cadence
 ```
 
-Range: `1`..`1000` ms. Inspect the current rate with `select * from pgque.status();`.
+Allowed values: exact divisors of `1000` in the `1`..`1000` ms range. Inspect the current rate with `select * from pgque.status();`.
 
 Trade-offs to keep in mind when raising the rate:
 - **WAL volume.** Every tick is one INSERT into a per-queue tick table plus a metadata UPDATE — at 10 ticks/sec that's ~10× the WAL of a 1 tick/sec cadence. Cheap on a small workload; not free on tight WAL budgets or slow logical-replication subscribers.
@@ -432,7 +432,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Managed Postgres support | ✅ |
 | No daemon / no C extension | ✅ |
 | `pg_cron` or external ticking | ✅ |
-| Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable 1–1000 ticks/sec) | ✅ |
+| Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable with exact-divisor periods from 1–1000 ticks/sec) | ✅ |
 | System-table rotation / bloat mitigation |  |
 | Subconsumers / coop consumers |  |
 | Queue splitter |  |
