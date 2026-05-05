@@ -9,7 +9,8 @@ create table public.coop_concurrency_results (
   worker text primary key,
   msg_ids bigint[],
   batch_ids bigint[],
-  row_count integer
+  row_count integer,
+  wait_ms numeric
 );
 
 do $$
@@ -29,31 +30,55 @@ select pgque.send('coop_concurrent_alloc', 't', 'event-2');
 select pgque.force_tick('coop_concurrent_alloc');
 select pgque.ticker('coop_concurrent_alloc');
 
+-- Worker-1 receives a batch and holds the FOR UPDATE on the coop_main row
+-- for 2 seconds. dblink_send_query runs in autocommit, so the entire CTE is
+-- one transaction; the lock acquired by receive_coop is held until pg_sleep
+-- returns. Worker-2's measured wait (asserted below) proves contention so
+-- this assumption cannot silently break.
 select dblink_connect('coop_w1', 'dbname=' || current_database());
 select dblink_send_query('coop_w1', $dblink$
 with ins as (
-  insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count)
+  insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count, wait_ms)
   select 'w1',
          coalesce(array_agg(msg_id order by msg_id), '{}'),
          coalesce(array_agg(distinct batch_id order by batch_id), '{}'),
-         count(*)
+         count(*),
+         0
   from pgque.receive_coop('coop_concurrent_alloc', 'main_c', 'w1', 10)
   returning 1
 ), hold_lock as (
-  select pg_sleep(1)
+  select pg_sleep(2)
 )
 select count(*)
 from ins, hold_lock;
 $dblink$);
 
-select pg_sleep(0.2);
+-- Give worker-1 a head start to acquire the lock, then race worker-2 against
+-- it. Worker-2 must block on the FOR UPDATE; measure the wait so a future
+-- regression that drops the lock would surface as a near-zero wait.
+select pg_sleep(0.5);
 
-insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count)
-select 'w2',
-       coalesce(array_agg(msg_id order by msg_id), '{}'),
-       coalesce(array_agg(distinct batch_id order by batch_id), '{}'),
-       count(*)
-from pgque.receive_coop('coop_concurrent_alloc', 'main_c', 'w2', 10);
+do $$
+declare
+  v_t0 timestamptz;
+  v_msg_ids bigint[];
+  v_batch_ids bigint[];
+  v_row_count integer;
+  v_wait_ms numeric;
+begin
+  v_t0 := clock_timestamp();
+
+  select coalesce(array_agg(msg_id order by msg_id), '{}'),
+         coalesce(array_agg(distinct batch_id order by batch_id), '{}'),
+         count(*)
+  into v_msg_ids, v_batch_ids, v_row_count
+  from pgque.receive_coop('coop_concurrent_alloc', 'main_c', 'w2', 10);
+
+  v_wait_ms := extract(epoch from clock_timestamp() - v_t0) * 1000;
+
+  insert into public.coop_concurrency_results(worker, msg_ids, batch_ids, row_count, wait_ms)
+  values ('w2', v_msg_ids, v_batch_ids, v_row_count, v_wait_ms);
+end $$;
 
 do $$
 begin
@@ -106,6 +131,25 @@ begin
 
   assert v_duplicates is null,
     'concurrent workers duplicated events: ' || v_duplicates::text;
+end $$;
+
+-- Prove the FOR UPDATE on coop_main actually serialized worker-2 behind
+-- worker-1. Worker-1 holds for 2s after a 0.5s head start; worker-2 should
+-- wait roughly 1.5s. Anything under 1s indicates the lock did not block.
+do $$
+declare
+  v_w2_wait_ms numeric;
+begin
+  select wait_ms
+  into v_w2_wait_ms
+  from public.coop_concurrency_results
+  where worker = 'w2';
+
+  assert v_w2_wait_ms is not null,
+    'w2 wait_ms was not recorded';
+  raise notice 'w2 receive_coop blocked %ms on coop_main FOR UPDATE', round(v_w2_wait_ms, 1);
+  assert v_w2_wait_ms > 1000,
+    format('w2 receive_coop did not block on coop_main FOR UPDATE; observed wait %s ms (expected > 1000)', v_w2_wait_ms);
 end $$;
 
 do $$
