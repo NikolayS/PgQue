@@ -5671,12 +5671,12 @@ create or replace function pgque._clear_member_cursor(
 returns void as $$
 begin
     update pgque.subscription
-       set sub_active = now(),
-           sub_last_tick = null,
-           sub_next_tick = null,
-           sub_batch = null
-     where sub_queue = p_queue_id
-       and sub_consumer = p_consumer_id;
+    set sub_active = now(),
+        sub_last_tick = null,
+        sub_next_tick = null,
+        sub_batch = null
+    where sub_queue = p_queue_id
+        and sub_consumer = p_consumer_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 

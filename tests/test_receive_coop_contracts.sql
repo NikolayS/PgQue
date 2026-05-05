@@ -47,7 +47,7 @@ begin
   join pgque.queue q on q.queue_id = s.sub_queue
   join pgque.consumer c on c.co_id = s.sub_consumer
   where q.queue_name = 'coop_empty_batch'
-    and c.co_name = 'main_c.w1';
+      and c.co_name = 'main_c.w1';
 
   assert v_sub.sub_batch is null,
     'receive_coop() left sub_batch set after returning 0 rows — '
