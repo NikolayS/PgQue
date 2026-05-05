@@ -1,11 +1,12 @@
 # Cooperative consumers
 
-Blueprint version: `0.2-draft.5`
+Blueprint version: `0.2-draft.6`
 
 ## Change log
 
 | Version | Date | Notes |
 |---|---|---|
+| `0.2-draft.6` | 2026-05-05 | Close stale-token correctness holes: takeover must allocate fresh `batch_id`; forced unregister invalidates old tokens; mixed normal/cooperative receive is forbidden; choose `sub_role`; reject dotted names; add heartbeat and client options. |
 | `0.2-draft.5` | 2026-05-05 | Make `subscription.sub_cooperative` the recommended marker column and clarify cooperative-consumer workload fit vs high-frequency fan-out. |
 | `0.2-draft.4` | 2026-05-05 | Tighten active subconsumer unregister semantics: force unregister must retry/DLQ active messages, never drop them; add lock-contention warning and mixed-version/downgrade notes. |
 | `0.2-draft.3` | 2026-05-05 | Harden TypeScript release guidance: SQL compatibility checks, npm Trusted Publishing caveats, release runner requirements, package shape, and oldest-supported SQL integration tests. |
@@ -122,23 +123,32 @@ expected to understand cooperative rows. PgQue 0.2 docs must say cooperative
 consumers require PgQue 0.2-aware clients, and downgrade after creating
 subconsumers is unsupported unless subconsumers are unregistered first.
 
-Add a lightweight marker column:
+Add an explicit role marker column:
 
 ```sql
 alter table pgque.subscription
-  add column sub_cooperative boolean not null default false;
+  add column sub_role text not null default 'normal',
+  add constraint subscription_sub_role_check
+    check (sub_role in ('normal', 'coop_main', 'coop_member'));
 ```
 
-Use `sub_cooperative = true` on subconsumer rows and keep the main logical
-consumer row as `false`. The shared `sub_id` remains the ownership invariant;
-the marker is for safety, diagnostics, filtering, and performance.
+Use roles as follows:
+
+- `normal`: ordinary fan-out consumer row.
+- `coop_main`: logical consumer group cursor row.
+- `coop_member`: subconsumer row that can own an active cooperative batch.
+
+The shared `sub_id` remains the ownership invariant for retry and dead-letter
+routing. `sub_role` is for safety, diagnostics, filtering, and performance.
 
 Reasons:
 
-- Safety: cooperative scans can explicitly target subconsumer rows instead of
-  inferring state from nullable tick columns.
-- Performance: checking a boolean is cheaper and clearer than repeated self-join
-  or count checks on `sub_id`.
+- Safety: cooperative scans can explicitly target `coop_member` rows and avoid
+  accidentally treating ordinary fan-out consumers as cooperative workers.
+- Correctness: `finish_batch()` and stale takeover can identify cooperative
+  member rows without derived name or nullable-tick heuristics.
+- Performance: checking a role marker is cheaper and clearer than repeated
+  self-join or count checks on `sub_id`.
 - Migration clarity: PgQue 0.2 introduces the feature, so an explicit schema
   marker is cleaner than hiding the state in legacy PgQ field combinations.
 
@@ -176,14 +186,17 @@ pgque.next_batch(
 ) returns bigint
 
 pgque.next_batch_custom(
-  queue text,
-  consumer text,
-  subconsumer text,
-  min_lag interval,
-  min_count int4,
-  min_interval interval,
-  dead_interval interval default null
-) returns record
+  in queue text,
+  in consumer text,
+  in subconsumer text,
+  in min_lag interval,
+  in min_count int4,
+  in min_interval interval,
+  in dead_interval interval default null,
+  out batch_id bigint,
+  out prev_tick_id bigint,
+  out next_tick_id bigint
+)
 ```
 
 Modern API for applications and clients:
@@ -209,12 +222,30 @@ pgque.receive_coop(
   max_return int default 100,
   dead_interval interval default null
 ) returns setof pgque.message
+
+pgque.touch_subconsumer(
+  queue text,
+  consumer text,
+  subconsumer text
+) returns integer
 ```
 
 `subscribe_subconsumer()` and `unsubscribe_subconsumer()` are modern aliases over
 `register_subconsumer()` and `unregister_subconsumer()`.
 
+Registering the first subconsumer converts the logical consumer's subscription
+row from `sub_role = 'normal'` to `sub_role = 'coop_main'`. Unregistering the
+last subconsumer converts it back to `normal` only after no `coop_member` rows
+remain.
+
 `ack()` and `nack()` stay unchanged. `batch_id` remains the ownership token.
+
+Once a logical consumer has one or more `coop_member` rows, normal
+`receive(queue, consumer, ...)`, `next_batch(queue, consumer)`, and
+`next_batch_custom(queue, consumer, ...)` for the `coop_main` consumer must raise
+a clear error. The main row is the cooperative group cursor and must not also act
+as a normal active consumer. To return to normal fan-out mode, unregister all
+subconsumers first.
 
 ## Batch allocation algorithm
 
@@ -229,8 +260,10 @@ pgque.receive_coop(
 6. If the current subconsumer already has `sub_batch`, refresh `sub_active` and
    return the same batch id.
 7. If `dead_interval` is provided, find a stale sibling subconsumer with an
-   active batch, lock it, move the batch/tick state to the current subconsumer,
-   clear the stale sibling, and return the stolen batch id.
+   active batch and lock it. Stale takeover must allocate a fresh `batch_id`,
+   copy the victim's tick window to the current subconsumer under that new
+   ownership token, clear the victim's old `sub_batch`, and return the fresh
+   `batch_id`. Never reuse the victim's old `batch_id`.
 8. Otherwise call the existing main-consumer batch allocator for the logical
    consumer.
 9. Immediately advance/close the main consumer row so the group cursor moves
@@ -240,6 +273,11 @@ pgque.receive_coop(
 
 The main subscription lock is mandatory. Without it, two workers can race and
 allocate duplicate or skipped tick windows.
+
+`batch_id` is the only token accepted by `ack()` and `nack()`. Any operation
+that transfers or force-closes ownership must invalidate the old token in the
+same transaction. Late `ack(old_batch_id)` or `nack(old_batch_id, ...)` must not
+affect a new owner or a redelivered batch.
 
 ## `finish_batch()` behavior
 
@@ -267,10 +305,12 @@ logical group cursor.
 
 Detection rule:
 
-- If the target subscription row shares its `sub_id` with more than one
-  subscription row, and the target row is not the main cursor row, treat it as a
+- If the target subscription row has `sub_role = 'coop_member'`, treat it as a
   cooperative subconsumer batch.
-- Otherwise use normal `finish_batch()` behavior.
+- If the target subscription row has `sub_role = 'normal'`, use normal consumer
+  behavior.
+- `finish_batch()` must reject attempts to finish a `coop_main` row as an active
+  normal consumer.
 
 ## Locking and concurrency
 
@@ -286,14 +326,17 @@ Required locks:
 
 Recommended stale takeover query behavior:
 
-- consider only sibling rows with the same `sub_id`
+- consider only sibling rows with the same `sub_queue` and `sub_id`
+- require `sub_role = 'coop_member'`
 - require `sub_batch is not null`
 - require `sub_active < now() - dead_interval`
 - use deterministic ordering by `sub_active asc`
 - use `for update skip locked` when scanning candidates
 
 Prefer clearing stale sibling batch state over deleting the sibling row during
-automatic takeover. Deletion should be reserved for explicit unsubscribe.
+automatic takeover. Deletion should be reserved for explicit unsubscribe. On
+takeover, clear the victim's old `sub_batch` so the old `batch_id` is no longer
+accepted by `ack()` or `nack()`.
 
 Batch allocation is serialized on the main subscription row. That is the right
 correctness tradeoff, but it is not infinite scaling. Documentation must warn
@@ -306,6 +349,12 @@ Cooperative consumers fit CPU-bound or I/O-bound handlers where message
 processing dominates allocation cost. Normal fan-out consumers remain better for
 ultra-high-frequency, low-latency streams where each consumer should advance its
 own cursor without coordinating with sibling workers.
+
+`dead_interval` is not a visibility timeout. It is based on `sub_active`. A
+healthy worker running a long handler can be stolen if it does not heartbeat and
+`dead_interval` is too low. Set `dead_interval` above worst-case handler runtime
+or call `pgque.touch_subconsumer()` from long-running handlers to refresh
+`sub_active`.
 
 ## Active batch unregistration
 
@@ -321,27 +370,38 @@ The active-batch force path must never drop messages.
 
 - If the subconsumer has no active batch, unregister it.
 - If the subconsumer has an active batch, atomically route every message in that
-  batch through retry/dead-letter handling for the shared `sub_id`, then clear
-  the batch state and unregister the subconsumer.
+  batch through retry/dead-letter handling for the shared `sub_id`, invalidate
+  the active `batch_id`, then clear the batch state and unregister the
+  subconsumer.
 - If retry/DLQ routing fails for any message, abort the transaction and leave
   the subconsumer registered with its active batch intact.
 
-The implementation may use an internal batch-level helper, but the semantics
-should be equivalent to nacking each message with a reason such as
-`subconsumer unregistered`: messages under retry budget go to immediate retry;
-terminal messages go to `dead_letter`. A plain "clear active batch" operation is
-data loss because the main group cursor was already advanced when the batch was
+Forced unregister is semantically equivalent to nacking every message in the
+active batch with a PgQue-generated reason such as `subconsumer unregistered`.
+It must follow the same retry-count, retry-delay, and dead-letter rules as
+`pgque.nack()`; do not bypass normal retry policy unless a future design
+explicitly changes that policy. A plain "clear active batch" operation is data
+loss because the main group cursor was already advanced when the batch was
 assigned.
+
+Forced unregister must invalidate the old active `batch_id` in the same
+transaction that routes messages and removes the subconsumer row. Late
+`ack(old_batch_id)` or `nack(old_batch_id, ...)` from the old worker must not
+affect any new delivery.
 
 ## Name handling
 
 The SQL layer should validate queue, consumer, and subconsumer names with the
 same rules used by the existing PgQue API.
 
-Internally the subconsumer's concrete `pgque.consumer.co_name` can use the
-existing `consumer || '.' || subconsumer` convention, but clients must expose
-`consumer` and `subconsumer` as separate arguments. Do not make users manually
-construct internal names.
+For PgQue 0.2, keep name handling simple and collision-free: reject `.` in both
+logical consumer names and subconsumer names for cooperative APIs. This avoids
+ambiguous internal names such as `billing.us.worker-1` meaning either
+`consumer = billing.us, subconsumer = worker-1` or
+`consumer = billing, subconsumer = us.worker-1`.
+
+Clients must expose `consumer` and `subconsumer` as separate arguments. Do not
+make users manually construct internal names.
 
 Documentation should recommend globally stable, unique subconsumer names per
 logical consumer, for example hostname, process id, or deployment instance id.
@@ -359,6 +419,7 @@ Grant to `pgque_reader`:
 - cooperative `next_batch` overloads
 - cooperative `next_batch_custom`
 - `receive_coop`
+- `touch_subconsumer`
 
 Do not grant them to `pgque_writer`.
 
@@ -374,14 +435,27 @@ Add low-level methods:
 Subscribe(ctx, queue, consumer string) (int, error)
 Unsubscribe(ctx, queue, consumer string) (int, error)
 SubscribeSubconsumer(ctx, queue, consumer, subconsumer string) (int, error)
-UnsubscribeSubconsumer(ctx, queue, consumer, subconsumer string) (int, error)
-ReceiveCoop(ctx, queue, consumer, subconsumer string, maxMessages int) ([]Message, error)
+UnsubscribeSubconsumer(ctx, queue, consumer, subconsumer string, opts ...UnsubscribeOption) (int, error)
+ReceiveCoop(ctx, queue, consumer, subconsumer string, opts ...ReceiveCoopOption) ([]Message, error)
+TouchSubconsumer(ctx, queue, consumer, subconsumer string) (int, error)
+
+ReceiveCoop options:
+WithMaxMessages(n int)
+WithDeadInterval(d time.Duration)
+
+Unsubscribe options:
+WithBatchHandling(mode int)
 ```
 
 Add high-level option:
 
 ```go
-client.NewConsumer("orders", "billing", pgque.WithSubconsumer("worker-1"))
+client.NewConsumer(
+    "orders",
+    "billing",
+    pgque.WithSubconsumer("worker-1"),
+    pgque.WithDeadInterval(5*time.Minute),
+)
 ```
 
 If `WithSubconsumer()` is absent, keep using normal `Receive()`.
@@ -394,14 +468,21 @@ Add client methods:
 subscribe(queue, consumer) -> int
 unsubscribe(queue, consumer) -> int
 subscribe_subconsumer(queue, consumer, subconsumer) -> int
-unsubscribe_subconsumer(queue, consumer, subconsumer) -> int
-receive_coop(queue, consumer, subconsumer, max_messages=100) -> list[Message]
+unsubscribe_subconsumer(queue, consumer, subconsumer, batch_handling=0) -> int
+receive_coop(queue, consumer, subconsumer, max_messages=100, dead_interval=None) -> list[Message]
+touch_subconsumer(queue, consumer, subconsumer) -> int
 ```
 
 Add high-level constructor argument:
 
 ```python
-Consumer(client, queue="orders", name="billing", subconsumer="worker-1")
+Consumer(
+    client,
+    queue="orders",
+    name="billing",
+    subconsumer="worker-1",
+    dead_interval="5 minutes",
+)
 ```
 
 If `subconsumer is None`, keep using normal `receive()`.
@@ -412,14 +493,30 @@ Add client methods:
 
 ```ts
 subscribeSubconsumer(queue, consumer, subconsumer): Promise<number>
-unsubscribeSubconsumer(queue, consumer, subconsumer): Promise<number>
-receiveCoop(queue, consumer, subconsumer, maxMessages = 100): Promise<Message[]>
+unsubscribeSubconsumer(
+  queue,
+  consumer,
+  subconsumer,
+  options?: { batchHandling?: 0 | 1 },
+): Promise<number>
+
+receiveCoop(
+  queue,
+  consumer,
+  subconsumer,
+  options?: { maxMessages?: number; deadInterval?: string },
+): Promise<Message[]>
+
+touchSubconsumer(queue, consumer, subconsumer): Promise<number>
 ```
 
 Add high-level consumer option:
 
 ```ts
-client.newConsumer("orders", "billing", { subconsumer: "worker-1" })
+client.newConsumer("orders", "billing", {
+  subconsumer: "worker-1",
+  deadInterval: "5 minutes",
+})
 ```
 
 If `subconsumer` is absent, keep using normal `receive()`.
@@ -445,7 +542,8 @@ Document:
 - each worker should use a stable unique subconsumer name
 - `ack()` still closes the whole batch
 - `max_return` still has the existing partial-batch caveat
-- `dead_interval` enables stale-worker takeover
+- `dead_interval` enables stale-worker takeover, but long handlers need either
+  conservative intervals or `touch_subconsumer()` heartbeats
 - `nack()` behavior is unchanged
 - forced subconsumer unregister retries or dead-letters active messages; it does
   not discard them
@@ -467,7 +565,7 @@ SQL tests:
 5. `ack()` on a cooperative batch clears the subconsumer row without advancing a
    subconsumer cursor.
 6. Stale takeover moves an active batch from a dead sibling to the current
-   subconsumer.
+   subconsumer under a fresh `batch_id`.
 7. Unregistering an active subconsumer fails with `batch_handling = 0`.
 8. Unregistering an active subconsumer with `batch_handling = 1` routes all
    active-batch messages to immediate retry or dead letter, then unregisters the
@@ -483,8 +581,20 @@ SQL tests:
     behavior remains unchanged.
 14. Two-session allocation test proves concurrent subconsumers cannot allocate
     the same new batch.
-15. High-poll worker test documents main subscription lock contention without
+15. Late `ack(old_batch_id)` after stale takeover does not finish the new
+    owner's batch.
+16. Late `nack(old_batch_id, ...)` after stale takeover does not retry/DLQ
+    messages owned by the new batch token.
+17. Late `ack()` / `nack()` after forced unregister does not affect any new
+    delivery.
+18. Normal `receive()` / `next_batch()` for a `coop_main` consumer raises while
+    subconsumer rows exist; cooperative receive still works, and other normal
+    consumers on the same queue are unaffected.
+19. Dotted logical consumer or subconsumer names are rejected by cooperative
+    APIs.
+20. High-poll worker test documents main subscription lock contention without
     duplicate or skipped batches.
+21. `touch_subconsumer()` refreshes `sub_active` for long-running handlers.
 
 Client tests for each library:
 
