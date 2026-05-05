@@ -1,11 +1,12 @@
 # Cooperative consumers
 
-Blueprint version: `0.2-draft.6`
+Blueprint version: `0.2-draft.7`
 
 ## Change log
 
 | Version | Date | Notes |
 |---|---|---|
+| `0.2-draft.7` | 2026-05-05 | Final SQL-core cleanup: define upgrade defaults and `sub_role` state transitions; make coop auto-registration explicit; clarify touch semantics and deterministic lock order; remove immediate-retry wording. |
 | `0.2-draft.6` | 2026-05-05 | Close stale-token correctness holes: takeover must allocate fresh `batch_id`; forced unregister invalidates old tokens; mixed normal/cooperative receive is forbidden; choose `sub_role`; reject dotted names; add heartbeat and client options. |
 | `0.2-draft.5` | 2026-05-05 | Make `subscription.sub_cooperative` the recommended marker column and clarify cooperative-consumer workload fit vs high-frequency fan-out. |
 | `0.2-draft.4` | 2026-05-05 | Tighten active subconsumer unregister semantics: force unregister must retry/DLQ active messages, never drop them; add lock-contention warning and mixed-version/downgrade notes. |
@@ -141,6 +142,10 @@ Use roles as follows:
 The shared `sub_id` remains the ownership invariant for retry and dead-letter
 routing. `sub_role` is for safety, diagnostics, filtering, and performance.
 
+On upgrade, all existing `pgque.subscription` rows get `sub_role = 'normal'`.
+No existing consumer is converted to `coop_main` unless
+`register_subconsumer()` / `subscribe_subconsumer()` is called.
+
 Reasons:
 
 - Safety: cooperative scans can explicitly target `coop_member` rows and avoid
@@ -233,10 +238,31 @@ pgque.touch_subconsumer(
 `subscribe_subconsumer()` and `unsubscribe_subconsumer()` are modern aliases over
 `register_subconsumer()` and `unregister_subconsumer()`.
 
-Registering the first subconsumer converts the logical consumer's subscription
-row from `sub_role = 'normal'` to `sub_role = 'coop_main'`. Unregistering the
-last subconsumer converts it back to `normal` only after no `coop_member` rows
-remain.
+State transitions:
+
+```text
+normal -> coop_main
+  register first subconsumer for this logical consumer;
+  fail if the normal consumer has an active batch.
+
+coop_main -> normal
+  unregister last coop_member, only when no active member batch remains or after
+  active member batches have been safely nacked with batch_handling = 1.
+
+coop_member -> deleted
+  unregister subconsumer after active-batch safety checks.
+```
+
+Invariants:
+
+- `coop_main` must never have `sub_batch is not null`.
+- `coop_member` may have `sub_batch` only while actively owning a cooperative
+  batch.
+- `normal` keeps existing PgQue fan-out semantics.
+
+`receive_coop()` and cooperative `next_batch(..., subconsumer, ...)`
+auto-create the logical consumer and subconsumer if missing, using the same
+validation and locking as `register_subconsumer()`.
 
 `ack()` and `nack()` stay unchanged. `batch_id` remains the ownership token.
 
@@ -305,8 +331,8 @@ logical group cursor.
 
 Detection rule:
 
-- If the target subscription row has `sub_role = 'coop_member'`, treat it as a
-  cooperative subconsumer batch.
+- If the target subscription row has `sub_role = 'coop_member'` and
+  `sub_batch = batch_id`, treat it as a cooperative subconsumer batch.
 - If the target subscription row has `sub_role = 'normal'`, use normal consumer
   behavior.
 - `finish_batch()` must reject attempts to finish a `coop_main` row as an active
@@ -323,6 +349,9 @@ Required locks:
 - `next_batch(..., subconsumer)` locks the current subconsumer row before
   checking or returning an active batch.
 - stale takeover locks the victim row before moving batch state.
+- every cooperative path must lock in one deterministic order: first the
+  `coop_main` row, then the current `coop_member` row, then candidate victim
+  `coop_member` rows using `for update skip locked`.
 
 Recommended stale takeover query behavior:
 
@@ -378,9 +407,9 @@ The active-batch force path must never drop messages.
 
 Forced unregister is semantically equivalent to nacking every message in the
 active batch with a PgQue-generated reason such as `subconsumer unregistered`.
-It must follow the same retry-count, retry-delay, and dead-letter rules as
-`pgque.nack()`; do not bypass normal retry policy unless a future design
-explicitly changes that policy. A plain "clear active batch" operation is data
+It must follow the same retry-count, retry-delay, retry-after, and dead-letter
+rules as `pgque.nack()`; do not bypass normal retry policy unless a future
+design explicitly changes that policy. A plain "clear active batch" operation is data
 loss because the main group cursor was already advanced when the batch was
 assigned.
 
@@ -544,6 +573,9 @@ Document:
 - `max_return` still has the existing partial-batch caveat
 - `dead_interval` enables stale-worker takeover, but long handlers need either
   conservative intervals or `touch_subconsumer()` heartbeats
+- `touch_subconsumer()` refreshes `sub_active` only for an existing
+  `coop_member`; it may touch idle or active members, must not create rows, and
+  stale takeover only considers active rows with `sub_batch is not null`
 - `nack()` behavior is unchanged
 - forced subconsumer unregister retries or dead-letters active messages; it does
   not discard them
@@ -557,8 +589,8 @@ Document:
 SQL tests:
 
 1. `register_subconsumer()` is idempotent.
-2. `receive_coop()` can auto-create the main consumer and subconsumer if that is
-   the chosen API behavior.
+2. `receive_coop()` / cooperative `next_batch()` auto-create the main consumer
+   and subconsumer when missing.
 3. Two subconsumers under one logical consumer split batches without duplicate
    delivery.
 4. Repeated receive by the same active subconsumer returns the same active batch.
@@ -568,7 +600,8 @@ SQL tests:
    subconsumer under a fresh `batch_id`.
 7. Unregistering an active subconsumer fails with `batch_handling = 0`.
 8. Unregistering an active subconsumer with `batch_handling = 1` routes all
-   active-batch messages to immediate retry or dead letter, then unregisters the
+   active-batch messages through the same retry/dead-letter policy as
+   `pgque.nack()` with a PgQue-generated reason, then unregisters the
    subconsumer. No message is skipped.
 9. A forced unregister that fails during retry/DLQ routing leaves the active
    batch and subconsumer intact.
@@ -594,7 +627,13 @@ SQL tests:
     APIs.
 20. High-poll worker test documents main subscription lock contention without
     duplicate or skipped batches.
-21. `touch_subconsumer()` refreshes `sub_active` for long-running handlers.
+21. `touch_subconsumer()` refreshes `sub_active` for idle and active
+    `coop_member` rows, does not create missing rows, and stale takeover ignores
+    idle rows.
+22. Upgrade/migration preserves existing normal subscriptions and assigns
+    `sub_role = 'normal'`.
+23. Registering the first subconsumer fails if the normal consumer has an active
+    batch.
 
 Client tests for each library:
 
