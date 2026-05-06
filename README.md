@@ -41,6 +41,8 @@ PgQ was designed at Skype to run messaging for hundreds of millions of users, an
 
 PgQue rebuilds that battle-tested engine in pure PL/pgSQL, so the zero-bloat queue pattern works anywhere you can run SQL — without adding another distributed system to your stack.
 
+PgQ shipped at Skype in 2007; pgque is the same engine, repackaged for managed Postgres, and ships with libraries for TypeScript, Python, and Go.
+
 **The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and most other managed providers. No C extension, no `shared_preload_libraries`, no provider approval, no restart.
 
 Historical context, two decks:
