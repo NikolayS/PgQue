@@ -244,6 +244,30 @@ Options:
 | `WithCoopDeadInterval(d)` | `ReceiveCoop` takeover window for one call. |
 | `WithBatchHandlingRetry()` | `UnsubscribeSubconsumer`: route active batch through retry/DLQ instead of erroring. |
 
+Runnable demo: [`clients/go/bench/coop_demo`](bench/coop_demo) — two
+workers under one logical consumer printing per-message dispatch lines
+and a final disjoint-delivery summary.
+
+### Throughput scaling
+
+![Coop scaling -- Go](bench/coop_scaling/coop_scaling.png)
+
+Throughput rises from one to a few subconsumers because separate
+batches now process in parallel. The curve plateaus and may regress
+beyond that point because cooperative allocation serializes on a
+`FOR UPDATE` of the cooperative main row, so every batch handover
+goes through one hot row. Adding more *normal* consumers does not
+share work — each `register_consumer` is a separate fan-out cursor
+that delivers every event again, so four normal consumers process
+the queue four times, not 4x faster. To split work across N workers,
+use cooperative subconsumers under one logical consumer. Tune
+`ticker_max_count` and tick cadence so each batch carries meaningful
+work; otherwise N workers benchmark row-lock churn instead of useful
+processing. See [`docs/reference.md`](../../docs/reference.md) for the
+canonical SQL-side reference. The benchmark source lives in
+[`clients/go/bench/coop_scaling`](bench/coop_scaling); reproduce with
+`PGQUE_TEST_DSN=... bash bench/coop_scaling/run.sh`.
+
 ## Transactions
 
 `Send` → ticker → `Receive` must each run in its own committed transaction (PgQue is snapshot-based). `pgxpool` satisfies this transparently — every `Send`/`Receive`/`Ack` is its own implicit tx, and the `Consumer` is pool-level.
