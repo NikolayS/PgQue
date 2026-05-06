@@ -164,20 +164,24 @@ database with `PGQUE_TEST_DSN` set.
 
 ![Coop scaling — Python](bench/coop_scaling.png)
 
-Throughput rises with cooperative subconsumers when the consumer can
-process several batches in parallel: each batch is handed to exactly one
-member, so producing many small batches (more frequent ticks) is what
-unlocks parallelism. The plateau and regression at higher `N` come from
-the `FOR UPDATE` lock on the cooperative main row — every member must
-serialize through it to claim or release a batch, so adding workers past
-the lock's saturation point only adds contention. **Adding more normal
-consumers does not share work**: each `register_consumer` /
-`subscribe` is its own fan-out cursor, so every event is redelivered to
-every consumer — to split work across workers under one logical
-consumer, use cooperative subconsumers. To amortize the main-row lock,
-tune `ticker_max_count` and tick cadence so each batch carries enough
-events to make the lock acquire-and-release worth it. Reproduce with
-[`bench/coop_scaling.py`](bench/coop_scaling.py).
+Cooperative subconsumers parallelize the **handler** side of one
+logical consumer: each batch is handed to exactly one member, so N
+workers can run N handlers concurrently and total throughput rises with
+N as long as handler work fills the time the SQL allocator spends under
+its `FOR UPDATE` on the cooperative main row. The chart above is taken
+with a 1 ms simulated per-message handler (`time.sleep` releases the
+GIL); throughput keeps rising up to N=16 but the slope softens because
+every member still has to serialize through that one main-row lock to
+claim or release a batch. **Adding more normal consumers does not share
+work**: each `register_consumer` / `subscribe` is its own fan-out
+cursor, so every event is redelivered to every consumer — to split work
+across workers under one logical consumer, use cooperative
+subconsumers. To amortize the main-row lock, tune `ticker_max_count`
+and tick cadence so each batch carries enough events to make the lock
+acquire-and-release worth it. Reproduce with
+[`bench/coop_scaling.py`](bench/coop_scaling.py); pass
+`--handler-work-ms 0` to see the contention-only curve, which decreases
+monotonically with `N`.
 
 ## Manual ticking
 
