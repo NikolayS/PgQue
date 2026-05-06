@@ -1,6 +1,6 @@
 # Tick frequency tuning
 
-PgQue is tick-based. A consumer sees events only after a tick creates a batch boundary. `pgque.start()` uses `pg_cron` to run one 1-second slot, but that slot calls `pgque.ticker_loop()`, which invokes `pgque.ticker()` every `pgque.config.tick_period_ms` ms and commits between iterations.
+PgQue is tick-based. A consumer sees events only after a tick creates a batch boundary. `pgque.start()` uses `pg_cron` to run one 1-second slot; `pgque.start_timetable()` does the same with `pg_timetable`. In both cases, the scheduled slot calls `pgque.ticker_loop()`, which invokes `pgque.ticker()` every `pgque.config.tick_period_ms` ms and commits between iterations.
 
 Default: `tick_period_ms = 100`, i.e. 10 checks/sec.
 
@@ -32,7 +32,7 @@ select pgque.set_tick_period_ms(100);   -- 10 checks/sec, default
 select pgque.set_tick_period_ms(50);    -- 20 checks/sec
 ```
 
-The change applies on the next `pg_cron` slot (≤1 s); no rescheduling needed.
+The change applies on the next scheduler slot (≤1 s for `pgque.start()` / `pgque.start_timetable()`); no rescheduling needed.
 
 ## WAL budget for active queues
 
@@ -56,7 +56,7 @@ Things that can move the number:
 - **Postgres version and settings.** `wal_compression`, page layout, checkpoint cadence, and storage settings matter.
 - **Table state.** Page splits, relation extension, and vacuum/rotation timing can change per-tick WAL.
 - **Number of active queues.** Ticking is per queue. Ten continuously-active queues at 10 materialized ticks/sec are roughly ten times the single-queue estimate. Ten idle queues are not.
-- **pg_cron logging.** `cron.job_run_details` WAL is separate. PgQue's sub-second loop does not multiply pg_cron log rows: there is still one cron slot per second regardless of `tick_period_ms`, but successful-run logging can still dominate small deployments unless disabled or purged.
+- **Scheduler logging.** `cron.job_run_details` WAL is separate when using pg_cron. PgQue's sub-second loop does not multiply pg_cron log rows: there is still one cron slot per second regardless of `tick_period_ms`, but successful-run logging can still dominate small deployments unless disabled or purged. With pg_timetable, use its own execution-log retention knobs/policies instead.
 
 ## Why idle queues back off
 
@@ -75,7 +75,7 @@ So a quiet queue tends toward occasional idle ticks rather than 10 materialized 
 - Use 1000 ms / 1 check/sec for small projects, low-throughput queues, or environments where WAL volume and logical replication lag matter more than sub-100 ms delivery.
 - For many queues in one database, estimate active queues separately from idle queues; idle queues back off.
 - If you raise the rate below 50 ms, monitor WAL generation, `pg_stat_user_tables` dead tuples for PgQue metadata tables, NOTIFY queue pressure, and replica/apply lag.
-- Purge PgQue's `cron.job_run_details` rows if pg_cron logging noise matters, without disabling history for unrelated jobs:
+- If using pg_cron, purge PgQue's `cron.job_run_details` rows if logging noise matters, without disabling history for unrelated jobs:
 
 ```sql
 select cron.schedule(
@@ -97,7 +97,7 @@ select cron.schedule(
 );
 ```
 
-- If you do not need successful-run history for any pg_cron job, `alter system set cron.log_run = off;` disables it globally after a restart.
+- If you do not need successful-run history for any pg_cron job, `alter system set cron.log_run = off;` disables it globally after a restart. If using pg_timetable, configure/purge pg_timetable's own log tables instead.
 
 ## What still needs better benchmarks
 
@@ -108,6 +108,6 @@ The 280 B/tick number is intentionally conservative documentation from a simple 
 - 1, 10, 100, and 1000 materialized ticks/sec;
 - one queue vs many queues;
 - idle queues vs active queues;
-- pg_cron logging on/off;
+- pg_cron / pg_timetable scheduler logging on/off;
 - logical replication subscriber lag under sustained ticking;
 - interaction with rotation/vacuum cadence.

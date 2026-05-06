@@ -3952,6 +3952,9 @@ create table if not exists pgque.config (
     singleton       bool primary key default true check (singleton),
     ticker_job_id   bigint,
     maint_job_id    bigint,
+    scheduler       text
+        constraint config_scheduler_check
+        check (scheduler in ('pg_cron', 'pg_timetable')),
     tick_period_ms  integer not null default 100
         constraint config_tick_period_ms_check
         check (
@@ -3971,6 +3974,21 @@ on conflict (singleton) do nothing;
 -- Add tick_period_ms on upgrade from a pre-tick-period install.
 do $$
 begin
+    if not exists (
+        select 1 from information_schema.columns
+        where table_schema = 'pgque' and table_name = 'config'
+          and column_name = 'scheduler'
+    ) then
+        alter table pgque.config
+            add column scheduler text;
+    end if;
+
+    alter table pgque.config
+        drop constraint if exists config_scheduler_check;
+    alter table pgque.config
+        add constraint config_scheduler_check
+        check (scheduler in ('pg_cron', 'pg_timetable'));
+
     if not exists (
         select 1 from information_schema.columns
         where table_schema = 'pgque' and table_name = 'config'
@@ -4231,6 +4249,7 @@ begin
     end if;
 
     -- Idempotent: stop existing jobs first
+    perform pgque.stop_timetable();
     perform pgque.stop();
 
     v_dbname := current_database();
@@ -4285,7 +4304,8 @@ begin
     -- Store job IDs in config (retry + rotate_step2 unscheduled by name)
     update pgque.config
     set ticker_job_id = v_ticker_id,
-        maint_job_id = v_maint_id;
+        maint_job_id = v_maint_id,
+        scheduler = 'pg_cron';
 
     raise notice 'pgque started: ticker=% (% ticks/sec), retry_events=%, maint=%, rotate_step2=%',
         v_ticker_id, (1000.0 / v_period_ms)::numeric(10, 2),
@@ -4299,17 +4319,25 @@ declare
     v_ticker_id bigint;
     v_maint_id bigint;
     v_has_pgcron bool;
+    v_scheduler text;
 begin
     -- Read current job IDs
-    select ticker_job_id, maint_job_id
-    into v_ticker_id, v_maint_id
+    select ticker_job_id, maint_job_id, scheduler
+    into v_ticker_id, v_maint_id, v_scheduler
     from pgque.config;
+
+    -- stop() is the generic PgQue stop entrypoint; delegate when pg_timetable
+    -- owns the active jobs.
+    if v_scheduler = 'pg_timetable' then
+        perform pgque.stop_timetable();
+        return;
+    end if;
 
     -- Check if pg_cron is available
     select exists (select 1 from pg_extension where extname = 'pg_cron')
     into v_has_pgcron;
 
-    if v_has_pgcron then
+    if v_has_pgcron and (v_scheduler is null or v_scheduler = 'pg_cron') then
         -- Unschedule ticker if it exists
         if v_ticker_id is not null then
             perform cron.unschedule(v_ticker_id);
@@ -4337,10 +4365,188 @@ begin
         end;
     end if;
 
-    -- Clear job IDs regardless (even if pg_cron is gone)
+    -- Clear pg_cron job IDs (only when scheduler is pg_cron or unset).
     update pgque.config
     set ticker_job_id = null,
-        maint_job_id = null;
+        maint_job_id = null,
+        scheduler = null
+    where scheduler is null or scheduler = 'pg_cron';
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+
+create or replace function pgque.start_timetable(i_ticks_per_second integer default 10)
+returns void as $$
+declare
+    v_ticker_id bigint;
+    v_retry_id bigint;
+    v_maint_id bigint;
+    v_step2_id bigint;
+    v_period_ms integer;
+    v_timetable_owner oid;
+    v_add_job_reg regprocedure;
+    v_delete_job_reg regprocedure;
+    v_owner_super bool;
+begin
+    -- pg_timetable is optional and external (standalone scheduler). It creates
+    -- the timetable schema on first run; PgQue only needs its SQL API here.
+    if to_regnamespace('timetable') is null then
+        raise exception 'pg_timetable schema/API is not installed. '
+            'Run pg_timetable against this database first, or use pgque.start() for pg_cron.';
+    end if;
+
+    -- Support both modern pg_timetable (12-argument add_job with job_on_error)
+    -- and older v4-style installs (11-argument add_job). The named-argument
+    -- calls below only use parameters common to both versions.
+    v_add_job_reg := coalesce(
+        to_regprocedure('timetable.add_job(text,timetable.cron,text,jsonb,timetable.command_kind,text,integer,boolean,boolean,boolean,boolean,text)'),
+        to_regprocedure('timetable.add_job(text,timetable.cron,text,jsonb,timetable.command_kind,text,integer,boolean,boolean,boolean,boolean)')
+    );
+    v_delete_job_reg := to_regprocedure('timetable.delete_job(text)');
+    if v_add_job_reg is null or v_delete_job_reg is null then
+        raise exception 'pg_timetable schema/API is not installed. '
+            'Run pg_timetable against this database first, or use pgque.start() for pg_cron.';
+    end if;
+
+    -- start_timetable() is SECURITY DEFINER, so do not invoke arbitrary code
+    -- from any schema named "timetable". Trust only a pg_timetable schema owned
+    -- by the PgQue owner or by a superuser, and require the called functions to
+    -- share that owner. This prevents a low-privilege fake timetable schema from
+    -- becoming a definer-privilege trampoline.
+    select nspowner into v_timetable_owner
+    from pg_namespace where oid = 'timetable'::regnamespace;
+    select rolsuper into v_owner_super
+    from pg_roles where oid = v_timetable_owner;
+    if v_timetable_owner <> current_user::regrole and not coalesce(v_owner_super, false) then
+        raise exception 'untrusted pg_timetable schema owner: %', v_timetable_owner::regrole;
+    end if;
+    if exists (
+        select 1
+        from pg_proc
+        where oid in (v_add_job_reg::oid, v_delete_job_reg::oid)
+          and proowner <> v_timetable_owner
+    ) then
+        raise exception 'untrusted pg_timetable API owner: add_job/delete_job must be owned by timetable schema owner';
+    end if;
+
+    if i_ticks_per_second is null or i_ticks_per_second < 1 or i_ticks_per_second > 1000
+       or 1000 % i_ticks_per_second <> 0 then
+        raise exception 'ticks_per_second must be an exact divisor of 1000 between 1 and 1000 (got %)',
+            coalesce(i_ticks_per_second::text, 'NULL');
+    end if;
+
+    v_period_ms := 1000 / i_ticks_per_second;
+    perform pgque.set_tick_period_ms(v_period_ms);
+
+    -- Idempotent: remove any old PgQue jobs from both schedulers.  This avoids
+    -- double-ticking if an operator switches from pg_cron to pg_timetable.
+    perform pgque.stop_timetable();
+    perform pgque.stop();
+
+    execute $sql$
+        select timetable.add_job(
+            job_name => 'pgque_ticker',
+            job_schedule => '@every 1 second'::timetable.cron,
+            job_command => 'CALL pgque.ticker_loop()',
+            job_kind => 'SQL'::timetable.command_kind,
+            job_max_instances => 1,
+            job_ignore_errors => false
+        )
+    $sql$ into v_ticker_id;
+
+    execute $sql$
+        select timetable.add_job(
+            job_name => 'pgque_retry_events',
+            job_schedule => '@every 30 seconds'::timetable.cron,
+            job_command => 'select pgque.maint_retry_events()',
+            job_kind => 'SQL'::timetable.command_kind,
+            job_max_instances => 1,
+            job_ignore_errors => false
+        )
+    $sql$ into v_retry_id;
+
+    execute $sql$
+        select timetable.add_job(
+            job_name => 'pgque_maint',
+            job_schedule => '@every 30 seconds'::timetable.cron,
+            job_command => 'select pgque.maint()',
+            job_kind => 'SQL'::timetable.command_kind,
+            job_max_instances => 1,
+            job_ignore_errors => false
+        )
+    $sql$ into v_maint_id;
+
+    execute $sql$
+        select timetable.add_job(
+            job_name => 'pgque_rotate_step2',
+            job_schedule => '@every 10 seconds'::timetable.cron,
+            job_command => 'select pgque.maint_rotate_tables_step2()',
+            job_kind => 'SQL'::timetable.command_kind,
+            job_max_instances => 1,
+            job_ignore_errors => false
+        )
+    $sql$ into v_step2_id;
+
+    update pgque.config
+    set ticker_job_id = v_ticker_id,
+        maint_job_id = v_maint_id,
+        scheduler = 'pg_timetable';
+
+    raise notice 'pgque started with pg_timetable: ticker=% (% ticks/sec), retry_events=%, maint=%, rotate_step2=%',
+        v_ticker_id, i_ticks_per_second, v_retry_id, v_maint_id, v_step2_id;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+create or replace function pgque.stop_timetable()
+returns void as $$
+declare
+    v_has_timetable bool;
+    v_timetable_owner oid;
+    v_delete_job_reg regprocedure;
+    v_owner_super bool;
+    v_scheduler text;
+begin
+    select scheduler into v_scheduler from pgque.config;
+
+    v_has_timetable := to_regnamespace('timetable') is not null
+        and to_regprocedure('timetable.delete_job(text)') is not null;
+
+    if v_has_timetable then
+        v_delete_job_reg := to_regprocedure('timetable.delete_job(text)');
+        select nspowner into v_timetable_owner
+        from pg_namespace where oid = 'timetable'::regnamespace;
+        select rolsuper into v_owner_super
+        from pg_roles where oid = v_timetable_owner;
+        if v_timetable_owner <> current_user::regrole and not coalesce(v_owner_super, false) then
+            if v_scheduler = 'pg_timetable' then
+                raise exception 'untrusted pg_timetable schema owner: %', v_timetable_owner::regrole;
+            end if;
+            return;
+        end if;
+        if exists (
+            select 1
+            from pg_proc
+            where oid = v_delete_job_reg::oid
+              and proowner <> v_timetable_owner
+        ) then
+            if v_scheduler = 'pg_timetable' then
+                raise exception 'untrusted pg_timetable API owner: delete_job must be owned by timetable schema owner';
+            end if;
+            return;
+        end if;
+
+        -- delete_job(name) returns false when absent; no exception noise needed.
+        execute $sql$select timetable.delete_job('pgque_ticker')$sql$;
+        execute $sql$select timetable.delete_job('pgque_retry_events')$sql$;
+        execute $sql$select timetable.delete_job('pgque_maint')$sql$;
+        execute $sql$select timetable.delete_job('pgque_rotate_step2')$sql$;
+    end if;
+
+    update pgque.config
+    set ticker_job_id = null,
+        maint_job_id = null,
+        scheduler = null
+    where scheduler = 'pg_timetable';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -4350,6 +4556,9 @@ begin
     -- Stop pg_cron jobs before dropping the schema.
     if exists (select 1 from pg_extension where extname = 'pg_cron') then
         perform pgque.stop();
+    end if;
+    if to_regnamespace('timetable') is not null then
+        perform pgque.stop_timetable();
     end if;
     -- Drop everything
     drop schema pgque cascade;
@@ -4378,32 +4587,49 @@ begin
     -- pgque version
     return query select 'pgque'::text, 'info'::text, pgque.version();
 
-    -- pg_cron status
-    if exists (select 1 from pg_extension where extname = 'pg_cron') then
-        return query
-        select 'ticker'::text,
-            case when c.ticker_job_id is not null then 'scheduled' else 'stopped' end,
-            case when c.ticker_job_id is not null
-                then format('job_id=%s, tick_period_ms=%s (%s ticks/sec)',
-                    c.ticker_job_id,
-                    c.tick_period_ms,
-                    (1000.0 / c.tick_period_ms)::numeric(10, 2))
-                else format('not scheduled (tick_period_ms=%s)', c.tick_period_ms)
-            end
-        from pgque.config c;
+    -- Scheduler status (new summary row).
+    return query
+    select 'scheduler'::text,
+        coalesce(c.scheduler, 'manual')::text,
+        format('ticker_job_id=%s, maint_job_id=%s, tick_period_ms=%s (%s ticks/sec)',
+            coalesce(c.ticker_job_id::text, 'NULL'),
+            coalesce(c.maint_job_id::text, 'NULL'),
+            c.tick_period_ms,
+            (1000.0 / c.tick_period_ms)::numeric(10, 2))
+    from pgque.config c;
 
-        return query
-        select 'maintenance'::text,
-            case when c.maint_job_id is not null then 'scheduled' else 'stopped' end,
-            case when c.maint_job_id is not null
-                then format('job_id=%s', c.maint_job_id)
-                else 'not scheduled'
-            end
-        from pgque.config c;
-    else
+    -- Backward-compatible rows retained for scripts that parse status() by
+    -- component name.
+    return query
+    select 'ticker'::text,
+        case when c.ticker_job_id is not null then 'scheduled' else 'stopped' end,
+        case when c.ticker_job_id is not null
+            then format('scheduler=%s, job_id=%s, tick_period_ms=%s (%s ticks/sec)',
+                coalesce(c.scheduler, 'manual'),
+                c.ticker_job_id,
+                c.tick_period_ms,
+                (1000.0 / c.tick_period_ms)::numeric(10, 2))
+            else format('not scheduled (tick_period_ms=%s)', c.tick_period_ms)
+        end
+    from pgque.config c;
+
+    return query
+    select 'maintenance'::text,
+        case when c.maint_job_id is not null then 'scheduled' else 'stopped' end,
+        case when c.maint_job_id is not null
+            then format('scheduler=%s, job_id=%s', coalesce(c.scheduler, 'manual'), c.maint_job_id)
+            else 'not scheduled'
+        end
+    from pgque.config c;
+
+    if not exists (select 1 from pg_extension where extname = 'pg_cron') then
         return query select 'pg_cron'::text, 'unavailable'::text,
-            format('pg_cron not installed -- call pgque.ticker() and pgque.maint() manually (current tick_period_ms=%s)',
-                (select tick_period_ms from pgque.config));
+            'use pgque.start_timetable() for pg_timetable, or call pgque.ticker() / pgque.maint() manually'::text;
+    end if;
+
+    if to_regnamespace('timetable') is null then
+        return query select 'pg_timetable'::text, 'unavailable'::text,
+            'run pg_timetable against this database, then call pgque.start_timetable()'::text;
     end if;
 
     -- Queue count
