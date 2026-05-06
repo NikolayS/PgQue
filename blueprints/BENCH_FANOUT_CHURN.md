@@ -5,13 +5,15 @@
 `BENCH_XMIN_HORIZON.md` covers the case where VACUUM is *blocked* — a long
 REPEATABLE READ transaction or an idle logical slot holds the xmin horizon and
 dead tuples cannot be reclaimed at all. That is one of two main failure modes
-for `SELECT ... FOR UPDATE SKIP LOCKED` queues. This spec covers the other:
-**steady-state churn under burst fan-out**, where autovacuum is not blocked but
-still loses ground during bursts. Every enqueued job eventually becomes a dead
-tuple when it is dequeued; every burst adds a spike of dead tuples that
-autovacuum must chase. Over time, the queue table bloats, buffer cache fills
-with dead pages, and bystander queries on co-located tables see p99 spikes even
-when the queue is otherwise healthy.
+for UPDATE/DELETE queues. This spec covers the other: **steady-state churn
+under burst fan-out**, where autovacuum is not blocked but still loses ground
+during bursts. The pattern produces a sawtooth: dead tuples spike during each
+burst (rows DELETEd or UPDATEd, still occupying heap pages, awaiting VACUUM —
+harming co-located query performance immediately), autovacuum catches up, dead
+tuples decay; meanwhile cumulative bloat (empty space left behind after VACUUM
+marks dead-tuple slots reusable) grows roughly monotonically until VACUUM FULL
+or pg_repack runs. The two pain modes show up in different metrics: dead tuple
+count versus `pg_total_relation_size`.
 
 Burst fan-out is a standard production pattern: a periodic job scans a source
 table for pending work and enqueues a batch of detail jobs in one pass. Common
@@ -21,18 +23,35 @@ common structure is one trigger → 10²–10⁴ jobs added → workers drain �
 repeat. Unlike a steady trickle, these bursts hit the queue table as a sudden
 wall; autovacuum reacts after the fact and may not finish before the next burst.
 
-pgque's TRUNCATE-rotation model is structurally immune: events live in a
-rotating set of tables that are dropped by TRUNCATE rather than reclaimed
-row-by-row. There are no dead tuples on the hot path regardless of burst size.
-Tuning autovacuum more aggressively (lower `autovacuum_vacuum_scale_factor`,
-higher `autovacuum_vacuum_cost_limit`) can reduce how much bloat accumulates,
-but it cannot eliminate the cause — vacuum still does work proportional to the
-number of dequeued jobs. Rotation eliminates the cause entirely.
+UPDATE/DELETE queues have two pain modes that interact with burst load:
+
+- **(a) Dead tuples.** They accumulate during DELETE-heavy windows and hurt
+  co-located query performance immediately — sequential scans visit them, index
+  entries still point at them — before VACUUM marks them reusable. If the xmin
+  horizon is blocked (the BENCH_XMIN_HORIZON scenario), VACUUM cannot reclaim
+  them at all and tuning is helpless.
+- **(b) Bloat.** Once VACUUM runs, dead tuples convert to bloat — empty space
+  inside heap pages. Cumulative bloat grows in proportion to total dequeue
+  volume; heap files do not shrink without VACUUM FULL or pg_repack.
+
+UPDATE/DELETE queues *can* mitigate (b) with partitioning + TRUNCATE on retired
+partitions, but they typically don't, and partitioning alone does nothing for
+(a) — UPDATEs and DELETEs in the *active* partition still generate dead tuples.
+
+The structural answer is not tuning autovacuum more aggressively — that only
+changes the *rate* of dead-tuple→bloat conversion, not the total bloat volume.
+The structural answer is **avoiding UPDATE and DELETE on the hot path entirely**.
+pgque (PgQ heritage) tracks consumer state via batch IDs and per-consumer
+cursors instead of mutating event rows; events are append-only and retired by
+TRUNCATE of an old rotation table. Result: zero dead tuples regardless of burst
+size, regardless of xmin horizon, regardless of tuning. Rotation+TRUNCATE is one
+implementation of "no row mutation on the hot path"; the absence of mutation is
+the real trick.
 
 This benchmark measures the gap: throughput, bloat growth, bystander latency
 impact, and autovacuum activity under controlled bursts, for both workloads.
 Together with BENCH_XMIN_HORIZON.md it maps the full landscape of dead-tuple
-failure modes for SKIP LOCKED queues.
+failure modes for UPDATE/DELETE queues.
 
 ## Scenarios
 
@@ -68,7 +87,7 @@ bloat translates to measurable bystander latency degradation.
 
 ## Hardware / PG Config
 
-Single-laptop reproducible. Docker Compose. PG17.
+Single-laptop reproducible. Docker Compose. PG18.
 
 Aggressive autovacuum baked in (matches production-grade tuning):
 
@@ -79,8 +98,14 @@ autovacuum_vacuum_threshold = 50
 autovacuum_analyze_scale_factor = 0.005
 autovacuum_vacuum_cost_limit = 10000
 autovacuum_vacuum_cost_delay = 2ms
+autovacuum_vacuum_insert_scale_factor = 0.005
 log_autovacuum_min_duration = 0
 ```
+
+PG13+ also triggers autovacuum on insert volume independently of dead-tuple
+count; setting `autovacuum_vacuum_insert_scale_factor = 0.005` ensures vacuum
+fires aggressively on the insert side of each burst, so W-skiplocked is not
+unfairly penalized by under-triggering during the enqueue phase.
 
 These settings make autovacuum more aggressive than the PostgreSQL default.
 The intent is to measure the failure mode even under favorable tuning, not to
