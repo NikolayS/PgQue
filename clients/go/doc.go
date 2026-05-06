@@ -30,4 +30,14 @@
 // PgQue itself is installed via "\i pgque.sql" — no PostgreSQL extension
 // required. See https://github.com/NikolayS/pgque for the schema install
 // and full documentation.
+//
+// # Experimental: cooperative consumers
+//
+// SubscribeSubconsumer, UnsubscribeSubconsumer, ReceiveCoop,
+// TouchSubconsumer, and the matching Consumer options
+// (WithSubconsumer, WithDeadInterval) are experimental in PgQue 0.2.
+// Function names, edge-case behavior, and client API shape may change
+// before this feature is marked stable. Do not use this as the only
+// processing path for critical workloads without idempotent handlers
+// and stale-worker takeover tests.
 package pgque

@@ -199,6 +199,121 @@ func (c *Client) Nack(ctx context.Context, batchID int64, msg Message, opts Nack
 	return nil
 }
 
+// SubscribeSubconsumer registers a subconsumer under the given logical
+// consumer on the queue, wrapping pgque.subscribe_subconsumer. The
+// returned int64 is the SQL row-count: 1 for a new registration and 0
+// when the subconsumer was already registered.
+//
+// Cooperative consumers are experimental in PgQue 0.2 — the function
+// names, edge-case behavior, and client API shape may change before
+// the feature is marked stable.
+func (c *Client) SubscribeSubconsumer(ctx context.Context, queue, consumer, subconsumer string) (int64, error) {
+	var n int64
+	err := c.pool.QueryRow(ctx,
+		"select pgque.subscribe_subconsumer($1, $2, $3)", queue, consumer, subconsumer,
+	).Scan(&n)
+	if err != nil {
+		return 0, wrapSQLError("subscribe subconsumer", err)
+	}
+	return n, nil
+}
+
+// UnsubscribeSubconsumer removes a subconsumer from the cooperative
+// group, wrapping pgque.unsubscribe_subconsumer. The returned int64 is
+// the SQL row-count: 1 if a subscription was removed, 0 otherwise.
+//
+// By default the call raises if the subconsumer holds an active batch.
+// Pass WithBatchHandlingRetry() to route active messages through
+// retry/DLQ on the way out (equivalent to nacking each message).
+//
+// Experimental in PgQue 0.2.
+func (c *Client) UnsubscribeSubconsumer(ctx context.Context, queue, consumer, subconsumer string, opts ...UnsubscribeSubconsumerOption) (int64, error) {
+	cfg := newUnsubscribeSubconsumerConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	var n int64
+	err := c.pool.QueryRow(ctx,
+		"select pgque.unsubscribe_subconsumer($1, $2, $3, $4)",
+		queue, consumer, subconsumer, cfg.batchHandling,
+	).Scan(&n)
+	if err != nil {
+		return 0, wrapSQLError("unsubscribe subconsumer", err)
+	}
+	return n, nil
+}
+
+// ReceiveCoop fetches the next batch for one subconsumer of a
+// cooperative group, wrapping pgque.receive_coop. Returns an empty
+// slice when no batch is available. Each returned Message carries a
+// BatchID that must be passed to Ack once all messages have been
+// processed.
+//
+// receive_coop auto-registers the cooperative main row and the
+// subconsumer on first call, so an explicit SubscribeSubconsumer is
+// not required. WithCoopMaxMessages tunes the per-call row cap
+// (default 100); WithCoopDeadInterval enables stale-worker takeover.
+//
+// Experimental in PgQue 0.2.
+func (c *Client) ReceiveCoop(ctx context.Context, queue, consumer, subconsumer string, opts ...ReceiveCoopOption) ([]Message, error) {
+	cfg := newReceiveCoopConfig()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	var deadArg any
+	if cfg.deadInterval > 0 {
+		deadArg = pgtype.Interval{Microseconds: cfg.deadInterval.Microseconds(), Valid: true}
+	}
+	rows, err := c.pool.Query(ctx,
+		"select * from pgque.receive_coop($1, $2, $3, $4, $5::interval)",
+		queue, consumer, subconsumer, cfg.maxMessages, deadArg)
+	if err != nil {
+		return nil, wrapSQLError("receive coop", err)
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		var createdAt time.Time
+		err := rows.Scan(
+			&m.MsgID, &m.BatchID, &m.Type, &m.Payload,
+			&m.RetryCount, &createdAt,
+			&m.Extra1, &m.Extra2, &m.Extra3, &m.Extra4,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("pgque: scan message: %w", err)
+		}
+		m.CreatedAt = createdAt
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapSQLError("receive coop rows", err)
+	}
+	return msgs, nil
+}
+
+// TouchSubconsumer updates the heartbeat on a registered subconsumer
+// row, wrapping pgque.touch_subconsumer. The returned int64 is the
+// SQL row-count: 1 when the row was found and touched, 0 otherwise
+// (e.g. the subconsumer was never registered).
+//
+// Heartbeats are not auto-emitted from the Consumer poll loop; call
+// this method manually when you want to advertise liveness ahead of a
+// dead-interval takeover by another worker.
+//
+// Experimental in PgQue 0.2.
+func (c *Client) TouchSubconsumer(ctx context.Context, queue, consumer, subconsumer string) (int64, error) {
+	var n int64
+	err := c.pool.QueryRow(ctx,
+		"select pgque.touch_subconsumer($1, $2, $3)", queue, consumer, subconsumer,
+	).Scan(&n)
+	if err != nil {
+		return 0, wrapSQLError("touch subconsumer", err)
+	}
+	return n, nil
+}
+
 // NewConsumer creates a Consumer that polls the given queue under the
 // given consumer name. The consumer must already be registered in PgQue
 // (e.g. via pgque.register_consumer).

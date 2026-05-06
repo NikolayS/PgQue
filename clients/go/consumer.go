@@ -29,6 +29,14 @@ type consumerBackend interface {
 	Nack(ctx context.Context, batchID int64, msg Message, opts NackOptions) error
 }
 
+// coopBackend is the optional cooperative-mode extension of
+// consumerBackend. The Consumer type-asserts the backend to coopBackend
+// only when WithSubconsumer is set, so existing stubs that drive the
+// non-coop poll loop are unaffected.
+type coopBackend interface {
+	ReceiveCoop(ctx context.Context, queue, consumer, subconsumer string, opts ...ReceiveCoopOption) ([]Message, error)
+}
+
 // strPtr returns a pointer to s; used for building NackOptions.Reason.
 func strPtr(s string) *string { return &s }
 
@@ -42,7 +50,17 @@ type Consumer struct {
 	maxMessages   int
 	handlers      map[string]HandlerFunc
 	unknownPolicy UnknownHandlerPolicy
+
+	// Cooperative mode (experimental). When subconsumer is non-empty,
+	// the poll loop calls ReceiveCoop instead of Receive and passes
+	// deadInterval for stale-worker takeover.
+	subconsumer  string
+	deadInterval time.Duration
 }
+
+// coopMode reports whether this Consumer is configured for the
+// experimental cooperative path (WithSubconsumer set).
+func (c *Consumer) coopMode() bool { return c.subconsumer != "" }
 
 // Handle registers fn as the handler for messages whose Type matches
 // eventType. Messages with no registered handler are dispatched per
@@ -89,7 +107,24 @@ func (c *Consumer) Start(ctx context.Context) error {
 		default:
 		}
 
-		msgs, err := c.backend.Receive(ctx, c.queue, c.name, c.maxMessages)
+		var (
+			msgs []Message
+			err  error
+		)
+		if c.coopMode() {
+			coop, ok := c.backend.(coopBackend)
+			if !ok {
+				log.Printf("pgque: coop mode requested but backend does not implement ReceiveCoop")
+				return fmt.Errorf("pgque: backend does not implement ReceiveCoop")
+			}
+			opts := []ReceiveCoopOption{WithCoopMaxMessages(c.maxMessages)}
+			if c.deadInterval > 0 {
+				opts = append(opts, WithCoopDeadInterval(c.deadInterval))
+			}
+			msgs, err = coop.ReceiveCoop(ctx, c.queue, c.name, c.subconsumer, opts...)
+		} else {
+			msgs, err = c.backend.Receive(ctx, c.queue, c.name, c.maxMessages)
+		}
 		if err != nil {
 			log.Printf("pgque: receive error: %v", err)
 			select {

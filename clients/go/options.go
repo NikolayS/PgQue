@@ -73,3 +73,88 @@ type NackOptions struct {
 	// records "max retries exceeded").
 	Reason *string
 }
+
+/*
+Cooperative consumers (experimental in PgQue 0.2).
+
+Function names, edge-case behavior, and client API shape may change
+before this feature is marked stable. Do not use this as the only
+processing path for critical workloads without idempotent handlers and
+stale-worker takeover tests.
+*/
+
+// WithSubconsumer enables cooperative-consumer mode on the Consumer.
+// When set, the poll loop calls Client.ReceiveCoop with the given
+// subconsumer name; without it the Consumer behaves exactly as before
+// (calls Client.Receive). The empty string disables coop mode.
+func WithSubconsumer(name string) ConsumerOption {
+	return func(c *Consumer) { c.subconsumer = name }
+}
+
+// WithDeadInterval sets the dead-worker takeover interval used in
+// cooperative mode. A subconsumer whose batch is older than this
+// duration may have its batch stolen by another member under a fresh
+// batch_id. The default of zero disables takeover. Has no effect
+// outside cooperative mode (set via WithSubconsumer).
+func WithDeadInterval(d time.Duration) ConsumerOption {
+	return func(c *Consumer) { c.deadInterval = d }
+}
+
+// receiveCoopConfig holds the resolved options for one ReceiveCoop call.
+type receiveCoopConfig struct {
+	maxMessages  int
+	deadInterval time.Duration
+}
+
+func newReceiveCoopConfig() *receiveCoopConfig {
+	return &receiveCoopConfig{maxMessages: 100}
+}
+
+// ReceiveCoopOption tunes a single Client.ReceiveCoop call.
+type ReceiveCoopOption func(*receiveCoopConfig)
+
+// WithCoopMaxMessages sets the per-call message limit (maps to the
+// i_max_return argument of pgque.receive_coop). Default is 100. Panics
+// if n <= 0.
+//
+// As with Receive, ack(batch_id) finishes the entire underlying batch
+// regardless of how many rows are returned; a low limit can therefore
+// drop rows. Match this to ticker_max_count (or larger) when you care
+// about per-message dispatch.
+func WithCoopMaxMessages(n int) ReceiveCoopOption {
+	if n <= 0 {
+		panic("pgque: WithCoopMaxMessages requires n > 0")
+	}
+	return func(c *receiveCoopConfig) { c.maxMessages = n }
+}
+
+// WithCoopDeadInterval enables stale-worker takeover for this
+// ReceiveCoop call. A subconsumer whose batch is older than d may have
+// its batch stolen under a fresh batch_id. Zero (the default) disables
+// takeover.
+func WithCoopDeadInterval(d time.Duration) ReceiveCoopOption {
+	return func(c *receiveCoopConfig) { c.deadInterval = d }
+}
+
+// unsubscribeSubconsumerConfig holds the resolved options for one
+// Client.UnsubscribeSubconsumer call.
+type unsubscribeSubconsumerConfig struct {
+	batchHandling int
+}
+
+func newUnsubscribeSubconsumerConfig() *unsubscribeSubconsumerConfig {
+	return &unsubscribeSubconsumerConfig{batchHandling: 0}
+}
+
+// UnsubscribeSubconsumerOption tunes a single
+// Client.UnsubscribeSubconsumer call.
+type UnsubscribeSubconsumerOption func(*unsubscribeSubconsumerConfig)
+
+// WithBatchHandlingRetry routes the unsubscribed subconsumer's active
+// batch (if any) through retry/DLQ on its way out, equivalent to
+// nacking each message. The default (no option) raises a SQL error
+// when an active batch exists, forcing the caller to ack or nack
+// before unsubscribing.
+func WithBatchHandlingRetry() UnsubscribeSubconsumerOption {
+	return func(c *unsubscribeSubconsumerConfig) { c.batchHandling = 1 }
+}
