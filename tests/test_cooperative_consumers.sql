@@ -120,7 +120,20 @@ declare
   m1_repeat pgque.message;
   m2 pgque.message;
   v_member record;
+  v_main_before record;
+  v_main_after record;
 begin
+  /*
+   * Snapshot the coop_main row before any member allocates a batch, so we
+   * can prove the main cursor advanced through the member's allocation.
+   */
+  select s.* into v_main_before
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_split'
+    and c.co_name = 'main_c';
+
   select * into m1 from pgque.receive_coop('coop_split', 'main_c', 'w1', 10) limit 1;
   select * into m1_repeat from pgque.receive_coop('coop_split', 'main_c', 'w1', 10) limit 1;
   select * into m2 from pgque.receive_coop('coop_split', 'main_c', 'w2', 10) limit 1;
@@ -143,6 +156,25 @@ begin
     and c.co_name = 'main_c.w1';
   assert v_member.sub_batch is null, 'ack should clear coop_member batch';
   assert v_member.sub_last_tick is null, 'ack should not advance coop_member cursor';
+
+  /*
+   * coop_main invariants after a member's ack:
+   *   - sub_batch must NEVER be non-null on a coop_main row;
+   *   - sub_last_tick advanced when w1's batch was allocated (the cooperative
+   *     mechanic moves the main cursor on member allocation, not on member
+   *     ack), so it must be strictly greater than the pre-receive snapshot.
+   */
+  select s.* into v_main_after
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_split'
+    and c.co_name = 'main_c';
+  assert v_main_after.sub_batch is null,
+    'coop_main must never have sub_batch set';
+  assert v_main_after.sub_last_tick > coalesce(v_main_before.sub_last_tick, 0),
+    format('coop_main sub_last_tick should advance from %s, got %s',
+           coalesce(v_main_before.sub_last_tick, 0), v_main_after.sub_last_tick);
 
   perform pgque.ack(m2.batch_id);
 end $$;
@@ -457,6 +489,179 @@ begin
   perform pgque.ack(m2.batch_id);
 end $$;
 drop table coop_redeliver_first;
+
+/*
+ * REV-blocking + selected potential coverage. Each block is independent and
+ * uses its own queue so failures point at one specific contract:
+ *   B. unregister_subconsumer is idempotent (second call returns 0).
+ *   C. unregister_subconsumer rejects unsupported batch_handling values.
+ *   D. touch_subconsumer on an active (in-batch) member returns 1, refreshes
+ *      sub_active, leaves sub_batch unchanged.
+ *   E. Direct legacy next_batch(2-arg) and next_batch_custom(5-arg) calls on
+ *      a coop_main with members raise the cooperative-form directive.
+ *   F. Direct finish_batch on a coop_member returns 1 and clears the member
+ *      cursor (mirrors the ack() path).
+ *   G. A normal consumer and an active coop group on the same queue both
+ *      receive the same event independently (fan-out is not suppressed).
+ */
+
+-- B: unregister_subconsumer idempotency
+do $$
+begin
+  perform pgque.create_queue('coop_idempotent');
+  perform pgque.register_subconsumer('coop_idempotent', 'main_c', 'w1');
+
+  assert pgque.unregister_subconsumer('coop_idempotent', 'main_c', 'w1') = 1,
+    'first unregister_subconsumer should return 1';
+  assert pgque.unregister_subconsumer('coop_idempotent', 'main_c', 'w1') = 0,
+    'second unregister_subconsumer must be idempotent (return 0)';
+end $$;
+
+-- C: invalid batch_handling raises explicit message
+do $$
+begin
+  perform pgque.create_queue('coop_bh_invalid');
+  perform pgque.register_subconsumer('coop_bh_invalid', 'main_c', 'w1');
+
+  begin
+    perform pgque.unregister_subconsumer('coop_bh_invalid', 'main_c', 'w1', 2);
+    raise exception 'expected unsupported batch_handling rejection';
+  exception when others then
+    if sqlerrm = 'expected unsupported batch_handling rejection' then raise; end if;
+    assert sqlerrm like 'unsupported batch_handling value%',
+      format('unexpected batch_handling error message: %s', sqlerrm);
+  end;
+end $$;
+
+-- D: touch_subconsumer on an active (in-batch) member
+do $$
+begin
+  perform pgque.create_queue('coop_touch_active');
+  perform pgque.register_subconsumer('coop_touch_active', 'main_c', 'w1');
+end $$;
+select pgque.send('coop_touch_active', 't', 'touch-payload');
+select pgque.force_tick('coop_touch_active');
+select pgque.ticker('coop_touch_active');
+do $$
+declare
+  m pgque.message;
+  v_before timestamptz;
+  v_member_after record;
+begin
+  select * into m from pgque.receive_coop('coop_touch_active', 'main_c', 'w1', 10) limit 1;
+  assert m.batch_id is not null, 'setup: w1 should hold an active batch';
+
+  select s.sub_active into v_before
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_touch_active'
+    and c.co_name = 'main_c.w1';
+
+  perform pg_sleep(0.01);
+  assert pgque.touch_subconsumer('coop_touch_active', 'main_c', 'w1') = 1,
+    'touch_subconsumer on active member must return 1';
+
+  select s.* into v_member_after
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_touch_active'
+    and c.co_name = 'main_c.w1';
+  assert v_member_after.sub_batch = m.batch_id,
+    'touch_subconsumer must not clear or change the active sub_batch';
+  assert v_member_after.sub_active > v_before,
+    'touch_subconsumer must refresh sub_active even on active member';
+
+  perform pgque.ack(m.batch_id);
+end $$;
+
+-- E: direct legacy next_batch / next_batch_custom rejection on coop_main
+do $$
+begin
+  perform pgque.create_queue('coop_legacy_reject');
+  perform pgque.register_subconsumer('coop_legacy_reject', 'main_c', 'w1');
+
+  begin
+    perform pgque.next_batch('coop_legacy_reject', 'main_c');
+    raise exception 'expected legacy 2-arg next_batch rejection';
+  exception when others then
+    if sqlerrm = 'expected legacy 2-arg next_batch rejection' then raise; end if;
+    assert sqlerrm like '%cooperative main consumer%',
+      format('unexpected legacy 2-arg next_batch error: %s', sqlerrm);
+  end;
+
+  begin
+    perform *
+    from pgque.next_batch_custom(
+      'coop_legacy_reject', 'main_c',
+      null::interval, null::int4, null::interval
+    );
+    raise exception 'expected legacy 5-arg next_batch_custom rejection';
+  exception when others then
+    if sqlerrm = 'expected legacy 5-arg next_batch_custom rejection' then raise; end if;
+    assert sqlerrm like '%cooperative main consumer%',
+      format('unexpected legacy 5-arg next_batch_custom error: %s', sqlerrm);
+  end;
+end $$;
+
+-- F: direct finish_batch on coop_member clears member cursor
+do $$
+begin
+  perform pgque.create_queue('coop_finish_direct');
+  perform pgque.register_subconsumer('coop_finish_direct', 'main_c', 'w1');
+end $$;
+select pgque.send('coop_finish_direct', 't', 'finish-direct-payload');
+select pgque.force_tick('coop_finish_direct');
+select pgque.ticker('coop_finish_direct');
+do $$
+declare
+  m pgque.message;
+  v_member_after record;
+  v_finish_rc int;
+begin
+  select * into m from pgque.receive_coop('coop_finish_direct', 'main_c', 'w1', 10) limit 1;
+  assert m.batch_id is not null, 'setup: w1 should hold an active batch';
+
+  v_finish_rc := pgque.finish_batch(m.batch_id);
+  assert v_finish_rc = 1,
+    format('finish_batch on coop_member should return 1, got %s', v_finish_rc);
+
+  select s.* into v_member_after
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_finish_direct'
+    and c.co_name = 'main_c.w1';
+  assert v_member_after.sub_batch is null,
+    'direct finish_batch on coop_member must clear sub_batch';
+  assert v_member_after.sub_last_tick is null,
+    'direct finish_batch on coop_member must clear sub_last_tick';
+end $$;
+
+-- G: normal consumer + active coop group on the same queue both receive
+do $$
+begin
+  perform pgque.create_queue('coop_fanout');
+  perform pgque.register_consumer('coop_fanout', 'normal_c');
+  perform pgque.register_subconsumer('coop_fanout', 'main_c', 'w1');
+end $$;
+select pgque.send('coop_fanout', 't', 'fanout-event');
+select pgque.force_tick('coop_fanout');
+select pgque.ticker('coop_fanout');
+do $$
+declare
+  normal_rows int;
+  coop_rows int;
+begin
+  select count(*) into normal_rows from pgque.receive('coop_fanout', 'normal_c', 10);
+  assert normal_rows = 1,
+    format('normal consumer must receive on a queue with active coop group, got %s', normal_rows);
+
+  select count(*) into coop_rows from pgque.receive_coop('coop_fanout', 'main_c', 'w1', 10);
+  assert coop_rows = 1,
+    format('coop subconsumer must receive event independently, got %s', coop_rows);
+end $$;
 
 do $$ begin
   raise notice 'PASS: cooperative consumer SQL-core semantics';
