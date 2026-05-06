@@ -252,21 +252,25 @@ and a final disjoint-delivery summary.
 
 ![Coop scaling -- Go](bench/coop_scaling/coop_scaling.png)
 
-Throughput rises from one to a few subconsumers because separate
-batches now process in parallel. The curve plateaus and may regress
-beyond that point because cooperative allocation serializes on a
-`FOR UPDATE` of the cooperative main row, so every batch handover
-goes through one hot row. Adding more *normal* consumers does not
-share work — each `register_consumer` is a separate fan-out cursor
-that delivers every event again, so four normal consumers process
-the queue four times, not 4x faster. To split work across N workers,
-use cooperative subconsumers under one logical consumer. Tune
-`ticker_max_count` and tick cadence so each batch carries meaningful
-work; otherwise N workers benchmark row-lock churn instead of useful
-processing. See [`docs/reference.md`](../../docs/reference.md) for the
-canonical SQL-side reference. The benchmark source lives in
-[`clients/go/bench/coop_scaling`](bench/coop_scaling); reproduce with
-`PGQUE_TEST_DSN=... bash bench/coop_scaling/run.sh`.
+The benchmark sweeps `subconsumers ∈ {1, 2, 4, 8, 16}` and simulates
+~1 ms of per-message work in the handler. Throughput rises from one
+to a few subconsumers because separate batches now process in
+parallel. Eventually the curve plateaus (and may regress) once the
+`FOR UPDATE` lock on the cooperative main row, taken on every batch
+handover, becomes the bottleneck. With a *no-op* handler that lock
+dominates from N=1 and the curve is monotonically decreasing — set
+`HANDLER_WORK_MS=0` in `run.sh` to reproduce the contention-only
+shape. Adding more *normal* consumers does not share work: each
+`register_consumer` is a separate fan-out cursor that delivers every
+event again, so four normal consumers process the queue four times,
+not 4x faster. To split work across N workers, use cooperative
+subconsumers under one logical consumer. Tune `ticker_max_count` and
+tick cadence so each batch carries meaningful work; otherwise N
+workers benchmark row-lock churn instead of useful processing. See
+[`docs/reference.md`](../../docs/reference.md) for the canonical
+SQL-side reference. The benchmark source lives in
+[`clients/go/bench/coop_scaling`](bench/coop_scaling); reproduce
+with `PGQUE_TEST_DSN=... bash bench/coop_scaling/run.sh`.
 
 ## Transactions
 
