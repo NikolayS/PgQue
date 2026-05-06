@@ -1017,6 +1017,12 @@ begin
             from pgque.get_batch_events(v_member.sub_batch)
         loop
             if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
+                /*
+                 * ev_txid is bigint in get_batch_events (legacy PgQ
+                 * signature); the text round-trip is the codebase
+                 * convention to widen to xid8 without precision loss
+                 * (see pgque.nack() for the same pattern).
+                 */
                 perform pgque.event_dead(
                     v_member.sub_batch,
                     v_ev.ev_id,
@@ -1032,6 +1038,13 @@ begin
                     v_ev.ev_extra4
                 );
             else
+                /*
+                 * 60 second retry delay matches pgque.nack()'s default
+                 * (i_retry_after default '60 seconds'). Per-queue retry
+                 * intervals are not configurable today; if that changes,
+                 * read it alongside queue_max_retries above and pass it
+                 * here.
+                 */
                 perform pgque.event_retry(v_member.sub_batch, v_ev.ev_id, 60);
             end if;
         end loop;
