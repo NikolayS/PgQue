@@ -1,2 +1,6 @@
 dist/
 node_modules/
+
+# Per-run benchmark output. The committed PNG is the headline result;
+# CSVs are reproducible from the bench scripts.
+bench/coop_scaling.csv
