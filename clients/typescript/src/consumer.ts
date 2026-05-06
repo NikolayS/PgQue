@@ -31,6 +31,8 @@ export class Consumer {
   private readonly maxMessages: number;
   private readonly unknownHandlerPolicy: 'ack' | 'nack';
   private readonly logger: Pick<Console, 'warn' | 'error'>;
+  private readonly subconsumer: string | undefined;
+  private readonly deadInterval: string | undefined;
 
   /** @internal — use {@link Client.newConsumer}. */
   constructor(
@@ -43,6 +45,13 @@ export class Consumer {
     this.maxMessages = opts.maxMessages ?? DEFAULT_MAX_MESSAGES;
     this.unknownHandlerPolicy = opts.unknownHandlerPolicy ?? 'nack';
     this.logger = opts.logger ?? console;
+    this.subconsumer = opts.subconsumer;
+    this.deadInterval = opts.deadInterval;
+    if (this.deadInterval !== undefined && this.subconsumer === undefined) {
+      throw new Error(
+        'pgque: deadInterval requires subconsumer; pass { subconsumer, deadInterval } together',
+      );
+    }
   }
 
   /** Register a handler for `eventType`. Replaces any previous handler. */
@@ -65,7 +74,13 @@ export class Consumer {
     while (!signal?.aborted) {
       let msgs: Message[];
       try {
-        msgs = await this.client.receive(this.queue, this.name, this.maxMessages);
+        msgs =
+          this.subconsumer !== undefined
+            ? await this.client.receiveCoop(this.queue, this.name, this.subconsumer, {
+                maxMessages: this.maxMessages,
+                ...(this.deadInterval !== undefined ? { deadInterval: this.deadInterval } : {}),
+              })
+            : await this.client.receive(this.queue, this.name, this.maxMessages);
       } catch (err) {
         this.logger.error(`pgque: receive error: ${formatErr(err)}`);
         await sleep(this.pollIntervalMs, signal);

@@ -322,6 +322,144 @@ export class Client {
   }
 
   /**
+   * **Experimental.** Register `subconsumer` under the cooperative group
+   * `(queue, consumer)`. Wraps `pgque.subscribe_subconsumer`.
+   *
+   * Returns `1` on first registration, `0` when already registered. Throws
+   * if the named `consumer` already exists as an active normal consumer
+   * (use `pgque.register_subconsumer(..., convert_normal => true)` via
+   * `rawPool` to convert intentionally).
+   *
+   * Function names and edge-case behavior may change before this feature
+   * is marked stable.
+   */
+  async subscribeSubconsumer(
+    queue: string,
+    consumer: string,
+    subconsumer: string,
+  ): Promise<number> {
+    try {
+      const result = await this.pool.query<{ subscribe_subconsumer: number }>(
+        'select pgque.subscribe_subconsumer($1, $2, $3) as subscribe_subconsumer',
+        [queue, consumer, subconsumer],
+      );
+      return result.rows[0]?.subscribe_subconsumer ?? 0;
+    } catch (err) {
+      throw mapPgError('subscribeSubconsumer', err, { queue });
+    }
+  }
+
+  /**
+   * **Experimental.** Unregister `subconsumer` from the cooperative group.
+   * Wraps `pgque.unsubscribe_subconsumer`.
+   *
+   * `options.batchHandling` controls the active-batch policy:
+   * - `0` (default) — raise if the subconsumer holds an active batch.
+   * - `1` — atomically route the active batch through retry/DLQ before
+   *   removing the subconsumer (no messages are dropped).
+   */
+  async unsubscribeSubconsumer(
+    queue: string,
+    consumer: string,
+    subconsumer: string,
+    options: { batchHandling?: 0 | 1 } = {},
+  ): Promise<number> {
+    const batchHandling = options.batchHandling ?? 0;
+    try {
+      const result = await this.pool.query<{ unsubscribe_subconsumer: number }>(
+        'select pgque.unsubscribe_subconsumer($1, $2, $3, $4) as unsubscribe_subconsumer',
+        [queue, consumer, subconsumer, batchHandling],
+      );
+      return result.rows[0]?.unsubscribe_subconsumer ?? 0;
+    } catch (err) {
+      throw mapPgError('unsubscribeSubconsumer', err, { queue });
+    }
+  }
+
+  /**
+   * **Experimental.** Receive messages for one cooperative subconsumer.
+   * Wraps `pgque.receive_coop`. The cooperative main and subconsumer rows
+   * are auto-registered on first call.
+   *
+   * `options.maxMessages` defaults to `100` (the SQL default). `ack(batchId)`
+   * still finishes the entire underlying batch, so size `maxMessages`
+   * appropriately or use the high-level `Consumer` default.
+   *
+   * `options.deadInterval` is a PostgreSQL `interval` text (e.g.
+   * `"5 minutes"`); when set, `receive_coop` may steal a stale sibling's
+   * batch, allocating a fresh `batchId` and invalidating the old token.
+   *
+   * Cooperative allocation serializes on a `FOR UPDATE` of the main
+   * subscription row; high worker counts polling tiny batches contend on
+   * that row. Tune tick cadence so each batch does meaningful work.
+   */
+  async receiveCoop(
+    queue: string,
+    consumer: string,
+    subconsumer: string,
+    options: { maxMessages?: number; deadInterval?: string } = {},
+  ): Promise<Message[]> {
+    if (!queue) {
+      throw new PgqueSqlError('receiveCoop', {
+        cause: new Error('queue must be a non-empty string'),
+      });
+    }
+    if (!consumer) {
+      throw new PgqueSqlError('receiveCoop', {
+        cause: new Error('consumer must be a non-empty string'),
+      });
+    }
+    if (!subconsumer) {
+      throw new PgqueSqlError('receiveCoop', {
+        cause: new Error('subconsumer must be a non-empty string'),
+      });
+    }
+    const maxMessages = options.maxMessages ?? 100;
+    if (!Number.isInteger(maxMessages) || maxMessages <= 0) {
+      throw new PgqueSqlError('receiveCoop', {
+        cause: new Error('maxMessages must be a positive integer'),
+      });
+    }
+    const deadInterval = options.deadInterval ?? null;
+    try {
+      const result = await this.pool.query<RawMessageRow>(
+        'select * from pgque.receive_coop($1, $2, $3, $4, $5::interval)',
+        [queue, consumer, subconsumer, maxMessages, deadInterval],
+      );
+      return result.rows.map(rowToMessage);
+    } catch (err) {
+      if (err instanceof PgqueError) throw err;
+      throw mapPgError('receiveCoop', err, { queue });
+    }
+  }
+
+  /**
+   * **Experimental.** Refresh `sub_active` for `subconsumer` so a stale-batch
+   * takeover does not steal it from a worker running a long handler. Wraps
+   * `pgque.touch_subconsumer`. Returns the row count touched (`1` if the
+   * subconsumer is registered, `0` otherwise).
+   *
+   * The high-level `Consumer` does not call this automatically; call it
+   * manually from long-running handlers or use a conservative
+   * `deadInterval`.
+   */
+  async touchSubconsumer(
+    queue: string,
+    consumer: string,
+    subconsumer: string,
+  ): Promise<number> {
+    try {
+      const result = await this.pool.query<{ touch_subconsumer: number }>(
+        'select pgque.touch_subconsumer($1, $2, $3) as touch_subconsumer',
+        [queue, consumer, subconsumer],
+      );
+      return result.rows[0]?.touch_subconsumer ?? 0;
+    } catch (err) {
+      throw mapPgError('touchSubconsumer', err, { queue });
+    }
+  }
+
+  /**
    * Construct a Consumer that polls `queue` under `name`. The consumer
    * must already be subscribed (e.g. via {@link subscribe}).
    */

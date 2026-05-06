@@ -41,3 +41,33 @@ export async function advanceQueue(client: Client, queue: string): Promise<void>
   await client.forceNextTick(queue);
   await client.ticker(queue);
 }
+
+/**
+ * Teardown variant for cooperative tests: nukes any cooperative subscription
+ * rows under `queue` directly so `drop_queue(..., true)` does not trip on the
+ * `cannot unregister cooperative main` guard. Direct table writes are
+ * test-only — production code should always go through
+ * `unsubscribe_subconsumer`.
+ */
+export async function teardownCoopTestQueue(env: TestEnv): Promise<void> {
+  try {
+    await env.client.rawPool.query(
+      `delete from pgque.subscription
+        where sub_queue = (select queue_id from pgque.queue where queue_name = $1)`,
+      [env.queue],
+    );
+    await env.client.rawPool.query(
+      `delete from pgque.retry_queue
+        where ev_queue = (select queue_id from pgque.queue where queue_name = $1)`,
+      [env.queue],
+    );
+    await env.client.rawPool.query(
+      `delete from pgque.dead_letter
+        where dl_queue_id = (select queue_id from pgque.queue where queue_name = $1)`,
+      [env.queue],
+    );
+    await env.client.rawPool.query(`select pgque.drop_queue($1, true)`, [env.queue]);
+  } finally {
+    await env.client.close();
+  }
+}

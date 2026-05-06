@@ -77,6 +77,24 @@ export interface ConsumerOptions {
   unknownHandlerPolicy?: 'ack' | 'nack';
   /** Optional logger. Defaults to `console`. */
   logger?: Pick<Console, 'warn' | 'error'>;
+  /**
+   * **Experimental.** When set, the consumer joins a cooperative group on
+   * `(queue, name)` as this `subconsumer` worker. The poll loop calls
+   * `client.receiveCoop(queue, name, subconsumer, ...)` instead of
+   * `client.receive(...)`. PgQue auto-registers the cooperative main +
+   * subconsumer rows on first call.
+   *
+   * Function names, edge-case behavior, and the option shape may change
+   * before this feature is marked stable.
+   */
+  subconsumer?: string;
+  /**
+   * **Experimental.** PostgreSQL `interval` text passed to `receive_coop` to
+   * enable stale-batch takeover (e.g. `"5 minutes"`). Only valid together
+   * with `subconsumer`; supplying it without `subconsumer` throws at
+   * construction.
+   */
+  deadInterval?: string;
 }
 
 /**
