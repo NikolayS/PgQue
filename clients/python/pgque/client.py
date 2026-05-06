@@ -273,6 +273,139 @@ class PgqueClient:
         """Deprecated compatibility alias for ``force_next_tick``."""
         return self.force_next_tick(queue)
 
+    # --- experimental cooperative consumers -----------------------------
+    #
+    # Function names, edge-case behavior, and signatures for these methods
+    # may change before the cooperative API is marked stable. See the
+    # client README ("Experimental: cooperative consumers") and
+    # ``docs/reference.md`` for context.
+
+    def subscribe_subconsumer(
+        self,
+        queue: str,
+        consumer: str,
+        subconsumer: str,
+    ) -> int:
+        """Register ``subconsumer`` under logical ``consumer`` for ``queue``.
+
+        Maps to ``pgque.subscribe_subconsumer(queue, consumer, subconsumer)``.
+        Returns ``1`` for a new registration and ``0`` if the row already
+        existed.
+        """
+        try:
+            row = self.conn.execute(
+                "select pgque.subscribe_subconsumer(%s, %s, %s)",
+                (queue, consumer, subconsumer),
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
+
+    def unsubscribe_subconsumer(
+        self,
+        queue: str,
+        consumer: str,
+        subconsumer: str,
+        *,
+        batch_handling: int = 0,
+    ) -> int:
+        """Unregister one subconsumer.
+
+        Maps to ``pgque.unsubscribe_subconsumer(queue, consumer,
+        subconsumer, batch_handling)``. The default ``batch_handling=0``
+        raises if the subconsumer holds an active batch; pass ``1`` to
+        route active messages through the same retry/DLQ policy as
+        ``nack`` before the row is removed.
+        """
+        try:
+            row = self.conn.execute(
+                "select pgque.unsubscribe_subconsumer(%s, %s, %s, %s)",
+                (queue, consumer, subconsumer, batch_handling),
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
+
+    def receive_coop(
+        self,
+        queue: str,
+        consumer: str,
+        subconsumer: str,
+        *,
+        max_messages: int = 100,
+        dead_interval: Optional[str] = None,
+    ) -> list[Message]:
+        """Receive a batch of messages for one cooperative subconsumer.
+
+        Maps to ``pgque.receive_coop(queue, consumer, subconsumer,
+        max_return, dead_interval)``. The function auto-registers the
+        ``coop_main`` and ``coop_member`` rows on first call, so callers
+        do not need to ``subscribe_subconsumer`` ahead of time unless
+        they want to convert an existing normal consumer.
+
+        Args:
+            queue: Queue name.
+            consumer: Logical consumer (the ``coop_main`` row).
+            subconsumer: Per-worker member name.
+            max_messages: Maximum rows to return from the current batch.
+                ``ack(batch_id)`` advances the cooperative cursor past
+                the entire underlying batch, so set this >= the queue's
+                worst-case batch size or consume the full batch before
+                acking.
+            dead_interval: Optional PostgreSQL interval syntax (e.g.
+                ``"5 minutes"``). When set, allows takeover of a stale
+                sibling's batch under a fresh ``batch_id``; the old
+                token is invalidated.
+
+        Returns:
+            Possibly-empty list of ``Message`` objects.
+        """
+        try:
+            rows = self.conn.execute(
+                "select * from pgque.receive_coop(%s, %s, %s, %s, %s::interval)",
+                (queue, consumer, subconsumer, max_messages, dead_interval),
+            ).fetchall()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+
+        return [
+            Message(
+                msg_id=r[0],
+                batch_id=r[1],
+                type=r[2],
+                payload=r[3],
+                retry_count=r[4],
+                created_at=r[5],
+                extra1=r[6],
+                extra2=r[7],
+                extra3=r[8],
+                extra4=r[9],
+            )
+            for r in rows
+        ]
+
+    def touch_subconsumer(
+        self,
+        queue: str,
+        consumer: str,
+        subconsumer: str,
+    ) -> int:
+        """Refresh the heartbeat for a registered subconsumer row.
+
+        Maps to ``pgque.touch_subconsumer(queue, consumer, subconsumer)``.
+        Does not create a row if one does not already exist; returns the
+        number of rows touched (``1`` when the subconsumer is registered,
+        ``0`` otherwise).
+        """
+        try:
+            row = self.conn.execute(
+                "select pgque.touch_subconsumer(%s, %s, %s)",
+                (queue, consumer, subconsumer),
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
+
     def nack(
         self,
         batch_id: int,
