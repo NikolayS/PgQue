@@ -93,6 +93,49 @@ try {
 `sendBatch()`, `ticker(queue)`, and `forceNextTick(queue)` are JS `bigint` to
 match PostgreSQL `bigint` losslessly.
 
+## Experimental: cooperative consumers
+
+> **Experimental in PgQue 0.2.** Function names, edge-case behavior, and
+> client API shape may change before this feature is marked stable. Do not
+> use this as the only processing path for critical workloads without
+> idempotent handlers and stale-worker takeover tests.
+
+Cooperative consumers let several workers share **one logical consumer** by
+registering as **subconsumers** under it. Each cooperative batch is handed to
+exactly one subconsumer; the main row owns the group cursor.
+
+```ts
+await client.subscribeSubconsumer('orders', 'billing', 'worker-1');
+
+const consumer = client.newConsumer('orders', 'billing', {
+  subconsumer: 'worker-1',
+  deadInterval: '5 minutes', // PostgreSQL interval; enables stale-batch takeover
+});
+consumer.handle('order.created', async (msg) => { /* ... */ });
+await consumer.start(ac.signal);
+```
+
+When `subconsumer` is set, the poll loop calls `client.receiveCoop(...)`
+instead of `client.receive(...)`. Without it, the consumer behaves
+identically to the non-cooperative form.
+
+| Method | Description |
+|---|---|
+| `client.subscribeSubconsumer(queue, consumer, subconsumer)` | Register a subconsumer. Returns `1` first call, `0` if already registered. |
+| `client.unsubscribeSubconsumer(queue, consumer, subconsumer, { batchHandling? })` | Remove a subconsumer. Default raises if a batch is active; `batchHandling: 1` routes the active batch through retry/DLQ first. |
+| `client.receiveCoop(queue, consumer, subconsumer, { maxMessages?, deadInterval? })` | Cooperative receive. Auto-registers main + subconsumer rows on first call. `deadInterval` enables stale-batch takeover; the new owner gets a fresh `batchId`. |
+| `client.touchSubconsumer(queue, consumer, subconsumer)` | Refresh the subconsumer heartbeat so a long handler is not stolen. The high-level consumer does not call this automatically. |
+
+Throughput note: cooperative allocation serializes on a `FOR UPDATE` of the
+main subscription row. Many workers polling tiny batches contend on that
+single hot row — tune ticker cadence so each batch does meaningful work.
+Once a logical consumer has subconsumers, plain `receive` / `next_batch`
+on that consumer raises; unregister all subconsumers to return to normal
+fan-out.
+
+If `deadInterval` is set without `subconsumer`, `newConsumer` throws at
+construction.
+
 ## Errors
 
 All errors derive from `PgqueError`:
