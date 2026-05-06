@@ -605,6 +605,29 @@ begin
   end;
 end $$;
 
+-- E2: legacy 5-arg next_batch_custom on a coop_member raises an explicit
+-- subconsumer-form directive — not the misleading 'PgQ corruption' fallback
+-- that the LEFT JOIN to pgque.tick produces (member rows have sub_last_tick
+-- NULL by design, which trips the prev_tick_id sanity check downstream).
+do $$
+begin
+  perform pgque.create_queue('coop_member_fallthrough');
+  perform pgque.register_subconsumer('coop_member_fallthrough', 'main_c', 'w1');
+
+  begin
+    perform *
+    from pgque.next_batch_custom(
+      'coop_member_fallthrough', 'main_c.w1',
+      null::interval, null::int4, null::interval
+    );
+    raise exception 'expected coop_member rejection on legacy next_batch_custom';
+  exception when others then
+    if sqlerrm = 'expected coop_member rejection on legacy next_batch_custom' then raise; end if;
+    assert sqlerrm like '%cooperative subconsumer%',
+      format('legacy next_batch_custom should reject coop_member with subconsumer-form directive, got: %s', sqlerrm);
+  end;
+end $$;
+
 -- F: direct finish_batch on coop_member clears member cursor
 do $$
 begin

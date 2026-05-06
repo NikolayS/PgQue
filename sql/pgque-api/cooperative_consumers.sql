@@ -301,6 +301,17 @@ begin
         raise exception 'consumer % on queue % is a cooperative main consumer; use cooperative receive/next_batch with a subconsumer', i_consumer_name, i_queue_name;
     end if;
 
+    /*
+     * coop_member rows carry sub_last_tick = NULL by design (the main row
+     * owns the cursor), so the LEFT JOIN to pgque.tick above always yields
+     * prev_tick_id IS NULL for members. Reject explicitly here so callers
+     * see a directive to use the cooperative form instead of the misleading
+     * 'PgQ corruption' fallback raised by the prev_tick_id sanity check.
+     */
+    if sub_role = 'coop_member' then
+        raise exception 'consumer % on queue % is a cooperative subconsumer; use receive_coop / next_batch (cooperative form) instead of the legacy 5-arg next_batch_custom', i_consumer_name, i_queue_name;
+    end if;
+
     -- sanity check
     if prev_tick_id is null then
         raise exception 'PgQ corruption: Consumer % on queue % does not see tick %', i_consumer_name, i_queue_name, prev_tick_id;
