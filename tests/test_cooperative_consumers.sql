@@ -160,6 +160,8 @@ begin
   /*
    * coop_main invariants after a member's ack:
    *   - sub_batch must NEVER be non-null on a coop_main row;
+   *   - sub_next_tick must be null on a coop_main row (members own the
+   *     active batch, the main row carries only the group cursor);
    *   - sub_last_tick advanced when w1's batch was allocated (the cooperative
    *     mechanic moves the main cursor on member allocation, not on member
    *     ack), so it must be strictly greater than the pre-receive snapshot.
@@ -172,6 +174,8 @@ begin
     and c.co_name = 'main_c';
   assert v_main_after.sub_batch is null,
     'coop_main must never have sub_batch set';
+  assert v_main_after.sub_next_tick is null,
+    'coop_main must never have sub_next_tick set';
   assert v_main_after.sub_last_tick > coalesce(v_main_before.sub_last_tick, 0),
     format('coop_main sub_last_tick should advance from %s, got %s',
            coalesce(v_main_before.sub_last_tick, 0), v_main_after.sub_last_tick);
@@ -364,12 +368,36 @@ declare
   normal_msg pgque.message;
 begin
   select * into normal_msg from pgque.receive('coop_misc', 'normal_active', 10) limit 1;
+  /*
+   * Two distinct guards on register_subconsumer fire on a normal consumer:
+   *
+   *   1. Without convert_normal: 'explicit conversion is required' — the
+   *      caller didn't opt in to converting an existing normal consumer.
+   *   2. With convert_normal := true AND sub_batch is not null: 'cannot
+   *      convert active normal consumer ...' — opt-in is honored, but the
+   *      consumer is mid-batch and conversion would orphan the active
+   *      cursor token.
+   *
+   * Both branches are blueprint invariants; we test both here.
+   */
   begin
     perform pgque.register_subconsumer('coop_misc', 'normal_active', 'w1');
     raise exception 'expected active normal conversion rejection';
   exception when others then
     if sqlerrm = 'expected active normal conversion rejection' then raise; end if;
+    assert sqlerrm like 'consumer % on queue % is already a normal consumer%',
+      format('without convert_normal, expected explicit-conversion-required error, got: %s', sqlerrm);
   end;
+
+  begin
+    perform pgque.register_subconsumer('coop_misc', 'normal_active', 'w1', i_convert_normal => true);
+    raise exception 'expected active-batch conversion rejection';
+  exception when others then
+    if sqlerrm = 'expected active-batch conversion rejection' then raise; end if;
+    assert sqlerrm like 'cannot convert active normal consumer%',
+      format('with i_convert_normal := true on an active batch, expected active-batch rejection, got: %s', sqlerrm);
+  end;
+
   perform pgque.ack(normal_msg.batch_id);
 end $$;
 
@@ -387,6 +415,8 @@ declare
   m pgque.message;
   shared_sub_id int4;
   no_batch bigint;
+  v_w1_sub_active_before timestamptz;
+  v_w1_sub_active_after timestamptz;
 begin
   select * into m from pgque.receive_coop('coop_misc', 'main_c', 'w2', 10) limit 1;
   perform pgque.nack(m.batch_id, m, interval '1 second', 'test nack');
@@ -411,10 +441,27 @@ begin
      and c.co_name = 'main_c.w1'
      and s.sub_queue = q.queue_id
      and s.sub_consumer = c.co_id
-     and s.sub_batch is null;
+     and s.sub_batch is null
+   returning s.sub_active into v_w1_sub_active_before;
   no_batch := pgque.next_batch('coop_misc', 'main_c', 'w3', interval '1 minute');
   assert no_batch is null,
     'stale takeover must ignore idle coop_member rows';
+
+  /*
+   * Idle members with stale sub_active must NOT be refreshed by a failed
+   * stale-takeover scan. The impl skips the heartbeat update on an empty
+   * tick window; if a regression added an unconditional sub_active = now()
+   * write, w1's timestamp would jump forward and silently mask the bug.
+   */
+  select s.sub_active into v_w1_sub_active_after
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_misc'
+    and c.co_name = 'main_c.w1';
+  assert v_w1_sub_active_after = v_w1_sub_active_before,
+    format('failed stale-takeover must not refresh idle member sub_active (before=%s, after=%s)',
+           v_w1_sub_active_before, v_w1_sub_active_after);
 
   begin
     perform pgque.unregister_consumer('coop_misc', 'main_c');
@@ -625,6 +672,35 @@ begin
     if sqlerrm = 'expected coop_member rejection on legacy next_batch_custom' then raise; end if;
     assert sqlerrm like '%cooperative subconsumer%',
       format('legacy next_batch_custom should reject coop_member with subconsumer-form directive, got: %s', sqlerrm);
+  end;
+end $$;
+
+-- E3: 2-arg next_batch and receive on a dotted member name route through
+-- next_batch_info -> next_batch_custom(5), so they must surface the same
+-- coop_member rejection rather than the legacy 'PgQ corruption' fallback.
+-- Asserts the rejection at the entry points users actually call (E2 only
+-- exercises next_batch_custom directly).
+do $$
+begin
+  perform pgque.create_queue('coop_member_2arg');
+  perform pgque.register_subconsumer('coop_member_2arg', 'main_c', 'w1');
+
+  begin
+    perform pgque.next_batch('coop_member_2arg', 'main_c.w1');
+    raise exception 'expected coop_member rejection on 2-arg next_batch';
+  exception when others then
+    if sqlerrm = 'expected coop_member rejection on 2-arg next_batch' then raise; end if;
+    assert sqlerrm like '%cooperative subconsumer%',
+      format('2-arg next_batch should reject coop_member with subconsumer-form directive, got: %s', sqlerrm);
+  end;
+
+  begin
+    perform * from pgque.receive('coop_member_2arg', 'main_c.w1', 10);
+    raise exception 'expected coop_member rejection on receive';
+  exception when others then
+    if sqlerrm = 'expected coop_member rejection on receive' then raise; end if;
+    assert sqlerrm like '%cooperative subconsumer%',
+      format('receive should reject coop_member with subconsumer-form directive, got: %s', sqlerrm);
   end;
 end $$;
 

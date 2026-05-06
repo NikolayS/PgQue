@@ -74,7 +74,40 @@ declare
   v_batch_ids bigint[];
   v_row_count integer;
   v_wait_ms numeric;
+  v_w1_in_sleep boolean := false;
+  v_polls int := 0;
 begin
+  /*
+   * Pre-check before measuring w2: confirm w1 is past its FOR UPDATE on
+   * coop_main and currently inside pg_sleep(3) (i.e., holding the lock).
+   * Without this gate, a slow runner could let w2 race in before w1
+   * acquires the lock and the wait-time assertion below would measure
+   * nothing.
+   *
+   * MVCC visibility note: w1's INSERT in the dblink CTE is held inside the
+   * same transaction during pg_sleep(3), so it's invisible to us until
+   * commit (which happens AFTER w1 releases the lock). Polling
+   * coop_concurrency_results would therefore not work. pg_stat_activity is
+   * the right signal: when wait_event = 'PgSleep' for a backend running
+   * the dblink query, we know that backend is past every prior step,
+   * including the FOR UPDATE on coop_main.
+   *
+   * Polls up to 3s in 100ms steps.
+   */
+  while v_polls < 30 and not v_w1_in_sleep loop
+    perform pg_sleep(0.1);
+    select exists (
+      select 1
+      from pg_stat_activity
+      where pid <> pg_backend_pid()
+        and query like '%coop_concurrent_alloc%'
+        and wait_event = 'PgSleep'
+    ) into v_w1_in_sleep;
+    v_polls := v_polls + 1;
+  end loop;
+  assert v_w1_in_sleep,
+    'w1 did not enter pg_sleep within 3s; serialization test cannot proceed';
+
   v_t0 := clock_timestamp();
 
   select coalesce(array_agg(msg_id order by msg_id), '{}'),
