@@ -23,6 +23,7 @@ fi
 
 psql_base=(psql --no-psqlrc -v ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
 queue_name="two_session_receive_${$}_$(date +%s)"
+session1_app="pgque_receive_lock_s1_${$}_$(date +%s)"
 hold_seconds=4
 min_wait_seconds=$((hold_seconds - 1))
 workdir="$(mktemp -d)"
@@ -76,7 +77,7 @@ commit;
 SQL
 
 "${psql_base[@]}" -f "${workdir}/setup.sql"
-"${psql_base[@]}" -f "${workdir}/session1.sql" >"${workdir}/session1.out" 2>"${workdir}/session1.err" &
+PGAPPNAME="${session1_app}" "${psql_base[@]}" -f "${workdir}/session1.sql" >"${workdir}/session1.out" 2>"${workdir}/session1.err" &
 session1_pid=$!
 
 print_debug() {
@@ -90,20 +91,31 @@ print_debug() {
   cat "${workdir}/session2.err" >&2 || true
 }
 
-# Wait until session 1 has entered receive() and recorded an active batch.
+# Wait until session 1 is visibly inside pg_sleep() with its transaction open.
+# Polling pgque.subscription.sub_batch is wrong here: session1's batch update is
+# uncommitted, so other sessions cannot see it until the row lock is already gone.
+session1_ready=0
 for _ in $(seq 1 50); do
   if "${psql_base[@]}" -tAc "
     select 1
-      from pgque.subscription s
-      join pgque.queue q on q.queue_id = s.sub_queue
-     where q.queue_name = '${queue_name}'
-       and s.sub_batch is not null
+      from pg_stat_activity
+     where application_name = '${session1_app}'
+       and state = 'active'
+       and wait_event_type = 'Timeout'
+       and wait_event = 'PgSleep'
+       and query like 'select pg_sleep(%'
      limit 1
   " | grep -q 1; then
+    session1_ready=1
     break
   fi
   sleep 0.2
 done
+if (( session1_ready != 1 )); then
+  echo "FAIL: session1 did not reach pg_sleep() while holding the receive transaction" >&2
+  print_debug
+  exit 1
+fi
 start_epoch=$(date +%s)
 set +e
 "${psql_base[@]}" -f "${workdir}/session2.sql" >"${workdir}/session2.out" 2>"${workdir}/session2.err"
