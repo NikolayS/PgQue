@@ -686,6 +686,101 @@ begin
     format('coop subconsumer must receive event independently, got %s', coop_rows);
 end $$;
 
+/*
+ * H: full coop teardown DLQ retention contract.
+ *
+ * 817c084 routes coop DLQ writes to the coop_main's co_id. The fix protects
+ * the DLQ row from member-cascade delete during unregister_subconsumer.
+ * This test exercises the FULL teardown sequence the existing 817c084
+ * regression in test_coop_ultrareview only partially covers:
+ *
+ *   Stage 1: unregister the last member -> coop_main demotes to 'normal'.
+ *            DLQ row MUST survive (the contract 817c084 introduced).
+ *   Stage 2: unregister_consumer the (now normal) main, which deletes the
+ *            consumer row. The dl_consumer_id ON DELETE CASCADE then wipes
+ *            the DLQ row -- documented behavior, see
+ *            sql/pgque-additions/dlq.sql near the dl_consumer_id FK.
+ *
+ * Asserting both stages locks in the contract: cooperative DLQ rows
+ * survive the cooperative-teardown path (member unregister), then follow
+ * the same cascade-on-consumer-delete rule as normal DLQ rows.
+ */
+do $$
+begin
+  perform pgque.create_queue('coop_dlq_teardown');
+  update pgque.queue
+  set queue_max_retries = 0
+  where queue_name = 'coop_dlq_teardown';
+  /*
+   * Use queue-unique consumer + subconsumer names. Other test blocks in
+   * this file reuse 'main_c' as a shared consumer, which would prevent
+   * the consumer row from being deleted in stage 2 (unregister_consumer
+   * only deletes the consumer row when no other subscriptions reference
+   * it). Without deletion, the dl_consumer_id ON DELETE CASCADE never
+   * fires and the stage-2 assertion would fail.
+   */
+  perform pgque.register_subconsumer('coop_dlq_teardown', 'dlq_teardown_main_c', 'dlq_teardown_w1');
+end $$;
+select pgque.send('coop_dlq_teardown', 't', 'dlq-payload');
+select pgque.force_tick('coop_dlq_teardown');
+select pgque.ticker('coop_dlq_teardown');
+do $$
+declare
+  m pgque.message;
+  v_dlq_count int;
+  v_main_role text;
+begin
+  select * into m from pgque.receive_coop('coop_dlq_teardown', 'dlq_teardown_main_c', 'dlq_teardown_w1', 10) limit 1;
+  -- queue_max_retries = 0 routes the first nack straight to DLQ. nack()
+  -- writes the dead_letter row but does not close the batch; ack() then
+  -- clears the member's sub_batch so unregister can proceed via the idle
+  -- path (no batch_handling = 1 needed).
+  perform pgque.nack(m.batch_id, m, interval '1 second', 'force-dlq');
+  perform pgque.ack(m.batch_id);
+
+  select count(*) into v_dlq_count
+  from pgque.dead_letter as dl
+  join pgque.queue as q on q.queue_id = dl.dl_queue_id
+  where q.queue_name = 'coop_dlq_teardown'
+    and dl.ev_id = m.msg_id;
+  assert v_dlq_count = 1,
+    format('setup: DLQ row should exist after force-dlq nack, got %s', v_dlq_count);
+
+  -- Stage 1: unregister the only member. Main should demote to 'normal' and
+  -- the DLQ row must survive (anchored to persistent main co_id, not the
+  -- ephemeral member co_id).
+  assert pgque.unregister_subconsumer('coop_dlq_teardown', 'dlq_teardown_main_c', 'dlq_teardown_w1') = 1,
+    'unregister of only member should succeed';
+  select s.sub_role into v_main_role
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'coop_dlq_teardown'
+    and c.co_name = 'dlq_teardown_main_c';
+  assert v_main_role = 'normal',
+    format('main should demote to normal after last member unregister, got %s', v_main_role);
+
+  select count(*) into v_dlq_count
+  from pgque.dead_letter as dl
+  join pgque.queue as q on q.queue_id = dl.dl_queue_id
+  where q.queue_name = 'coop_dlq_teardown'
+    and dl.ev_id = m.msg_id;
+  assert v_dlq_count = 1,
+    format('DLQ row must survive last-member-unregister + main-demote sequence, got %s', v_dlq_count);
+
+  -- Stage 2: unregister_consumer the (now normal) main. The cascade on
+  -- dl_consumer_id wipes the DLQ row by documented design.
+  assert pgque.unregister_consumer('coop_dlq_teardown', 'dlq_teardown_main_c') = 1,
+    'unregister_consumer of demoted main should succeed';
+  select count(*) into v_dlq_count
+  from pgque.dead_letter as dl
+  join pgque.queue as q on q.queue_id = dl.dl_queue_id
+  where q.queue_name = 'coop_dlq_teardown'
+    and dl.ev_id = m.msg_id;
+  assert v_dlq_count = 0,
+    format('DLQ row must cascade when its consumer is unregistered (per dl_consumer_id ON DELETE CASCADE), got %s', v_dlq_count);
+end $$;
+
 do $$ begin
   raise notice 'PASS: cooperative consumer SQL-core semantics';
 end $$;
