@@ -136,6 +136,32 @@ fan-out.
 If `deadInterval` is set without `subconsumer`, `newConsumer` throws at
 construction.
 
+A runnable two-worker walkthrough lives in
+[`bench/coop_demo.ts`](bench/coop_demo.ts):
+
+```bash
+PGQUE_TEST_DSN=postgres://user@host/db \
+  bun run clients/typescript/bench/coop_demo.ts
+```
+
+### Throughput scaling
+
+![Coop scaling — TypeScript](bench/coop_scaling.png)
+
+Throughput rises with more cooperative subconsumers because batches process
+in parallel — handler time on one worker overlaps with the allocator handing
+the next batch to another. The plateau or regression at high N is the
+`FOR UPDATE` lock on the cooperative main row: every `receive_coop` call
+serializes on that single hot row. **Adding more normal consumers does not
+share work.** Each `subscribe` (a separate `register_consumer` cursor)
+re-delivers every event — that is fan-out, not work-sharing. To split work
+across N workers, use cooperative subconsumers. Tune `ticker_max_count` and
+tick cadence so each batch carries enough events to amortize the lock.
+
+Methodology and the script live in
+[`bench/coop_scaling.ts`](bench/coop_scaling.ts) and
+[`bench/coop_scaling.sh`](bench/coop_scaling.sh).
+
 ## Errors
 
 All errors derive from `PgqueError`:
