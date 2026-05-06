@@ -156,6 +156,29 @@ client.unsubscribe_subconsumer(
 the subconsumer holds an active batch; pass `batch_handling=1` to route
 active messages through retry/DLQ before removal.
 
+A runnable two-worker demo lives at
+[`bench/coop_demo.py`](bench/coop_demo.py); run it against any pgque
+database with `PGQUE_TEST_DSN` set.
+
+#### Scaling
+
+![Coop scaling — Python](bench/coop_scaling.png)
+
+Throughput rises with cooperative subconsumers when the consumer can
+process several batches in parallel: each batch is handed to exactly one
+member, so producing many small batches (more frequent ticks) is what
+unlocks parallelism. The plateau and regression at higher `N` come from
+the `FOR UPDATE` lock on the cooperative main row — every member must
+serialize through it to claim or release a batch, so adding workers past
+the lock's saturation point only adds contention. **Adding more normal
+consumers does not share work**: each `register_consumer` /
+`subscribe` is its own fan-out cursor, so every event is redelivered to
+every consumer — to split work across workers under one logical
+consumer, use cooperative subconsumers. To amortize the main-row lock,
+tune `ticker_max_count` and tick cadence so each batch carries enough
+events to make the lock acquire-and-release worth it. Reproduce with
+[`bench/coop_scaling.py`](bench/coop_scaling.py).
+
 ## Manual ticking
 
 For tests, demos, or manual operation without `pg_cron`, use
