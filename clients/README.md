@@ -27,14 +27,16 @@ SQL primitives. The matrix below tracks the public client API on current
 | Unknown-type behavior avoids silent ack | ✗ | ✓ | ✓ |
 | Configurable unknown-type policy | ✗ | ✗ | ✗ |
 | `subscribe` / `unsubscribe` wrappers | ✗ | ✗ | ✓ |
-| Cooperative consumers (experimental) [^coop] | ✗ | ✗ | ✓ |
+| Cooperative consumers (experimental) [^coop] | ✓ | ✗ | ✓ |
 
 Legend: ✓ supported by the client API on `main`; ✗ not exposed as a
 first-class client API. Lower-level SQL primitives remain available through raw
 connection/pool escape hatches. TypeScript currently exposes an extra
 convenience wrapper for `ticker`; Python and Go can call it via raw SQL.
 
-[^coop]: Experimental. TypeScript exposes `subscribeSubconsumer`,
-    `unsubscribeSubconsumer`, `receiveCoop`, `touchSubconsumer`, and a
-    `subconsumer` / `deadInterval` option on `newConsumer`. Function names
-    and edge-case behavior may change before the feature is marked stable.
+[^coop]: Experimental. Each supporting client exposes
+    `subscribe_subconsumer` / `unsubscribe_subconsumer` / `receive_coop` /
+    `touch_subconsumer` (idiomatic case per language) and a `subconsumer` /
+    `dead_interval` option on the high-level consumer. Function names and
+    edge-case behavior may change before the feature is marked stable. See
+    each client's README for details.

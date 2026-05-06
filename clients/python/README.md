@@ -97,6 +97,65 @@ consumer = pgque.Consumer(
 )
 ```
 
+## Experimental: cooperative consumers
+
+> **Experimental in PgQue 0.2.** Function names, edge-case behavior, and
+> client API shape may change before this feature is marked stable. Do
+> not use this as the only processing path for critical workloads
+> without idempotent handlers and stale-worker takeover tests.
+
+Cooperative consumers let several worker processes share **one logical
+consumer**. Each batch is handed to exactly one subconsumer; the main
+row owns the group cursor, member rows own active batches. See
+[`docs/reference.md` — Cooperative consumers / subconsumers](../../docs/reference.md#cooperative-consumers--subconsumers)
+for the SQL surface.
+
+Two-worker example (each worker holds its own connection / process):
+
+```python
+import pgque
+
+# worker-1
+c1 = pgque.Consumer(
+    dsn="postgresql://localhost/mydb",
+    queue="orders",
+    name="order_worker",
+    subconsumer="worker-1",
+    dead_interval="5 minutes",  # optional: take over a stale sibling
+)
+
+@c1.on("order.created")
+def handle(msg):
+    process(msg)
+
+c1.start()  # in a second process: subconsumer="worker-2"
+```
+
+`Consumer(subconsumer=...)` switches the poll loop to
+`receive_coop` and auto-registers the `coop_main` + `coop_member` rows
+on the first call. `dead_interval` is only valid in cooperative mode;
+passing it without `subconsumer` raises `ValueError`.
+
+The low-level methods on `PgqueClient` are also available for direct
+use:
+
+```python
+client.subscribe_subconsumer("orders", "order_worker", "worker-1")
+msgs = client.receive_coop(
+    "orders", "order_worker", "worker-1",
+    max_messages=100, dead_interval="5 minutes",
+)
+client.ack(msgs[0].batch_id)
+client.touch_subconsumer("orders", "order_worker", "worker-1")
+client.unsubscribe_subconsumer(
+    "orders", "order_worker", "worker-1", batch_handling=1,
+)
+```
+
+`unsubscribe_subconsumer(..., batch_handling=0)` (the default) raises if
+the subconsumer holds an active batch; pass `batch_handling=1` to route
+active messages through retry/DLQ before removal.
+
 ## Manual ticking
 
 For tests, demos, or manual operation without `pg_cron`, use
