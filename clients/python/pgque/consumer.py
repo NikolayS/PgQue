@@ -68,6 +68,8 @@ class Consumer:
         max_messages: int = _DEFAULT_MAX_MESSAGES,
         retry_after: int = 60,
         unknown_handler_policy: Literal["nack", "ack"] = "nack",
+        subconsumer: Optional[str] = None,
+        dead_interval: Optional[str] = None,
     ):
         self.dsn = dsn
         self.queue = queue
@@ -81,6 +83,18 @@ class Consumer:
                 f"got {unknown_handler_policy!r}"
             )
         self._unknown_handler_policy = unknown_handler_policy
+
+        # Experimental cooperative-consumers mode. When ``subconsumer`` is
+        # set, the poll loop calls ``client.receive_coop(...)`` instead of
+        # the normal ``receive(...)``. ``dead_interval`` is meaningless
+        # outside coop mode and signals a programming error if provided.
+        if dead_interval is not None and subconsumer is None:
+            raise ValueError(
+                "dead_interval is only valid in cooperative mode "
+                "(set subconsumer=...)"
+            )
+        self.subconsumer = subconsumer
+        self.dead_interval = dead_interval
 
         self._handlers: dict[str, Callable] = {}
         self._default_handler: Optional[Callable] = None
@@ -228,9 +242,18 @@ class Consumer:
         # Use a transaction block for receive + ack
         with conn.transaction():
             client = PgqueClient(conn)
-            msgs = client.receive(
-                self.queue, self.name, self.max_messages
-            )
+            if self.subconsumer is not None:
+                msgs = client.receive_coop(
+                    self.queue,
+                    self.name,
+                    self.subconsumer,
+                    max_messages=self.max_messages,
+                    dead_interval=self.dead_interval,
+                )
+            else:
+                msgs = client.receive(
+                    self.queue, self.name, self.max_messages
+                )
 
             if not msgs:
                 return
