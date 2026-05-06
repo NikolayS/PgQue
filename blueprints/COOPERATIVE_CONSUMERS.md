@@ -173,7 +173,8 @@ Low-level compatibility-style API:
 pgque.register_subconsumer(
   queue text,
   consumer text,
-  subconsumer text
+  subconsumer text,
+  convert_normal boolean default false
 ) returns integer
 
 pgque.unregister_subconsumer(
@@ -216,7 +217,8 @@ Modern API for applications and clients:
 pgque.subscribe_subconsumer(
   queue text,
   consumer text,
-  subconsumer text
+  subconsumer text,
+  convert_normal boolean default false
 ) returns integer
 
 pgque.unsubscribe_subconsumer(

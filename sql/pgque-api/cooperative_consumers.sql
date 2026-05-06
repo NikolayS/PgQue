@@ -151,7 +151,11 @@ begin
         delete from pgque.retry_queue
         where ev_owner = x_sub_id;
 
-        -- this will drop subconsumers too
+        /*
+         * Delete the single normal/coop_main subscription. Member rows were
+         * already rejected above (cooperative teardown must go through
+         * unregister_subconsumer), so this only ever removes one row.
+         */
         delete from pgque.subscription
         where sub_id = x_sub_id;
 
@@ -216,10 +220,21 @@ as $$
 --      prev_tick_id        - Start tick id.
 --      prev_tick_time      - Start tick time.
 --      prev_tick_event_seq - value from event id sequence at the time tick was issued.
+--
+-- pgque override note:
+--      This 5-arg form is the legacy non-cooperative API. Cooperative consumers
+--      must use the 7-arg pgque.next_batch_custom(queue, consumer, subconsumer,
+--      …, dead_interval) below. If the named (queue, consumer) resolves to a
+--      coop_main row that has at least one coop_member, this function raises
+--      with a directive to use the cooperative form. Coop_main rows without
+--      members behave as normal consumers and pass through.
+--
 -- Calls:
 --      pgque.find_tick_helper
 -- Tables directly manipulated:
 --      update - pgque.subscription
+-- Tables read:
+--      pgque.subscription (coop_main rejection EXISTS check), pgque.tick
 -- ----------------------------------------------------------------------
 declare
     errmsg text;
@@ -380,7 +395,7 @@ returns integer as $$
 -- Returns:
 --      1 if batch was found, 0 otherwise.
 -- Calls:
---      None
+--      pgque._clear_member_cursor (coop_member branch)
 -- Tables directly manipulated:
 --      update - pgque.subscription
 -- ----------------------------------------------------------------------
@@ -832,6 +847,16 @@ begin
     end if;
 
     if next_tick_id is null then
+        /*
+         * Empty tick window: no batch allocated, no cursor advance.
+         * sub_active is intentionally NOT refreshed here. The dead-interval
+         * takeover query above requires sub_batch is not null, so an idle
+         * member with stale sub_active cannot be victimized — refreshing
+         * would just hide a worker that has stopped polling. Active members
+         * (sub_batch is not null) refresh sub_active on the active-batch
+         * return path; touch_subconsumer is the explicit heartbeat for idle
+         * members that need to keep their identity warm.
+         */
         prev_tick_id := null;
         return;
     end if;
