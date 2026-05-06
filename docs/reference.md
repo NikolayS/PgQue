@@ -168,6 +168,8 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 
 Receives messages for one subconsumer. `max_return` must be >= 1. `dead_interval` enables stale-batch takeover from another inactive member; takeover allocates a fresh `batch_id`, so old tokens cannot ack/nack the new owner's state. The cooperative group is a trust boundary: callers allowed to use the same `(queue, consumer)` can steal stale batches from each other by design, so do not share one cooperative group across mutually untrusted workers.
 
+**Auto-registration.** If the logical `consumer` or `subconsumer` is not yet registered, `receive_coop()` registers them on the fly (creates the `coop_main` row on first call, then the `coop_member` row), so a worker can call `receive_coop()` cold without a prior `register_subconsumer`. Use the explicit `register_subconsumer(..., convert_normal => true)` call only when you need to convert an existing normal consumer into a cooperative main.
+
 **Empty tick windows are auto-finished.** When the current batch's tick window holds no events, `receive_coop()` calls `finish_batch` internally and returns the empty set. Callers polling a quiet queue do not see (and do not need to ack) a `batch_id`; this differs from `receive()`, which still returns an active batch token even when the result set is empty.
 
 **Batch-ownership caveat.** As with `receive()`, `max_return` limits only returned rows; `ack(batch_id)` advances the cooperative cursor past the whole underlying batch. Use `max_return >= ticker_max_count` or consume the full batch before acking.
@@ -191,7 +193,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 Updates a registered subconsumer heartbeat without creating rows. Returns the number of rows touched.
 Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 
-**Cooperative-aware inherited functions.** `pgque.unregister_consumer()` refuses to unregister a cooperative main while subconsumers are registered; unregister subconsumers explicitly. Normal `pgque.next_batch*()` / `pgque.receive()` for a `coop_main` with members raise because the main row is the group cursor. `pgque.finish_batch()` rejects `coop_main` batches and clears member-owned cooperative batches on ack. Batch ids are bearer tokens, matching inherited PgQ behavior: a caller that learns a valid batch id can finish it, so keep batch ids inside trusted consumer code.
+**Cooperative-aware inherited functions.** `pgque.unregister_consumer()` refuses to unregister a cooperative main while subconsumers are registered; unregister subconsumers explicitly. Normal `pgque.next_batch*()` / `pgque.receive()` raise on cooperative rows in two cases: the named consumer is a `coop_main` with at least one registered member (the main row is the group cursor, not a per-worker token), or the named consumer is a `coop_member` row (member rows must go through `receive_coop()` / cooperative `next_batch()`). Both cases include a directive in the error message pointing to the cooperative form. `pgque.finish_batch()` rejects `coop_main` batches and clears member-owned cooperative batches on ack. Batch ids are bearer tokens, matching inherited PgQ behavior: a caller that learns a valid batch id can finish it, so keep batch ids inside trusted consumer code.
 
 #### `pgque.subscribe(queue text, consumer text) → integer`
 
@@ -497,7 +499,7 @@ Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.next_batch_custom(queue_name text, consumer_name text, min_lag interval, min_count int4, min_interval interval) → record`
 
-Activates the next batch with custom size/age constraints. Same out columns as `next_batch_info`. Cooperative-aware: normal inherited batch allocation raises for `coop_main` consumers while member rows exist.
+Activates the next batch with custom size/age constraints. Same out columns as `next_batch_info`. Cooperative-aware: this 5-arg legacy form raises if the named consumer is a `coop_main` with at least one registered member, or if it is a `coop_member` row — in both cases the error message directs the caller to the 7-arg cooperative form. Normal consumers and `coop_main` rows with no members pass through.
 Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_events(batch_id bigint) → setof record`

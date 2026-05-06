@@ -5376,10 +5376,12 @@ returns integer as $$
 -- Returns:
 --      number of (sub)consumers unregistered
 -- Calls:
---      None
+--      None (direct DML only)
 -- Tables directly manipulated:
 --      delete - pgque.retry_queue
 --      delete - pgque.subscription
+--      update - pgque.subscription (last coop_member removed: demote coop_main back to 'normal')
+--      delete - pgque.consumer (when no subscriptions remain for the consumer)
 -- ----------------------------------------------------------------------
 declare
     x_sub_id integer;
