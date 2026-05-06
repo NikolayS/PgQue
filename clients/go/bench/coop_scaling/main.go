@@ -39,6 +39,7 @@ func main() {
 	runs := flag.Int("runs", 3, "number of runs to take the median over")
 	maxMessages := flag.Int("max-messages", 500, "per-call ReceiveCoop max messages")
 	pollInterval := flag.Duration("poll-interval", 5*time.Millisecond, "idle poll backoff")
+	handlerWorkMs := flag.Float64("handler-work-ms", 1.0, "simulated per-message handler work in milliseconds (use 0 for a no-op handler)")
 	flag.Parse()
 
 	dsn := os.Getenv("PGQUE_TEST_DSN")
@@ -56,10 +57,12 @@ func main() {
 	// Build the payload string once.
 	payloadStr := strings.Repeat("x", *payload)
 
+	handlerWork := time.Duration(*handlerWorkMs * float64(time.Millisecond))
+
 	rates := make([]float64, 0, *runs)
 	durations := make([]float64, 0, *runs)
 	for r := 0; r < *runs; r++ {
-		eps, secs, err := runOne(ctx, client, *subN, *events, payloadStr, *maxMessages, *pollInterval)
+		eps, secs, err := runOne(ctx, client, *subN, *events, payloadStr, *maxMessages, *pollInterval, handlerWork)
 		if err != nil {
 			log.Fatalf("run %d: %v", r, err)
 		}
@@ -81,6 +84,7 @@ func runOne(
 	payloadStr string,
 	maxMessages int,
 	pollInterval time.Duration,
+	handlerWork time.Duration,
 ) (float64, float64, error) {
 	suffix := randSuffix()
 	queue := "coop_scal_q_" + suffix
@@ -116,7 +120,7 @@ func runOne(
 	// Fixed chunkSize across N keeps "one batch = unit of work"
 	// constant; throughput then reflects the parallelism the SQL
 	// allocator exposes, not how big each batch happens to be.
-	chunkSize := 100
+	chunkSize := 25
 	for i := 0; i < events; i += chunkSize {
 		end := i + chunkSize
 		if end > events {
@@ -151,7 +155,7 @@ func runOne(
 		name := subName(i)
 		go func() {
 			defer wg.Done()
-			drain(workerCtx, client, queue, consumer, name, maxMessages, pollInterval, &processed, int64(events))
+			drain(workerCtx, client, queue, consumer, name, maxMessages, pollInterval, handlerWork, &processed, int64(events))
 		}()
 	}
 
@@ -206,14 +210,23 @@ func runOne(
 	return float64(events) / secs, secs, nil
 }
 
-// drain runs a tight ReceiveCoop -> Ack loop until the shared
-// processed counter reaches `target` or the context is cancelled.
+// drain runs a tight ReceiveCoop -> handler -> Ack loop until the
+// shared processed counter reaches `target` or the context is
+// cancelled. handlerWork simulates per-message handler latency: each
+// message gets a time.Sleep(handlerWork) so that scaling tests
+// reflect the cost the SQL allocator pays AND the time the worker
+// would normally spend doing useful work. Without per-message work,
+// many workers just contend on the FOR UPDATE on the cooperative
+// main row and throughput is monotonically decreasing — which is
+// real but is not the scaling-with-work story this benchmark wants
+// to show.
 func drain(
 	ctx context.Context,
 	client *pgque.Client,
 	queue, consumer, name string,
 	maxMessages int,
 	pollInterval time.Duration,
+	handlerWork time.Duration,
 	processed *int64,
 	target int64,
 ) {
@@ -237,6 +250,12 @@ func drain(
 		if len(msgs) == 0 {
 			time.Sleep(pollInterval)
 			continue
+		}
+		// Simulate per-message handler work.
+		if handlerWork > 0 {
+			for range msgs {
+				time.Sleep(handlerWork)
+			}
 		}
 		batchID := msgs[0].BatchID
 		if _, err := client.Ack(ctx, batchID); err != nil {
