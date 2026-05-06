@@ -5347,10 +5347,8 @@ alter table pgque.subscription
 do $$
 begin
     if not exists (
-        select
-            1
-        from
-            pg_catalog.pg_constraint
+        select 1
+        from pg_catalog.pg_constraint
         where
             conrelid = 'pgque.subscription'::regclass
             and conname = 'subscription_sub_role_check'
@@ -5419,10 +5417,8 @@ begin
 
     -- delete only one cooperative subconsumer
     if _sub_id_cnt > 1 and _sub_role = 'coop_member' then
-        perform
-            1
-        from
-            pgque.subscription
+        perform 1
+        from pgque.subscription
         where
             sub_id = x_sub_id
             and sub_consumer = _consumer_id
@@ -5436,23 +5432,17 @@ begin
             sub_id = x_sub_id
             and sub_consumer = _consumer_id;
 
-        perform
-            1
-        from
-            pgque.subscription
-        where
-            sub_consumer = _consumer_id;
+        perform 1
+        from pgque.subscription
+        where sub_consumer = _consumer_id;
         if not found then
             delete from pgque.consumer
-            where
-                co_id = _consumer_id;
+            where co_id = _consumer_id;
         end if;
 
         if not exists (
-            select
-                1
-            from
-                pgque.subscription
+            select 1
+            from pgque.subscription
             where
                 sub_id = x_sub_id
                 and sub_role = 'coop_member'
@@ -5472,10 +5462,8 @@ begin
         -- consumer API. Members must be unregistered explicitly so one
         -- caller cannot wipe sibling subconsumers by guessing the main name.
         if _sub_role = 'coop_main' then
-            perform
-                1
-            from
-                pgque.subscription
+            perform 1
+            from pgque.subscription
             where
                 sub_id = x_sub_id
                 and sub_role = 'coop_member';
@@ -5485,10 +5473,8 @@ begin
         end if;
 
         -- delete main consumer (or a legacy single-row subscription)
-        perform
-            1
-        from
-            pgque.subscription
+        perform 1
+        from pgque.subscription
         where
             sub_id = x_sub_id
             and sub_role = 'coop_member'
@@ -5499,24 +5485,18 @@ begin
 
         -- retry events
         delete from pgque.retry_queue
-        where
-            ev_owner = x_sub_id;
+        where ev_owner = x_sub_id;
 
         -- this will drop subconsumers too
         delete from pgque.subscription
-        where
-            sub_id = x_sub_id;
+        where sub_id = x_sub_id;
 
-        perform
-            1
-        from
-            pgque.subscription
-        where
-            sub_consumer = _consumer_id;
+        perform 1
+        from pgque.subscription
+        where sub_consumer = _consumer_id;
         if not found then
             delete from pgque.consumer
-            where
-                co_id = _consumer_id;
+            where co_id = _consumer_id;
         end if;
 
         return _sub_id_cnt;
@@ -5632,10 +5612,8 @@ begin
     end if;
 
     if sub_role = 'coop_main' and exists (
-        select
-            1
-        from
-            pgque.subscription as sx
+        select 1
+        from pgque.subscription as sx
         where
             sx.sub_queue = queue_id
             and sx.sub_id = cur_sub_id
@@ -5664,8 +5642,7 @@ begin
             cur_tick_id,
             cur_tick_time,
             cur_tick_event_seq
-        from
-            pgque.tick
+        from pgque.tick
         where
             tick_id > prev_tick_id
             and tick_queue = queue_id
@@ -5683,15 +5660,14 @@ begin
             cur_tick_id,
             cur_tick_time,
             cur_tick_event_seq
-        from
-            pgque.find_tick_helper(
-                queue_id,
-                prev_tick_id,
-                prev_tick_time,
-                prev_tick_event_seq,
-                i_min_count,
-                i_min_interval
-            );
+        from pgque.find_tick_helper(
+            queue_id,
+            prev_tick_id,
+            prev_tick_time,
+            prev_tick_event_seq,
+            i_min_count,
+            i_min_interval
+        );
     end if;
 
     if i_min_lag is not null then
@@ -5747,14 +5723,10 @@ returns integer as $$
 declare
     v_sub record;
 begin
-    select
-        *
-    into
-        v_sub
-    from
-        pgque.subscription
-    where
-        sub_batch = x_batch_id
+    select *
+    into v_sub
+    from pgque.subscription
+    where sub_batch = x_batch_id
     for update;
     if not found then
         raise warning 'finish_batch: batch % not found', x_batch_id;
@@ -5867,12 +5839,9 @@ begin
         returning co_id into v_main_consumer_id;
     end if;
 
-    select
-        *
-    into
-        v_main
-    from
-        pgque.subscription
+    select *
+    into v_main
+    from pgque.subscription
     where
         sub_queue = v_queue_id
         and sub_consumer = v_main_consumer_id
@@ -5935,12 +5904,9 @@ begin
         returning co_id into v_member_consumer_id;
     end if;
 
-    select
-        *
-    into
-        v_member
-    from
-        pgque.subscription
+    select *
+    into v_member
+    from pgque.subscription
     where
         sub_queue = v_queue_id
         and sub_consumer = v_member_consumer_id
@@ -5951,8 +5917,7 @@ begin
         end if;
 
         update pgque.subscription
-        set
-            sub_active = now()
+        set sub_active = now()
         where
             sub_queue = v_queue_id
             and sub_consumer = v_member_consumer_id;
@@ -6007,8 +5972,7 @@ begin
     v_member_name := i_consumer || '.' || i_subconsumer;
 
     update pgque.subscription as s
-    set
-        sub_active = clock_timestamp()
+    set sub_active = clock_timestamp()
     from
         pgque.queue as q
         cross join pgque.consumer as c
@@ -6064,12 +6028,9 @@ begin
         q.queue_name = i_queue
         and c.co_name = i_consumer;
 
-    select
-        *
-    into
-        v_main
-    from
-        pgque.subscription
+    select *
+    into v_main
+    from pgque.subscription
     where
         sub_queue = v_queue_id
         and sub_consumer = v_main_consumer_id
@@ -6084,12 +6045,9 @@ begin
     from pgque.consumer
     where co_name = v_member_name;
 
-    select
-        *
-    into
-        v_member
-    from
-        pgque.subscription
+    select *
+    into v_member
+    from pgque.subscription
     where
         sub_queue = v_queue_id
         and sub_consumer = v_member_consumer_id
@@ -6102,8 +6060,7 @@ begin
 
     if v_member.sub_batch is not null then
         update pgque.subscription
-        set
-            sub_active = now()
+        set sub_active = now()
         where
             sub_queue = v_member.sub_queue
             and sub_consumer = v_member.sub_consumer;
@@ -6114,12 +6071,9 @@ begin
     end if;
 
     if i_dead_interval is not null then
-        select
-            *
-        into
-            v_victim
-        from
-            pgque.subscription
+        select *
+        into v_victim
+        from pgque.subscription
         where
             sub_queue = v_main.sub_queue
             and sub_id = v_main.sub_id
@@ -6163,8 +6117,7 @@ begin
     into
         v_prev_tick_time,
         v_prev_tick_event_seq
-    from
-        pgque.tick
+    from pgque.tick
     where
         tick_queue = v_queue_id
         and tick_id = v_main.sub_last_tick;
@@ -6181,8 +6134,7 @@ begin
             next_tick_id,
             v_next_tick_time,
             v_next_tick_event_seq
-        from
-            pgque.tick
+        from pgque.tick
         where
             tick_id > v_main.sub_last_tick
             and tick_queue = v_queue_id
@@ -6199,15 +6151,14 @@ begin
             next_tick_id,
             v_next_tick_time,
             v_next_tick_event_seq
-        from
-            pgque.find_tick_helper(
-                v_queue_id,
-                v_main.sub_last_tick,
-                v_prev_tick_time,
-                v_prev_tick_event_seq,
-                i_min_count,
-                i_min_interval
-            ) as h;
+        from pgque.find_tick_helper(
+            v_queue_id,
+            v_main.sub_last_tick,
+            v_prev_tick_time,
+            v_prev_tick_event_seq,
+            i_min_count,
+            i_min_interval
+        ) as h;
     end if;
 
     if i_min_lag is not null and next_tick_id is not null then
@@ -6313,12 +6264,9 @@ begin
         return 0;
     end if;
 
-    select
-        *
-    into
-        v_main
-    from
-        pgque.subscription
+    select *
+    into v_main
+    from pgque.subscription
     where
         sub_queue = v_queue_id
         and sub_consumer = v_main_consumer_id
@@ -6336,12 +6284,9 @@ begin
         return 0;
     end if;
 
-    select
-        *
-    into
-        v_member
-    from
-        pgque.subscription
+    select *
+    into v_member
+    from pgque.subscription
     where
         sub_queue = v_queue_id
         and sub_consumer = v_member_consumer_id
@@ -6369,8 +6314,7 @@ begin
                 ev_extra2,
                 ev_extra3,
                 ev_extra4
-            from
-                pgque.get_batch_events(v_member.sub_batch)
+            from pgque.get_batch_events(v_member.sub_batch)
         loop
             if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
                 perform pgque.event_dead(
@@ -6400,22 +6344,19 @@ begin
         sub_queue = v_queue_id
         and sub_consumer = v_member_consumer_id;
 
-    perform
-        1
-    from
-        pgque.subscription
-    where
-        sub_consumer = v_member_consumer_id;
+    perform 1
+    from pgque.subscription
+    where sub_consumer = v_member_consumer_id;
     if not found then
         delete from pgque.consumer
-        where
-            co_id = v_member_consumer_id;
+        where co_id = v_member_consumer_id;
     end if;
 
     select count(*)
     into v_remaining
     from pgque.subscription
-    where sub_queue = v_queue_id
+    where
+        sub_queue = v_queue_id
         and sub_id = v_main.sub_id
         and sub_role = 'coop_member';
     if v_remaining = 0 then
@@ -6476,8 +6417,7 @@ begin
             ev_extra2,
             ev_extra3,
             ev_extra4
-        from
-            pgque.get_batch_events(v_batch_id)
+        from pgque.get_batch_events(v_batch_id)
     loop
         return next row(
             ev.ev_id,
