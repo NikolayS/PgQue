@@ -4,15 +4,22 @@
 """Scaling benchmark for cooperative consumers (pgque-py).
 
 Measures total events/sec as ``N`` cooperative subconsumers drain a
-fixed-size queue under one logical consumer. Renders a PNG chart next to
-the script.
+fixed-size queue under one logical consumer. Each worker simulates
+per-message handler work via ``time.sleep`` (which releases the GIL)
+so threads genuinely parallelize. Renders a PNG chart next to the
+script.
 
 Usage::
 
     PGQUE_TEST_DSN=postgres://localhost/pgque_coop_py \\
         python3 clients/python/bench/coop_scaling.py \\
             --subconsumers 1 2 4 8 16 \\
-            --events 5000 --payload 64 --runs 3
+            --events 5000 --payload 64 --runs 3 \\
+            --handler-work-ms 1.0
+
+Use ``--handler-work-ms 0`` to reproduce the no-op-handler curve,
+which is monotonically decreasing in N (pure FOR UPDATE contention
+on the cooperative main row).
 """
 
 from __future__ import annotations
@@ -37,6 +44,7 @@ DEFAULT_SUBCONSUMERS = (1, 2, 4, 8, 16)
 DEFAULT_EVENTS = 5_000
 DEFAULT_PAYLOAD_BYTES = 64
 DEFAULT_RUNS = 3
+DEFAULT_HANDLER_WORK_MS = 1.0
 PUBLISH_BATCH = 500
 # Number of ticks to spread events across. PgQ delivers each batch to
 # exactly one cooperative subconsumer, so a single tick serializes the
@@ -128,13 +136,23 @@ def _worker_loop(
     counter: list[int],
     counter_lock: threading.Lock,
     stop_evt: threading.Event,
+    handler_work_ms: float,
 ) -> None:
-    """Tight ``receive_coop`` -> ``ack`` loop until ``target`` is hit.
+    """Tight ``receive_coop`` -> handler -> ``ack`` loop until ``target``.
 
     Uses an autocommit psycopg connection: holding ``FOR UPDATE`` on the
     cooperative main row past ``receive_coop`` deadlocks parallel
     workers, as flagged in the cooperative consumers PR.
+
+    ``handler_work_ms`` simulates per-message handler latency by
+    ``time.sleep``-ing for that many milliseconds per message. Python
+    releases the GIL during ``time.sleep`` so workers actually
+    parallelize. With ``handler_work_ms == 0`` the curve degenerates to
+    pure lock contention on the cooperative main row and throughput
+    decreases monotonically with N — useful as a ceiling reference but
+    not the scaling story cooperative consumers exist to tell.
     """
+    handler_work_s = handler_work_ms / 1000.0
     with pgque.connect(dsn, autocommit=True) as client:
         while not stop_evt.is_set():
             with counter_lock:
@@ -154,6 +172,10 @@ def _worker_loop(
                 # started, so this only happens after the queue drains.
                 time.sleep(0.005)
                 continue
+            if handler_work_s > 0:
+                # Simulate per-message handler work; sleep releases the
+                # GIL so threads genuinely parallelize.
+                time.sleep(handler_work_s * len(msgs))
             client.ack(msgs[0].batch_id)
             with counter_lock:
                 counter[0] += len(msgs)
@@ -165,6 +187,7 @@ def _run_once(
     payload_bytes: int,
     n_workers: int,
     consumer_name: str,
+    handler_work_ms: float,
 ) -> float:
     subconsumers = [f"worker-{i}" for i in range(n_workers)]
     with _bench_queue(dsn, consumer_name, subconsumers) as queue:
@@ -186,6 +209,7 @@ def _run_once(
                     counter,
                     counter_lock,
                     stop_evt,
+                    handler_work_ms,
                 ),
                 name=f"bench-{sub}",
                 daemon=True,
@@ -224,12 +248,18 @@ def _measure(
     n_workers: int,
     runs: int,
     consumer_name: str,
+    handler_work_ms: float,
 ) -> RunResult:
     durations: list[float] = []
     for _ in range(runs):
         durations.append(
             _run_once(
-                dsn, n_events, payload_bytes, n_workers, consumer_name
+                dsn,
+                n_events,
+                payload_bytes,
+                n_workers,
+                consumer_name,
+                handler_work_ms,
             )
         )
     median_s = statistics.median(durations)
@@ -251,6 +281,7 @@ def _render_chart(
     server_version: str,
     n_events: int,
     payload_bytes: int,
+    handler_work_ms: float,
     out_path: Path,
 ) -> None:
     import matplotlib
@@ -279,7 +310,8 @@ def _render_chart(
     )
     footer = (
         f"PG {server_version} | {machine} | "
-        f"{n_events} events, {payload_bytes} byte payload"
+        f"{n_events} events, {payload_bytes} byte payload, "
+        f"{handler_work_ms:g} ms handler work"
     )
     fig.text(0.5, 0.01, footer, ha="center", fontsize=8, color="#555")
     fig.tight_layout(rect=(0, 0.04, 1, 1))
@@ -313,6 +345,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=DEFAULT_RUNS,
         help="Number of runs per N; reported as median (default: 3).",
+    )
+    parser.add_argument(
+        "--handler-work-ms",
+        type=float,
+        default=DEFAULT_HANDLER_WORK_MS,
+        help=(
+            "Simulated per-message handler work in milliseconds "
+            "(default: 1.0). Use 0 for a no-op handler, which "
+            "exposes pure FOR UPDATE contention on the cooperative "
+            "main row."
+        ),
     )
     parser.add_argument(
         "--chart",
@@ -349,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
             n,
             args.runs,
             consumer_name,
+            args.handler_work_ms,
         )
         results.append(result)
         print(
@@ -371,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             server_version,
             args.events,
             args.payload,
+            args.handler_work_ms,
             out_path,
         )
         print(f"# chart written to {out_path}", file=sys.stderr)
