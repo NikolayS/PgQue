@@ -185,6 +185,65 @@ TypeScript client (`PgqueQueueNotFoundError`, `PgqueConsumerNotFoundError`,
 `PgqueSqlError`). Go uses the standard acronym-uppercase convention
 (`SQLError` rather than `SqlError`).
 
+## Experimental: cooperative consumers
+
+**Experimental in PgQue 0.2.** Function names, edge-case behavior, and
+client API shape may change before this feature is marked stable. Do
+not use this as the only processing path for critical workloads
+without idempotent handlers and stale-worker takeover tests.
+
+Cooperative consumers let several workers share one logical consumer
+cursor. Each worker registers as a *subconsumer*; each cooperative
+batch is allocated to one subconsumer at a time. Pass
+`pgque.WithSubconsumer(name)` to the high-level `Consumer` to opt in:
+
+```go
+worker := client.NewConsumer("orders", "order_workers",
+    pgque.WithSubconsumer("worker-1"),
+    pgque.WithDeadInterval(2*time.Minute), // optional: steal stale batches
+)
+worker.Handle("order.created", func(ctx context.Context, m pgque.Message) error {
+    return processOrder(ctx, m)
+})
+go worker.Start(ctx)
+
+// On a separate process / goroutine:
+worker2 := client.NewConsumer("orders", "order_workers",
+    pgque.WithSubconsumer("worker-2"))
+worker2.Handle("order.created", processOrderHandler)
+go worker2.Start(ctx)
+```
+
+`receive_coop` auto-registers the cooperative main and the subconsumer
+on first poll, so an explicit `SubscribeSubconsumer` is not required.
+Heartbeats are not auto-emitted; call `client.TouchSubconsumer(...)`
+manually if you want to advertise liveness ahead of a dead-interval
+takeover by another worker.
+
+Throughput note: cooperative allocation serializes on a `FOR UPDATE`
+of the cooperative main row, so many workers polling tiny batches
+contend on a single hot row. Tune `ticker_max_count` and tick cadence
+so each batch is large enough to amortize the lock.
+
+Low-level API (matches the SQL one-for-one):
+
+| Method | Wraps |
+| --- | --- |
+| `Client.SubscribeSubconsumer(ctx, q, c, sc)` | `pgque.subscribe_subconsumer` |
+| `Client.UnsubscribeSubconsumer(ctx, q, c, sc, opts...)` | `pgque.unsubscribe_subconsumer` |
+| `Client.ReceiveCoop(ctx, q, c, sc, opts...)` | `pgque.receive_coop` |
+| `Client.TouchSubconsumer(ctx, q, c, sc)` | `pgque.touch_subconsumer` |
+
+Options:
+
+| Option | Notes |
+| --- | --- |
+| `WithSubconsumer(name)` | High-level `Consumer`: enables coop mode. |
+| `WithDeadInterval(d)` | High-level `Consumer`: passes a takeover window to `ReceiveCoop`. |
+| `WithCoopMaxMessages(n)` | `ReceiveCoop` per-call row cap (default 100). |
+| `WithCoopDeadInterval(d)` | `ReceiveCoop` takeover window for one call. |
+| `WithBatchHandlingRetry()` | `UnsubscribeSubconsumer`: route active batch through retry/DLQ instead of erroring. |
+
 ## Transactions
 
 `Send` → ticker → `Receive` must each run in its own committed transaction (PgQue is snapshot-based). `pgxpool` satisfies this transparently — every `Send`/`Receive`/`Ack` is its own implicit tx, and the `Consumer` is pool-level.

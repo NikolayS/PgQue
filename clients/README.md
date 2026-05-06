@@ -27,7 +27,7 @@ SQL primitives. The matrix below tracks the public client API on current
 | Unknown-type behavior avoids silent ack | ✗ | ✓ | ✓ |
 | Configurable unknown-type policy | ✗ | ✗ | ✗ |
 | `subscribe` / `unsubscribe` wrappers | ✗ | ✗ | ✓ |
-| Cooperative consumers (experimental) [^coop] | ✓ | ✗ | ✓ |
+| Cooperative consumers (experimental) [^coop] | ✓ | ✓ | ✓ |
 
 Legend: ✓ supported by the client API on `main`; ✗ not exposed as a
 first-class client API. Lower-level SQL primitives remain available through raw
