@@ -231,9 +231,109 @@ jobs:
             exit 1
           fi
 
+      - name: Verify pg_timetable to pg_cron scheduler switch
+        run: |
+          set -Eeuo pipefail
+          # Run the pg_timetable lifecycle file directly in the pg_cron image.
+          # This creates the fake pg_timetable schema, starts PgQue with it,
+          # switches back to pg_cron, and must exercise the non-SKIP switch path.
+          out=$(PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_pgtimetable_lifecycle.sql 2>&1)
+          echo "$out"
+          if echo "$out" | grep -q 'SKIP: pg_cron not installed (cannot test pg_timetable -> pg_cron switch)'; then
+            echo "FAIL: pg_timetable -> pg_cron switch test skipped despite pg_cron being installed"
+            exit 1
+          fi
+          if ! echo "$out" | grep -q 'PASS: start() switches pg_timetable to pg_cron cleanly'; then
+            echo "FAIL: pg_timetable -> pg_cron switch assertion did not run"
+            exit 1
+          fi
+
       - name: Cleanup
         if: always()
         run: docker rm -f pgque-pgcron-test
+
+
+  pgtimetable-real-test:
+    name: pg_timetable real worker
+    runs-on: ubuntu-latest
+    env:
+      PG_VERSION: '18'
+      PGTT_IMAGE: cybertecpostgresql/pg_timetable@sha256:6bed16f944ab91392fac9cd04aba82cd6690769e179d411748fd0bb538f55acd
+      PGTT_NET: pgque-pgtimetable-test
+      PG_CONTAINER: pgque-pgtimetable-pg
+      PGTT_CONTAINER: pgque-pgtimetable-worker
+      PGPASSWORD: pgque_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Start PostgreSQL 18
+        run: |
+          set -Eeuo pipefail
+          docker network create "${PGTT_NET}"
+          docker run -d --name "${PG_CONTAINER}" --network "${PGTT_NET}" \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            postgres:${PG_VERSION}
+
+          ready=0
+          for _ in $(seq 1 60); do
+            if docker exec "${PG_CONTAINER}" pg_isready -U postgres -d pgque_test; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 60 seconds"
+            docker logs "${PG_CONTAINER}"
+            exit 1
+          fi
+
+      - name: Initialize real pg_timetable schema
+        run: |
+          set -Eeuo pipefail
+          docker run --rm --network "${PGTT_NET}" "${PGTT_IMAGE}" \
+            --init \
+            --connstr="postgresql://postgres:pgque_test@${PG_CONTAINER}:5432/pgque_test" \
+            --clientname=pgque
+
+      - name: Install pgque and schedule pg_timetable jobs
+        run: |
+          set -Eeuo pipefail
+          docker cp sql/pgque.sql "${PG_CONTAINER}":/tmp/pgque.sql
+          docker cp tests/test_pgtimetable_real_setup.sql "${PG_CONTAINER}":/tmp/test_pgtimetable_real_setup.sql
+          docker exec -e PGPASSWORD "${PG_CONTAINER}" \
+            psql -U postgres -d pgque_test -v ON_ERROR_STOP=1 -f /tmp/pgque.sql
+          docker exec -e PGPASSWORD "${PG_CONTAINER}" \
+            psql -U postgres -d pgque_test -v ON_ERROR_STOP=1 -f /tmp/test_pgtimetable_real_setup.sql
+
+      - name: Start real pg_timetable worker
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name "${PGTT_CONTAINER}" --network "${PGTT_NET}" "${PGTT_IMAGE}" \
+            --connstr="postgresql://postgres:pgque_test@${PG_CONTAINER}:5432/pgque_test" \
+            --clientname=pgque \
+            --log-level=debug
+
+      - name: Verify real pg_timetable executes PgQue ticker_loop
+        run: |
+          set -Eeuo pipefail
+          docker cp tests/test_pgtimetable_real_assert.sql "${PG_CONTAINER}":/tmp/test_pgtimetable_real_assert.sql
+          docker exec -e PGPASSWORD "${PG_CONTAINER}" \
+            psql -U postgres -d pgque_test -v ON_ERROR_STOP=1 -f /tmp/test_pgtimetable_real_assert.sql
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker logs "${PGTT_CONTAINER}" || true
+          docker rm -f "${PGTT_CONTAINER}" "${PG_CONTAINER}" || true
+          docker network rm "${PGTT_NET}" || true
 
   python-client-tests:
     name: Python client tests

@@ -1,6 +1,6 @@
 <h1 align="center">PgQue – PgQ, universal edition</h1>
 
-<p align="center"><strong>Zero-bloat Postgres queue. One SQL file to install, <code>pg_cron</code> to tick.</strong></p>
+<p align="center"><strong>Zero-bloat Postgres queue. One SQL file to install, <code>pg_cron</code> or <code>pg_timetable</code> to tick.</strong></p>
 
 <p align="center">
   <a href="https://github.com/NikolayS/pgque/actions/workflows/ci.yml"><img src="https://github.com/NikolayS/pgque/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -150,17 +150,33 @@ Or from the shell, same single-transaction guarantee via `psql --single-transact
 PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f sql/pgque.sql
 ```
 
-With `pg_cron` available in the same database as PgQue, `pgque.start()` creates the default ticker and maintenance jobs:
+With `pg_cron` available in the same database as PgQue, `pgque.start()` creates the default ticker and maintenance jobs. The ticker uses a one-second pg_cron slot and calls `pgque.ticker_loop()`, which ticks every 100 ms by default (10 ticks/sec) with a commit between ticks:
 
 ```sql
 select pgque.start();
 ```
 
+With `pg_timetable`, run the external pg_timetable worker against the database where PgQue is installed, then schedule PgQue with the same 10 ticks/sec default. For example:
+
+```bash
+pg_timetable --dbname=mydb --clientname=pgque
+```
+
+The `--clientname=pgque` flag is required; pg_timetable only executes chains whose `job_client_name` matches the running worker's client name. Keep that worker running; unlike `pg_cron`, pg_timetable is an external scheduler process, not a Postgres extension background worker. See the [pg_timetable docs](https://github.com/cybertec-postgresql/pg_timetable) for production service setup.
+
+```sql
+select pgque.start_timetable();      -- default: 10 ticks/sec
+-- or explicitly:
+select pgque.start_timetable(10);
+```
+
+`pgque.stop_timetable()` removes the PgQue pg_timetable jobs. `pgque.stop()` also stops whichever PgQue scheduler is active. Calling `pgque.start_timetable()` automatically removes existing PgQue `pg_cron` jobs first; `pgque.start()` does the same for PgQue pg_timetable jobs. `pgque.set_tick_period_ms(ms)` still controls the loop cadence; for example `100` means 10 ticks/sec, `200` means 5 ticks/sec, and `1000` means 1 tick/sec.
+
 ### Tick rate
 
-PgQue ticks **10 times per second by default** (every 100 ms), even though `pg_cron`'s minimum schedule is 1 second. `pgque.start()` schedules a single 1-second pg_cron slot that calls `CALL pgque.ticker_loop()`; the procedure then re-invokes `pgque.ticker()` every `tick_period_ms` ms inside that slot, committing between iterations so each tick gets its own transaction (snapshot semantics; bounded held-xmin so rotation isn't blocked).
+PgQue ticks **10 times per second by default** (every 100 ms), even though `pg_cron`'s minimum schedule is 1 second. `pgque.start()` schedules a single 1-second pg_cron slot that calls `CALL pgque.ticker_loop()`; `pgque.start_timetable()` schedules the same loop through one pg_timetable `@every 1 second` job. The procedure then re-invokes `pgque.ticker()` every `tick_period_ms` ms inside that slot, committing between iterations so each tick gets its own transaction (snapshot semantics; bounded held-xmin so rotation isn't blocked).
 
-Tune at runtime — no need to call `start()` again, the change picks up on the next pg_cron slot (≤1 s):
+Tune at runtime — no need to call `start()` again, the change picks up on the next scheduler slot (≤1 s):
 
 ```sql
 select pgque.set_tick_period_ms(50);    -- 20 ticks/sec, ~25 ms median e2e
@@ -178,9 +194,9 @@ Trade-offs to keep in mind when raising the rate:
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker_loop()`, `pgque.maint_retry_events()`, and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 
-**pg_cron log hygiene.** Every `pg_cron` job execution writes a row to `cron.job_run_details`, with no built-in purge. PgQue's internal sub-second loop does **not** make this worse — there is still only **one** `pg_cron` slot per second per job, regardless of `tick_period_ms`, so the per-second row count is the same as a 1 tick/sec schedule. Across PgQue's four scheduled jobs (ticker, retry, maint, rotate_step2), that is roughly **5,000 rows per hour** on top of any other pg_cron jobs, growing forever unless you intervene. Prefer a PgQue-specific purge job; disable `cron.log_run` globally only if you do not need successful-run history for any pg_cron jobs. See [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes. *(Independent issue: `pg_cron` itself has no per-job log toggle as of 1.6.)*
+**Scheduler log hygiene.** Every `pg_cron` job execution writes a row to `cron.job_run_details`, with no built-in purge. PgQue's internal sub-second loop does **not** make this worse — there is still only **one** `pg_cron` slot per second per job, regardless of `tick_period_ms`, so the per-second row count is the same as a 1 tick/sec schedule. Across PgQue's four scheduled jobs (ticker, retry, maint, rotate_step2), that is roughly **5,000 rows per hour** on top of any other pg_cron jobs, growing forever unless you intervene. Prefer a PgQue-specific purge job; disable `cron.log_run` globally only if you do not need successful-run history for any pg_cron jobs. See [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes. *(Independent issue: `pg_cron` itself has no per-job log toggle as of 1.6.)* If you use pg_timetable, monitor and purge pg_timetable's own execution history tables according to its retention policy; PgQue does not manage those logs.
 
-Without `pg_cron`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
+Without `pg_cron` or `pg_timetable`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
 
 ```bash
 PAGER=cat psql --no-psqlrc -d mydb -c "select pgque.ticker()"              # at your chosen tick period
@@ -434,8 +450,8 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Pure SQL / PL/pgSQL install | ✅ |
 | Managed Postgres support | ✅ |
 | No daemon / no C extension | ✅ |
-| `pg_cron` or external ticking | ✅ |
-| Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable with exact-divisor periods from 1–1000 ticks/sec) | ✅ |
+| `pg_cron`, `pg_timetable`, or external ticking | ✅ |
+| Sub-second ticking with `pg_cron` / `pg_timetable` (default 10 ticks/sec, tunable with exact-divisor periods from 1–1000 ticks/sec) | ✅ |
 | System-table rotation / bloat mitigation |  |
 | Cooperative consumers / subconsumers | 🔬 experimental |
 | Queue splitter |  |

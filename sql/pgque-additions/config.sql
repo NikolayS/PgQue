@@ -5,6 +5,9 @@ create table if not exists pgque.config (
     singleton       bool primary key default true check (singleton),
     ticker_job_id   bigint,
     maint_job_id    bigint,
+    scheduler       text
+        constraint config_scheduler_check
+        check (scheduler in ('pg_cron', 'pg_timetable')),
     tick_period_ms  integer not null default 100
         constraint config_tick_period_ms_check
         check (
@@ -24,6 +27,21 @@ on conflict (singleton) do nothing;
 -- Add tick_period_ms on upgrade from a pre-tick-period install.
 do $$
 begin
+    if not exists (
+        select 1 from information_schema.columns
+        where table_schema = 'pgque' and table_name = 'config'
+          and column_name = 'scheduler'
+    ) then
+        alter table pgque.config
+            add column scheduler text;
+    end if;
+
+    alter table pgque.config
+        drop constraint if exists config_scheduler_check;
+    alter table pgque.config
+        add constraint config_scheduler_check
+        check (scheduler in ('pg_cron', 'pg_timetable'));
+
     if not exists (
         select 1 from information_schema.columns
         where table_schema = 'pgque' and table_name = 'config'
