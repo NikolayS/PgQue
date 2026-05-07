@@ -50,6 +50,8 @@ Historical context, two decks:
 - [Marko Kreen (Skype), PGCon 2009 — PgQ](https://www.pgcon.org/2009/schedule/attachments/91_pgq.pdf)
 - [Alexander Kukushkin (Microsoft), 2026 — Rediscovering PgQ](https://speakerdeck.com/cyberdemn/rediscovering-pgq)
 
+External coverage: [Christophe Pettus, *pgque: two snapshots and a diff*](https://thebuild.com/blog/2026/05/03/pgque-two-snapshots-and-a-diff/) — walk-through of the snapshot/diff mechanism: how two consecutive tick snapshots determine event visibility and why that avoids row-level locks and dead tuple bloat.
+
 ## Why PgQue
 
 Most Postgres queues rely on `SKIP LOCKED` plus `DELETE` and/or `UPDATE`. That holds up in toy examples and then turns into dead tuples, VACUUM pressure, index bloat, and performance drift under sustained load.
