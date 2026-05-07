@@ -45,8 +45,8 @@ jobs:
       - name: Verify version input
         run: |
           set -Eeuo pipefail
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "version must look like 0.2.0"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc|\.post|\.dev)[0-9]+)?$ ]]; then
+            echo "version must be PEP 440, e.g. 0.2.0, 0.2.0.dev1, or 0.2.0rc1"
             exit 1
           fi
           actual=$(python - <<'PY'

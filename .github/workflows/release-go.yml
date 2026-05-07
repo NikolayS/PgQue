@@ -31,7 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          # Pin to the workflow-dispatch SHA validated by this run. Do not
+          # re-read a later main after protected environment approval.
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
@@ -100,7 +102,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          # Pin to the workflow-dispatch SHA validated by this run. Do not
+          # re-read a later main after protected environment approval.
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
