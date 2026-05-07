@@ -24,8 +24,8 @@
     "queue",
     "pgq",
     "pgque",
-    "skip-locked",
-    "job-queue"
+    "job-queue",
+    "background-jobs"
   ],
   "type": "module",
   "main": "./dist/index.js",

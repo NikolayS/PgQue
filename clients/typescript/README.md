@@ -7,15 +7,14 @@ PgQ-based universal PostgreSQL queue. Thin, idiomatic wrapper over the
 
 ## Install
 
-After the first TypeScript client release, install the published package with
-any npm-compatible package manager:
-
 ```bash
-npm install pgque
-# or: bun add pgque
-# or: pnpm add pgque
-# or: yarn add pgque
+npm install pgque@rc
+# or: bun add pgque@rc
+# or: pnpm add pgque@rc
+# or: yarn add pgque@rc
 ```
+
+The `@rc` dist-tag points at the latest v0.2.0 release candidate (currently `0.2.0-rc.1`). Drop the tag once v0.2.0 ships.
 
 Runtime requirements: Node.js 20+ and PostgreSQL 14+ with the PgQue schema
 installed (`\i pgque.sql` — no extension required).
