@@ -26,6 +26,14 @@ begin
 end $$;
 
 -- pgque.receive() -- wraps next_batch + get_batch_events
+--
+-- Single-worker-per-consumer contract:
+--   Each (queue, consumer) pair is a single cursor.  Concurrent calls for
+--   the same consumer are serialised by FOR UPDATE inside
+--   pgque.next_batch_custom() (pgque.sql).  The second caller blocks until
+--   the first commits, then observes the open batch_id and returns it
+--   without opening a new one.  Two workers under the same consumer name
+--   do not get parallelism; use distinct consumer names for fan-out.
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
 returns setof pgque.message as $$

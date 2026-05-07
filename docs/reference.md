@@ -126,6 +126,8 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 select * from pgque.receive('orders', 'processor', 100);
 ```
 
+**Single-worker-per-consumer contract.** Each consumer name is a single cursor that advances through ticks in sequence. Only one worker should call `receive()` for a given `(queue, consumer)` pair at a time. Concurrent calls for the same consumer are serialised internally via a row-level lock on the subscription cursor: the second caller blocks until the first finishes, then observes the already-open batch and returns it unchanged. Running two workers under the same consumer name does not provide parallelism — it provides redundancy at best (both workers receive the same batch) and is unsupported. Use distinct consumer names for parallel workers on the same queue; they each get an independent cursor over all events (fan-out).
+
 **Batch-ownership caveat.** `max_return` limits the number of rows returned to the caller, but `ack(batch_id)` advances the consumer cursor past the entire underlying batch. If `max_return < ticker_max_count`, calling `ack()` after a partial receive will drop the unreturned rows from the consumer's perspective. Either consume the full batch before acking, or use `max_return >= ticker_max_count` for safe pagination.
 
 #### `pgque.ack(batch_id bigint) → integer`

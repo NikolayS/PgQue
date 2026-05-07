@@ -607,6 +607,45 @@ END {
 
 echo "PASS: get_batch_cursor SECURITY header injected (extra_where is trusted SQL)"
 
+# Serialize concurrent receive()/next_batch_custom() calls for the same
+# (queue, consumer) cursor.  Upstream PgQ allowed two sessions to read
+# sub_batch = NULL concurrently and allocate distinct batch IDs; the later
+# UPDATE overwrote the first batch.  Locking the subscription row makes the
+# second session re-read the committed active batch and return idempotently.
+NEXT_BATCH_FILE="${OUTPUT_DIR}/functions/pgque.next_batch.sql"
+python3 - "${NEXT_BATCH_FILE}" <<'PYPATCH'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+old = """          and s.sub_queue = q.queue_id
+          and s.sub_consumer = c.co_id;
+"""
+new = """          and s.sub_queue = q.queue_id
+          and s.sub_consumer = c.co_id
+        for update of s;
+"""
+if old not in s:
+    raise SystemExit('next_batch_custom subscription lookup not found')
+s = s.replace(old, new, 1)
+marker = """begin
+    select s.sub_queue, s.sub_consumer, s.sub_id, s.sub_batch,
+"""
+comment = """begin
+    -- PgQue transformation: serialize same-consumer receive()/next_batch_custom()
+    -- calls by locking the subscription cursor row before reading sub_batch.
+    -- The second session blocks here, then re-reads the active batch_id and
+    -- returns idempotently instead of allocating a second batch (#97/#125).
+    select s.sub_queue, s.sub_consumer, s.sub_id, s.sub_batch,
+"""
+if marker not in s:
+    raise SystemExit('next_batch_custom begin marker not found')
+s = s.replace(marker, comment, 1)
+p.write_text(s)
+PYPATCH
+
+echo "PASS: next_batch_custom locks subscription row for concurrent receive"
+
 # -- Assembly: build sql/pgque.sql ------------------------------------
 
 echo ""
