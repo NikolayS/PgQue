@@ -58,7 +58,12 @@ begin
   assert v_count = 0, 'should have no more messages after ack';
 end $$;
 
--- Step 6: partial receive still acks the whole underlying batch
+-- Step 6: partial receive must NOT silently drop unreturned batch rows (#134).
+-- Pre-fix behavior: ack(batch_id) advanced sub_last_tick past the whole tick
+-- window, so events the caller never saw became unreachable. The fix is in
+-- pgque.ack(), which now re-queues unreturned events to pgque.retry_queue
+-- before calling finish_batch. See tests/test_receive_partial_no_skip.sql for
+-- the full red/green regression coverage.
 do $$
 begin
   perform pgque.create_queue('test_recv_partial');
@@ -96,18 +101,30 @@ begin
   perform pgque.ack(v_batch_id);
 end $$;
 
+-- Push the re-queued rows back into the main event table.
+do $$ begin perform pgque.maint_retry_events(); end $$;
+
+do $$ begin
+  perform pgque.force_tick('test_recv_partial');
+  perform pgque.ticker();
+end $$;
+
 do $$
 declare
   v_msg pgque.message;
   v_count int := 0;
+  v_batch_id bigint;
 begin
   for v_msg in select * from pgque.receive('test_recv_partial', 'c1', 10)
   loop
     v_count := v_count + 1;
+    v_batch_id := v_msg.batch_id;
   end loop;
 
-  assert v_count = 0,
-    'ack(batch_id) should finish the whole batch, even if receive(..., 1) returned one row';
+  assert v_count = 2,
+    format('the 2 unreturned events MUST be re-delivered after ack (#134), got %s', v_count);
+
+  perform pgque.ack(v_batch_id);
 end $$;
 
 -- Step 7: send(text) fast path must store payload byte-for-byte
