@@ -38,8 +38,10 @@ UPDATE/DELETE queues *can* mitigate (b) with partitioning + TRUNCATE on retired
 partitions, but they typically don't, and partitioning alone does nothing for
 (a) — UPDATEs and DELETEs in the *active* partition still generate dead tuples.
 
-The structural answer is not tuning autovacuum more aggressively — that only
-changes the *rate* of dead-tuple→bloat conversion, not the total bloat volume.
+Tuning autovacuum more aggressively is not the structural answer. Under
+unblocked xmin, tuning only changes the *rate* of dead-tuple→bloat conversion —
+not the total bloat volume. Under blocked xmin, tuning does nothing at all:
+VACUUM cannot remove dead tuples until the xmin horizon advances.
 The structural answer is **avoiding UPDATE and DELETE on the hot path entirely**.
 pgque (PgQ heritage) tracks consumer state via batch IDs and per-consumer
 cursors instead of mutating event rows; events are append-only and retired by
