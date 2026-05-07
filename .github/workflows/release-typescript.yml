@@ -67,9 +67,26 @@ jobs:
       - name: Pack smoke test
         run: npm pack --dry-run
 
+      - name: Resolve npm dist-tag
+        run: |
+          set -Eeuo pipefail
+          # Prereleases must NOT inherit the default `latest` dist-tag, or `npm install pgque`
+          # would resolve to a prerelease for everyone. Pull the prerelease identifier (rc, dev,
+          # beta, alpha, ...) out of the version and use it as the tag; final releases get `latest`.
+          case "$VERSION" in
+            *-rc*)    NPM_TAG=rc ;;
+            *-dev*)   NPM_TAG=dev ;;
+            *-beta*)  NPM_TAG=beta ;;
+            *-alpha*) NPM_TAG=alpha ;;
+            *-*)      NPM_TAG=next ;;
+            *)        NPM_TAG=latest ;;
+          esac
+          echo "NPM_TAG=$NPM_TAG" >> "$GITHUB_ENV"
+          echo "resolved npm dist-tag: $NPM_TAG (version=$VERSION)"
+
       - name: Publish dry run
         if: inputs.dry_run
-        run: npm publish --dry-run --provenance
+        run: npm publish --dry-run --provenance --tag "$NPM_TAG"
 
   publish:
     if: ${{ !inputs.dry_run }}
@@ -120,5 +137,19 @@ jobs:
           bun run build
           npm pack --dry-run
 
+      - name: Resolve npm dist-tag
+        run: |
+          set -Eeuo pipefail
+          case "$VERSION" in
+            *-rc*)    NPM_TAG=rc ;;
+            *-dev*)   NPM_TAG=dev ;;
+            *-beta*)  NPM_TAG=beta ;;
+            *-alpha*) NPM_TAG=alpha ;;
+            *-*)      NPM_TAG=next ;;
+            *)        NPM_TAG=latest ;;
+          esac
+          echo "NPM_TAG=$NPM_TAG" >> "$GITHUB_ENV"
+          echo "resolved npm dist-tag: $NPM_TAG (version=$VERSION)"
+
       - name: Publish to npm
-        run: npm publish --provenance
+        run: npm publish --provenance --tag "$NPM_TAG"
