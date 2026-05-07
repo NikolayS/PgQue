@@ -451,7 +451,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Managed Postgres support | ✅ |
 | No daemon / no C extension | ✅ |
 | `pg_cron`, `pg_timetable`, or external ticking | ✅ |
-| Sub-second ticking with `pg_cron` / `pg_timetable` (default 10 ticks/sec, tunable with exact-divisor periods from 1–1000 ticks/sec) | ✅ |
+| Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable) | ✅ |
 | System-table rotation / bloat mitigation |  |
 | Cooperative consumers / subconsumers | 🔬 experimental |
 | Queue splitter |  |
