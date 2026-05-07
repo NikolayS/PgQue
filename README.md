@@ -52,7 +52,7 @@ Historical context, two decks:
 
 External coverage:
 
-- [pgque: two snapshots and a diff](https://thebuild.com/blog/2026/05/03/pgque-two-snapshots-and-a-diff/) by Christophe Pettus — walk-through of the snapshot/diff mechanism: how two consecutive tick snapshots determine event visibility and why that avoids row-level locks and dead tuple bloat.
+- [PgQue: Two Snapshots and a Diff](https://thebuild.com/blog/2026/05/03/pgque-two-snapshots-and-a-diff/) by Christophe Pettus — walk-through of the snapshot/diff mechanism: how two consecutive tick snapshots determine event visibility and why that avoids row-level locks and dead tuple bloat.
 - [HN discussion](https://news.ycombinator.com/item?id=47817349)
 
 ## Why PgQue
