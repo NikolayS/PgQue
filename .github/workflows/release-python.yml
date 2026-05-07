@@ -61,6 +61,7 @@ jobs:
           if str(parsed) != v:
               sys.exit(f'version {v!r} is not in PEP 440 canonical form (would normalise to {str(parsed)!r})')
           "
+
           actual=$(python - <<'PY'
           import tomllib
           print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])
