@@ -50,7 +50,10 @@ Historical context, two decks:
 - [Marko Kreen (Skype), PGCon 2009 — PgQ](https://www.pgcon.org/2009/schedule/attachments/91_pgq.pdf)
 - [Alexander Kukushkin (Microsoft), 2026 — Rediscovering PgQ](https://speakerdeck.com/cyberdemn/rediscovering-pgq)
 
-External coverage: [Christophe Pettus, *pgque: two snapshots and a diff*](https://thebuild.com/blog/2026/05/03/pgque-two-snapshots-and-a-diff/) — walk-through of the snapshot/diff mechanism: how two consecutive tick snapshots determine event visibility and why that avoids row-level locks and dead tuple bloat.
+External coverage:
+
+- [pgque: two snapshots and a diff](https://thebuild.com/blog/2026/05/03/pgque-two-snapshots-and-a-diff/) by Christophe Pettus — walk-through of the snapshot/diff mechanism: how two consecutive tick snapshots determine event visibility and why that avoids row-level locks and dead tuple bloat.
+- [HN discussion](https://news.ycombinator.com/item?id=47817349)
 
 ## Why PgQue
 
