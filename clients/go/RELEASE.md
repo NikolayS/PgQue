@@ -18,6 +18,9 @@ The Go client version is independent from the SQL/server `pgque.version()`.
 Choose the next Go module tag when the Go API, behavior, or packaging changes;
 server-only SQL changes do not require a Go client release.
 
+Use Go module semver tags in the mirror repository: `v0.2.0`, `v0.2.0-rc.1`,
+or `v0.2.0-dev` are valid.
+
 ## Tagging convention
 
 The mirror repository uses normal Go module tags:
@@ -53,6 +56,9 @@ The release workflow is `.github/workflows/release-go.yml`.
 2. Ensure the `go-release` GitHub environment exists and is protected.
 3. Ensure `PGQUE_GO_MIRROR_TOKEN` is configured.
 4. Run **Release Go client** from `main` with `version=vX.Y.Z` and `dry_run=true`.
+   Dry runs validate tests, subtree split, mirror-root module layout, and public
+   tag availability; they do not require the protected `go-release` environment
+   or `PGQUE_GO_MIRROR_TOKEN`.
 5. If the dry run is clean, run it again with `dry_run=false`.
 6. The workflow runs `go test ./...`, splits `clients/go`, pushes the mirror's
    `main`, creates annotated tag `vX.Y.Z` in the mirror, and optionally creates

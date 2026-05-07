@@ -22,10 +22,9 @@ permissions:
   contents: read
 
 jobs:
-  mirror-and-tag:
+  validate:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: go-release
     env:
       VERSION: ${{ inputs.version }}
       MIRROR_REPO: NikolayS/pgque-go
@@ -57,12 +56,10 @@ jobs:
           echo "split_sha=$split_sha" >> "$GITHUB_ENV"
           echo "mirror commit: $split_sha"
 
-      - name: Check mirror tag does not exist
-        env:
-          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
+      - name: Check public mirror tag does not exist
         run: |
           set -Eeuo pipefail
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git"
+          remote="https://github.com/${MIRROR_REPO}.git"
           if git ls-remote --exit-code --tags "$remote" "refs/tags/$VERSION" >/dev/null; then
             echo "mirror tag $VERSION already exists"
             exit 1
@@ -91,13 +88,48 @@ jobs:
           set -Eeuo pipefail
           echo "dry run: would push subtree $split_sha to ${MIRROR_REPO}:main and tag $VERSION"
 
+  publish:
+    if: ${{ !inputs.dry_run }}
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: go-release
+    env:
+      VERSION: ${{ inputs.version }}
+      MIRROR_REPO: NikolayS/pgque-go
+      GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: clients/go/go.mod
+          cache-dependency-path: clients/go/go.sum
+
+      - name: Split clients/go subtree
+        run: |
+          set -Eeuo pipefail
+          split_sha=$(git subtree split --prefix=clients/go HEAD)
+          echo "split_sha=$split_sha" >> "$GITHUB_ENV"
+          echo "mirror commit: $split_sha"
+
       - name: Push mirror main and tag
-        if: ${{ !inputs.dry_run }}
-        env:
-          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
           remote="https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git"
+          if git ls-remote --exit-code --tags "$remote" "refs/tags/$VERSION" >/dev/null; then
+            echo "mirror tag $VERSION already exists"
+            exit 1
+          else
+            rc=$?
+            if [ "$rc" -ne 2 ]; then
+              echo "failed to check mirror tag $VERSION"
+              exit "$rc"
+            fi
+          fi
+
           candidate="refs/heads/release-candidate/$VERSION"
           git push "$remote" "$split_sha:$candidate"
 
@@ -112,9 +144,7 @@ jobs:
           git push "$remote" ":$candidate"
 
       - name: Create GitHub Release in mirror
-        if: ${{ !inputs.dry_run && inputs.create_release }}
-        env:
-          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
+        if: inputs.create_release
         run: |
           set -Eeuo pipefail
           gh release create "$VERSION" \
@@ -124,7 +154,6 @@ jobs:
             --notes "Go client release for module github.com/NikolayS/pgque-go. Install with: go get github.com/NikolayS/pgque-go@$VERSION"
 
       - name: Warm Go module proxy cache
-        if: ${{ !inputs.dry_run }}
         run: |
           set -Eeuo pipefail
           curl -fsSL "https://proxy.golang.org/github.com/!nikolay!s/pgque-go/@v/$VERSION.info" >/dev/null || true

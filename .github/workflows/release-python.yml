@@ -23,13 +23,11 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  build-and-publish:
+  build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: ${{ inputs.repository == 'pypi' && 'pypi' || 'testpypi' }}
     env:
       VERSION: ${{ inputs.version }}
     defaults:
@@ -81,15 +79,49 @@ jobs:
           assert hasattr(pgque, 'PgqueClient')
           PY
 
+      - name: Upload distributions
+        if: ${{ !inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: clients/python/dist/*
+          if-no-files-found: error
+
+  publish-testpypi:
+    if: ${{ !inputs.dry_run && inputs.repository == 'testpypi' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
       - name: Publish to TestPyPI
-        if: ${{ !inputs.dry_run && inputs.repository == 'testpypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: clients/python/dist
+          packages-dir: dist
           repository-url: https://test.pypi.org/legacy/
 
+  publish-pypi:
+    if: ${{ !inputs.dry_run && inputs.repository == 'pypi' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
       - name: Publish to PyPI
-        if: ${{ !inputs.dry_run && inputs.repository == 'pypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: clients/python/dist
+          packages-dir: dist
