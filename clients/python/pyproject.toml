@@ -1,6 +1,6 @@
 [project]
 name = "pgque-py"
-version = "0.2.0.dev1"
+version = "0.2.0rc1"
 description = "Python client for PgQue -- PgQ Universal Edition"
 readme = "README.md"
 requires-python = ">=3.10"
