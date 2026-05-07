@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v5
         with:
@@ -45,10 +45,22 @@ jobs:
       - name: Verify version input
         run: |
           set -Eeuo pipefail
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "version must look like 0.2.0"
-            exit 1
-          fi
+          python -m pip install -U packaging
+          # Validate PEP 440 (accepts 0.2.0, 0.2.0rc1, 0.2.0.dev1, 0.2.0a1, 0.2.0.post1, ...).
+          # Reject hyphenated forms like 0.2.0-dev that PyPI normalises into something
+          # the operator did not type, since "version input == pyproject.toml" then
+          # silently disagrees with what the wheel publishes as.
+          python -c "
+          import os, sys
+          from packaging.version import Version, InvalidVersion
+          v = os.environ['VERSION']
+          try:
+              parsed = Version(v)
+          except InvalidVersion as e:
+              sys.exit(f'invalid PEP 440 version: {v!r} ({e})')
+          if str(parsed) != v:
+              sys.exit(f'version {v!r} is not in PEP 440 canonical form (would normalise to {str(parsed)!r})')
+          "
           actual=$(python - <<'PY'
           import tomllib
           print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])
