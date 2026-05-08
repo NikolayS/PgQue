@@ -15,5 +15,8 @@
 \echo 'Running: test_experimental_config_api'
 \i tests/test_experimental_config_api.sql
 
+\echo 'Running: test_streaming'
+\i tests/test_streaming.sql
+
 \echo ''
 \echo '=== ALL EXPERIMENTAL TESTS PASSED ==='
