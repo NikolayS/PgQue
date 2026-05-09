@@ -3,6 +3,12 @@
 # Marko Kreen / Skype Technologies OU).
 
 module Pgque
+  # Thin wrapper over the pgque SQL functions.
+  #
+  # Note: Pgque::Client#send mirrors the SQL `pgque.send(queue, payload)`
+  # primitive and the Python/TS client surface. That name shadows
+  # Ruby's Object#send, so use #__send__ or #public_send when you need
+  # to invoke a method on a Pgque::Client instance reflectively.
   class Client
     attr_reader :conn
 

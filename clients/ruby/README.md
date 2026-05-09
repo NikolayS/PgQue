@@ -35,6 +35,26 @@ grant pgque_writer to your_app_user;
 
 See [`docs/reference.md` — Roles and grants](../../docs/reference.md#roles-and-grants).
 
+## A note on `Pgque::Client#send`
+
+The producer method is called `send` to mirror the SQL surface
+(`pgque.send(queue, payload)`) and the Python/TS clients. That name
+shadows Ruby's `Object#send`, which is widely used for reflective
+method invocation. This means `client.send(:close)` calls the SQL
+`send`, **not** the `close` method.
+
+Two well-known Ruby escape hatches restore reflective dispatch on a
+`Pgque::Client` instance:
+
+```ruby
+client.__send__(:close)        # canonical "always works" form
+client.public_send(:close)     # safer: respects visibility
+```
+
+Use `__send__` or `public_send` whenever you need to call a method on
+a `Pgque::Client` by name. The Pgque API itself never calls these
+internally.
+
 ## Tests
 
 Integration tests require a running PostgreSQL with the PgQue schema

@@ -47,6 +47,18 @@ class TestConnect < Minitest::Test
     client.close
     client.close
   end
+
+  def test_underscore_send_dispatches_methods_reflectively
+    # Pgque::Client#send shadows Object#send; __send__ and public_send
+    # remain the way to invoke methods reflectively on a client.
+    client = Pgque.connect(dsn)
+    client.__send__(:close)
+    assert client.conn.finished?
+
+    client2 = Pgque.connect(dsn)
+    client2.public_send(:close)
+    assert client2.conn.finished?
+  end
 end
 
 class TestConnectBadDsn < Minitest::Test
