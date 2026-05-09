@@ -22,3 +22,11 @@ class TestConnect < Minitest::Test
     assert captured.conn.finished?
   end
 end
+
+class TestConnectBadDsn < Minitest::Test
+  def test_connect_bad_dsn_raises_pgque_connection_error
+    assert_raises(Pgque::ConnectionError) do
+      Pgque.connect("postgresql://nobody:wrong@localhost:1/nonexistent_db_xyz")
+    end
+  end
+end

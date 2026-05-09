@@ -9,6 +9,8 @@ module Pgque
     def self.connect(dsn, autocommit: false)
       conn = PG.connect(dsn)
       new(conn, owns_conn: true)
+    rescue PG::ConnectionBad => e
+      raise ConnectionError, e.message
     end
 
     def initialize(conn, owns_conn: false)
