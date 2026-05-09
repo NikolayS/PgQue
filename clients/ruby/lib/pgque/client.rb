@@ -8,14 +8,19 @@ module Pgque
 
     def self.connect(dsn, autocommit: false)
       conn = PG.connect(dsn)
-      new(conn, owns_conn: true)
+      new(conn, owns_conn: true, autocommit: autocommit)
     rescue PG::ConnectionBad => e
       raise ConnectionError, e.message
     end
 
-    def initialize(conn, owns_conn: false)
+    def initialize(conn, owns_conn: false, autocommit: false)
       @conn = conn
       @owns_conn = owns_conn
+      @autocommit = autocommit
+    end
+
+    def autocommit?
+      @autocommit
     end
 
     def close

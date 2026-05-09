@@ -32,6 +32,15 @@ class TestConnect < Minitest::Test
       raw.close
     end
   end
+
+  def test_autocommit_flag
+    Pgque.connect(dsn, autocommit: true) do |client|
+      assert client.autocommit?
+    end
+    Pgque.connect(dsn) do |client|
+      refute client.autocommit?
+    end
+  end
 end
 
 class TestConnectBadDsn < Minitest::Test
