@@ -89,6 +89,49 @@ module Pgque
       raise wrap_sql_error(e)
     end
 
+    # Experimental: function names, edge-case behavior, and signatures may
+    # change before the cooperative API is marked stable.
+    def subscribe_subconsumer(queue, consumer, subconsumer)
+      result = @conn.exec_params(
+        "select pgque.subscribe_subconsumer($1, $2, $3)",
+        [queue, consumer, subconsumer],
+      )
+      result.values[0][0].to_i
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
+    def unsubscribe_subconsumer(queue, consumer, subconsumer, batch_handling: 0)
+      result = @conn.exec_params(
+        "select pgque.unsubscribe_subconsumer($1, $2, $3, $4)",
+        [queue, consumer, subconsumer, batch_handling],
+      )
+      result.values[0][0].to_i
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
+    def receive_coop(queue, consumer, subconsumer, max_messages: 100,
+                     dead_interval: nil)
+      result = @conn.exec_params(
+        "select * from pgque.receive_coop($1, $2, $3, $4, $5::interval)",
+        [queue, consumer, subconsumer, max_messages, dead_interval],
+      )
+      result.values.map { |row| row_to_message(row) }
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
+    def touch_subconsumer(queue, consumer, subconsumer)
+      result = @conn.exec_params(
+        "select pgque.touch_subconsumer($1, $2, $3)",
+        [queue, consumer, subconsumer],
+      )
+      result.values[0][0].to_i
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
     def nack(batch_id, msg, retry_after: 60, reason: nil)
       payload_str = case msg.payload
                     when Hash, Array then JSON.dump(msg.payload)
