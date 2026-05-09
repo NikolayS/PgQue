@@ -5,6 +5,10 @@ build/output/
 clients/python/*.egg-info/
 clients/typescript/node_modules/
 clients/typescript/package-lock.json
+clients/ruby/Gemfile.lock
+clients/ruby/pkg/
+clients/ruby/.bundle/
+clients/ruby/*.gem
 
 # Claude Code agent worktrees (ephemeral isolation per agent run)
 .claude/worktrees/

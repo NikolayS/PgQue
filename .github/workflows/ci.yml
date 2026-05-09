@@ -491,6 +491,62 @@ jobs:
         if: always()
         run: docker rm -f pgque-ts-test
 
+  ruby-client-tests:
+    name: Ruby client tests
+    runs-on: ubuntu-latest
+    env:
+      PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Start PostgreSQL 18
+        run: |
+          set -Eeuo pipefail
+          docker run -d --name pgque-ruby-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            postgres:18
+
+          for i in $(seq 1 30); do
+            docker exec pgque-ruby-test pg_isready -U postgres && break
+            sleep 1
+          done || { echo "PG not ready after 30 seconds"; exit 1; }
+
+      - name: Build pgque
+        run: bash build/transform.sh
+
+      - name: Install pgque
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          working-directory: clients/ruby
+          bundler-cache: true
+
+      - name: Ruby client test suite
+        run: |
+          set -Eeuo pipefail
+          cd clients/ruby
+          bundle exec rake test
+
+      - name: Ruby package smoke
+        run: |
+          set -Eeuo pipefail
+          cd clients/ruby
+          gem build pgque.gemspec
+
+      - name: Cleanup Ruby test DB
+        if: always()
+        run: docker rm -f pgque-ruby-test
+
   verify:
     runs-on: ubuntu-latest
     steps:
