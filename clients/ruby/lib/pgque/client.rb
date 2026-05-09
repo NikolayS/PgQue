@@ -37,7 +37,7 @@ module Pgque
       end
       encoded = encode_payload(payload)
       result =
-        if type && type != "" && type != "default"
+        if custom_type?(type)
           @conn.exec_params(
             "select pgque.send($1, $2, $3::jsonb)",
             [queue, type, encoded],
@@ -139,8 +139,7 @@ module Pgque
                     when nil         then "null"
                     else                  msg.payload.to_s
                     end
-      created_at_str = msg.created_at.respond_to?(:iso8601) ?
-                         msg.created_at.iso8601(6) : msg.created_at
+      created_at_str = format_created_at(msg.created_at)
 
       @conn.exec_params(
         "select pgque.nack($1, " \
@@ -235,6 +234,17 @@ module Pgque
 
     def integer_column(result)
       result.column_values(0).map(&:to_i)
+    end
+
+    def custom_type?(type)
+      !type.to_s.empty? && type != "default"
+    end
+
+    def format_created_at(value)
+      case value
+      when Time then value.iso8601(6)
+      else value
+      end
     end
   end
 end
