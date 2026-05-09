@@ -41,6 +41,12 @@ class TestConnect < Minitest::Test
       refute client.autocommit?
     end
   end
+
+  def test_close_is_idempotent
+    client = Pgque.connect(dsn)
+    client.close
+    client.close
+  end
 end
 
 class TestConnectBadDsn < Minitest::Test
