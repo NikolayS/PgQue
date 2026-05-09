@@ -46,4 +46,16 @@ class TestSend < Minitest::Test
       assert_kind_of Integer, eid
     end
   end
+
+  def test_send_batch_returns_ids_in_order
+    with_queue do |queue, _consumer, conn|
+      client = Pgque::Client.new(conn)
+      ids = client.send_batch(queue, "batch.test", [
+        { "n" => 1 }, { "n" => 2 }, { "n" => 3 }, { "n" => 4 }
+      ])
+      assert_equal 4, ids.size
+      assert ids.all? { |i| i.is_a?(Integer) }
+      assert_equal ids.sort, ids
+    end
+  end
 end

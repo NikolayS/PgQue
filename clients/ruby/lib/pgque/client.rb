@@ -50,6 +50,16 @@ module Pgque
       result.values[0][0].to_i
     end
 
+    def send_batch(queue, type, payloads)
+      encoded = payloads.map { |p| encode_payload(p) }
+      array_literal = pg_text_array(encoded)
+      result = @conn.exec_params(
+        "select unnest(pgque.send_batch($1, $2, $3::jsonb[]))",
+        [queue, type, array_literal],
+      )
+      result.values.map { |r| r[0].to_i }
+    end
+
     private
 
     def encode_payload(payload)
@@ -58,6 +68,14 @@ module Pgque
       when nil         then "null"
       else                  payload
       end
+    end
+
+    def pg_text_array(strings)
+      escaped = strings.map do |s|
+        inner = s.to_s.gsub('\\') { '\\\\' }.gsub('"') { '\\"' }
+        "\"#{inner}\""
+      end
+      "{#{escaped.join(',')}}"
     end
   end
 end
