@@ -30,4 +30,12 @@ class TestSend < Minitest::Test
       assert_kind_of Integer, eid
     end
   end
+
+  def test_send_str_payload_passes_through
+    with_queue do |queue, _consumer, conn|
+      client = Pgque::Client.new(conn)
+      eid = client.send(queue, '"plain string"')
+      assert_kind_of Integer, eid
+    end
+  end
 end
