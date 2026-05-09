@@ -1,0 +1,107 @@
+name: Release Ruby client
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, matching clients/ruby/lib/pgque/version.rb"
+        required: true
+        type: string
+      dry_run:
+        description: "Build and validate without publishing"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    defaults:
+      run:
+        working-directory: clients/ruby
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          working-directory: clients/ruby
+          bundler-cache: true
+
+      - name: Verify version input
+        run: |
+          set -Eeuo pipefail
+          # Reject malformed input early. Gem::Version is permissive
+          # (accepts 0.2.0, 0.2.0.rc.1, 0.2.0.alpha, 0.2.0.beta.1, ...)
+          # but rejects clear garbage like "x.y.z" or empty strings.
+          ruby -rrubygems -e "Gem::Version.new(ENV.fetch('VERSION'))"
+
+          # The version constant must already match the input -- bumping
+          # version.rb is the responsibility of the release-prep PR, not
+          # this workflow. Any drift here is a configuration error.
+          actual=$(ruby -e 'require_relative "lib/pgque/version"; print Pgque::VERSION')
+          test "$actual" = "$VERSION" || {
+            echo "version input ${VERSION} != lib/pgque/version.rb ${actual}"
+            exit 1
+          }
+
+      - name: Build gem
+        run: gem build pgque.gemspec
+
+      - name: Verify built gem installs
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/pgque-gem-check
+          gem install --install-dir /tmp/pgque-gem-check --no-document \
+            "./pgque-${VERSION}.gem"
+          GEM_PATH=/tmp/pgque-gem-check GEM_HOME=/tmp/pgque-gem-check \
+            ruby -e '
+              require "pgque"
+              expected = ENV.fetch("VERSION")
+              raise "version mismatch: expected #{expected}, got #{Pgque::VERSION}" \
+                unless Pgque::VERSION == expected
+              raise "Pgque::Client missing"   unless defined?(Pgque::Client)
+              raise "Pgque::Consumer missing" unless defined?(Pgque::Consumer)
+              puts "install verified: pgque #{Pgque::VERSION}"
+            '
+
+  publish-rubygems:
+    if: ${{ !inputs.dry_run }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: rubygems
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: clients/ruby
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          working-directory: clients/ruby
+          bundler-cache: true
+
+      # rubygems/release-gem builds the gem from the gemspec in
+      # working-directory and pushes via OIDC. setup-trusted-publisher
+      # exchanges the GitHub-issued JWT for a short-lived rubygems.org
+      # API key -- no long-lived RUBYGEMS_API_KEY secret is needed.
+      - name: Publish to RubyGems via OIDC
+        uses: rubygems/release-gem@v1
+        with:
+          working-directory: clients/ruby
+          setup-trusted-publisher: true
+          await-release: true
