@@ -50,7 +50,7 @@ module Pgque
         end
       result.values[0][0].to_i
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def send_batch(queue, type, payloads)
@@ -62,7 +62,7 @@ module Pgque
       )
       result.values.map { |r| r[0].to_i }
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def receive(queue, consumer, max_messages = 100)
@@ -72,14 +72,14 @@ module Pgque
       )
       result.values.map { |row| row_to_message(row) }
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def ack(batch_id)
       result = @conn.exec_params("select pgque.ack($1)", [batch_id])
       result.values[0][0].to_i
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def force_next_tick(queue)
@@ -87,7 +87,7 @@ module Pgque
       v = result.values[0][0]
       v.nil? || v.empty? ? nil : v.to_i
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     # Experimental: function names, edge-case behavior, and signatures may
@@ -99,7 +99,7 @@ module Pgque
       )
       result.values[0][0].to_i
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def unsubscribe_subconsumer(queue, consumer, subconsumer, batch_handling: 0)
@@ -109,7 +109,7 @@ module Pgque
       )
       result.values[0][0].to_i
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def receive_coop(queue, consumer, subconsumer, max_messages: 100,
@@ -120,7 +120,7 @@ module Pgque
       )
       result.values.map { |row| row_to_message(row) }
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def touch_subconsumer(queue, consumer, subconsumer)
@@ -130,7 +130,7 @@ module Pgque
       )
       result.values[0][0].to_i
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     def nack(batch_id, msg, retry_after: 60, reason: nil)
@@ -155,7 +155,7 @@ module Pgque
       )
       nil
     rescue PG::Error => e
-      raise wrap_sql_error(e)
+      raise_wrapped_sql_error(e)
     end
 
     private
@@ -217,6 +217,12 @@ module Pgque
       else
         Error.new(msg)
       end
+    end
+
+    def raise_wrapped_sql_error(error)
+      wrapped = wrap_sql_error(error)
+      wrapped.set_backtrace(error.backtrace) if error.backtrace
+      raise wrapped, cause: error
     end
   end
 end
