@@ -103,8 +103,13 @@ class TestSend < Minitest::Test
         conn.exec_params("select pgque.ticker($1)", [queue])
         msgs = client.receive(queue, consumer, 10)
         assert_equal 1, msgs.size, "no message for payload=#{payload.inspect}"
-        assert_equal expected, msgs[0].payload,
-                     "payload=#{payload.inspect} did not round-trip"
+        if expected.nil?
+          assert_nil msgs[0].payload,
+                     "payload=#{payload.inspect} did not round-trip to nil"
+        else
+          assert_equal expected, msgs[0].payload,
+                       "payload=#{payload.inspect} did not round-trip"
+        end
         client.ack(msgs[0].batch_id)
       end
     end

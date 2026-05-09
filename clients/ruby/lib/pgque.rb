@@ -11,6 +11,7 @@ require "pgque/errors"
 require "pgque/event"
 require "pgque/message"
 require "pgque/client"
+require "pgque/consumer"
 
 module Pgque
   def self.connect(dsn, autocommit: false)
