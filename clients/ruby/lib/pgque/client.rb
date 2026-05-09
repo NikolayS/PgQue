@@ -48,6 +48,8 @@ module Pgque
           )
         end
       result.values[0][0].to_i
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
     end
 
     def send_batch(queue, type, payloads)
@@ -58,6 +60,58 @@ module Pgque
         [queue, type, array_literal],
       )
       result.values.map { |r| r[0].to_i }
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
+    def receive(queue, consumer, max_messages = 100)
+      result = @conn.exec_params(
+        "select * from pgque.receive($1, $2, $3)",
+        [queue, consumer, max_messages],
+      )
+      result.values.map { |row| row_to_message(row) }
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
+    def ack(batch_id)
+      result = @conn.exec_params("select pgque.ack($1)", [batch_id])
+      result.values[0][0].to_i
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
+    def force_next_tick(queue)
+      result = @conn.exec_params("select pgque.force_next_tick($1)", [queue])
+      v = result.values[0][0]
+      v.nil? || v.empty? ? nil : v.to_i
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
+    end
+
+    def nack(batch_id, msg, retry_after: 60, reason: nil)
+      payload_str = case msg.payload
+                    when Hash, Array then JSON.dump(msg.payload)
+                    when nil         then "null"
+                    else                  msg.payload.to_s
+                    end
+      created_at_str = msg.created_at.respond_to?(:iso8601) ?
+                         msg.created_at.iso8601(6) : msg.created_at
+
+      @conn.exec_params(
+        "select pgque.nack($1, " \
+        "ROW($2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11)::pgque.message, " \
+        "$12::interval, $13)",
+        [
+          batch_id, msg.msg_id, msg.batch_id, msg.type, payload_str,
+          msg.retry_count, created_at_str,
+          msg.extra1, msg.extra2, msg.extra3, msg.extra4,
+          "#{retry_after} seconds", reason,
+        ],
+      )
+      nil
+    rescue PG::Error => e
+      raise wrap_sql_error(e)
     end
 
     private
@@ -76,6 +130,40 @@ module Pgque
         "\"#{inner}\""
       end
       "{#{escaped.join(',')}}"
+    end
+
+    def row_to_message(row)
+      Message.new(
+        msg_id: row[0].to_i,
+        batch_id: row[1].to_i,
+        type: row[2],
+        payload: parse_jsonb(row[3]),
+        retry_count: row[4].nil? ? nil : row[4].to_i,
+        created_at: row[5].nil? ? nil : Time.parse(row[5]),
+        extra1: row[6],
+        extra2: row[7],
+        extra3: row[8],
+        extra4: row[9],
+      )
+    end
+
+    def parse_jsonb(text)
+      return nil if text.nil?
+      JSON.parse(text)
+    rescue JSON::ParserError
+      text
+    end
+
+    def wrap_sql_error(error)
+      msg = error.message.to_s
+      low = msg.downcase
+      if low.include?("queue not found")
+        QueueNotFound.new(msg)
+      elsif low.include?("batch not found")
+        BatchNotFound.new(msg)
+      else
+        Error.new(msg)
+      end
     end
   end
 end

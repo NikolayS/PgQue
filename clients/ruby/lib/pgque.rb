@@ -3,11 +3,13 @@
 # Marko Kreen / Skype Technologies OU).
 
 require "json"
+require "time"
 require "pg"
 
 require "pgque/version"
 require "pgque/errors"
 require "pgque/event"
+require "pgque/message"
 require "pgque/client"
 
 module Pgque
