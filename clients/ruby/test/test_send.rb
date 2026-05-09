@@ -192,8 +192,8 @@ class TestSendSqlForm < Minitest::Test
     end
 
     class FakeResult
-      def values
-        [["999"]]
+      def getvalue(_row, _col)
+        "999"
       end
     end
   end
