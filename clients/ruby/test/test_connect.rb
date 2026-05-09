@@ -12,4 +12,13 @@ class TestConnect < Minitest::Test
     client.close
     assert client.conn.finished?
   end
+
+  def test_connect_block_form_closes_on_exit
+    captured = nil
+    Pgque.connect(dsn) do |client|
+      captured = client
+      refute client.conn.finished?
+    end
+    assert captured.conn.finished?
+  end
 end

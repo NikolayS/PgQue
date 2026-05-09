@@ -9,6 +9,13 @@ require "pgque/client"
 
 module Pgque
   def self.connect(dsn, autocommit: false)
-    Client.connect(dsn, autocommit: autocommit)
+    client = Client.connect(dsn, autocommit: autocommit)
+    return client unless block_given?
+
+    begin
+      yield client
+    ensure
+      client.close
+    end
   end
 end
