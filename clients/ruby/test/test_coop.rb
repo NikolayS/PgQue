@@ -16,6 +16,10 @@ module CoopHelpers
     yield q, conn
   ensure
     if conn && !conn.finished?
+      # Reset failed transaction state before cleanup, mirroring
+      # with_queue. Otherwise a test that leaves the connection in
+      # PQTRANS_INERROR will make unsubscribe/drop fail and leak state.
+      conn.exec("ROLLBACK") rescue nil
       begin
         rows = conn.exec_params(
           "select c.co_name from pgque.consumer c " \
