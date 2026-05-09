@@ -59,14 +59,14 @@ module Pgque
     end
 
     def start
-      set_running(true)
+      self.running = true
 
       in_main_thread = (Thread.current == Thread.main)
       original_handlers = {}
 
       stop_proc = ->(signum) {
         @logger.info("received signal #{signum}, shutting down")
-        set_running(false)
+        self.running = false
       }
 
       if in_main_thread
@@ -101,7 +101,7 @@ module Pgque
     end
 
     def stop
-      set_running(false)
+      self.running = false
     end
 
     def running?
@@ -220,7 +220,7 @@ module Pgque
       end
     end
 
-    def set_running(value)
+    def running=(value)
       @running_mutex.synchronize { @running = value }
     end
 
