@@ -48,7 +48,7 @@ module Pgque
             [queue, encoded],
           )
         end
-      result.values[0][0].to_i
+      integer_scalar(result)
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
@@ -60,7 +60,7 @@ module Pgque
         "select unnest(pgque.send_batch($1, $2, $3::jsonb[]))",
         [queue, type, array_literal],
       )
-      result.values.map { |r| r[0].to_i }
+      integer_column(result)
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
@@ -70,21 +70,21 @@ module Pgque
         "select * from pgque.receive($1, $2, $3)",
         [queue, consumer, max_messages],
       )
-      result.values.map { |row| row_to_message(row) }
+      result.each_row.map { |row| row_to_message(row) }
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
 
     def ack(batch_id)
       result = @conn.exec_params("select pgque.ack($1)", [batch_id])
-      result.values[0][0].to_i
+      integer_scalar(result)
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
 
     def force_next_tick(queue)
       result = @conn.exec_params("select pgque.force_next_tick($1)", [queue])
-      v = result.values[0][0]
+      v = scalar(result)
       v.nil? || v.empty? ? nil : v.to_i
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
@@ -97,7 +97,7 @@ module Pgque
         "select pgque.subscribe_subconsumer($1, $2, $3)",
         [queue, consumer, subconsumer],
       )
-      result.values[0][0].to_i
+      integer_scalar(result)
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
@@ -107,7 +107,7 @@ module Pgque
         "select pgque.unsubscribe_subconsumer($1, $2, $3, $4)",
         [queue, consumer, subconsumer, batch_handling],
       )
-      result.values[0][0].to_i
+      integer_scalar(result)
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
@@ -118,7 +118,7 @@ module Pgque
         "select * from pgque.receive_coop($1, $2, $3, $4, $5::interval)",
         [queue, consumer, subconsumer, max_messages, dead_interval],
       )
-      result.values.map { |row| row_to_message(row) }
+      result.each_row.map { |row| row_to_message(row) }
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
@@ -128,7 +128,7 @@ module Pgque
         "select pgque.touch_subconsumer($1, $2, $3)",
         [queue, consumer, subconsumer],
       )
-      result.values[0][0].to_i
+      integer_scalar(result)
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
     end
@@ -223,6 +223,18 @@ module Pgque
       wrapped = wrap_sql_error(error)
       wrapped.set_backtrace(error.backtrace) if error.backtrace
       raise wrapped, cause: error
+    end
+
+    def scalar(result)
+      result.getvalue(0, 0)
+    end
+
+    def integer_scalar(result)
+      scalar(result).to_i
+    end
+
+    def integer_column(result)
+      result.column_values(0).map(&:to_i)
     end
   end
 end
