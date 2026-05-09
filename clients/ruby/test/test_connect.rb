@@ -21,6 +21,17 @@ class TestConnect < Minitest::Test
     end
     assert captured.conn.finished?
   end
+
+  def test_external_conn_is_not_closed_by_close
+    raw = PG.connect(dsn)
+    begin
+      client = Pgque::Client.new(raw)
+      client.close
+      refute raw.finished?
+    ensure
+      raw.close
+    end
+  end
 end
 
 class TestConnectBadDsn < Minitest::Test
