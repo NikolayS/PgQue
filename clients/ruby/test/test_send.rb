@@ -47,6 +47,30 @@ class TestSend < Minitest::Test
     end
   end
 
+  def test_send_numeric_and_boolean_payloads_coerce_via_to_s
+    # Non-String/Hash/Array/nil payloads run through to_s so numerics
+    # and booleans round-trip naturally as JSON scalars.
+    cases = [
+      [42,    42],
+      [3.14,  3.14],
+      [true,  true],
+      [false, false],
+    ]
+    cases.each do |payload, expected|
+      with_queue do |queue, consumer, conn|
+        client = Pgque::Client.new(conn)
+        client.send(queue, payload)
+        conn.exec_params("select pgque.force_next_tick($1)", [queue])
+        conn.exec_params("select pgque.ticker($1)", [queue])
+        msgs = client.receive(queue, consumer, 10)
+        assert_equal 1, msgs.size, "no message for #{payload.inspect}"
+        assert_equal expected, msgs[0].payload,
+                     "#{payload.inspect} did not round-trip"
+        client.ack(msgs[0].batch_id)
+      end
+    end
+  end
+
   def test_send_batch_returns_ids_in_order
     with_queue do |queue, _consumer, conn|
       client = Pgque::Client.new(conn)

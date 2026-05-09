@@ -160,11 +160,20 @@ module Pgque
 
     private
 
+    # Hash/Array: JSON-encoded.
+    # nil: literal "null" so ::jsonb yields JSON null (not SQL NULL).
+    # String: passed through verbatim; caller must supply valid JSON text.
+    # Anything else (Integer, Float, true, false, Symbol, ...): coerced
+    # via #to_s so numerics and booleans round-trip naturally
+    # (42 -> "42", true -> "true"). Symbols and other objects whose
+    # to_s isn't valid JSON will surface a SQL error from the ::jsonb
+    # cast -- callers who care should pre-encode with JSON.dump.
     def encode_payload(payload)
       case payload
       when Hash, Array then JSON.dump(payload)
       when nil         then "null"
-      else                  payload
+      when String      then payload
+      else                  payload.to_s
       end
     end
 
