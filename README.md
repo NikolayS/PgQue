@@ -333,7 +333,7 @@ Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, e
 
 ## Client libraries
 
-PgQue is SQL-first, so any Postgres driver works. First-party client libraries live in this repo for **Python**, **Go**, **TypeScript**, and **Ruby**, all published at `v0.2.0-rc.1`.
+PgQue is SQL-first, so any Postgres driver works. First-party client libraries live in this repo for **Python**, **Go**, **TypeScript**, and **Ruby** — all in v0.2 release-candidate state. Each section below shows the install command for that ecosystem's version spelling: PyPI uses `0.2.0rc1`, RubyGems uses `0.2.0.rc.1`, npm and Go use `0.2.0-rc.1`.
 
 ### Python (`pgque-py`) — psycopg 3
 
