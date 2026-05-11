@@ -417,6 +417,10 @@ gem install pgque --pre        # or pin: gem "pgque", "0.2.0.rc.1"
 require "pgque"
 
 Pgque.connect("postgresql://localhost/mydb") do |client|
+  # one-time setup (typically in a migration)
+  client.conn.exec("select pgque.create_queue('orders')")
+  client.conn.exec("select pgque.subscribe('orders', 'processor')")
+
   client.send("orders", { "order_id" => 42 }, type: "order.created")
 end
 
@@ -425,10 +429,8 @@ consumer = Pgque::Consumer.new(
   queue: "orders",
   name: "processor",
 )
-
 consumer.on("order.created") { |msg| process_order(msg.payload) }
-
-consumer.start  # blocks until SIGTERM/SIGINT
+consumer.start  # blocks until SIGTERM/SIGINT; needs pgque.ticker() running
 ```
 
 ### Any language

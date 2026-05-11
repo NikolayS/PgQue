@@ -35,6 +35,40 @@ grant pgque_writer to your_app_user;
 
 See [`docs/reference.md` — Roles and grants](../../docs/reference.md#roles-and-grants).
 
+## Quickstart
+
+Run the one-time setup once (typically in a migration), then produce
+and consume from any process:
+
+```ruby
+require "pgque"
+
+Pgque.connect("postgresql://localhost/mydb") do |client|
+  # one-time setup
+  client.conn.exec("select pgque.create_queue('orders')")
+  client.conn.exec("select pgque.subscribe('orders', 'order_worker')")
+
+  # produce
+  client.send("orders", { "order_id" => 42 }, type: "order.created")
+end
+
+# consume (separate process)
+consumer = Pgque::Consumer.new(
+  "postgresql://localhost/mydb",
+  queue: "orders",
+  name: "order_worker",
+)
+consumer.on("order.created") { |msg| process_order(msg.payload) }
+consumer.start  # blocks until SIGTERM / SIGINT
+```
+
+The consumer only sees events after `pgque.ticker()` has materialized
+a batch. With `pg_cron` available, run `select pgque.start();` once
+to schedule the default 10 ticks/sec. Without `pg_cron`, drive
+ticking from your application or an external scheduler — see the
+project [Installation](https://github.com/NikolayS/pgque#installation)
+section for both paths.
+
 ## A note on `Pgque::Client#send`
 
 The producer method is called `send` to mirror the SQL surface
