@@ -1,0 +1,61 @@
+# Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+
+require_relative "test_helper"
+
+class TestConnect < Minitest::Test
+  include PgqueTest::Helpers
+
+  def test_connect_returns_client
+    client = Pgque.connect(dsn)
+    assert_instance_of Pgque::Client, client
+    refute client.conn.finished?
+    client.close
+    assert client.conn.finished?
+  end
+
+  def test_connect_block_form_closes_on_exit
+    captured = nil
+    Pgque.connect(dsn) do |client|
+      captured = client
+      refute client.conn.finished?
+    end
+    assert captured.conn.finished?
+  end
+
+  def test_external_conn_is_not_closed_by_close
+    raw = PG.connect(dsn)
+    begin
+      client = Pgque::Client.new(raw)
+      client.close
+      refute raw.finished?
+    ensure
+      raw.close
+    end
+  end
+
+  def test_close_is_idempotent
+    client = Pgque.connect(dsn)
+    client.close
+    client.close
+  end
+
+  def test_underscore_send_dispatches_methods_reflectively
+    # Pgque::Client#send shadows Object#send; __send__ and public_send
+    # remain the way to invoke methods reflectively on a client.
+    client = Pgque.connect(dsn)
+    client.__send__(:close)
+    assert client.conn.finished?
+
+    client2 = Pgque.connect(dsn)
+    client2.public_send(:close)
+    assert client2.conn.finished?
+  end
+end
+
+class TestConnectBadDsn < Minitest::Test
+  def test_connect_bad_dsn_raises_pgque_connection_error
+    assert_raises(Pgque::ConnectionError) do
+      Pgque.connect("postgresql://nobody:wrong@localhost:1/nonexistent_db_xyz")
+    end
+  end
+end
