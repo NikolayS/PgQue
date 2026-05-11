@@ -108,6 +108,13 @@ module Pgque
           conn.close unless conn.finished?
         end
       ensure
+        # Clear running? before logging so callers observing the flag
+        # see "stopped" by the time the log line is written -- and so
+        # an exception during PG.connect, LISTEN, or the poll loop
+        # leaves the consumer in a consistent state instead of a
+        # ghost "running" with no live worker. Plain instance-var
+        # write -- not the trap-context-unsafe pattern.
+        @running = false
         if in_main_thread
           original_handlers.each { |sig, h| Signal.trap(sig, h || "DEFAULT") }
         end

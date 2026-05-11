@@ -76,6 +76,28 @@ class TestConsumerUnit < Minitest::Test
     end
   end
 
+  def test_running_clears_after_start_failure
+    skip_dsn_for_this_class!
+    # Point at an unreachable port so PG.connect raises immediately
+    # inside start, exiting before the poll loop ever runs.
+    cons = Pgque::Consumer.new(
+      "postgresql://nobody:wrong@localhost:1/nodb",
+      queue: "q", name: "c", logger: silent_logger
+    )
+    refute cons.running?
+    assert_raises(PG::Error) { cons.start }
+    refute cons.running?,
+           "consumer.running? must be false after start raised"
+  end
+
+  def silent_logger
+    require "logger"
+    require "stringio"
+    log = Logger.new(StringIO.new)
+    log.level = Logger::FATAL
+    log
+  end
+
   def test_invalid_pgque_log_level_falls_back_to_fatal
     skip_dsn_for_this_class!
     old = ENV["PGQUE_LOG_LEVEL"]
