@@ -283,7 +283,8 @@ begin
             and t2.tick_id = s.sub_next_tick
     where
         q.queue_name = i_queue_name
-        and c.co_name = i_consumer_name;
+        and c.co_name = i_consumer_name
+    for update of s;
     if not found then
         errmsg := 'Not subscriber to queue: '
             || coalesce(i_queue_name, 'NULL')
@@ -381,6 +382,13 @@ begin
 
     -- get next batch
     batch_id := nextval('pgque.batch_id_seq');
+    -- Defense in depth: filter on sub_role = 'normal' so a stray coop_main
+    -- row (e.g. memberless one that bypassed the rejection above) cannot be
+    -- stamped with sub_batch. With FOR UPDATE held since the initial SELECT,
+    -- sub_role cannot change here, so the filter is a guard against future
+    -- regressions rather than a fix for a reachable bug today. The column
+    -- name is qualified because the function declares a local PL/pgSQL
+    -- variable also named sub_role.
     update pgque.subscription
     set
         sub_batch = batch_id,
@@ -388,7 +396,8 @@ begin
         sub_active = now()
     where
         sub_queue = queue_id
-        and sub_consumer = cons_id;
+        and sub_consumer = cons_id
+        and pgque.subscription.sub_role = 'normal';
     return;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;

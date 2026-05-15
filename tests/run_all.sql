@@ -130,5 +130,8 @@
 \echo 'Running: test_coop_concurrency'
 \i tests/test_coop_concurrency.sql
 
+\echo 'Running: test_legacy_next_batch_role_guard'
+\i tests/test_legacy_next_batch_role_guard.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
