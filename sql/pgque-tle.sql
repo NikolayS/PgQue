@@ -5845,7 +5845,8 @@ begin
             and t2.tick_id = s.sub_next_tick
     where
         q.queue_name = i_queue_name
-        and c.co_name = i_consumer_name;
+        and c.co_name = i_consumer_name
+    for update of s;
     if not found then
         errmsg := 'Not subscriber to queue: '
             || coalesce(i_queue_name, 'NULL')
