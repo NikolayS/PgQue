@@ -59,6 +59,20 @@ if [[ -z "${original_find_tick_def}" ]]; then
     exit 1
 fi
 
+# Refuse to start if the captured "original" already contains the harness's
+# test sentinel. That means a prior run was killed between override install
+# and restore, and the database still has the pausing variant of
+# find_tick_helper. Re-install sql/pgque.sql before re-running this harness,
+# otherwise the cleanup at the bottom would "restore" the override back into
+# place and the next run would never see the real function.
+if [[ "${original_find_tick_def}" == *"pg_advisory_lock(${advisory_lock_key})"* ]] \
+    || [[ "${original_find_tick_def}" == *'$test$'* ]]; then
+    echo "FAIL: pgque.find_tick_helper already contains the harness pausing override," >&2
+    echo "      probably left behind by a killed previous run. Re-install pgque first:" >&2
+    echo "        psql \"\${PGQUE_TEST_DSN}\" -v ON_ERROR_STOP=1 -f sql/pgque.sql" >&2
+    exit 1
+fi
+
 cleanup() {
     if [[ -n "${lock_pid}" ]]; then
         kill "${lock_pid}" 2>/dev/null || true
