@@ -7072,6 +7072,20 @@ begin
         proc := to_regprocedure(rec.sig);
         if proc is not null then
             execute format('alter function %s owner to %I', proc, rec.owner_name);
+
+            -- Restored v0.1.0 send_batch wrappers are SECURITY DEFINER and
+            -- call the new v0.2.0 internal bulk primitive. Preserve runtime
+            -- behavior for non-superuser owners by granting just that owner
+            -- execute on the primitive their wrapper now needs.
+            if rec.sig in (
+                'pgque.send_batch(text,text,jsonb[])',
+                'pgque.send_batch(text,text,text[])'
+            ) then
+                execute format(
+                    'grant execute on function pgque.insert_event_bulk(text, text, text[]) to %I',
+                    rec.owner_name
+                );
+            end if;
         end if;
     end loop;
 end $$;

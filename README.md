@@ -285,6 +285,7 @@ The default install stays small; additional APIs live under `sql/experimental/` 
 
 - [Tutorial](docs/tutorial.md) — a hands-on walkthrough. Start here if you are new.
 - [Reference](docs/reference.md) — every shipped function and role.
+- [Upgrading](docs/upgrading.md) — SQL-file upgrade procedure for existing installs.
 - [Examples](docs/examples.md) — patterns: fan-out, exactly-once, batch loading, recurring jobs.
 - [Benchmarks](docs/benchmarks.md) — throughput measurements and methodology.
 - [Tick frequency tuning](docs/tick-frequency.md) — latency/WAL trade-offs, idle tick behavior, and pg_cron logging caveats.

@@ -12,8 +12,8 @@ declare
   v_tick_period_ms int;
 begin
   v_version := pgque.version();
-  assert v_version = '0.2.0-rc.1',
-    'pgque.version() should report HEAD version, got ' || v_version;
+  assert v_version is not null and v_version <> '0.1.0',
+    'pgque.version() should report upgraded HEAD version, got ' || coalesce(v_version, 'NULL');
 
   assert exists (select 1 from pgque.queue where queue_name = 'upgrade_v01_q'),
     'pre-upgrade queue should survive';

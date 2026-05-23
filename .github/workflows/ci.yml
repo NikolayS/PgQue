@@ -83,6 +83,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Upgrade coverage uses oldest/newest supported PG endpoints; the main
+        # regression matrix above covers every supported version (14–18).
         pg_version: ['18', '14']
 
     steps:

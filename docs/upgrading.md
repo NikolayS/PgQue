@@ -33,6 +33,7 @@ After upgrading, verify the installed version:
 
 ```sql
 select pgque.version();
+-- 0.2.0-rc.1, or the exact release you installed
 ```
 
 You can also run the idempotency smoke test from the repository:

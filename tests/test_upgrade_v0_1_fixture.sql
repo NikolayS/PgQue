@@ -99,16 +99,19 @@ begin
 end $$;
 
 -- Owner preservation fixture: v0.1.0 wrappers must keep their old owner when a
--- superuser performs the upgrade. Use a dedicated superuser role so recreated
--- SECURITY DEFINER wrappers can still call internal PgQue primitives during the
--- post-upgrade assertions.
+-- superuser performs the upgrade. Use a dedicated non-superuser owner with the
+-- PgQue runtime roles it needs: the recreated SECURITY DEFINER wrappers execute
+-- as this owner during the post-upgrade assertions.
 do $$
 declare
   f text;
 begin
   if not exists (select 1 from pg_roles where rolname = 'pgque_v01_wrapper_owner') then
-    create role pgque_v01_wrapper_owner superuser;
+    create role pgque_v01_wrapper_owner;
   end if;
+
+  grant pgque_reader to pgque_v01_wrapper_owner;
+  grant pgque_writer to pgque_v01_wrapper_owner;
 
   foreach f in array array[
     'pgque.send(text,jsonb)',
