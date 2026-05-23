@@ -80,8 +80,8 @@ def main() -> int:
     ax.grid(axis='y', color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
     ax.set_xlabel('message number in the backlog')
-    ax.set_ylabel('seconds until completion')
-    ax.set_title('Completion latency by queue position', loc='left', fontsize=15, color=FG, pad=18)
+    ax.set_ylabel('completion time in seconds')
+    ax.set_title('Completion time by queue position', loc='left', fontsize=15, color=FG, pad=18)
     ax.text(0.0, 1.02,
             'Same 160-message backlog. One line per subconsumer count. Lower is better.',
             transform=ax.transAxes, ha='left', va='bottom', fontsize=10.5, color=DIM)
@@ -100,7 +100,7 @@ def main() -> int:
                 f"{meta['workers']} workers  {meta['wall_s']:.1f}s",
                 color=color, va='center', ha='left', fontsize=9.5)
 
-    ax.text(0.98, 0.96, '250 ms/message → ~4 msg/s per worker',
+    ax.text(0.98, 0.96, 'Per-event work stays fixed at 250 ms',
             transform=ax.transAxes, ha='right', va='top', fontsize=10, color=DIM)
 
     fig.savefig(out, bbox_inches='tight')
