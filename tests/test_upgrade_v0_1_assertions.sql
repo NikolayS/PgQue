@@ -88,7 +88,14 @@ begin
       format('wrapper %s should preserve owner pgque_v01_wrapper_owner, got %s', f, coalesce(v_owner, 'NULL'));
   end loop;
 
-  raise notice 'PASS: recreated v0.1.0 wrapper owners preserved';
+  assert has_function_privilege(
+      'pgque_v01_wrapper_owner',
+      'pgque.insert_event_bulk(text, text, text[])',
+      'EXECUTE'
+    ),
+    'pgque_v01_wrapper_owner should have execute on insert_event_bulk for restored send_batch wrappers';
+
+  raise notice 'PASS: recreated v0.1.0 wrapper owners and required send_batch primitive grant preserved';
 end $$;
 
 -- New publishing/consuming still works on the upgraded queue.

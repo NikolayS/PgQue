@@ -308,7 +308,9 @@ begin
             -- Restored v0.1.0 send_batch wrappers are SECURITY DEFINER and
             -- call the new v0.2.0 internal bulk primitive. Preserve runtime
             -- behavior for non-superuser owners by granting just that owner
-            -- execute on the primitive their wrapper now needs.
+            -- execute on the primitive their wrapper now needs. The grant is
+            -- intentionally persistent: the restored wrapper keeps calling
+            -- this locked-down primitive on later idempotent reinstalls.
             if rec.sig in (
                 'pgque.send_batch(text,text,jsonb[])',
                 'pgque.send_batch(text,text,text[])'

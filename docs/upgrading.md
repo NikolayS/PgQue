@@ -1,9 +1,8 @@
 # Upgrading PgQue
 
 PgQue upgrades are SQL-file upgrades. Install the new release over the existing
-schema by re-running `sql/pgque.sql` as the schema owner or a superuser:
-
-Run from the repository root:
+schema by re-running `sql/pgque.sql` as the schema owner or a superuser, from
+the repository root:
 
 ```bash
 psql --single-transaction -v ON_ERROR_STOP=1 -d mydb -f sql/pgque.sql

@@ -147,6 +147,8 @@ jobs:
             -v ON_ERROR_STOP=1 -f tests/test_security_public_execute.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_upgrade_grants.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_pgque_roles.sql
 
       - name: Verify post-upgrade idempotency
         run: |
