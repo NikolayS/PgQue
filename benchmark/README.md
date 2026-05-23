@@ -7,6 +7,7 @@ Backs [NikolayS/pgque#61](https://github.com/NikolayS/pgque/issues/61) (the held
 ## Start here
 
 - **[Throughput harness](./)** — cross-system benchmark harness and results.
+- **[subconsumer-scaling](subconsumer-scaling/)** — focused demo for the `250 ms / message` story: one PgQue consumer, in-process subconsumers, backlog drain, charts, and GIF output.
 - **[xmin-horizon](xmin-horizon/)** — blocked-xmin/dead-tuple repro comparing `SKIP LOCKED` queues with PgQue rotation.
 - **[METHODOLOGY.md](METHODOLOGY.md)** — full bench methodology, workload shape, observability stack, phase scheduler.
 - **[OPS_GOTCHAS.md](OPS_GOTCHAS.md)** — every operational lesson from running this on AWS (NVMe mount, pg_partman stale rows, que function leftovers, pgboss index, etc.).

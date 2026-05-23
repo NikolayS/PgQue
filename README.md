@@ -30,6 +30,7 @@ Discussion on [Hacker News](https://news.ycombinator.com/item?id=47817349).
 - [Quick start](#quick-start)
 - [Client libraries](#client-libraries)
 - [Benchmarks](#benchmarks)
+- [Subconsumers / cooperative consumers](#subconsumers--cooperative-consumers)
 - [Architecture](#architecture)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -439,6 +440,48 @@ Numbers there are for reference and exploration, not a final verdict —
 benchmarking Postgres queues is hard (cf. Brendan Gregg) and the
 methodology continues to evolve.
 
+The dedicated subconsumer demo harness lives in
+[`benchmark/subconsumer-scaling/`](benchmark/subconsumer-scaling/). It fixes the
+per-message downstream work at 250 ms and varies only consumer parallelism, so
+the scaling story is easy to see without mixing in producer cadence or tick
+tuning.
+
+## Subconsumers / cooperative consumers
+
+This is the use case that keeps coming up: the queue itself is fast, but the
+downstream side effect is not. If one message means one email API call, one SMS
+request, one webhook, or one slow HTTP POST, then consumer-side parallelism is
+what decides whether the backlog melts or lingers.
+
+PgQue does not need a second queue to show that effect. One main consumer can
+fetch a batch and fan the work out to a pool of subconsumers. To make the point
+concrete, the demo harness preloads the same 160-message backlog every time and
+replaces the external side effect with a fixed `sleep(250 ms)` per message.
+That means one worker should top out near 4 messages / second. Then we increase
+only the number of subconsumers.
+
+<p align="center"><img src="docs/images/backlog_race.gif" alt="Backlog drain race for 1, 2, 4, 8, and 16 subconsumers on the same 160-message queue with 250 ms of work per message" width="760"></p>
+
+Observed drain times from the demo run above:
+
+| Subconsumers | Avg throughput | Drain time |
+|---:|---:|---:|
+| 1  | 4.0 msg/s  | 40.4 s |
+| 2  | 7.9 msg/s  | 20.3 s |
+| 4  | 15.8 msg/s | 10.1 s |
+| 8  | 31.3 msg/s | 5.1 s  |
+| 16 | 61.8 msg/s | 2.6 s  |
+
+The same data as a completion-latency view — one shared axis, one line per
+worker count, lower is better:
+
+<p align="center"><img src="docs/images/completion_latency.png" alt="Completion latency by queue position for the same 160-message backlog with 1, 2, 4, 8, and 16 subconsumers" width="760"></p>
+
+These are demo numbers, not a product claim. The point is narrower and more
+useful: when downstream work costs ~250 ms / message, one worker buys you ~4
+messages / second, and extra subconsumers scale backlog drain almost linearly
+until some other bottleneck shows up.
+
 ## Architecture
 
 PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, three-table TRUNCATE rotation on the hot path, separate retry / delayed / dead-letter tables, and independent per-consumer cursors — and adds a modern API layer on top. See [blueprints/SPECx.md](blueprints/SPECx.md) for the full specification and [docs/pgq-concepts.md](docs/pgq-concepts.md) for the batch/tick/rotation glossary.
@@ -455,7 +498,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | `pg_cron`, `pg_timetable`, or external ticking | ✅ |
 | Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable) | ✅ |
 | System-table rotation / bloat mitigation |  |
-| Cooperative consumers / subconsumers | 🔬 experimental |
+| [Cooperative consumers / subconsumers](#subconsumers--cooperative-consumers) | 🔬 experimental |
 | Queue splitter |  |
 | Queue mover |  |
 | Modern `send`, `receive`, `ack`, `nack` API | ✅ |
