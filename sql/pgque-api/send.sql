@@ -54,13 +54,23 @@ end $$;
 -- documented "re-run sql/pgque.sql to upgrade" path works from v0.1.0.
 -- Do not unconditionally drop current wrappers: users may have dependent
 -- views/functions, and normal idempotent reinstall must preserve those OIDs.
+-- Also preserve the old function owner when the upgrade is run by a superuser:
+-- dropped SECURITY DEFINER wrappers must not silently become superuser-owned.
+alter default privileges in schema pgque revoke execute on functions from public;
+
+create temporary table if not exists pgque_v01_wrapper_owners (
+    sig text primary key,
+    owner_name name not null
+);
+
 do $$
 declare
-    sig text;
+    v_sig text;
     proc regprocedure;
     args text;
+    v_owner_name name;
 begin
-    foreach sig in array array[
+    foreach v_sig in array array[
         'pgque.send(text,jsonb)',
         'pgque.send(text,text)',
         'pgque.send(text,text,jsonb)',
@@ -70,13 +80,24 @@ begin
         'pgque.subscribe(text,text)',
         'pgque.unsubscribe(text,text)'
     ] loop
-        proc := to_regprocedure(sig);
+        proc := to_regprocedure(v_sig);
         if proc is null then
             continue;
         end if;
 
         args := pg_get_function_arguments(proc);
         if args like 'i\_%' escape '\' then
+            select r.rolname
+            into v_owner_name
+            from pg_proc as p
+            join pg_roles as r on r.oid = p.proowner
+            where p.oid = proc::oid;
+
+            insert into pg_temp.pgque_v01_wrapper_owners (sig, owner_name)
+            values (v_sig, v_owner_name)
+            on conflict (sig) do update
+                set owner_name = excluded.owner_name;
+
             execute format('drop function %s', proc);
         end if;
     end loop;
@@ -259,6 +280,27 @@ begin
     return pgque.unregister_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- Restore owners for wrappers that had to be dropped during v0.1.0 upgrade.
+do $$
+declare
+    rec record;
+    proc regprocedure;
+begin
+    if to_regclass('pg_temp.pgque_v01_wrapper_owners') is null then
+        return;
+    end if;
+
+    for rec in select sig, owner_name from pg_temp.pgque_v01_wrapper_owners
+    loop
+        proc := to_regprocedure(rec.sig);
+        if proc is not null then
+            execute format('alter function %s owner to %I', proc, rec.owner_name);
+        end if;
+    end loop;
+end $$;
+
+drop table if exists pg_temp.pgque_v01_wrapper_owners;
 
 -- Grants for the send* + subscribe/unsubscribe family.
 -- send* are producer-side (insert events) -> pgque_writer.

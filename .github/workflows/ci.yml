@@ -93,6 +93,7 @@ jobs:
 
       - name: Start PostgreSQL ${{ matrix.pg_version }}
         run: |
+          set -Eeuo pipefail
           docker run -d --name pgque-upgrade-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
@@ -100,14 +101,14 @@ jobs:
             postgres:${{ matrix.pg_version }}
 
           ready=0
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
               ready=1
               break
             fi
             sleep 1
           done
-          if [ "$ready" != "1" ]; then
+          if [[ "${ready}" -ne 1 ]]; then
             echo "PG not ready after 30 seconds"
             docker logs pgque-upgrade-test
             exit 1

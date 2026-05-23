@@ -21,9 +21,9 @@ begin
     'pre-upgrade consumer should survive';
   assert exists (
     select 1
-    from pgque.subscription s
-    join pgque.queue q on q.queue_id = s.sub_queue
-    join pgque.consumer c on c.co_id = s.sub_consumer
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
     where q.queue_name = 'upgrade_v01_q'
       and c.co_name = 'upgrade_v01_c'
   ), 'pre-upgrade subscription should survive';
@@ -49,13 +49,20 @@ begin
   assert to_regprocedure('pgque.send_batch(text,jsonb[])') is not null,
     'pgque.send_batch(text,jsonb[]) should exist after upgrade';
 
-  raise notice 'PASS: upgraded schema and pre-existing state verified';
+  perform pgque.send(queue_name := 'upgrade_v01_q', payload := '{"named":"jsonb-default"}'::jsonb);
+  perform pgque.send(queue_name := 'upgrade_v01_q', type_name := 'named.jsonb', payload := '{"named":"jsonb-explicit"}'::jsonb);
+  perform pgque.send_batch(queue_name := 'upgrade_v01_q', payloads := array['{"named":"batch-jsonb-default"}'::jsonb]);
+  perform pgque.send_batch(queue_name := 'upgrade_v01_q', type_name := 'named.text.batch', payloads := array['named-batch-text']);
+  perform pgque.subscribe(queue := 'upgrade_v01_q', consumer := 'upgrade_v01_named_c');
+  perform pgque.unsubscribe(queue := 'upgrade_v01_q', consumer := 'upgrade_v01_named_c');
+
+  raise notice 'PASS: upgraded schema, pre-existing state, and named-argument wrappers verified';
 end $$;
 
 -- New publishing/consuming still works on the upgraded queue.
 do $$
 begin
-  perform pgque.send('upgrade_v01_q', 'post.upgrade', '{"ok":true}'::jsonb);
+  perform pgque.send(queue_name := 'upgrade_v01_q', type_name := 'post.upgrade', payload := '{"ok":true}'::jsonb);
 end $$;
 
 do $$
