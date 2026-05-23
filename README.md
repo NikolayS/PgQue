@@ -449,16 +449,18 @@ tuning.
 ## Subconsumers / cooperative consumers
 
 This is the use case that keeps coming up: the queue itself is fast, but the
-downstream side effect is not. If one message means one email API call, one SMS
-request, one webhook, or one slow HTTP POST, then consumer-side parallelism is
-what decides whether the backlog melts or lingers.
+downstream side effect is not. If one message means one transactional email API
+call (Resend, SendGrid), one SMS request, one webhook, or one slow HTTP POST,
+then consumer-side parallelism is what decides whether the backlog melts or
+lingers.
 
 PgQue does not need a second queue to show that effect. One main consumer can
 fetch a batch and fan the work out to a pool of subconsumers. To make the point
 concrete, the demo harness preloads the same 160-message backlog every time and
-replaces the external side effect with a fixed `sleep(250 ms)` per message.
-That means one worker should top out near 4 messages / second. Then we increase
-only the number of subconsumers.
+replaces the email-provider call with a fixed `sleep(250 ms)` per message — an
+intentional stand-in for a service like Resend or SendGrid. That means one
+worker should top out near 4 messages / second. Then we increase only the
+number of subconsumers.
 
 <p align="center"><img src="docs/images/backlog_race.gif" alt="Backlog drain race for 1, 2, 4, 8, and 16 subconsumers on the same 160-message queue with 250 ms of work per message" width="760"></p>
 

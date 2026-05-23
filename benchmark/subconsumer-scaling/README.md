@@ -4,7 +4,7 @@ Focused benchmark + visualization harness for the `250 ms / message` story.
 
 One consumer fetches a PgQue batch, then hands message processing to an in-process
 pool of **subconsumers**. Each subconsumer sleeps for a fixed amount of time per
-message to emulate an external side effect such as an email API call.
+message to emulate a transactional email API call — think Resend or SendGrid.
 
 The point is simple: when downstream work costs ~250 ms per message, a single
 worker tops out at ~4 messages / second. More subconsumers drain the same
