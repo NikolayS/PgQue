@@ -54,7 +54,7 @@ grant pgque_writer to app_webhook;
 grant pgque_reader to metrics;
 ```
 
-See [reference.md — Roles and grants](reference.md#roles-and-grants) for the full table and rationale.
+See [reference.md — Roles and grants](reference.md#roles-and-grants) for the full table and rationale. If you already have PgQue installed, see [upgrading.md](upgrading.md) before re-running the installer on an existing schema.
 
 ## Step 2: Create the queue and the consumer
 

@@ -77,6 +77,82 @@ jobs:
         if: always()
         run: docker rm -f pgque-test
 
+  upgrade-v0-1-to-head:
+    name: upgrade v0.1.0 to HEAD (PG ${{ matrix.pg_version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: ['18', '14']
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Start PostgreSQL ${{ matrix.pg_version }}
+        run: |
+          docker run -d --name pgque-upgrade-test \
+            -e POSTGRES_PASSWORD=pgque_test \
+            -e POSTGRES_DB=pgque_test \
+            -p 5432:5432 \
+            postgres:${{ matrix.pg_version }}
+
+          ready=0
+          for i in $(seq 1 30); do
+            if PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            echo "PG not ready after 30 seconds"
+            docker logs pgque-upgrade-test
+            exit 1
+          fi
+
+      - name: Build HEAD pgque
+        run: bash build/transform.sh
+
+      - name: Install v0.1.0
+        run: |
+          set -Eeuo pipefail
+          git show v0.1.0:sql/pgque.sql > /tmp/pgque-v0.1.0.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f /tmp/pgque-v0.1.0.sql
+
+      - name: Prepare v0.1.0 fixture
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_fixture.sql
+
+      - name: Upgrade to HEAD
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+
+      - name: Verify upgraded state
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_assertions.sql
+
+      - name: Verify post-upgrade idempotency
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f sql/pgque.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pgque-upgrade-test
+
   pg_tle-test:
     name: pg_tle install path
     runs-on: ubuntu-latest

@@ -47,6 +47,41 @@ begin
     end if;
 end $$;
 
+-- v0.1.0 shipped these public wrappers with i_* argument names.
+-- PostgreSQL rejects CREATE OR REPLACE FUNCTION when input argument names
+-- change, even when the signature is otherwise identical. Drop only those
+-- old wrappers before recreating them with the stable v0.2 API names so the
+-- documented "re-run sql/pgque.sql to upgrade" path works from v0.1.0.
+-- Do not unconditionally drop current wrappers: users may have dependent
+-- views/functions, and normal idempotent reinstall must preserve those OIDs.
+do $$
+declare
+    sig text;
+    proc regprocedure;
+    args text;
+begin
+    foreach sig in array array[
+        'pgque.send(text,jsonb)',
+        'pgque.send(text,text)',
+        'pgque.send(text,text,jsonb)',
+        'pgque.send(text,text,text)',
+        'pgque.send_batch(text,text,jsonb[])',
+        'pgque.send_batch(text,text,text[])',
+        'pgque.subscribe(text,text)',
+        'pgque.unsubscribe(text,text)'
+    ] loop
+        proc := to_regprocedure(sig);
+        if proc is null then
+            continue;
+        end if;
+
+        args := pg_get_function_arguments(proc);
+        if args like 'i\_%' escape '\' then
+            execute format('drop function %s', proc);
+        end if;
+    end loop;
+end $$;
+
 -- pgque.send(queue, payload jsonb) -- send with default type, JSON payload
 create or replace function pgque.send(queue_name text, payload jsonb)
 returns bigint as $$
