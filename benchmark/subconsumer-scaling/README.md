@@ -27,7 +27,8 @@ backlog faster.
 - `summary_table.py` — markdown summary table
 - `gif_subconsumer_scaling.py` — animated two-panel GIF
 - `backlog_race.py` — the current single-axis backlog-drain graphic used in the main README
-- `completion_latency.py` — static single-axis completion-latency chart used in the main README
+- `scaling_linearity.py` — static throughput-vs-subconsumers chart used in the main README
+- `completion_latency.py` — alternative completion-time-by-queue-position chart
 
 ## Quick start
 
@@ -79,4 +80,4 @@ backlog from the same starting line.
 ## Recommended assets for the main README
 
 - `docs/images/backlog_race.gif` — one-axis backlog-drain race
-- `docs/images/completion_latency.png` — static latency view on one axis
+- `docs/images/scaling_linearity.png` — static throughput-vs-workers chart with ideal linear line

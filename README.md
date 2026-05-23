@@ -474,15 +474,15 @@ Observed drain times from the demo run above:
 | 8  | 31.3 msg/s | 5.1 s  |
 | 16 | 61.8 msg/s | 2.6 s  |
 
-The same data as a completion-time-by-queue-position view — one shared axis,
-one line per worker count, lower is better:
+Observed throughput from the same run, plotted against the ideal `4 × workers`
+line. This is the static view to keep: it shows the scaling is near-linear.
 
-<p align="center"><img src="docs/images/completion_latency.png" alt="Completion time by queue position for the same 160-message backlog with 1, 2, 4, 8, and 16 subconsumers" width="760"></p>
+<p align="center"><img src="docs/images/scaling_linearity.png" alt="Observed throughput vs ideal linear scaling for 1, 2, 4, 8, and 16 subconsumers on the same 160-message backlog" width="760"></p>
 
 These are demo numbers, not a product claim. The point is narrower and more
 useful: when downstream work costs ~250 ms / message, one worker buys you ~4
-messages / second, and extra subconsumers scale backlog drain almost linearly
-until some other bottleneck shows up.
+messages / second, and extra subconsumers scale throughput and backlog drain
+close to linearly until some other bottleneck shows up.
 
 ## Architecture
 
