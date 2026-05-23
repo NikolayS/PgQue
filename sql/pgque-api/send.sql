@@ -56,8 +56,6 @@ end $$;
 -- views/functions, and normal idempotent reinstall must preserve those OIDs.
 -- Also preserve the old function owner when the upgrade is run by a superuser:
 -- dropped SECURITY DEFINER wrappers must not silently become superuser-owned.
-alter default privileges in schema pgque revoke execute on functions from public;
-
 create temporary table if not exists pgque_v01_wrapper_owners (
     sig text primary key,
     owner_name name not null
@@ -110,6 +108,7 @@ begin
     return pgque.insert_event(queue_name, 'default', payload::text);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send(text, jsonb) from public;
 
 -- pgque.send(queue, payload text) -- fast path, opaque textual payload
 -- Skips the jsonb parse + canonical reserialize round-trip. Use this when
@@ -123,6 +122,7 @@ begin
     return pgque.insert_event(queue_name, 'default', payload);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send(text, text) from public;
 
 -- pgque.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
 create or replace function pgque.send(queue_name text, type_name text, payload jsonb)
@@ -131,6 +131,7 @@ begin
     return pgque.insert_event(queue_name, type_name, payload::text);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send(text, text, jsonb) from public;
 
 -- pgque.send(queue, type, payload text) -- fast path with explicit type
 create or replace function pgque.send(queue_name text, type_name text, payload text)
@@ -139,6 +140,7 @@ begin
     return pgque.insert_event(queue_name, type_name, payload);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send(text, text, text) from public;
 
 -- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
 -- Deliberately does not call insert_event_raw(): batch send needs one table
@@ -224,6 +226,7 @@ begin
     return pgque.send_batch(queue_name, 'default', payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send_batch(text, jsonb[]) from public;
 
 -- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
 create or replace function pgque.send_batch(
@@ -240,6 +243,7 @@ begin
     return pgque.insert_event_bulk(queue_name, type_name, payloads::text[]);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send_batch(text, text, jsonb[]) from public;
 
 -- pgque.send_batch(queue, payloads text[]) -- default-type fast-path batch send
 create or replace function pgque.send_batch(queue_name text, payloads text[])
@@ -248,6 +252,7 @@ begin
     return pgque.send_batch(queue_name, 'default', payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send_batch(text, text[]) from public;
 
 -- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
 create or replace function pgque.send_batch(
@@ -264,6 +269,7 @@ begin
     return pgque.insert_event_bulk(queue_name, type_name, payloads);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.send_batch(text, text, text[]) from public;
 
 -- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
 create or replace function pgque.subscribe(queue text, consumer text)
@@ -272,6 +278,7 @@ begin
     return pgque.register_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.subscribe(text, text) from public;
 
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
 create or replace function pgque.unsubscribe(queue text, consumer text)
@@ -280,6 +287,7 @@ begin
     return pgque.unregister_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.unsubscribe(text, text) from public;
 
 -- Restore owners for wrappers that had to be dropped during v0.1.0 upgrade.
 do $$
