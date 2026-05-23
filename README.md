@@ -474,15 +474,16 @@ Observed drain times from the demo run above:
 | 8  | 31.3 msg/s | 5.1 s  |
 | 16 | 61.8 msg/s | 2.6 s  |
 
-Observed throughput from the same run, plotted against the ideal `4 × workers`
-line. This is the static view to keep: it shows the scaling is near-linear.
+The static view below converts the same run into **effective latency per
+delivered message** on a plain linear x-axis. Because throughput scales close to
+linearly, this curve falls close to the ideal `250 ms / workers` line.
 
-<p align="center"><img src="docs/images/scaling_linearity.png" alt="Observed throughput vs ideal linear scaling for 1, 2, 4, 8, and 16 subconsumers on the same 160-message backlog" width="760"></p>
+<p align="center"><img src="docs/images/single_message_latency.png" alt="Effective latency per delivered message vs number of subconsumers for 1, 2, 4, 8, and 16 workers on the same 160-message backlog" width="760"></p>
 
 These are demo numbers, not a product claim. The point is narrower and more
 useful: when downstream work costs ~250 ms / message, one worker buys you ~4
-messages / second, and extra subconsumers scale throughput and backlog drain
-close to linearly until some other bottleneck shows up.
+messages / second, and extra subconsumers drive the per-message latency down
+close to the ideal inverse curve until some other bottleneck shows up.
 
 ## Architecture
 
