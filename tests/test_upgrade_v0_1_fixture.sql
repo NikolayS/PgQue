@@ -97,3 +97,31 @@ begin
 
   raise notice 'PASS: v0.1.0 upgrade fixture prepared';
 end $$;
+
+-- Owner preservation fixture: v0.1.0 wrappers must keep their old owner when a
+-- superuser performs the upgrade. Use a dedicated superuser role so recreated
+-- SECURITY DEFINER wrappers can still call internal PgQue primitives during the
+-- post-upgrade assertions.
+do $$
+declare
+  f text;
+begin
+  if not exists (select 1 from pg_roles where rolname = 'pgque_v01_wrapper_owner') then
+    create role pgque_v01_wrapper_owner superuser;
+  end if;
+
+  foreach f in array array[
+    'pgque.send(text,jsonb)',
+    'pgque.send(text,text)',
+    'pgque.send(text,text,jsonb)',
+    'pgque.send(text,text,text)',
+    'pgque.send_batch(text,text,jsonb[])',
+    'pgque.send_batch(text,text,text[])',
+    'pgque.subscribe(text,text)',
+    'pgque.unsubscribe(text,text)'
+  ] loop
+    execute format('alter function %s owner to pgque_v01_wrapper_owner', f::regprocedure);
+  end loop;
+
+  raise notice 'PASS: v0.1.0 wrapper owners prepared';
+end $$;

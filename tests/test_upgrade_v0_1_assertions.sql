@@ -50,13 +50,45 @@ begin
     'pgque.send_batch(text,jsonb[]) should exist after upgrade';
 
   perform pgque.send(queue_name := 'upgrade_v01_q', payload := '{"named":"jsonb-default"}'::jsonb);
+  perform pgque.send(queue_name := 'upgrade_v01_q', payload := 'named-text-default');
   perform pgque.send(queue_name := 'upgrade_v01_q', type_name := 'named.jsonb', payload := '{"named":"jsonb-explicit"}'::jsonb);
+  perform pgque.send(queue_name := 'upgrade_v01_q', type_name := 'named.text', payload := 'named-text-explicit');
   perform pgque.send_batch(queue_name := 'upgrade_v01_q', payloads := array['{"named":"batch-jsonb-default"}'::jsonb]);
+  perform pgque.send_batch(queue_name := 'upgrade_v01_q', type_name := 'named.jsonb.batch', payloads := array['{"named":"batch-jsonb-explicit"}'::jsonb]);
   perform pgque.send_batch(queue_name := 'upgrade_v01_q', type_name := 'named.text.batch', payloads := array['named-batch-text']);
   perform pgque.subscribe(queue := 'upgrade_v01_q', consumer := 'upgrade_v01_named_c');
   perform pgque.unsubscribe(queue := 'upgrade_v01_q', consumer := 'upgrade_v01_named_c');
 
   raise notice 'PASS: upgraded schema, pre-existing state, and named-argument wrappers verified';
+end $$;
+
+-- Recreated v0.1.0 wrappers must preserve their pre-upgrade owner.
+do $$
+declare
+  f text;
+  v_owner name;
+begin
+  foreach f in array array[
+    'pgque.send(text,jsonb)',
+    'pgque.send(text,text)',
+    'pgque.send(text,text,jsonb)',
+    'pgque.send(text,text,text)',
+    'pgque.send_batch(text,text,jsonb[])',
+    'pgque.send_batch(text,text,text[])',
+    'pgque.subscribe(text,text)',
+    'pgque.unsubscribe(text,text)'
+  ] loop
+    select r.rolname
+    into v_owner
+    from pg_proc as p
+    join pg_roles as r on r.oid = p.proowner
+    where p.oid = f::regprocedure::oid;
+
+    assert v_owner = 'pgque_v01_wrapper_owner',
+      format('wrapper %s should preserve owner pgque_v01_wrapper_owner, got %s', f, coalesce(v_owner, 'NULL'));
+  end loop;
+
+  raise notice 'PASS: recreated v0.1.0 wrapper owners preserved';
 end $$;
 
 -- New publishing/consuming still works on the upgraded queue.
