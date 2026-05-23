@@ -188,7 +188,8 @@ jobs:
 
           ready=0
           for _ in $(seq 1 30); do
-            if docker exec pgque-tle-test pg_isready -U postgres; then
+            if docker exec -e PGPASSWORD=pgque_test pgque-tle-test \
+              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
               ready=1
               break
             fi
@@ -196,6 +197,7 @@ jobs:
           done
           if [[ "${ready}" -ne 1 ]]; then
             echo "PG not ready after 30 seconds"
+            docker logs pgque-tle-test
             exit 1
           fi
 
@@ -258,7 +260,8 @@ jobs:
 
           ready=0
           for _ in $(seq 1 30); do
-            if docker exec pgque-pgcron-test pg_isready -U postgres; then
+            if docker exec -e PGPASSWORD=pgque_test pgque-pgcron-test \
+              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
               ready=1
               break
             fi
