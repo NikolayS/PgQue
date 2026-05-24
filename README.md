@@ -501,7 +501,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | No daemon / no C extension | ✅ |
 | `pg_cron`, `pg_timetable`, or external ticking | ✅ |
 | Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable) | ✅ |
-| System-table rotation / bloat mitigation | ✅ |
+| System-table rotation / bloat mitigation |  |
 | [Cooperative consumers / subconsumers](#subconsumers--cooperative-consumers) | 🔬 experimental |
 | Queue splitter |  |
 | Queue mover |  |
@@ -516,18 +516,18 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Java library |  |
 | Ruby library |  |
 | Basic queue/consumer info views | ✅ |
-| Advanced observability / health views | 🔬 experimental |
-| LISTEN/NOTIFY consumer wakeups on tick | ✅ |
-| Delayed / scheduled delivery (`send_at`) | 🔬 experimental |
-| Queue config JSON API | 🔬 experimental |
-| Queue pause / resume | 🔬 experimental |
-| OpenTelemetry SQL metrics export | 🔬 experimental |
+| Advanced observability / health views |  |
+| LISTEN/NOTIFY consumer wakeups on tick |  |
+| Delayed / scheduled delivery (`send_at`) |  |
+| Queue config JSON API |  |
+| Queue pause / resume |  |
+| OpenTelemetry / Prometheus metrics export |  |
 | Admin CLI |  |
-| Cross-database `pg_cron` scheduling | ✅ |
+| Cross-database `pg_cron` scheduling |  |
 | Message TTL / expiry |  |
 | Per-tenant isolation / multi-schema installs |  |
 | `pg_tle` extension package | ✅ |
-| Migration guides | ✅ |
+| Migration guides |  |
 
 ## Contributing
 
