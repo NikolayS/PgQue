@@ -632,7 +632,12 @@ function mapPgError(
   err: unknown,
   ctx?: { queue?: string; consumer?: string; batchId?: bigint },
 ): PgqueError {
-  const msg = err instanceof Error ? err.message : String(err ?? '');
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'object' && err !== null && 'message' in err
+        ? String((err as { message?: unknown }).message ?? '')
+        : String(err ?? '');
   if (/queue not found/i.test(msg) && ctx?.queue) {
     return new PgqueQueueNotFoundError(ctx.queue, { cause: err });
   }
