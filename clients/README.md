@@ -82,24 +82,23 @@ users to install `--pre`, `@rc`, or an `-rc` Go tag.
 | `receive` | ✓ | ✓ | ✓ |
 | `ack` returns SQL rowcount (0 stale, 1 success) | ✓ (int) | ✓ (int64) | ✓ (number) |
 | `nack` | ✓ | ✓ | ✓ |
-| `ticker` / `Ticker` / `ticker`, `ticker_all` / `TickerAll` / `tickerAll` | ✓ | ✗ | ✓ |
+| `ticker` / `Ticker` / `ticker`, `ticker_all` / `TickerAll` / `tickerAll` | ✓ | ✓ | ✓ |
 | `force_next_tick` / `ForceNextTick` / `forceNextTick` | ✓ | ✓ | ✓ |
 | `nack` retry delay + reason options | ✓ | ✓ | ✓ |
 | High-level `Consumer` | ✓ | ✓ | ✓ |
 | Consumer wakeup model | polling + optional LISTEN/NOTIFY wakeup | polling | polling |
 | `Consumer` poll interval option | ✓ | ✓ | ✓ |
 | `Consumer` max-messages option | ✓ | ✓ | ✓ |
-| `Consumer` retry delay option | ✓ | ✗ | ✗ |
+| `Consumer` retry delay option | ✓ | ✓ | ✗ |
 | Unknown-type behavior avoids silent ack | ✓ | ✓ | ✓ |
 | Configurable unknown-type policy | ✓ | ✓ | ✓ |
-| `subscribe` / `unsubscribe` wrappers | ✓ | ✗ | ✓ |
+| `subscribe` / `unsubscribe` wrappers | ✓ | ✓ | ✓ |
 | Cooperative consumers (experimental) [^coop] | ✓ | ✓ | ✓ |
 
 Legend: ✓ supported by the client API on `main`; ✗ not exposed as a
 first-class client API. Lower-level SQL primitives remain available through raw
-connection/pool escape hatches. Python and TypeScript currently expose ticker
-convenience wrappers; Go can call ticker functions via raw SQL until parity is
-complete.
+connection/pool escape hatches. Python, Go, and TypeScript expose ticker
+convenience wrappers.
 
 [^coop]: Experimental. Each supporting client exposes
     `subscribe_subconsumer` / `unsubscribe_subconsumer` / `receive_coop` /

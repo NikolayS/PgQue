@@ -2,7 +2,8 @@
 
 Go client for [PgQue](https://github.com/NikolayS/pgque) — the PgQ-based
 universal PostgreSQL queue. A thin, idiomatic wrapper over the
-`pgque-api` SQL functions: `send`, `receive`, `ack`, `nack`,
+`pgque-api` SQL functions: `send`, `send_batch`, `subscribe`,
+`unsubscribe`, `receive`, `ack`, `nack`, `ticker`, `ticker_all`, and
 `force_next_tick`.
 
 ## Install
@@ -50,7 +51,9 @@ func main() {
 
     // One-time queue + consumer setup (run once, e.g. in a migration):
     //   select pgque.create_queue('orders');
-    //   select pgque.register_consumer('orders', 'order_worker');
+    if _, err := client.Subscribe(ctx, "orders", "order_worker"); err != nil {
+        log.Fatal(err)
+    }
 
     // Producer side -- single event
     _, err = client.Send(ctx, "orders", pgque.Event{
@@ -92,6 +95,7 @@ func main() {
 | `WithPollInterval(d time.Duration)`     | `30s`          | Idle backoff between polls when the queue is empty.                   |
 | `WithMaxMessages(n int)`                | `math.MaxInt32` | Per-Receive limit. The default requests the whole PgQ batch before `Ack`. If you lower it below the real batch size, `Ack` still finishes the batch and unreturned rows are skipped. |
 | `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` logs and skips messages with no registered handler.      |
+| `WithRetryAfter(d time.Duration)`       | `60s`          | Retry delay for Consumer-issued `Nack` calls on handler failure or unknown type. |
 
 ## Manual ticking
 
@@ -104,7 +108,7 @@ _, err := client.ForceNextTick(ctx, "orders")
 if err != nil {
     log.Fatal(err)
 }
-_, err = client.Pool().Exec(ctx, "select pgque.ticker()")
+_, err = client.Ticker(ctx, "orders")
 ```
 
 `Client.ForceTick(ctx, queue)` remains as a deprecated compatibility alias.

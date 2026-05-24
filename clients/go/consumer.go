@@ -50,6 +50,7 @@ type Consumer struct {
 	maxMessages   int
 	handlers      map[string]HandlerFunc
 	unknownPolicy UnknownHandlerPolicy
+	retryAfter    *time.Duration
 
 	// Cooperative mode (experimental). When subconsumer is non-empty,
 	// the poll loop calls ReceiveCoop instead of Receive and passes
@@ -156,7 +157,8 @@ func (c *Consumer) Start(ctx context.Context) error {
 				}
 				log.Printf("pgque: no handler registered for event type %q, nacking message %d", msg.Type, msg.MsgID)
 				if nackErr := c.backend.Nack(ctx, batchID, msg, NackOptions{
-					Reason: strPtr("unknown event type: " + msg.Type),
+					RetryAfter: c.retryAfter,
+					Reason:     strPtr("unknown event type: " + msg.Type),
 				}); nackErr != nil {
 					log.Printf("pgque: nack error for unhandled type %s: %v", msg.Type, nackErr)
 					nackFailed = true
@@ -166,7 +168,8 @@ func (c *Consumer) Start(ctx context.Context) error {
 			if handlerErr := c.dispatchWithRecover(ctx, handler, msg); handlerErr != nil {
 				log.Printf("pgque: handler error for %s: %v", msg.Type, handlerErr)
 				if nackErr := c.backend.Nack(ctx, batchID, msg, NackOptions{
-					Reason: strPtr("handler error: " + handlerErr.Error()),
+					RetryAfter: c.retryAfter,
+					Reason:     strPtr("handler error: " + handlerErr.Error()),
 				}); nackErr != nil {
 					log.Printf("pgque: nack error for %s: %v", msg.Type, nackErr)
 					nackFailed = true

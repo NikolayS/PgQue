@@ -59,6 +59,16 @@ func WithUnknownHandlerPolicy(p UnknownHandlerPolicy) ConsumerOption {
 	return func(c *Consumer) { c.unknownPolicy = p }
 }
 
+// WithRetryAfter sets the redelivery delay used by the high-level Consumer
+// when it nacks messages whose handler failed or whose type is unknown.
+// Default is the SQL/client Nack default of 60 seconds. Panics if d < 0.
+func WithRetryAfter(d time.Duration) ConsumerOption {
+	if d < 0 {
+		panic("pgque: WithRetryAfter requires d >= 0")
+	}
+	return func(c *Consumer) { c.retryAfter = &d }
+}
+
 // NackOptions tunes a single Client.Nack call. A zero-value NackOptions
 // uses the SQL-side defaults: 60s retry delay, NULL reason.
 type NackOptions struct {

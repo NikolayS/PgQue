@@ -25,8 +25,9 @@ type stubBackend struct {
 	nackCount int32
 	ackCount  int32
 
-	nackErr error
-	lastMax int32
+	nackErr         error
+	lastMax         int32
+	lastNackOptions NackOptions
 }
 
 func (s *stubBackend) Receive(_ context.Context, _, _ string, maxMessages int) ([]Message, error) {
@@ -45,7 +46,10 @@ func (s *stubBackend) Ack(_ context.Context, _ int64) (int64, error) {
 	return 1, nil
 }
 
-func (s *stubBackend) Nack(_ context.Context, _ int64, _ Message, _ NackOptions) error {
+func (s *stubBackend) Nack(_ context.Context, _ int64, _ Message, opts NackOptions) error {
+	s.mu.Lock()
+	s.lastNackOptions = opts
+	s.mu.Unlock()
 	atomic.AddInt32(&s.nackCount, 1)
 	return s.nackErr
 }
@@ -183,4 +187,45 @@ func TestConsumer_WithMaxMessagesPassesReceiveLimit(t *testing.T) {
 	if got := atomic.LoadInt32(&stub.lastMax); got != 123 {
 		t.Fatalf("configured maxMessages = %d, want 123", got)
 	}
+}
+
+func TestConsumer_WithRetryAfterPassesNackOption(t *testing.T) {
+	client := &Client{}
+	retryAfter := 7 * time.Second
+	stub := &stubBackend{
+		msg: Message{
+			MsgID:   1,
+			BatchID: 42,
+			Type:    "no.handler.registered",
+			Payload: `{}`,
+		},
+	}
+
+	c := client.NewConsumer("dummy_queue", "dummy_consumer",
+		WithPollInterval(50*time.Millisecond),
+		WithRetryAfter(retryAfter))
+	c.backend = stub
+
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	_ = c.Start(ctx)
+
+	if got := atomic.LoadInt32(&stub.nackCount); got == 0 {
+		t.Fatal("expected Nack to be attempted")
+	}
+	stub.mu.Lock()
+	got := stub.lastNackOptions.RetryAfter
+	stub.mu.Unlock()
+	if got == nil || *got != retryAfter {
+		t.Fatalf("RetryAfter = %v, want %s", got, retryAfter)
+	}
+}
+
+func TestWithRetryAfterPanicsOnNegative(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	WithRetryAfter(-time.Second)
 }
