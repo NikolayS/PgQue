@@ -152,4 +152,6 @@ jobs:
           echo "resolved npm dist-tag: $NPM_TAG (version=$VERSION)"
 
       - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --tag "$NPM_TAG"
