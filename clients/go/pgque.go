@@ -95,6 +95,30 @@ func (c *Client) SendBatch(ctx context.Context, queue, typ string, payloads []an
 	return ids, nil
 }
 
+// Subscribe registers consumer on queue, wrapping pgque.subscribe. The
+// returned int64 is the SQL row-count: 1 for a new subscription and 0
+// when the consumer was already subscribed.
+func (c *Client) Subscribe(ctx context.Context, queue, consumer string) (int64, error) {
+	var n int64
+	err := c.pool.QueryRow(ctx, "select pgque.subscribe($1, $2)", queue, consumer).Scan(&n)
+	if err != nil {
+		return 0, wrapSQLError("subscribe", err)
+	}
+	return n, nil
+}
+
+// Unsubscribe removes consumer from queue, wrapping pgque.unsubscribe. The
+// returned int64 is the SQL row-count: 1 when a subscription was removed and
+// 0 when no row existed.
+func (c *Client) Unsubscribe(ctx context.Context, queue, consumer string) (int64, error) {
+	var n int64
+	err := c.pool.QueryRow(ctx, "select pgque.unsubscribe($1, $2)", queue, consumer).Scan(&n)
+	if err != nil {
+		return 0, wrapSQLError("unsubscribe", err)
+	}
+	return n, nil
+}
+
 // Receive fetches up to maxMessages from the next batch for the named
 // consumer. Returns an empty slice when no batch is available; in that
 // case the caller should sleep before polling again. Each returned
@@ -144,6 +168,30 @@ func (c *Client) Ack(ctx context.Context, batchID int64) (int64, error) {
 	err := c.pool.QueryRow(ctx, "SELECT pgque.ack($1)", batchID).Scan(&n)
 	if err != nil {
 		return 0, wrapSQLError("ack", err)
+	}
+	return n, nil
+}
+
+// Ticker runs the per-queue ticker for queue, wrapping pgque.ticker(queue).
+// It returns the new tick id when a tick was inserted, or nil when no tick
+// was needed.
+func (c *Client) Ticker(ctx context.Context, queue string) (*int64, error) {
+	var tickID *int64
+	err := c.pool.QueryRow(ctx, "select pgque.ticker($1)", queue).Scan(&tickID)
+	if err != nil {
+		return nil, wrapSQLError("ticker", err)
+	}
+	return tickID, nil
+}
+
+// TickerAll runs the global ticker across all eligible queues, wrapping
+// zero-argument pgque.ticker(). It returns the number of queues that received
+// a tick during this call.
+func (c *Client) TickerAll(ctx context.Context) (int64, error) {
+	var n int64
+	err := c.pool.QueryRow(ctx, "select pgque.ticker()").Scan(&n)
+	if err != nil {
+		return 0, wrapSQLError("ticker all", err)
 	}
 	return n, nil
 }
@@ -323,6 +371,7 @@ func (c *Client) TouchSubconsumer(ctx context.Context, queue, consumer, subconsu
 //   - poll interval: 30s   (WithPollInterval)
 //   - max messages:  MaxInt32 (WithMaxMessages; drains the whole batch by default)
 //   - unknown type:  Nack  (WithUnknownHandlerPolicy)
+//   - retry delay:   60s   (WithRetryAfter; used for consumer-issued Nacks)
 func (c *Client) NewConsumer(queue, name string, opts ...ConsumerOption) *Consumer {
 	consumer := &Consumer{
 		backend:       c,
