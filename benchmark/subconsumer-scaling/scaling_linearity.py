@@ -56,13 +56,14 @@ def main() -> int:
     ax.grid(axis='y', color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
 
-    ax.plot(workers, ideal, color=IDEAL, linewidth=2.0, linestyle='--', label='ideal: 4 × workers msg/s')
-    ax.plot(workers, observed, color=OBS, linewidth=2.6, marker='o', markersize=6,
-            label='observed avg throughput')
+    bars = ax.bar(workers, observed, width=1.15, color=OBS, alpha=0.88,
+                  edgecolor=OBS, linewidth=0.6, label='observed avg throughput')
+    ax.plot(workers, ideal, color=IDEAL, linewidth=1.8, linestyle='--',
+            marker='o', markersize=3.5, zorder=3, label='ideal: 4 × workers msg/s')
 
-    for x, y, e in zip(workers, observed, efficiency):
-        ax.text(x, y + max(observed) * 0.035, f'{y:.1f}', ha='center', va='bottom', color=OBS, fontsize=9)
-        ax.text(x, y - max(observed) * 0.06, f'{e*100:.1f}% eff', ha='center', va='top', color=DIM, fontsize=8.5)
+    for bar, x, y, e in zip(bars, workers, observed, efficiency):
+        ax.text(x, y + max(observed) * 0.03, f'{y:.1f}', ha='center', va='bottom', color=OBS, fontsize=9)
+        ax.text(x, max(y * 0.55, max(observed) * 0.05), f'{e*100:.1f}% eff', ha='center', va='center', color=BG, fontsize=8.5)
 
     ax.set_xlim(min(workers) - 0.5, max(workers) + 1.8)
     ax.set_ylim(0, max(ideal) * 1.14)
