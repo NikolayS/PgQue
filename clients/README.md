@@ -89,7 +89,7 @@ users to install `--pre`, `@rc`, or an `-rc` Go tag.
 | Consumer wakeup model | polling + optional LISTEN/NOTIFY wakeup | polling | polling |
 | `Consumer` poll interval option | ✓ | ✓ | ✓ |
 | `Consumer` max-messages option | ✓ | ✓ | ✓ |
-| `Consumer` retry delay option | ✓ | ✓ | ✗ |
+| `Consumer` retry delay option | ✓ | ✓ | ✓ |
 | Unknown-type behavior avoids silent ack | ✓ | ✓ | ✓ |
 | Configurable unknown-type policy | ✓ | ✓ | ✓ |
 | `subscribe` / `unsubscribe` wrappers | ✓ | ✓ | ✓ |

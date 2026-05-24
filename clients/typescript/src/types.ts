@@ -68,6 +68,11 @@ export interface ConsumerOptions {
    */
   maxMessages?: number;
   /**
+   * Retry delay in **seconds** used by the high-level Consumer when it
+   * nacks messages after handler failure or unknown event type. Default `60`.
+   */
+  retryAfter?: number;
+  /**
    * What to do with messages whose `type` has no registered handler:
    * - `'nack'` (default) — nack each unknown message with a reason; PgQ
    *   routes to the retry queue or DLQ per the queue's `queue_max_retries`.

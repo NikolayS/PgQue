@@ -25,6 +25,17 @@ export class PgqueQueueNotFoundError extends PgqueError {
   }
 }
 
+/** The named batch no longer exists or is not active. */
+export class PgqueBatchNotFoundError extends PgqueError {
+  constructor(public readonly batchId?: bigint, options?: { cause?: unknown }) {
+    super(
+      batchId !== undefined ? `pgque: batch not found: ${batchId}` : 'pgque: batch not found',
+      options,
+    );
+    this.name = 'PgqueBatchNotFoundError';
+  }
+}
+
 /** The named consumer is not subscribed to the queue. */
 export class PgqueConsumerNotFoundError extends PgqueError {
   constructor(
