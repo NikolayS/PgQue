@@ -501,13 +501,13 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | No daemon / no C extension | ✅ |
 | `pg_cron`, `pg_timetable`, or external ticking | ✅ |
 | Sub-second ticking with `pg_cron` (default 10 ticks/sec, tunable) | ✅ |
-| System-table rotation / bloat mitigation | ✅ |
+| System-table rotation / bloat mitigation |  |
 | [Cooperative consumers / subconsumers](#subconsumers--cooperative-consumers) | 🔬 experimental |
 | Queue splitter |  |
 | Queue mover |  |
 | Modern `send`, `receive`, `ack`, `nack` API | ✅ |
 | `send_batch` API | ✅ |
-| Improved `send_batch` performance |  |
+| Improved `send_batch` performance | ✅ |
 | Dead-letter queue after retry limit | ✅ |
 | Go library | ✅ |
 | TypeScript library | ✅ |
