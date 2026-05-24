@@ -647,5 +647,21 @@ function mapPgError(
   if (/(batch not found|cannot find data for batch)/i.test(msg)) {
     return new PgqueBatchNotFoundError(ctx?.batchId, { cause: err });
   }
+  if (isConnectionError(err, msg)) {
+    return new PgqueConnectionError(`pgque: ${op}: ${msg}`, { cause: err });
+  }
   return new PgqueSqlError(op, { cause: err });
+}
+
+function isConnectionError(err: unknown, msg: string): boolean {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code ?? '')
+      : '';
+  return (
+    /^(ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|ENOTFOUND|EAI_AGAIN)$/i.test(code) ||
+    /(connection terminated|connection closed|pool has ended|pool after calling end|connection timeout|timeout expired|terminating connection|server closed the connection)/i.test(
+      msg,
+    )
+  );
 }
