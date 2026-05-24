@@ -641,7 +641,7 @@ function mapPgError(
   if (/queue not found/i.test(msg) && ctx?.queue) {
     return new PgqueQueueNotFoundError(ctx.queue, { cause: err });
   }
-  if (/(consumer (not registered|not found)|not subscribed)/i.test(msg)) {
+  if (/(consumer (not registered|not found)|not subscrib(?:ed|er))/i.test(msg)) {
     return new PgqueConsumerNotFoundError(ctx?.queue ?? '', ctx?.consumer ?? '', { cause: err });
   }
   if (/batch not found/i.test(msg)) {
