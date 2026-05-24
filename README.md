@@ -517,7 +517,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Ruby library |  |
 | Basic queue/consumer info views | ✅ |
 | Advanced observability / health views | 🔬 experimental |
-| LISTEN/NOTIFY consumer wakeups on tick | ✅ |
+| LISTEN/NOTIFY consumer wakeups on tick |  |
 | Delayed / scheduled delivery (`send_at`) | 🔬 experimental |
 | Queue config JSON API | 🔬 experimental |
 | Queue pause / resume | 🔬 experimental |
