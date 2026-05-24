@@ -2,7 +2,7 @@
 
 Every function shipped in the default install (`\i sql/pgque.sql`). Each entry lists the signature, return type, the role it is granted to, and the source file. A short code example appears where the signature alone leaves the call ambiguous.
 
-If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the end-to-end `send` / `receive` / `ack` loop. If you are updating an existing install, see [upgrading.md](upgrading.md). Use this as the lookup table.
+If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the end-to-end `send` / `receive` / `ack` loop. Use this as the lookup table.
 
 Each entry takes this form:
 

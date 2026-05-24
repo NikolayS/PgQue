@@ -213,7 +213,7 @@ For sub-second ticking from an external driver, loop `pgque.ticker()` at your ta
 
 **Important:** PgQue does not deliver messages without a working ticker. Enqueueing still works, but consumers will see nothing new because no ticks are created. If you do not use `pg_cron`, run `pgque.ticker()`, `pgque.maint_retry_events()`, and `pgque.maint()` yourself. Skipping `maint_retry_events()` means nack'd events will never be redelivered.
 
-For existing installs, follow the SQL-file upgrade procedure in [docs/upgrading.md](docs/upgrading.md). To uninstall: `\i sql/pgque_uninstall.sql`.
+Treat installation as one-way for now — upgrade and reinstall paths are still being tightened. To uninstall: `\i sql/pgque_uninstall.sql`.
 
 ### Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension
 
@@ -285,7 +285,6 @@ The default install stays small; additional APIs live under `sql/experimental/` 
 
 - [Tutorial](docs/tutorial.md) — a hands-on walkthrough. Start here if you are new.
 - [Reference](docs/reference.md) — every shipped function and role.
-- [Upgrading](docs/upgrading.md) — SQL-file upgrade procedure for existing installs.
 - [Examples](docs/examples.md) — patterns: fan-out, exactly-once, batch loading, recurring jobs.
 - [Benchmarks](docs/benchmarks.md) — throughput measurements and methodology.
 - [Tick frequency tuning](docs/tick-frequency.md) — latency/WAL trade-offs, idle tick behavior, and pg_cron logging caveats.

@@ -8,8 +8,6 @@ Short docs for users, plus a contributor primer.
   retry, DLQ, observability. Start here if you are new.
 - **[Reference](reference.md)** — every function, return type, and role
   grant in the default install.
-- **[Upgrading](upgrading.md)** — supported SQL-file upgrade procedure,
-  including v0.1.0 → v0.2.0.
 - **[Examples](examples.md)** — short patterns: fan-out, exactly-once,
   batch send, recurring jobs, DLQ inspection.
 - **[Benchmarks](benchmarks.md)** — current throughput numbers and
