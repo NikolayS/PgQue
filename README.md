@@ -527,7 +527,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Message TTL / expiry |  |
 | Per-tenant isolation / multi-schema installs |  |
 | `pg_tle` extension package | ✅ |
-| Migration guides | ✅ |
+| Migration guides |  |
 
 ## Contributing
 
