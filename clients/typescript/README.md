@@ -15,7 +15,7 @@ npm install pgque@rc
 # or: yarn add pgque@rc
 ```
 
-The `@rc` dist-tag points at the latest v0.2.0 release candidate (currently `0.2.0-rc.2`). Drop the tag once v0.2.0 ships.
+The `@rc` dist-tag points at the latest v0.2.0 release candidate (currently `0.2.0-rc.3`). Drop the tag once v0.2.0 ships.
 
 Runtime requirements: Node.js 20+ and PostgreSQL 14+ with the PgQue schema
 installed (`\i pgque.sql` — no extension required).
