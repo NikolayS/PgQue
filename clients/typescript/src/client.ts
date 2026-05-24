@@ -4,7 +4,9 @@
 import pg from 'pg';
 import { Consumer } from './consumer.js';
 import {
+  PgqueBatchNotFoundError,
   PgqueConnectionError,
+  PgqueConsumerNotFoundError,
   PgqueError,
   PgqueQueueNotFoundError,
   PgqueSqlError,
@@ -186,7 +188,7 @@ export class Client {
       return result.rows.map(rowToMessage);
     } catch (err) {
       if (err instanceof PgqueError) throw err;
-      throw mapPgError('receive', err, { queue });
+      throw mapPgError('receive', err, { queue, consumer });
     }
   }
 
@@ -288,7 +290,7 @@ export class Client {
       );
     } catch (err) {
       if (err instanceof PgqueError) throw err;
-      throw mapPgError('nack', err);
+      throw mapPgError('nack', err, { batchId });
     }
   }
 
@@ -635,13 +637,23 @@ function serializePayload(payload: unknown): string {
   return encoded;
 }
 
-function mapPgError(op: string, err: unknown, ctx?: { queue?: string }): PgqueError {
+function mapPgError(
+  op: string,
+  err: unknown,
+  ctx?: { queue?: string; consumer?: string; batchId?: bigint },
+): PgqueError {
   if (!isPgError(err)) {
     return new PgqueSqlError(op, { cause: err });
   }
   const msg = err.message ?? '';
   if (err.code === PG_RAISE_EXCEPTION_CODE && /queue not found/i.test(msg) && ctx?.queue) {
     return new PgqueQueueNotFoundError(ctx.queue, { cause: err });
+  }
+  if (err.code === PG_RAISE_EXCEPTION_CODE && /consumer (not registered|not found)/i.test(msg)) {
+    return new PgqueConsumerNotFoundError(ctx?.queue ?? '', ctx?.consumer ?? '', { cause: err });
+  }
+  if (err.code === PG_RAISE_EXCEPTION_CODE && /batch not found/i.test(msg)) {
+    return new PgqueBatchNotFoundError(ctx?.batchId, { cause: err });
   }
   return new PgqueSqlError(op, { cause: err });
 }

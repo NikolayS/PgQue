@@ -29,6 +29,7 @@ export class Consumer {
   private readonly handlers = new Map<string, HandlerFunc>();
   private readonly pollIntervalMs: number;
   private readonly maxMessages: number;
+  private readonly retryAfter: number;
   private readonly unknownHandlerPolicy: 'ack' | 'nack';
   private readonly logger: Pick<Console, 'warn' | 'error'>;
   private readonly subconsumer: string | undefined;
@@ -43,6 +44,10 @@ export class Consumer {
   ) {
     this.pollIntervalMs = opts.pollInterval ?? 30_000;
     this.maxMessages = opts.maxMessages ?? DEFAULT_MAX_MESSAGES;
+    this.retryAfter = opts.retryAfter ?? 60;
+    if (!Number.isFinite(this.retryAfter) || this.retryAfter < 0) {
+      throw new Error('pgque: retryAfter must be a non-negative finite number of seconds');
+    }
     this.unknownHandlerPolicy = opts.unknownHandlerPolicy ?? 'nack';
     this.logger = opts.logger ?? console;
     this.subconsumer = opts.subconsumer;
@@ -150,7 +155,7 @@ export class Consumer {
   /** Returns true if the nack succeeded, false if it threw (and was logged). */
   private async tryNack(batchId: bigint, msg: Message, reason: string): Promise<boolean> {
     try {
-      await this.client.nack(batchId, msg, { reason });
+      await this.client.nack(batchId, msg, { retryAfter: this.retryAfter, reason });
       return true;
     } catch (err) {
       this.logger.error(`pgque: nack error for "${msg.type}": ${formatErr(err)}`);

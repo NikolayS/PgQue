@@ -398,6 +398,64 @@ describe('Consumer (in-memory mocks)', () => {
     expect(fakeClient.receive.mock.calls[0]).toEqual(['q', 'c', 123]);
   });
 
+  it('passes configured retryAfter to consumer-issued nack', async () => {
+    const msg: Message = {
+      msgId: 3n,
+      batchId: 101n,
+      type: 'unknown_type',
+      payload: '{}',
+      retryCount: null,
+      createdAt: new Date(),
+      extra1: null,
+      extra2: null,
+      extra3: null,
+      extra4: null,
+    };
+
+    let receiveCalls = 0;
+    const fakeClient = {
+      receive: vi.fn(async () => {
+        receiveCalls += 1;
+        return receiveCalls === 1 ? [msg] : [];
+      }),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async (_batchId: bigint, _msg: Message, _opts?: unknown) => undefined),
+    };
+
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 10,
+      retryAfter: 5,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.nack.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.nack).toHaveBeenCalledTimes(1);
+    expect(fakeClient.nack.mock.calls[0]?.[2]).toMatchObject({ retryAfter: 5 });
+  });
+
+  it('rejects negative retryAfter at construction', () => {
+    const fakeClient = {
+      receive: vi.fn(async () => []),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => undefined),
+    };
+
+    expect(
+      () =>
+        new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+          retryAfter: -1,
+        }),
+    ).toThrow(/retryAfter/);
+  });
+
   it('does not call ack when nack fails for an unknown event type', async () => {
     const msg: Message = {
       msgId: 2n,

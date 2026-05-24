@@ -3,7 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  PgqueBatchNotFoundError,
   PgqueConnectionError,
+  PgqueConsumerNotFoundError,
   PgqueQueueNotFoundError,
   PgqueSqlError,
   connect,
@@ -161,6 +163,29 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     await expect(
       env.client.sendBatch('does_not_exist_xyz', 'x', [{}]),
     ).rejects.toBeInstanceOf(PgqueQueueNotFoundError);
+  });
+
+  skipIfNoDb('receive with nonexistent consumer raises PgqueConsumerNotFoundError', async () => {
+    await expect(env.client.receive(env.queue, 'missing_consumer_xyz', 10)).rejects.toBeInstanceOf(
+      PgqueConsumerNotFoundError,
+    );
+  });
+
+  skipIfNoDb('nack with nonexistent batch raises PgqueBatchNotFoundError', async () => {
+    await expect(
+      env.client.nack(999999999999n, {
+        msgId: 1n,
+        batchId: 999999999999n,
+        type: 'missing.batch',
+        payload: '{}',
+        retryCount: null,
+        createdAt: new Date(),
+        extra1: null,
+        extra2: null,
+        extra3: null,
+        extra4: null,
+      }),
+    ).rejects.toBeInstanceOf(PgqueBatchNotFoundError);
   });
 
   skipIfNoDb('sendBatch rejects non-serializable payloads', async () => {

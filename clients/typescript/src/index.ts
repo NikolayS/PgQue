@@ -4,8 +4,9 @@
 /**
  * pgque is the TypeScript client for PgQue, the PgQ-based universal
  * PostgreSQL queue. It is a thin, idiomatic wrapper over the `pgque-api`
- * SQL functions: `send`, `receive`, `ack`, `nack`, plus `subscribe` /
- * `unsubscribe`.
+ * SQL functions: `send`, `send_batch`, `subscribe`, `unsubscribe`,
+ * `receive`, `ack`, `nack`, `ticker`, `ticker_all`, and
+ * `force_next_tick`.
  *
  * Quick start:
  * ```ts
@@ -37,6 +38,7 @@
 export { Client, connect, pgqueTypes } from './client.js';
 export { Consumer, DEFAULT_MAX_MESSAGES } from './consumer.js';
 export {
+  PgqueBatchNotFoundError,
   PgqueConnectionError,
   PgqueConsumerNotFoundError,
   PgqueError,
