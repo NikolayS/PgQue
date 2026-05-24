@@ -507,7 +507,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Queue mover |  |
 | Modern `send`, `receive`, `ack`, `nack` API | ✅ |
 | `send_batch` API | ✅ |
-| Improved `send_batch` performance |  |
+| Improved `send_batch` performance | ✅ |
 | Dead-letter queue after retry limit | ✅ |
 | Go library | ✅ |
 | TypeScript library | ✅ |
