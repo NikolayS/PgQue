@@ -8,6 +8,7 @@ import {
   PgqueConsumerNotFoundError,
   PgqueQueueNotFoundError,
   PgqueSqlError,
+  Client,
   connect,
 } from '../src/index.js';
 import { TEST_DSN, setupTestQueue, teardownTestQueue, advanceQueue, type TestEnv } from './helpers.js';
@@ -327,4 +328,46 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
     }
     expect(total).toBe(N);
   });
+});
+
+describe('Client error classification (in-memory)', () => {
+  function clientThatRaises(message: string): Client {
+    return new Client({
+      query: async () => {
+        throw { message };
+      },
+    } as never);
+  }
+
+  it.each([
+    'queue not found: missing_q',
+    'no such queue',
+    'No such event queue',
+    'Event queue not created yet',
+    'event queue not found: missing_q',
+  ])('maps queue errors to PgqueQueueNotFoundError: %s', async (message) => {
+    await expect(clientThatRaises(message).ticker('missing_q')).rejects.toBeInstanceOf(
+      PgqueQueueNotFoundError,
+    );
+  });
+
+  it.each(['batch not found: 42', 'Cannot find data for batch 42'])(
+    'maps batch errors to PgqueBatchNotFoundError: %s',
+    async (message) => {
+      await expect(
+        clientThatRaises(message).nack(42n, {
+          msgId: 1n,
+          batchId: 42n,
+          type: 'x',
+          payload: '{}',
+          retryCount: null,
+          createdAt: new Date(),
+          extra1: null,
+          extra2: null,
+          extra3: null,
+          extra4: null,
+        }),
+      ).rejects.toBeInstanceOf(PgqueBatchNotFoundError);
+    },
+  );
 });

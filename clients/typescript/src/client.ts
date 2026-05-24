@@ -638,13 +638,13 @@ function mapPgError(
       : typeof err === 'object' && err !== null && 'message' in err
         ? String((err as { message?: unknown }).message ?? '')
         : String(err ?? '');
-  if (/queue not found/i.test(msg) && ctx?.queue) {
-    return new PgqueQueueNotFoundError(ctx.queue, { cause: err });
+  if (/(queue not found|no such queue|no such event queue|event queue not found|event queue not created)/i.test(msg)) {
+    return new PgqueQueueNotFoundError(ctx?.queue ?? '', { cause: err });
   }
   if (/(consumer (not registered|not found)|not subscrib(?:ed|er))/i.test(msg)) {
     return new PgqueConsumerNotFoundError(ctx?.queue ?? '', ctx?.consumer ?? '', { cause: err });
   }
-  if (/batch not found/i.test(msg)) {
+  if (/(batch not found|cannot find data for batch)/i.test(msg)) {
     return new PgqueBatchNotFoundError(ctx?.batchId, { cause: err });
   }
   return new PgqueSqlError(op, { cause: err });
