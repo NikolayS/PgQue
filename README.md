@@ -523,7 +523,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Queue pause / resume | 🔬 experimental |
 | OpenTelemetry SQL metrics export | 🔬 experimental |
 | Admin CLI |  |
-| Cross-database `pg_cron` scheduling | ✅ |
+| Cross-database `pg_cron` scheduling |  |
 | Message TTL / expiry |  |
 | Per-tenant isolation / multi-schema installs |  |
 | `pg_tle` extension package | ✅ |
