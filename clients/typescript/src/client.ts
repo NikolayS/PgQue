@@ -649,7 +649,7 @@ function mapPgError(
   if (err.code === PG_RAISE_EXCEPTION_CODE && /queue not found/i.test(msg) && ctx?.queue) {
     return new PgqueQueueNotFoundError(ctx.queue, { cause: err });
   }
-  if (err.code === PG_RAISE_EXCEPTION_CODE && /consumer (not registered|not found)/i.test(msg)) {
+  if (err.code === PG_RAISE_EXCEPTION_CODE && /(consumer (not registered|not found)|not subscribed)/i.test(msg)) {
     return new PgqueConsumerNotFoundError(ctx?.queue ?? '', ctx?.consumer ?? '', { cause: err });
   }
   if (err.code === PG_RAISE_EXCEPTION_CODE && /batch not found/i.test(msg)) {
