@@ -41,16 +41,6 @@ export const pgqueTypes: pg.CustomTypesConfig = {
   },
 };
 
-const PG_RAISE_EXCEPTION_CODE = 'P0001';
-
-interface PgError extends Error {
-  code?: string;
-}
-
-function isPgError(e: unknown): e is PgError {
-  return e instanceof Error && typeof (e as PgError).code === 'string';
-}
-
 /** Internal: row shape returned by `pgque.receive` after type parsers run. */
 interface RawMessageRow {
   msg_id: bigint;
@@ -642,11 +632,8 @@ function mapPgError(
   err: unknown,
   ctx?: { queue?: string; consumer?: string; batchId?: bigint },
 ): PgqueError {
-  if (!isPgError(err)) {
-    return new PgqueSqlError(op, { cause: err });
-  }
-  const msg = err.message ?? '';
-  if (err.code === PG_RAISE_EXCEPTION_CODE && /queue not found/i.test(msg) && ctx?.queue) {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  if (/queue not found/i.test(msg) && ctx?.queue) {
     return new PgqueQueueNotFoundError(ctx.queue, { cause: err });
   }
   if (/(consumer (not registered|not found)|not subscribed)/i.test(msg)) {
