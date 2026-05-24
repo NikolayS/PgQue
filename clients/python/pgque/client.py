@@ -12,6 +12,7 @@ import psycopg
 from .errors import (
     PgqueBatchNotFound,
     PgqueConnectionError,
+    PgqueConsumerNotFound,
     PgqueError,
     PgqueQueueNotFound,
 )
@@ -46,7 +47,13 @@ def _wrap_sql_error(e: Exception) -> PgqueError:
     low = msg.lower()
     if "queue not found" in low:
         return PgqueQueueNotFound(msg)
-    if "batch not found" in low:
+    if (
+        "consumer not registered" in low
+        or "consumer not found" in low
+        or "not subscriber to queue" in low
+    ):
+        return PgqueConsumerNotFound(msg)
+    if "batch not found" in low or "cannot find data for batch" in low:
         return PgqueBatchNotFound(msg)
     return PgqueError(msg)
 
@@ -180,6 +187,34 @@ class PgqueClient:
 
     # --- consumer -------------------------------------------------------
 
+    def subscribe(self, queue: str, consumer: str) -> int:
+        """Subscribe ``consumer`` to ``queue``.
+
+        Maps to ``pgque.subscribe(queue, consumer)``. Returns ``1`` when a
+        subscription row was created and ``0`` when it already existed.
+        """
+        try:
+            row = self.conn.execute(
+                "select pgque.subscribe(%s, %s)", (queue, consumer)
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
+
+    def unsubscribe(self, queue: str, consumer: str) -> int:
+        """Unsubscribe ``consumer`` from ``queue``.
+
+        Maps to ``pgque.unsubscribe(queue, consumer)``. Returns ``1`` when a
+        subscription row was removed and ``0`` when no row existed.
+        """
+        try:
+            row = self.conn.execute(
+                "select pgque.unsubscribe(%s, %s)", (queue, consumer)
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
+
     def receive(
         self,
         queue: str,
@@ -272,6 +307,32 @@ class PgqueClient:
     def force_tick(self, queue: str) -> Optional[int]:
         """Deprecated compatibility alias for ``force_next_tick``."""
         return self.force_next_tick(queue)
+
+    def ticker(self, queue: str) -> Optional[int]:
+        """Run the per-queue ticker for ``queue``.
+
+        Maps to ``pgque.ticker(queue)``. Returns the new tick ID when a tick
+        was inserted, or ``None`` when no tick was needed.
+        """
+        try:
+            row = self.conn.execute(
+                "select pgque.ticker(%s)", (queue,)
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
+
+    def ticker_all(self) -> int:
+        """Run the global ticker across all eligible queues.
+
+        Maps to zero-argument ``pgque.ticker()`` and returns the number of
+        queues that received a tick.
+        """
+        try:
+            row = self.conn.execute("select pgque.ticker()").fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0]
 
     # --- experimental cooperative consumers -----------------------------
     #
