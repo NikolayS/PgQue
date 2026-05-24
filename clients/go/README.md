@@ -8,7 +8,7 @@ universal PostgreSQL queue. A thin, idiomatic wrapper over the
 ## Install
 
 ```bash
-go get github.com/NikolayS/pgque-go@v0.2.0-rc.1
+go get github.com/NikolayS/pgque-go@v0.2.0-rc.2
 ```
 
 `@latest` also resolves to the rc since the v0.2.0 line is in release-candidate. The module is mirrored from `clients/go/` of the parent repo to the public [`NikolayS/pgque-go`](https://github.com/NikolayS/pgque-go) module repo.

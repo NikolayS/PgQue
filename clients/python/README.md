@@ -11,10 +11,10 @@ universal PostgreSQL queue. Thin wrapper over `pgque-api` SQL functions:
 pip install --pre pgque-py
 ```
 
-`--pre` is required while v0.2.0 is in release-candidate (the latest published version is `0.2.0rc1`); pip skips prereleases by default. Pin the exact version if you prefer:
+`--pre` is required while v0.2.0 is in release-candidate (the latest published version is `0.2.0rc2`); pip skips prereleases by default. Pin the exact version if you prefer:
 
 ```bash
-pip install "pgque-py==0.2.0rc1"
+pip install "pgque-py==0.2.0rc2"
 ```
 
 Requires Python 3.10+ and PostgreSQL 14+ with the PgQue schema installed
