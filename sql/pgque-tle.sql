@@ -68,8 +68,8 @@ begin
     from pgtle.available_extensions()
     where name = 'pgque';
 
-    if existing_version = '0.2.0-rc.1' then
-        raise notice 'pgque 0.2.0-rc.1 already registered with pg_tle; skipping install_extension().';
+    if existing_version = '0.2.0' then
+        raise notice 'pgque 0.2.0 already registered with pg_tle; skipping install_extension().';
         return;
     end if;
 
@@ -78,16 +78,16 @@ begin
             'but this script registers version %. Run '
             'sql/pgque-tle-uninstall.sql first to remove the existing '
             'registration, then re-run this script.',
-            existing_version, '0.2.0-rc.1';
+            existing_version, '0.2.0';
     end if;
 
     perform pgtle.install_extension(
         'pgque',
-        '0.2.0-rc.1',
+        '0.2.0',
         'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
 $pgque_extension_body$
 -- pgque.sql -- PgQ Universal Edition
--- Version: 0.2.0-rc.1
+-- Version: 0.2.0
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -4658,7 +4658,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.version()
 returns text as $$
 begin
-    return '0.2.0-rc.1';
+    return '0.2.0';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -7135,5 +7135,5 @@ $pgque_extension_body$
 end $wrapper$;
 
 \echo ''
-\echo 'PgQue 0.2.0-rc.1 registered with pg_tle.'
+\echo 'PgQue 0.2.0 registered with pg_tle.'
 \echo 'Run create extension pgque; to materialise the schema in this database.'
