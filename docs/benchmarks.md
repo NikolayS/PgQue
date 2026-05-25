@@ -34,6 +34,30 @@ unchanged from baseline.
 Reproducer + raw 5-second metrics: [`benchmark/xmin-horizon/`](../benchmark/xmin-horizon/).
 Spec: [`blueprints/BENCH_XMIN_HORIZON.md`](../blueprints/BENCH_XMIN_HORIZON.md).
 
+## Client producer batching
+
+First-party client producer microbenchmarks compare a sequential loop over
+`send()` with one `send_batch()` call. Environment: GitHub Actions
+`ubuntu-latest`, PostgreSQL 18 Docker image, one producer/client connection,
+median of 3 repeats. Raw data:
+[`benchmark/charts/client_producer_batch_api.csv`](../benchmark/charts/client_producer_batch_api.csv).
+
+| Client | Batch size | `send()` loop | `send_batch()` | Speedup |
+|---|---:|---:|---:|---:|
+| Python | 100 | 3,766 ev/s | 32,316 ev/s | 8.6× |
+| Python | 1000 | 3,963 ev/s | 64,156 ev/s | 16.2× |
+| Go | 100 | 2,912 ev/s | 47,535 ev/s | 16.3× |
+| Go | 1000 | 2,824 ev/s | 103,811 ev/s | 36.8× |
+| TypeScript | 100 | 2,009 ev/s | 36,650 ev/s | 18.2× |
+| TypeScript | 1000 | 2,476 ev/s | 113,530 ev/s | 45.9× |
+
+The point is not max cluster throughput. This isolates API overhead for a
+single sequential producer: loop-over-send is round-trip-bound; `send_batch()`
+collapses the operation into one SQL call and now uses PgQue's set-based
+`insert_event_bulk` path.
+
+![PgQue clients: batching vs loop over send()](../benchmark/charts/client_producer_batch_api.svg)
+
 ## Steady-state throughput
 
 Preliminary results on a laptop (Apple Silicon, 10 cores, 24 GiB RAM,

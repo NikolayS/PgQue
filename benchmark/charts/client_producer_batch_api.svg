@@ -1,113 +1,113 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="860" viewBox="0 0 1280 860">
-<rect width="100%" height="100%" fill="#ffffff"/>
-<text x="640.0" y="34" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="800" fill="#111827">PgQue clients: batching vs loop over send()</text>
-<text x="640.0" y="60" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">Single sequential producer, one DB connection/client, median of 3 repeats on GitHub Actions PostgreSQL 18 runner</text>
-<text x="92" y="82" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="700" fill="#111827">A. Throughput speedup from batch API</text>
+<rect x="0" y="0" width="100%" height="100%" fill="#ffffff" rx="0"/>
+<text x="640" y="34" font-family="Inter,Arial,sans-serif" font-size="24" fill="#111827" text-anchor="middle" font-weight="800">PgQue clients: batching vs loop over send()</text>
+<text x="640" y="60" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280" text-anchor="middle">Single sequential producer, one DB connection/client, median of 3 repeats on GitHub Actions PostgreSQL 18 runner</text>
+<text x="92" y="82" font-family="Inter,Arial,sans-serif" font-size="17" fill="#111827" font-weight="700">A. Throughput speedup from batch API</text>
 <text x="92" y="100" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">batch events/sec ÷ loop-over-send events/sec; higher is better</text>
 <line x1="92" y1="372.0" x2="612" y2="372.0" stroke="#e5e7eb"/>
-<text x="82" y="376.0" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">0×</text>
+<text x="82" y="376.0" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">0×</text>
 <line x1="92" y1="322.9" x2="612" y2="322.9" stroke="#e5e7eb"/>
-<text x="82" y="326.9" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">2×</text>
+<text x="82" y="326.9" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">10×</text>
 <line x1="92" y1="273.8" x2="612" y2="273.8" stroke="#e5e7eb"/>
-<text x="82" y="277.8" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">4×</text>
+<text x="82" y="277.8" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">20×</text>
 <line x1="92" y1="224.7" x2="612" y2="224.7" stroke="#e5e7eb"/>
-<text x="82" y="228.7" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">6×</text>
+<text x="82" y="228.7" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">30×</text>
 <line x1="92" y1="175.6" x2="612" y2="175.6" stroke="#e5e7eb"/>
-<text x="82" y="179.6" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">8×</text>
+<text x="82" y="179.6" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">40×</text>
 <line x1="92" y1="126.5" x2="612" y2="126.5" stroke="#e5e7eb"/>
-<text x="82" y="130.5" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">10×</text>
-<text x="172" y="396" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">n=1</text>
-<rect x="112.0" y="340.8" width="34" height="31.2" fill="#2563eb" rx="4"/>
-<text x="129.0" y="334.8" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#2563eb">1.27×</text>
-<rect x="152.0" y="347.8" width="34" height="24.2" fill="#0891b2" rx="4"/>
-<text x="169.0" y="341.8" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#0891b2">0.99×</text>
-<rect x="192.0" y="337.4" width="34" height="34.6" fill="#7c3aed" rx="4"/>
-<text x="209.0" y="331.4" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#7c3aed">1.41×</text>
-<text x="342" y="396" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">n=100</text>
-<rect x="282.0" y="256.0" width="34" height="116.0" fill="#2563eb" rx="4"/>
-<text x="299.0" y="250.0" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#2563eb">4.7×</text>
-<rect x="322.0" y="184.2" width="34" height="187.8" fill="#0891b2" rx="4"/>
-<text x="339.0" y="178.2" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#0891b2">7.7×</text>
-<rect x="362.0" y="132.1" width="34" height="239.9" fill="#7c3aed" rx="4"/>
-<text x="379.0" y="126.1" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#7c3aed">9.8×</text>
-<text x="512" y="396" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">n=1000</text>
-<rect x="452.0" y="239.4" width="34" height="132.6" fill="#2563eb" rx="4"/>
-<text x="469.0" y="233.4" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#2563eb">5.4×</text>
-<rect x="492.0" y="161.8" width="34" height="210.2" fill="#0891b2" rx="4"/>
-<text x="509.0" y="155.8" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#0891b2">8.6×</text>
-<rect x="532.0" y="125.2" width="34" height="246.8" fill="#7c3aed" rx="4"/>
-<text x="549.0" y="119.2" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="10" font-weight="700" fill="#7c3aed">10.1×</text>
+<text x="82" y="130.5" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">50×</text>
+<text x="172" y="396" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280" text-anchor="middle">n=1</text>
+<rect x="112.0" y="367.8" width="34" height="4.2" fill="#2563eb" rx="4"/>
+<text x="129.0" y="361.8" font-family="Inter,Arial,sans-serif" font-size="10" fill="#2563eb" text-anchor="middle" font-weight="700">0.85×</text>
+<rect x="152.0" y="366.8" width="34" height="5.2" fill="#0891b2" rx="4"/>
+<text x="169.0" y="360.8" font-family="Inter,Arial,sans-serif" font-size="10" fill="#0891b2" text-anchor="middle" font-weight="700">1.1×</text>
+<rect x="192.0" y="366.9" width="34" height="5.1" fill="#7c3aed" rx="4"/>
+<text x="209.0" y="360.9" font-family="Inter,Arial,sans-serif" font-size="10" fill="#7c3aed" text-anchor="middle" font-weight="700">1.0×</text>
+<text x="342" y="396" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280" text-anchor="middle">n=100</text>
+<rect x="282.0" y="329.9" width="34" height="42.1" fill="#2563eb" rx="4"/>
+<text x="299.0" y="323.9" font-family="Inter,Arial,sans-serif" font-size="10" fill="#2563eb" text-anchor="middle" font-weight="700">8.6×</text>
+<rect x="322.0" y="291.8" width="34" height="80.2" fill="#0891b2" rx="4"/>
+<text x="339.0" y="285.8" font-family="Inter,Arial,sans-serif" font-size="10" fill="#0891b2" text-anchor="middle" font-weight="700">16×</text>
+<rect x="362.0" y="282.4" width="34" height="89.6" fill="#7c3aed" rx="4"/>
+<text x="379.0" y="276.4" font-family="Inter,Arial,sans-serif" font-size="10" fill="#7c3aed" text-anchor="middle" font-weight="700">18×</text>
+<text x="512" y="396" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280" text-anchor="middle">n=1000</text>
+<rect x="452.0" y="292.5" width="34" height="79.5" fill="#2563eb" rx="4"/>
+<text x="469.0" y="286.5" font-family="Inter,Arial,sans-serif" font-size="10" fill="#2563eb" text-anchor="middle" font-weight="700">16×</text>
+<rect x="492.0" y="191.5" width="34" height="180.5" fill="#0891b2" rx="4"/>
+<text x="509.0" y="185.5" font-family="Inter,Arial,sans-serif" font-size="10" fill="#0891b2" text-anchor="middle" font-weight="700">37×</text>
+<rect x="532.0" y="146.9" width="34" height="225.1" fill="#7c3aed" rx="4"/>
+<text x="549.0" y="140.9" font-family="Inter,Arial,sans-serif" font-size="10" fill="#7c3aed" text-anchor="middle" font-weight="700">46×</text>
 <rect x="147" y="416" width="13" height="13" fill="#2563eb" rx="3"/><text x="166" y="427" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">Python</text>
 <rect x="287" y="416" width="13" height="13" fill="#0891b2" rx="3"/><text x="306" y="427" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">Go</text>
 <rect x="427" y="416" width="13" height="13" fill="#7c3aed" rx="3"/><text x="446" y="427" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">TypeScript</text>
-<text x="710" y="82" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="700" fill="#111827">B. Producer latency per batch</text>
+<text x="710" y="82" font-family="Inter,Arial,sans-serif" font-size="17" fill="#111827" font-weight="700">B. Producer latency per batch</text>
 <text x="710" y="100" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">milliseconds to publish the whole batch; log scale, lower is better</text>
 <line x1="710" y1="357.7" x2="1180" y2="357.7" stroke="#e5e7eb"/>
-<text x="700" y="361.7" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">1 ms</text>
-<line x1="710" y1="313.8" x2="1180" y2="313.8" stroke="#e5e7eb"/>
-<text x="700" y="317.8" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">3 ms</text>
-<line x1="710" y1="265.7" x2="1180" y2="265.7" stroke="#e5e7eb"/>
-<text x="700" y="269.7" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">10 ms</text>
-<line x1="710" y1="221.8" x2="1180" y2="221.8" stroke="#e5e7eb"/>
-<text x="700" y="225.8" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">30 ms</text>
-<line x1="710" y1="173.6" x2="1180" y2="173.6" stroke="#e5e7eb"/>
-<text x="700" y="177.6" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">100 ms</text>
-<line x1="710" y1="129.7" x2="1180" y2="129.7" stroke="#e5e7eb"/>
-<text x="700" y="133.7" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">300 ms</text>
-<line x1="723.0" y1="372.0" x2="723.0" y2="338.7" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="737.0" y1="372.0" x2="737.0" y2="348.3" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="730.0" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Py</text>
-<text x="730.0" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">1</text>
-<line x1="776.8" y1="372.0" x2="776.8" y2="219.4" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="790.8" y1="372.0" x2="790.8" y2="281.5" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="783.75" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Py</text>
-<text x="783.75" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">100</text>
-<line x1="830.5" y1="372.0" x2="830.5" y2="129.6" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="844.5" y1="372.0" x2="844.5" y2="197.0" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="837.5" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Py</text>
-<text x="837.5" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">1000</text>
-<line x1="884.2" y1="372.0" x2="884.2" y2="362.5" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="898.2" y1="372.0" x2="898.2" y2="362.0" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="891.25" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Go</text>
-<text x="891.25" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">1</text>
-<line x1="938.0" y1="372.0" x2="938.0" y2="206.8" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="952.0" y1="372.0" x2="952.0" y2="288.1" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="945.0" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Go</text>
-<text x="945.0" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">100</text>
-<line x1="991.8" y1="372.0" x2="991.8" y2="116.0" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="1005.8" y1="372.0" x2="1005.8" y2="201.8" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="998.75" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Go</text>
-<text x="998.75" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">1000</text>
-<line x1="1045.5" y1="372.0" x2="1045.5" y2="329.2" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="1059.5" y1="372.0" x2="1059.5" y2="343.0" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="1052.5" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Ty</text>
-<text x="1052.5" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">1</text>
-<line x1="1099.2" y1="372.0" x2="1099.2" y2="193.3" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="1113.2" y1="372.0" x2="1113.2" y2="284.4" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="1106.25" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Ty</text>
-<text x="1106.25" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">100</text>
-<line x1="1153.0" y1="372.0" x2="1153.0" y2="107.5" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
-<line x1="1167.0" y1="372.0" x2="1167.0" y2="199.8" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
-<text x="1160.0" y="390" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">Ty</text>
-<text x="1160.0" y="403" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280">1000</text>
+<text x="700" y="361.7" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">1 ms</text>
+<line x1="710" y1="313.7" x2="1180" y2="313.7" stroke="#e5e7eb"/>
+<text x="700" y="317.7" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">3 ms</text>
+<line x1="710" y1="265.4" x2="1180" y2="265.4" stroke="#e5e7eb"/>
+<text x="700" y="269.4" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">10 ms</text>
+<line x1="710" y1="221.4" x2="1180" y2="221.4" stroke="#e5e7eb"/>
+<text x="700" y="225.4" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">30 ms</text>
+<line x1="710" y1="173.1" x2="1180" y2="173.1" stroke="#e5e7eb"/>
+<text x="700" y="177.1" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">100 ms</text>
+<line x1="710" y1="129.1" x2="1180" y2="129.1" stroke="#e5e7eb"/>
+<text x="700" y="133.1" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280" text-anchor="end">300 ms</text>
+<line x1="723.0" y1="372.0" x2="723.0" y2="347.7" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="737.0" y1="372.0" x2="737.0" y2="341.1" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="730.0" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Py</text>
+<text x="730.0" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">1</text>
+<line x1="776.8" y1="372.0" x2="776.8" y2="226.2" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="790.8" y1="372.0" x2="790.8" y2="312.4" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="783.8" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Py</text>
+<text x="783.8" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">100</text>
+<line x1="830.5" y1="372.0" x2="830.5" y2="136.0" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="844.5" y1="372.0" x2="844.5" y2="247.6" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="837.5" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Py</text>
+<text x="837.5" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">1000</text>
+<line x1="884.2" y1="372.0" x2="884.2" y2="349.3" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="898.2" y1="372.0" x2="898.2" y2="351.5" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="891.2" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Go</text>
+<text x="891.2" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">1</text>
+<line x1="938.0" y1="372.0" x2="938.0" y2="215.9" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="952.0" y1="372.0" x2="952.0" y2="327.9" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="945.0" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Go</text>
+<text x="945.0" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">100</text>
+<line x1="991.8" y1="372.0" x2="991.8" y2="122.4" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="1005.8" y1="372.0" x2="1005.8" y2="266.9" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="998.8" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Go</text>
+<text x="998.8" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">1000</text>
+<line x1="1045.5" y1="372.0" x2="1045.5" y2="338.3" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="1059.5" y1="372.0" x2="1059.5" y2="340.0" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="1052.5" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Ty</text>
+<text x="1052.5" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">1</text>
+<line x1="1099.2" y1="372.0" x2="1099.2" y2="201.1" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="1113.2" y1="372.0" x2="1113.2" y2="317.5" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="1106.2" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Ty</text>
+<text x="1106.2" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">100</text>
+<line x1="1153.0" y1="372.0" x2="1153.0" y2="117.1" stroke="#94a3b8" stroke-width="7" stroke-linecap="round"/>
+<line x1="1167.0" y1="372.0" x2="1167.0" y2="270.5" stroke="#16a34a" stroke-width="7" stroke-linecap="round"/>
+<text x="1160.0" y="390" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">Ty</text>
+<text x="1160.0" y="403" font-family="Inter,Arial,sans-serif" font-size="9" fill="#6b7280" text-anchor="middle">1000</text>
 <rect x="810" y="422" width="14" height="10" fill="#94a3b8" rx="2"/><text x="830" y="432" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">loop over send()</text>
 <rect x="970" y="422" width="14" height="10" fill="#16a34a" rx="2"/><text x="990" y="432" font-family="Inter,Arial,sans-serif" font-size="12" fill="#6b7280">batch API</text>
-<rect x="92" y="480" width="1088" height="300" fill="#f8fafc" stroke="#e2e8f0" rx="16"/>
-<text x="116" y="516" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800" fill="#111827">What bottleneck is this exposing?</text>
+<rect x="92" y="480" width="1088" height="300" fill="#f8fafc" rx="16" stroke="#e2e8f0"/>
+<text x="116" y="516" font-family="Inter,Arial,sans-serif" font-size="18" fill="#111827" font-weight="800">What bottleneck is this exposing?</text>
 <circle cx="122" cy="547" r="5" fill="#0f766e"/>
-<text x="138" y="544" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700" fill="#111827">loop over send(), n=100/1000</text>
+<text x="138" y="544" font-family="Inter,Arial,sans-serif" font-size="13" fill="#111827" font-weight="700">loop over send(), n=100/1000</text>
 <text x="327" y="544" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">Dominated by client↔Postgres round trips and per-call driver overhead. Each message is one SQL statement.</text>
 <circle cx="122" cy="587" r="5" fill="#0f766e"/>
-<text x="138" y="584" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700" fill="#111827">batch API, n=100/1000</text>
-<text x="327" y="584" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">Round trips collapse to one SQL call. Remaining cost is payload JSON serialization + server-side send_batch insert work.</text>
+<text x="138" y="584" font-family="Inter,Arial,sans-serif" font-size="13" fill="#111827" font-weight="700">batch API, n=100/1000</text>
+<text x="327" y="584" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">Round trips collapse to one SQL call. Remaining cost is payload JSON serialization + one set-based server insert.</text>
 <circle cx="122" cy="627" r="5" fill="#0f766e"/>
-<text x="138" y="624" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700" fill="#111827">server-side note</text>
-<text x="327" y="624" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">Current safe API still depends on pgque.send_batch implementation; #159/set-based rewrite should improve the green bars further.</text>
+<text x="138" y="624" font-family="Inter,Arial,sans-serif" font-size="13" fill="#111827" font-weight="700">server-side note</text>
+<text x="327" y="624" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">Current send_batch uses the set-based insert_event_bulk path; green bars are the GA baseline, not the old pre-#159 path.</text>
 <circle cx="122" cy="667" r="5" fill="#0f766e"/>
-<text x="138" y="664" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700" fill="#111827">n=1</text>
+<text x="138" y="664" font-family="Inter,Arial,sans-serif" font-size="13" fill="#111827" font-weight="700">n=1</text>
 <text x="327" y="664" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">Batch and single send are intentionally similar; batching pays off once multiple events share one logical publish operation.</text>
 <circle cx="122" cy="707" r="5" fill="#0f766e"/>
-<text x="138" y="704" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700" fill="#111827">single producer</text>
+<text x="138" y="704" font-family="Inter,Arial,sans-serif" font-size="13" fill="#111827" font-weight="700">single producer</text>
 <text x="327" y="704" font-family="Inter,Arial,sans-serif" font-size="13" fill="#6b7280">These are not max cluster throughput numbers. They isolate producer API overhead for one sequential producer/client.</text>
-<text x="92" y="832" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">Source: PR #161 client-smoke logs. Metrics are medians over 3 repeats; each run creates a fresh queue and verifies inserted row count.</text>
+<text x="92" y="832" font-family="Inter,Arial,sans-serif" font-size="11" fill="#6b7280">Source: GitHub Actions run 26383024550, branch bench-client-producer-rc3. Metrics are medians over 3 repeats; each run creates a fresh queue and verifies inserted row count.</text>
 </svg>

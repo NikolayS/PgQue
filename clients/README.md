@@ -44,9 +44,12 @@ Benchmark entry points:
 - Go: `clients/go/producer_benchmark_test.go`
 - TypeScript: `clients/typescript/src/producer_bench.ts`
 
-If benchmark results are published, update the chart and state the environment
-used for the run. Stale charts are worse than no charts; they give users false
-confidence, which is how benchmarks become marketing-shaped lies.
+Current published client producer results live in
+`benchmark/charts/client_producer_batch_api.csv` and
+`benchmark/charts/client_producer_batch_api.svg`. If benchmark results are
+published, update both files and state the environment used for the run. Stale
+charts are worse than no charts; they give users false confidence, which is how
+benchmarks become marketing-shaped lies.
 
 ### Testing gates
 
