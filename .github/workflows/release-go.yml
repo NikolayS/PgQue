@@ -58,6 +58,7 @@ jobs:
           echo "mirror commit: $split_sha"
 
       - name: Check public mirror tag does not exist
+        if: ${{ !inputs.dry_run }}
         run: |
           set -Eeuo pipefail
           remote="https://github.com/${MIRROR_REPO}.git"
