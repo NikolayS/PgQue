@@ -370,4 +370,18 @@ describe('Client error classification (in-memory)', () => {
       ).rejects.toBeInstanceOf(PgqueBatchNotFoundError);
     },
   );
+
+  it.each([
+    { message: 'Connection terminated unexpectedly' },
+    { message: 'Cannot use a pool after calling end on the pool' },
+    { message: 'query failed', code: 'ECONNRESET' },
+  ])('maps connection errors to PgqueConnectionError: $message', async (cause) => {
+    const client = new Client({
+      query: async () => {
+        throw cause;
+      },
+    } as never);
+
+    await expect(client.send('q', { payload: {} })).rejects.toBeInstanceOf(PgqueConnectionError);
+  });
 });
