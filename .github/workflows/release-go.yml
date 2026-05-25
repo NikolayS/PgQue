@@ -33,6 +33,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:
@@ -102,11 +103,30 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: clients/go/go.mod
           cache-dependency-path: clients/go/go.sum
+
+      - name: Verify mirror token principal
+        env:
+          EXPECTED_LOGIN: NikolayS
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "PGQUE_GO_MIRROR_TOKEN is empty or unavailable"
+            exit 1
+          fi
+          login=$(curl -fsS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/user | jq -r .login)
+          if [ "$login" != "$EXPECTED_LOGIN" ]; then
+            echo "PGQUE_GO_MIRROR_TOKEN resolves to '$login', expected '$EXPECTED_LOGIN'"
+            exit 1
+          fi
 
       - name: Split clients/go subtree
         run: |
@@ -149,7 +169,6 @@ jobs:
           set -Eeuo pipefail
           gh release create "$VERSION" \
             --repo "$MIRROR_REPO" \
-            --target "$split_sha" \
             --title "Go client $VERSION" \
             --notes "Go client release for module github.com/NikolayS/pgque-go. Install with: go get github.com/NikolayS/pgque-go@$VERSION"
 
