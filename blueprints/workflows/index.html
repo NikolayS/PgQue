@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Brief — PgQue Durable Workflows — SPEC v0.1 (v0.1)</title>
+<title>Brief — PgQue Durable Workflows — SPEC v0.3 (v0.1)</title>
 <style>:root {
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --fs: 15px; --lh: 1.5rem; --measure: 88ch;
@@ -260,7 +260,7 @@ pre {
 <main class="brief">
 <header class="brief-hero">
 <p class="brief-kicker">Brief — derivative summary</p>
-<h1 class="brief-title">PgQue Durable Workflows — SPEC v0.1</h1>
+<h1 class="brief-title">PgQue Durable Workflows — SPEC v0.3</h1>
 <p class="brief-subtitle">
 <code>workflows</code> ·
  Version v0.1 ·
@@ -284,8 +284,10 @@ Summary, not the spec. Skim this for shape, architecture, scope, risks, decision
 <li><a href="#s-7-team-veteran-experts-to-hire"><span class="num">08</span><span>7. Team (veteran experts to hire)</span></a></li>
 <li><a href="#s-8-implementation-plan-sprints-parallelization-ordering"><span class="num">09</span><span>8. Implementation plan (sprints, parallelization, ordering)</span></a></li>
 <li><a href="#s-9-topic-specific-api-surface-reference-sdk-python-v0-1"><span class="num">10</span><span>9. Topic-specific: API surface (reference SDK, Python v0.1)</span></a></li>
-<li><a href="#s-10-non-goals-disclaimers-honored-strictly-not-reintroduced-anywhere-above"><span class="num">11</span><span>10. Non-goals / disclaimers (honored strictly — not reintroduced anywhere above)</span></a></li>
-<li><a href="#s-11-embedded-changelog"><span class="num">12</span><span>11. Embedded Changelog</span></a></li>
+<li><a href="#s-10-operability-notes-managed-pg"><span class="num">11</span><span>10. Operability notes (managed-PG)</span></a></li>
+<li><a href="#s-11-open-items-carried-to-v0-4"><span class="num">12</span><span>11. Open items carried to v0.4</span></a></li>
+<li><a href="#s-12-non-goals-disclaimers-honored-strictly-not-reintroduced-anywhere-above"><span class="num">13</span><span>12. Non-goals / disclaimers (honored strictly — not reintroduced anywhere above)</span></a></li>
+<li><a href="#s-13-embedded-changelog"><span class="num">14</span><span>13. Embedded Changelog</span></a></li>
 </ol>
 </nav>
 <section class="brief-goal" id="s-goal">
@@ -295,13 +297,13 @@ Summary, not the spec. Skim this for shape, architecture, scope, risks, decision
 <section class="brief-section brief-section-generic" id="s-1-goal-why-it-s-needed">
 <h2><span class="n">02</span><span>1. Goal &amp; why it&#39;s needed</span></h2>
 <p><strong>Goal.</strong> Provide a durable-execution / durable-workflow layer for PgQue that models each workflow as an <strong>append-only stream of state-transition events</strong> running over PgQ&#39;s existing snapshot + TRUNCATE rotation engine, so durable workflows inherit PgQ&#39;s zero-bloat property instead of fighting it.</p>
+<p><strong>Positioning.</strong> This is a <strong>bloat-free alternative to Temporal and DBOS</strong> — it competes with them head-on on durable execution and delivers the same core guarantees teams adopt those systems for (durable multi-step execution, exactly-once handoff, at-least-once steps, durable timers, fan-out/join), on just your managed Postgres with a <strong>flat dead-tuple curve at agent-loop throughput</strong>. Eliminating per-step <code>workflow_status</code> <code>UPDATE</code> churn is the <strong>headline benefit</strong>, not a limitation. We compete on durability; we differ only in <em>mechanism</em> — event-sourced append + rotate instead of replay of a linear function backed by a mutated status row.</p>
 <p><strong>Why this exists.</strong> Every Postgres-native durable-execution engine in the category (DBOS, absurd, and the long tail of <code>SELECT … FOR UPDATE SKIP LOCKED</code> + <code>DELETE</code> queues) shares one structural liability: they model a workflow as a <strong>mutable <code>workflow_status</code> row that is <code>UPDATE</code>d on every step</strong>. At the throughput the category is actually chasing — AI agent loops doing millions of cheap iterations — that per-step <code>UPDATE</code> churns dead tuples until the workload hits a VACUUM wall, and throughput degrades. PgQ already solved exactly this problem for <em>queues</em> with snapshot-batch isolation + wholesale <code>TRUNCATE</code> rotation: zero dead-tuple bloat under sustained load. The insight this spec operationalizes is that <strong>durable execution is event sourcing</strong>, PgQ is <strong>already an append-only event log</strong>, and therefore a workflow can be modeled as a stream of appended transitions (continuation-passing) rather than a mutated row. The zero-bloat property then carries through, <em>for free</em>, from the queue layer to the workflow layer.</p>
-<p>This exists because no one else can credibly claim &quot;durable workflows with a flat dead-tuple curve at agent-loop throughput, on just your managed Postgres, no separate datastore.&quot; That is the entire pitch, and it is only reachable by building <strong>on top of</strong> the rotation engine rather than re-introducing a mutable-status model beside it.</p>
 </section>
 <section class="brief-section brief-section-decisions" id="s-2-scope-resolved-interview-decisions">
 <h2><span class="n">03</span><span>2. Scope &amp; resolved interview decisions</span></h2>
 <p>The interview answers were all delegated to the lead (&quot;decide for me&quot;). Resolved:</p>
-<p>| Question | Decision (v0.1) | |---|---| | <strong>Primary users</strong> | Backend engineers running long-lived or high-iteration orchestration (AI agent loops, multi-step business processes, fan-out jobs) <strong>on managed Postgres</strong> who refuse a second datastore and refuse a VACUUM wall. | | <strong>Core job</strong> | Advance a workflow from one step to the next with <strong>exactly-once handoff</strong> and <strong>at-least-once step execution</strong>, never losing or silently duplicating a workflow&#39;s progress — on a hot path that appends and rotates rather than updates. | | <strong>Durability / recovery guarantee</strong> | At-least-once step execution + exactly-once handoff between steps; per-step idempotency keyed on <code>(workflow_id, step_seq)</code>. On crash, exactly the single in-flight step redelivers (PgQ&#39;s existing redelivery); there is no long function to replay. | | <strong>Success metric</strong> | A throughput-and-bloat benchmark vs a mutable-status-row baseline (DBOS/absurd shape) on server hardware: <strong>flat dead-tuple count + sustained throughput</strong> on the append+rotate hot path where the baseline degrades. | | <strong>Out of scope for v0.1</strong> | Cancellation / orphan-join propagation; linear-code (<code>async/await</code>-compiled) DX; N synchronized SDKs; hyperscale (&gt;~ a few thousand transitions/sec/db); deterministic replay. |</p>
+<p>| Question | Decision (v0.1, carried unchanged through v0.3) | |---|---| | <strong>Primary users</strong> | Backend engineers running long-lived or high-iteration orchestration (AI agent loops, multi-step business processes, fan-out jobs) <strong>on managed Postgres</strong> who refuse a second datastore and refuse a VACUUM wall. | | <strong>Core job</strong> | Advance a workflow from one step to the next with <strong>exactly-once handoff</strong> and <strong>at-least-once step execution</strong>, never losing or silently duplicating a workflow&#39;s progress — on a hot path that appends and rotates rather than updates. | | <strong>Durability / recovery guarantee</strong> | At-least-once step execution + exactly-once handoff between steps; per-step idempotency keyed on <code>(workflow_id, step_seq)</code>. On crash, exactly the single in-flight step redelivers (PgQ&#39;s existing redelivery); there is no long function to replay. | | <strong>Success metric</strong> | A throughput-and-bloat benchmark vs a mutable-status-row baseline (DBOS/absurd shape) on server hardware: <strong>flat dead-tuple count + sustained throughput</strong> on the append+rotate hot path where the baseline degrades. | | <strong>Out of scope for v0.1</strong> | Cancellation / orphan-join propagation; linear-code (<code>async/await</code>-compiled) DX; N synchronized SDKs; hyperscale (&gt;~ a few thousand transitions/sec/db); deterministic replay. |</p>
 <p>---</p>
 </section>
 <section class="brief-section brief-section-generic" id="s-3-user-stories">
@@ -309,37 +311,22 @@ Summary, not the spec. Skim this for shape, architecture, scope, risks, decision
 <p>Each story is persona + action + outcome and is directly exercised as a manual acceptance test (§6.4).</p>
 <p>---</p>
 <ul>
-<li><strong>Agent-loop builder (zero-bloat at iteration scale).</strong> <em>As</em> a backend engineer running an AI agent that loops thousands of times per run, <em>I</em> define each iteration as a step that processes and enqueues its successor, <em>so that</em> a million iterations complete with a <strong>flat dead-tuple count</strong> on the hot tables and no VACUUM-driven throughput cliff — verifiable with <code>pg_stat_user_tables.n_dead_tup</code> staying flat through the run.</li>
+<li><strong>Agent-loop builder (zero-bloat at iteration scale).</strong> <em>As</em> a backend engineer running an AI agent that loops thousands of times per run, <em>I</em> define each iteration as a step that processes and enqueues its successor, <em>so that</em> a million iterations complete with a <strong>flat dead-tuple count</strong> on the hot tables and no VACUUM-driven throughput cliff — verifiable with <code>pg_stat_user_tables.n_dead_tup</code> staying flat through the run. (The flat-curve claim is scoped to await-light loops; await/join-heavy shapes are characterized honestly in §5.6.)</li>
 </ul>
 </section>
 <section class="brief-section brief-section-architecture" id="s-4-architecture">
 <h2><span class="n">05</span><span>4. Architecture</span></h2>
 <p>&lt;!-- architecture:begin --&gt;</p>
 <p>&lt;!-- architecture:end --&gt;</p>
-<p>The durable layer <strong>only calls</strong> the five PgQ primitives + <code>send_at</code>. It adds <strong>no</strong> modification to rotation/tick/batch logic and introduces <strong>no</strong> second concurrency model.</p>
+<p>The durable layer <strong>only calls</strong> the PgQ primitives + <code>send_at</code>. It adds <strong>no</strong> modification to rotation/tick/batch logic and introduces <strong>no</strong> second concurrency model. Its dependencies on engine semantics (tick-visibility, durable per-event retry count, <code>send_at</code>) are made explicit and pinned by engine-contract tests (§5.9).</p>
 <ul>
-<li><strong>Workflow</strong> — a logical state machine identified by <code>workflow_id</code>. At any instant it is in exactly one of three conditions: <strong>(a)</strong> one <em>in-flight</em> message (a step-event sitting in a PgQ batch being processed), <strong>(b)</strong> <em>scheduled</em> (a <code>send_at</code> continuation awaiting a wake time, or a registered wait awaiting an event), or <strong>(c)</strong> <em>terminal</em>. The <strong>single-live-continuation invariant</strong> — each processed step enqueues <em>exactly one</em> successor — is what makes exclusivity structural rather than lease-based.</li>
-<li><strong>Step-event</strong> — the message on the PgQ queue. Payload carries: <code>workflow_id</code>, <code>step_seq</code> (monotonic progress anchor), <code>step_name</code>/state tag, and small continuation state (continuation-passing). Large state is the user&#39;s responsibility to hold in their own tables, addressed by <code>workflow_id</code>.</li>
+<li><strong>Workflow</strong> — a logical state machine identified by <code>workflow_id</code>, which is a <strong>128-bit unguessable capability</strong> (§5.11), not a sequential id. At any instant it is in exactly one of three conditions: <strong>(a)</strong> one <em>in-flight</em> message (a step-event sitting in a PgQ batch being processed), <strong>(b)</strong> <em>scheduled</em> (a <code>send_at</code> continuation awaiting a wake time, or a registered wait awaiting an event), or <strong>(c)</strong> <em>terminal</em>. The <strong>single-live-continuation invariant</strong> — each processed step enqueues <em>exactly one</em> successor — is what makes exclusivity structural rather than lease-based.</li>
+<li><strong><code>workflow_id</code> — addressing handle AND bearer capability.</strong> It is used both to <em>address</em> a workflow (in payloads, user tables) and, combined with the role grants and per-wait tokens of §5.10, to <em>authorize</em> operations against it. Because it does double duty it must be treated as a secret; §5.11 specifies its confidentiality/leakage model (hashed at rest in audit/DLQ, never logged raw, mandatory token for approval waits).</li>
+<li><strong>Step-event</strong> — the message on the PgQ queue. Payload carries: <code>workflow_id</code>, <code>step_seq</code> (monotonic progress anchor), <code>step_name</code>/state tag, <code>delivery_anchor</code> (the event&#39;s deliverable time, §5.4.1), small continuation state (continuation-passing), and — for retries — <code>retry_attempt</code>/<code>origin_step</code> (§5.2), subject to a <strong>hard payload size cap</strong> (§5.12). Large state is the user&#39;s responsibility to hold in their own tables, addressed by <code>workflow_id</code>.</li>
 <li><strong>Transition</strong> — process a step → emit successor as a <em>new append</em>. Never an <code>UPDATE</code> of a status row.</li>
-<li><strong>Coordination side tables</strong> (the only mutable state; see §5.5) — <code>wf_wait</code>, <code>wf_event_cache</code>, <code>wf_join</code>, <code>wf_join_done</code>, <code>wf_dedup</code>, <code>wf_live</code> (current-state projection). Their churn is bounded by <strong>concurrency and coordination-point count, not total step volume</strong> (the honest correction, §5.6).</li>
+<li><strong>Coordination side tables</strong> (the only mutable state; see §5.5) — <code>wf_registry</code>, <code>wf_wait</code>, <code>wf_event_cache</code>, <code>wf_join</code>, <code>wf_join_done</code>, <code>wf_dedup</code>, <code>wf_audit</code>, and the <strong>optional, opt-in</strong> <code>wf_live</code> projection. Their churn is bounded by <strong>concurrency and coordination-point count, not total step volume</strong> — stated precisely (distinguishing live row-count from dead-tuple rate, and conceding the await/join-heavy case) in §5.6.</li>
 </ul>
 <pre data-lang="text"><code class="language-text">(architecture not yet specified)</code></pre>
-<pre><code>┌──────────────────────────────────────────────────────────┐
-│  Reference SDK (Python, v0.1)                            │  ← thin client
-│  defineWorkflow / step / sleep / awaitEvent / emit /     │
-│  spawn / awaitAll  →  plain SQL function calls           │
-├──────────────────────────────────────────────────────────┤
-│  Durable layer  (sql/experimental/durable.sql)          │  ← THIS SPEC
-│  • dispatch loop over PgQ batches                        │
-│  • coordination side tables (waits, joins, dedup, proj.) │
-│  • SECURITY DEFINER fns, search_path=pgque,pg_catalog    │
-├──────────────────────────────────────────────────────────┤
-│  PgQ engine  (SACRED — UNMODIFIED)                       │  ← do not touch
-│  insert_event · next_batch · get_batch_events ·          │
-│  finish_batch · event_retry · send_at (PR #237) ·        │
-│  ticks · snapshot rotation · TRUNCATE · cooperative      │
-│  consumers (dead_interval takeover)                      │
-└──────────────────────────────────────────────────────────┘</code></pre>
 <details class="brief-subsections">
 <summary>Subsections (3)</summary>
 <ol><li>4.1 Layering (the sacred boundary)</li>
@@ -349,9 +336,9 @@ Summary, not the spec. Skim this for shape, architecture, scope, risks, decision
 </section>
 <section class="brief-section brief-section-generic" id="s-5-implementation-details">
 <h2><span class="n">06</span><span>5. Implementation details</span></h2>
-<p>The foundational guarantee. <code>insert_event()</code> (enqueue successor) and <code>finish_batch()</code> (ack) run in the <strong>consumer&#39;s own transaction</strong>, so a step&#39;s side effects, its successor enqueue, and its batch ack are <strong>one atomic commit</strong>:</p>
-<p>No subtransactions are used on this path (hard constraint).</p>
-<p>A batch may contain step-events for <strong>thousands of distinct workflows</strong>; they advance in <strong>one transaction</strong> (native fan-out + batch step execution). A step that fails transiently calls <code>pgque.event_retry()</code> for that single event rather than aborting the whole batch where the engine allows per-event retry; a poisoned step lands in PgQ&#39;s existing DLQ after max retries.</p>
+<p>The foundational guarantee. <code>insert_event()</code> (enqueue successor) and <code>finish_batch()</code> (ack) run in the <strong>consumer&#39;s own transaction</strong>. <strong>The atomic commit unit is the batch transaction</strong> (§5.2); for the common case of a single-event batch it reduces exactly to one step&#39;s side effects + its successor enqueue + its ack committing together:</p>
+<p>The dedup marker is keyed on <em>this attempt&#39;s</em> <code>(workflow_id, step_seq)</code>. A retry continuation is a <strong>new transition with a fresh <code>step_seq</code></strong> (§5.2), so it carries its own marker and is therefore <strong>not</strong> absorbed as a dedup no-op — it re-executes. <strong>No subtransactions are used on this path</strong> (hard constraint; also §5.13).</p>
+<p><strong>The transaction boundary is the batch.</strong> PgQ acks a <em>batch</em> wholesale via <code>finish_batch</code>; there is no per-event ack. The dispatcher processes every event in a batch within <strong>one</strong> transaction and commits once:</p>
 <ul>
 <li><strong>Commit</strong> ⇒ successor durably enqueued <strong>AND</strong> batch finished, atomically ⇒ exactly-once handoff.</li>
 <li><strong>Crash before commit</strong> ⇒ txn aborts ⇒ no successor, no dedup marker, batch not finished ⇒ the step redelivers cleanly.</li>
@@ -360,25 +347,32 @@ Summary, not the spec. Skim this for shape, architecture, scope, risks, decision
   -- 1. step&#39;s own DB side effects (idempotent or naturally in-txn)
   -- 2. record per-step dedup marker (workflow_id, step_seq)   [if first delivery]
   perform pgque.insert_event(queue, next_state);   -- enqueue exactly one successor
-  perform pgque.finish_batch(batch_id);            -- ack this step
+  perform pgque.finish_batch(batch_id);            -- ack this batch
 commit;</code></pre>
 <pre><code>loop:
   batch_id := pgque.next_batch(queue, consumer)        -- snapshot-bounded
-  if batch_id is null: sleep to next tick; continue
-  events  := pgque.get_batch_events(batch_id)          -- many workflows at once
+  if batch_id is null:
+      run_timeout_sweep()                              -- §5.7.1 in-loop liveness
+      sleep to next tick; continue
+  events  := pgque.get_batch_events(batch_id)
   begin
     for each event in events:                          -- batch step execution
         advance_one(event)                             -- §5.3, appends successor(s)
     pgque.finish_batch(batch_id)
+    run_timeout_sweep()                                -- opportunistic
   commit</code></pre>
+<pre><code>dedup_horizon  ≥  max_retry_backoff        (one attempt&#39;s backoff)
+               +  dead_interval             (worst-case takeover delay)
+               +  max_batch_duration
+               +  safety_margin</code></pre>
 <details class="brief-subsections">
 <summary>Subsections (8)</summary>
 <ol><li>5.1 The hot path: one transition = append + ack, atomically</li>
-<li>5.2 Dispatch loop</li>
+<li>5.2 Dispatch loop, transaction boundary, and retry (contradiction resolved)</li>
 <li>5.3 The five durable-execution requirements, mapped</li>
 <li>5.4 Per-step idempotency</li>
 <li>5.5 Coordination side tables</li>
-<li>5.6 The honest zero-bloat claim (stated precisely, never overstated)</li>
+<li>5.6 The honest zero-bloat claim (stated precisely — row-count vs dead-tuple rate, incl. the await/join-heavy case)</li>
 <li>5.7 `awaitEvent` / `emit` — the ~20% with real risk (designed and TDD&#39;d first)</li>
 <li>5.8 fan-out / join (spawn + `awaitAll`)</li></ol>
 </details>
@@ -386,13 +380,15 @@ commit;</code></pre>
 <section class="brief-section brief-section-generic" id="s-6-tests-plan">
 <h2><span class="n">07</span><span>6. Tests plan</span></h2>
 <p><strong>Red/green TDD for ALL new code.</strong> Every function below is written test-first: a failing test asserting the behavior, then the implementation that makes it pass. CI rejects any new SQL function or SDK method without a preceding failing-then-passing test in the same change.</p>
-<p>These are the pieces explicitly required to be designed and TDD&#39;d <strong>first</strong>, before any happy-path step plumbing:</p>
-<p>Each of the five user stories has a runnable scenario script the reviewer executes by hand against a managed-PG-like instance.</p>
+<p>Each of the five user stories has a runnable scenario script the reviewer executes by hand against a managed-PG-like instance, including the §3.3 forged-approval negative check (with and without the per-wait token) and the §3.2 long-sleep-resumes-not-DLQ&#39;d check.</p>
+<p>Throughput-and-bloat benchmark vs a mutable-status-row baseline (DBOS/absurd shape) on server hardware. Publishes, over a long sustained run: <strong><code>n_dead_tup</code></strong> (flat for the PgQue await-light hot path; rising for baseline), <strong>sustained transitions/sec</strong>, the <strong>coordination-table dead-tuple curve</strong>, and — <strong>new in v0.3</strong> — an explicit <strong>await/join-heavy A/B workload</strong> that coordinates on (nearly) every step, so the §5.6 scoped headline (flat for await-light; coordination-bounded for await/join-heavy) is substantiated rather than asserted. Because long VACUUM-wall runs are slow and noisy, this is a <strong>nightly / on-demand gated harness</strong>, explicitly out of the per-change CI gate (which runs only a short smoke version). The full harness is reproducible and versioned.</p>
 <ul>
-<li><strong>Exactly-once handoff</strong> (§5.1) — red test: kill the txn between <code>insert_event</code> and <code>commit</code>, assert no successor + clean redelivery; assert no double-handoff on commit.</li>
-<li><strong>Per-step idempotency</strong> (§5.4) — red test: deliver the same <code>(workflow_id, step_seq)</code> twice, assert exactly one successor + one side effect.</li>
-<li><strong><code>awaitEvent</code> / <code>emit</code> race matrix</strong> (§5.7) — one red test per row of the race table (emit-before-await, interleave, double-resume, stale cache, await redelivery, timeout). Single-resume token proven by concurrent emit+sweep test.</li>
-<li><strong>fan-out / join</strong> (§5.8) — red tests: race-free join-total recording; idempotent completed-set under duplicated completion; exactly-once parent resume; per-child failure surfaced in the result array.</li>
+<li><strong>Exactly-once handoff</strong> (§5.1) — kill the txn between <code>insert_event</code> and <code>commit</code>, assert no successor + clean redelivery; assert no double-handoff on commit.</li>
+<li><strong>Per-step idempotency + dedup-horizon + delivery-anchor clock</strong> (§5.4/§5.4.1) — deliver the same <code>(workflow_id, step_seq)</code> twice → exactly one successor + one side effect; redeliver at horizon-boundary age → routed to DLQ, no double-handoff; <strong>AND the mandatory positive test: a <code>sleep</code> longer than <code>dedup_horizon</code> resumes normally and is NOT DLQ&#39;d</strong> (asserts the <code>delivery_anchor</code> re-anchoring, guarding against the per-workflow-age misinterpretation).</li>
+<li><strong>Transaction-boundary / retry resolution</strong> (§5.2) — a retry continuation re-enqueues via <code>send_at</code> with a <strong>fresh <code>step_seq</code></strong> and, on delivery, <strong>re-executes its body</strong> (assert the step logic runs once per retry attempt up to <code>max_retries</code>, then lands in DLQ — guards against the dedup-no-op-swallows-retry bug); an unexpected exception aborts only a bounded batch; the fault-isolation re-dispatch isolates a poison event to the DLQ without DLQ-ing innocent co-tenants.</li>
+<li><strong><code>awaitEvent</code> / <code>emit</code> race matrix</strong> (§5.7) — one test per row; <code>cache_retention_horizon</code> never drops a within-horizon entry and is <strong>independent of <code>await_timeout</code></strong> (a long await behind a fast emit is not rejected, §5.7.2); advisory-lock serialization correct under simulated transaction-pooling, including a <strong>hash-collision correctness-safety</strong> test (§5.7.3); single-resume token proven by concurrent emit+sweep.</li>
+<li><strong>fan-out / join</strong> (§5.8) — race-free join-total recording; idempotent completed-set under duplicated completion; exactly-once parent resume; <strong>per-child result array assembled from <code>wf_join_done</code> (spill) with a resume payload under <code>max_payload_bytes</code> at full <code>max_spawn_fanout</code></strong> (guards the cap conflict); spawn-fanout cap enforced.</li>
+<li><strong>Authorization &amp; capability</strong> (§5.10/§5.11) — PUBLIC cannot execute any durable function; <code>emit</code> without the <code>workflow_id</code> capability fails; <code>emit</code> for an id absent from <code>wf_registry</code> is rejected with no cache row; an approval-class <code>emit</code> without the mandatory per-wait token fails even with a valid id (capability-leakage mitigation); forged-approval with a guessed sequential id fails; <strong><code>workflow_id</code> column is defaulted by <code>gen_random_uuid()</code>/<code>pgcrypto</code> and CI statically rejects any sequence/serial-derived id path</strong> (testable CSPRNG check); <code>wf_audit</code>/DLQ store hashed ids; audit row with <code>actor_id</code> written for every emit/resume/spawn.</li>
 </ul>
 <details class="brief-subsections">
 <summary>Subsections (5)</summary>
@@ -400,7 +396,7 @@ commit;</code></pre>
 <li>6.2 Built test-first, in this order (highest risk first)</li>
 <li>6.3 CI test suites</li>
 <li>6.4 Manual acceptance (maps 1:1 to §3 user stories)</li>
-<li>6.5 Success-criterion benchmark (the entire pitch)</li></ol>
+<li>6.5 Success-criterion benchmark (the entire pitch) — gated, NOT a per-change CI suite</li></ol>
 </details>
 </section>
 <section class="brief-section brief-section-generic" id="s-7-team-veteran-experts-to-hire">
@@ -408,12 +404,13 @@ commit;</code></pre>
 <p>Veteran <strong>&quot;Durable Workflow Engineer&quot;</strong> (accepted).</p>
 <p>---</p>
 <ul>
-<li><strong>Veteran PostgreSQL internals / MVCC engineer (1)</strong> — owns the snapshot/visibility reasoning, <code>xid8</code>/<code>pg_snapshot</code>, rotation interaction, no-subtransaction guarantee.</li>
-<li><strong>Veteran durable-execution / distributed-systems engineer (1)</strong> — owns the await/emit and fan-out/join race designs and the single-resume-token correctness proofs.</li>
-<li><strong>Veteran PL/pgSQL + SQL test engineer (pgTAP) (1)</strong> — owns the red/green TDD harness, concurrency/property tests, crash-recovery injection.</li>
-<li><strong>Veteran SDK / developer-experience engineer (Python) (1)</strong> — owns the one reference SDK and the thin-client surface.</li>
-<li><strong>Veteran performance / benchmarking engineer (1)</strong> — owns the throughput-and-bloat benchmark harness and the published curves.</li>
-<li><strong>Veteran technical writer / DX reviewer (0.5, shared)</strong> — owns the experimental-feature docs and the honest-claim framing.</li>
+<li><strong>Veteran PostgreSQL internals / MVCC engineer (1)</strong> — snapshot/visibility reasoning, <code>xid8</code>/<code>pg_snapshot</code>, rotation interaction, no-subtransaction guarantee, engine-contract tests (§5.9), engine-floor install gate.</li>
+<li><strong>Veteran durable-execution / distributed-systems engineer (1)</strong> — await/emit and fan-out/join race designs, single-resume-token proofs, the dedup-horizon + delivery-anchor bound (§5.4.1), the transaction-boundary/retry resolution incl. retry-<code>step_seq</code> semantics and poison-pill fault-isolation (§5.2).</li>
+<li><strong>Veteran PostgreSQL security engineer (0.5, shared)</strong> — authorization model (§5.10), capability generation + confidentiality/leakage model (§5.11), mandatory per-wait token, audit attribution under pooling, grant-audit tests, resource caps (§5.12).</li>
+<li><strong>Veteran PL/pgSQL + SQL test engineer (pgTAP) (1)</strong> — red/green TDD harness, concurrency/property tests, crash-recovery + pg_cron-disabled and scale-to-zero liveness injection, the positive long-sleep-not-DLQ&#39;d and retry-re-execution tests.</li>
+<li><strong>Veteran SDK / developer-experience engineer (Python) (1)</strong> — the one reference SDK and the thin-client surface, incl. <code>awaitAll</code> result-array assembly from the spill table.</li>
+<li><strong>Veteran performance / benchmarking engineer (1)</strong> — the gated throughput-and-bloat benchmark incl. the await/join-heavy A/B and the published curves.</li>
+<li><strong>Veteran technical writer / DX reviewer (0.5, shared)</strong> — experimental-feature docs, honest-claim framing (§5.6), ops/authz guide (required pg_cron-for-scale-to-zero, autovacuum settings, capability-leakage hygiene).</li>
 </ul>
 <details class="brief-subsections">
 <summary>Subsections (1)</summary>
@@ -423,17 +420,18 @@ commit;</code></pre>
 <section class="brief-section brief-section-generic" id="s-8-implementation-plan-sprints-parallelization-ordering">
 <h2><span class="n">09</span><span>8. Implementation plan (sprints, parallelization, ordering)</span></h2>
 <p><strong>Sprint 0 — Foundations &amp; harness (1 wk).</strong></p>
-<p><strong>Sprint 1 — Exactly-once core (1.5 wk).</strong> <em>(highest risk first, per constraint)</em></p>
-<p><strong>Sprint 2 — Coordination primitives (2 wk).</strong> <em>Two independent tracks in parallel:</em></p>
+<p><strong>Sprint 1 — Exactly-once core (1.5 wk).</strong> <em>(highest risk first)</em></p>
+<p><strong>Sprint 2 — Coordination primitives (2 wk).</strong> <em>Two parallel tracks:</em></p>
 <ul>
-<li>Test engineer: stand up pgTAP red/green harness, CI matrix (PG 14–18), engine-sacredness diff-guard. <em>(blocks everyone — must land first.)</em></li>
-<li>PG-internals engineer: spike <code>next_batch</code>/<code>get_batch_events</code>/<code>finish_batch</code> reduction; confirm <code>send_at</code> (PR #237) shape.</li>
-<li><em>Parallel:</em> SDK engineer scaffolds the thin Python client surface against stub SQL signatures.</li>
+<li>Test engineer: pgTAP red/green harness, CI matrix (PG 14–18), engine-sacredness diff-guard, grant-audit scaffold. <em>(blocks everyone.)</em></li>
+<li>PG-internals engineer: spike the primitive reduction; confirm <code>send_at</code> (PR #237) and the durable per-event retry counter; draft the engine-contract tests + install-time engine-floor gate (§5.9).</li>
+<li>Security engineer: role model + <code>REVOKE</code>-from-PUBLIC install template + capability generation and leakage-hygiene defaults (§5.11).</li>
+<li><em>Parallel:</em> SDK engineer scaffolds the thin Python client against stub SQL signatures.</li>
 </ul>
 </section>
 <section class="brief-section brief-section-generic" id="s-9-topic-specific-api-surface-reference-sdk-python-v0-1">
 <h2><span class="n">10</span><span>9. Topic-specific: API surface (reference SDK, Python v0.1)</span></h2>
-<p>Every SDK call compiles to one of the five PgQ primitives + a coordination-table touch. <strong>No</strong> <code>async/await</code>-compiled linear-code DX in v0.1 (deferred, §10).</p>
+<p>Every SDK call compiles to one of the PgQ primitives + a coordination-table touch, subject to the authorization (§5.10) and resource (§5.12) checks. <strong>No</strong> <code>async/await</code>-compiled linear-code DX in v0.1 (deferred, §12).</p>
 <p>---</p>
 <pre data-lang="python"><code class="language-python">wf = defineWorkflow(&quot;order_fulfillment&quot;)
 
@@ -445,38 +443,69 @@ def charge(ctx, state):
 @wf.step(&quot;await_ship&quot;)
 def await_ship(ctx, state):
     return ctx.await_event(&quot;shipped&quot;, timeout=&quot;24h&quot;,
-                           on_event=&quot;notify&quot;, on_timeout=&quot;escalate&quot;)
+                           on_event=&quot;notify&quot;, on_timeout=&quot;escalate&quot;,
+                           require_token=True)   # mandatory token for approval-class
 
 @wf.step(&quot;fan&quot;)
 def fan(ctx, state):
-    return ctx.spawn([...N children...], join=&quot;collect&quot;)   # awaitAll → result array
+    return ctx.spawn([...N children...], join=&quot;collect&quot;)   # N ≤ max_spawn_fanout
 
-# external producer, anywhere:
-emit(workflow_id, &quot;shipped&quot;, payload)</code></pre>
+@wf.step(&quot;collect&quot;)
+def collect(ctx, state):
+    results = ctx.join_results()      # assembled from wf_join_done spill (§5.8)
+    ...
+
+# authorized external producer (role: pgque_durable_client), holding the capability + wait token:
+emit(workflow_id, &quot;shipped&quot;, payload, token=wait_token, actor_id=&quot;svc:shipping&quot;)</code></pre>
 </section>
-<section class="brief-section brief-section-scope-out" id="s-10-non-goals-disclaimers-honored-strictly-not-reintroduced-anywhere-above">
-<h2><span class="n">11</span><span>10. Non-goals / disclaimers (honored strictly — not reintroduced anywhere above)</span></h2>
+<section class="brief-section brief-section-generic" id="s-10-operability-notes-managed-pg">
+<h2><span class="n">11</span><span>10. Operability notes (managed-PG)</span></h2>
 <p>---</p>
 <ul>
-<li><strong>NOT</strong> a Temporal/DBOS-style deterministic-replay engine. No workflow-determinism requirement, no replay of a long linear function, no per-step <code>workflow_status</code> UPDATE churn.</li>
+<li><strong>pg_cron — required for scale-to-zero (§5.7.1).</strong> For always-on-dispatcher topologies it is an optimization; for serverless / scale-to-zero (workers idle to zero between events), pg_cron driving <code>run_timeout_sweep()</code> is a <strong>correctness requirement</strong> for timeout liveness. The install script warns if neither a long-running dispatcher nor pg_cron is configured.</li>
+<li><strong>Engine floor (§5.9/§5.13):</strong> install gates on the minimum PgQ engine version — <code>send_at</code> present, durable per-event retry counter exposed, tick-visibility per contract — and fails loudly otherwise.</li>
+<li><strong>Required operator settings:</strong> documented autovacuum tuning for the <code>DELETE</code>-driven coordination tables (<code>wf_registry</code>, <code>wf_wait</code>, <code>wf_join</code>) so their dead-tuple rate (§5.6) stays bounded; rotation cadence for <code>wf_dedup</code>/<code>wf_event_cache</code>/<code>wf_audit</code>. The await/join-heavy dead-tuple characterization (§5.6) is documented so operators size autovacuum for their workload shape.</li>
+<li><strong>Capability-leakage hygiene (§5.11):</strong> disable statement-parameter logging for the durable schema (or route through non-logged channels); <code>workflow_id</code> is stored hashed in <code>wf_audit</code> and DLQ; treat the id as a secret and prefer the mandatory per-wait token for approvals.</li>
+<li><strong>Audit export (§5.10.3):</strong> the <code>wf_audit</code> rotating table must be exported to durable storage before rotation; export hook + retention policy are part of the docs. Note the honest limitation: the log is append-only-by-convention, not cryptographically tamper-evident (hash-chaining deferred, §11).</li>
+<li><strong>Install-time validation:</strong> validates mutual consistency of <code>dedup_horizon</code>, <code>cache_retention_horizon</code>, <code>await_timeout</code> ceiling, <code>dead_interval</code>, <code>max_retry_backoff</code>/<code>max_batch_duration</code>, and the resource caps, and fails loudly on inconsistency.</li>
+</ul>
+</section>
+<section class="brief-section brief-section-generic" id="s-11-open-items-carried-to-v0-4">
+<h2><span class="n">12</span><span>11. Open items carried to v0.4</span></h2>
+<p>---</p>
+<ul>
+<li>Quantitative defaults for every configured bound (<code>dedup_horizon</code>, <code>cache_retention_horizon</code>, <code>max_spawn_fanout</code>, <code>max_payload_bytes</code>, emit rate) validated against the benchmark.</li>
+<li>Per-wait emit-token issuance/rotation/revocation detail (§5.10.2) — now mandatory for approval-class, but the token lifecycle is still to be fully specified.</li>
+<li><strong>Audit hash-chaining / signing</strong> for genuine tamper-evidence (§5.10.3) — deferred enhancement beyond append-only-by-convention.</li>
+<li>A verification pass on the v0.3 fix-induced redesigns (poison-pill fault-isolation, <code>wf_registry</code> liveness source, capability confidentiality model) before promotion, since these are new this round.</li>
+<li>Cancellation / orphan-join propagation remains deferred (§12).</li>
+</ul>
+</section>
+<section class="brief-section brief-section-scope-out" id="s-12-non-goals-disclaimers-honored-strictly-not-reintroduced-anywhere-above">
+<h2><span class="n">13</span><span>12. Non-goals / disclaimers (honored strictly — not reintroduced anywhere above)</span></h2>
+<p>---</p>
+<ul>
+<li><strong>Mechanism distinction (NOT a competitive disclaimer).</strong> PgQue Durable Workflows is a direct, better, <strong>bloat-free alternative to Temporal and DBOS</strong> — it competes with them head-on and delivers the same core durable-execution guarantees (§1 Positioning). It deliberately does <strong>not</strong> reproduce their <em>durability mechanism</em>: deterministic replay of a long-lived linear function backed by a <code>workflow_status</code> row mutated on every step. That mechanism is precisely the source of the per-step <code>UPDATE</code> bloat we exist to eliminate; we deliver the same guarantees via event-sourced append-and-rotate. <strong>Eliminating per-step <code>UPDATE</code> churn is a goal/benefit (§1), never a non-goal.</strong> What we do disclaim here is only the <em>technique</em>: no determinism requirement imposed on user code, and no replay-of-a-linear-function programming model in v0.1 (a continuation-compiling SDK is deferred).</li>
 <li><strong>NOT</strong> a multi-language deterministic-replay runtime in v1. No N synchronized SDKs — one reference SDK.</li>
 <li><strong>NOT</strong> a separate server, daemon, or external datastore. No Cassandra, RocksDB, FoundationDB, or Redis.</li>
 <li><strong>NOT</strong> targeting hyperscale (&gt;~ a few thousand workflow transitions/sec per database) — conceded to Temporal honestly.</li>
-<li><strong>NOT</strong> changing the sacred PgQ engine, and <strong>NOT</strong> introducing a second <code>SELECT … FOR UPDATE SKIP LOCKED</code> claim/lease concurrency model as the primary mechanism — exclusivity comes from the single-live-continuation invariant over the existing rotation engine.</li>
+<li><strong>NOT</strong> changing the sacred PgQ engine, and <strong>NOT</strong> introducing a second <code>SELECT … FOR UPDATE SKIP LOCKED</code> claim/lease concurrency model as the primary mechanism — exclusivity comes from the single-live-continuation invariant over the existing rotation engine. (The transaction-scoped advisory lock of §5.7.3 is a coordination-table serialization primitive for the await/emit key only, <strong>not</strong> a workflow-claim/lease mechanism.)</li>
 <li><strong>Cancellation / orphan-join propagation is deferred</strong> to a follow-up, not in v0.1.</li>
 <li>Linear-code (<code>async/await</code>-compiled) DX is an explicit <strong>later</strong> SDK project, not an engine requirement.</li>
 </ul>
 </section>
-<section class="brief-section brief-section-generic" id="s-11-embedded-changelog">
-<h2><span class="n">12</span><span>11. Embedded Changelog</span></h2>
+<section class="brief-section brief-section-generic" id="s-13-embedded-changelog">
+<h2><span class="n">14</span><span>13. Embedded Changelog</span></h2>
 <ul>
-<li><strong>v0.1</strong> (2026-05-30) — Initial spec scaffold fleshed into full structure. Resolved all five delegated interview questions (primary users, core job, durability model, success metric, out-of-scope). Added Goal-&amp;-why framing, 5 user stories, layered architecture with the sacred-engine boundary, hot-path/coordination implementation detail incl. the honest zero-bloat correction, await/emit + fan-out/join race designs, red/green TDD-first ordering, team roster, 5-sprint plan with parallel tracks, SDK surface, and strict non-goals. No reviewer findings yet (first authoring round).</li>
+<li><strong>v0.3</strong> (2026-05-30) — Closed the fix-induced contradictions both reviewers raised against v0.2. Redefined dedup-horizon enforcement around a per-transition <code>delivery_anchor</code> (reset at each transition and timer fire) so long <code>send_at</code> sleeps are never misclassified as stale redeliveries and DLQ&#39;d, and recomputed the bound as single-attempt (not cumulative, not max-sleep-dependent) (§5.4.1). Pinned retry continuations to a fresh <code>step_seq</code> so they re-execute instead of being swallowed as a dedup no-op (§5.2/§5.4). Redesigned poison-pill containment onto the engine&#39;s durable per-event retry counter + a dispatcher fault-isolation re-dispatch, removing the un-writable counter and the unspecified per-workflow isolation (§5.2), and pinned the retry-counter behavior as an explicit engine contract (§5.9). Replaced the unbounded per-key lock row with a transaction-scoped advisory lock (zero row, pooler-safe, collision-correctness-safe) (§5.7.3, §5.5). Separated <code>cache_retention_horizon</code> (emit→registration) from the user-facing <code>await_timeout</code> so long awaits are not capped by cache retention (§5.7.2). Spilled per-child join results to <code>wf_join_done</code>, keeping the parent resume payload under the 8 KiB cap at full fan-out (§5.8). Made timeout liveness an explicit operator invariant — pg_cron REQUIRED for scale-to-zero (§5.7.1, §10). Introduced a mandatory minimal <code>wf_registry</code> as the authoritative emit-liveness source, resolving the unknown-id-rejection vs <code>wf_live</code>-demotion contradiction (§5.5/§5.10.2/§5.12). Added a <code>workflow_id</code> confidentiality/leakage model (mandatory per-wait token for approvals, hashed at rest in audit/DLQ, never logged raw) and reframed the CSPRNG check as a testable static assertion (§5.11). Corrected the audit overclaim (no &quot;tamper-evident&quot;; hash-chaining deferred) and added pooling-robust <code>actor_id</code> attribution (§5.10.3). Scoped the flat-dead-tuple headline to await-light loops and conceded coordination-point-bounded dead-tuple rate for await/join-heavy workloads, adding an await/join-heavy A/B to the benchmark (§5.6/§6.5). Stated a minimum PgQ engine floor gated at install (§5.9/§5.13). Filled the empty §4 architecture block. Fixed the §5.2 cross-reference (§5.1/§5.13, not §5.10). Added positive long-sleep-not-DLQ&#39;d and retry-re-execution tests (§6.2). All findings from both reviewers accepted.</li>
+<li><strong>v0.2</strong> (2026-05-30) — Hardening round against Reviewer A (security/ops). Added authorization model (§5.10: REVOKE-from-PUBLIC + role grants + caller-scoped emit authz + audit trail) and <code>workflow_id</code>-as-unforgeable-capability (§5.11). Stated the dedup-horizon ≥ max-redelivery-latency bound and its DLQ enforcement (§5.4.1). Resolved the batch-transaction vs per-event-retry contradiction (§5.2). Made timeout liveness a non-optional property of the dispatch loop (§5.7.1). Pinned the await/emit lock to a pooler-safe transaction-scoped row lock (§5.7.3). Bounded <code>wf_event_cache</code> retention (§5.7.2). Demoted <code>wf_live</code> to optional/opt-in (§5.5, §5.8). Refined the zero-bloat claim (§5.6). Added resource caps (§5.12). Stated the engine tick-visibility coupling as a regression-tested contract (§5.9). Scoped the benchmark out of per-change CI (§6.5). Added security engineer, operability section (§10), open-items (§11). Reviewer B unavailable this round.</li>
+<li><strong>v0.1</strong> (2026-05-30) — Initial spec scaffold fleshed into full structure. Resolved all five delegated interview questions. Added Goal-&amp;-why framing, 5 user stories, layered architecture with the sacred-engine boundary, hot-path/coordination detail incl. the honest zero-bloat correction, await/emit + fan-out/join race designs, red/green TDD-first ordering, team roster, 5-sprint plan, SDK surface, and strict non-goals. No reviewer findings yet (first authoring round).</li>
 </ul>
 </section>
 <footer class="brief-provenance">
 <p>
-Generated by <code>samospec brief workflows</code> on <time>2026-05-30T09:50:39.013Z</time>.
- 2 review rounds —
+Generated by <code>samospec brief workflows</code> on <time>2026-05-30T10:07:49.872Z</time>.
+ 3 review rounds —
  lead —,
  reviewers — +
  —.

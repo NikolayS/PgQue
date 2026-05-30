@@ -16,7 +16,7 @@
 - 8. Implementation plan (sprints, parallelization, ordering)
 - 9. Topic-specific: API surface (reference SDK, Python v0.1)
 - 10. Operability notes (managed-PG)
-- 11. Open items carried to v0.3
+- 11. Open items carried to v0.4
 - 12. Non-goals / disclaimers (honored strictly — not reintroduced anywhere above)
 - 13. Embedded Changelog
 
