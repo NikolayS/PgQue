@@ -5,8 +5,9 @@
 - **Question:** Should PgQue extend beyond a queue into a **durable-workflow /
   durable-execution engine on Postgres**, the way DBOS and absurd have? What are
   the realistic chances of adoption success if we go that route?
-- **Companion reading:** `blueprints/SPECx.md` §2.3 (workflow engines are
-  deliberately treated as a *different category* today), `CLAUDE.md` Key Design
+- **Companion reading:** `blueprints/SPECx.md` §2.3 (workflow engines treated as
+  a separate category today), `blueprints/COOPERATIVE_CONSUMERS.md` (0.2,
+  experimental), PR #237 (rotating zero-bloat `send_at`), `CLAUDE.md` Key Design
   Rules #2 (the PgQ engine is sacred) and #3 (modern API must reduce cleanly to
   PgQ primitives).
 
@@ -15,30 +16,58 @@ This study was produced after a deep review of the Hacker News thread
 and a parallel investigation of the six systems that thread orbits around:
 **DBOS, absurd, Temporal, Restate, Rivet, and Gadget's Silo**.
 
+> **Revision note (2026-05-30):** An earlier draft of this study concluded that
+> PgQue's zero-bloat differentiator "does not transfer" to a workflow layer,
+> because durable engines need `SELECT … FOR UPDATE SKIP LOCKED` claim/lease
+> semantics that conflict with PgQ's rotation model. **That conclusion was
+> wrong.** It assumed the DBOS/absurd implementation strategy (a mutable
+> `workflow_status` row updated per step). If instead workflow state transitions
+> are modelled as **appended events over the rotating log** — i.e. durable
+> execution as event sourcing — the rotation model is not an obstacle but an
+> *advantage*. This revision rebuilds the analysis around that architecture.
+
 ---
 
 ## 1. Verdict up front
 
-**Do not pivot PgQue into a Temporal/DBOS-style durable-execution platform.**
-Going head-to-head as a general "durable workflows on Postgres" engine is a
-**late, undifferentiated, SDK-heavy bet** in a category that already has a
-well-distributed Postgres-native incumbent (absurd) and a celebrity-founder
-incumbent (DBOS). PgQue's signature advantage — zero-bloat snapshot+TRUNCATE
-rotation — **does not transfer** to the workflow layer, which needs per-run
-exclusive claiming, not batch rotation.
+**Durable execution is feasible on PgQue's model, and for the workloads that
+dominate today's demand it can win *because of* the model, not despite it.**
 
-**Do pursue the adjacent, well-leveraged slice:** *transactional durable
-queues + checkpointed steps*, shipped as an **optional, experimental
-`pgque-api` layer** that reduces to PgQ primitives plus one new
-claim/lease table. This stays inside PgQue's identity ("the best zero-bloat
-Postgres queue, now with durable steps"), exploits the one capability DBOS
-under-documents (atomic enqueue inside the caller's own transaction), and
-defers the expensive part (multi-language deterministic-replay runtimes) until
-demand is proven.
+The key realisation: durable execution *is* event sourcing (this is literally
+how Temporal's event-history-and-replay works), and PgQ is already an
+append-only event log with snapshot-batched consumption and TRUNCATE rotation.
+The mistake is to copy DBOS/absurd's storage strategy — a mutable
+`workflow_status` row that gets `UPDATE`d on every step — because *that* is what
+bloats, and it is exactly the pattern PgQue exists to avoid. The right strategy
+is to model each workflow as a **stream of state-transition events**: process a
+step, then **enqueue the next state as a new message** rather than mutating a
+row. The workflow is always either (a) one in-flight message, (b) a *scheduled*
+message awaiting a wake time, or (c) terminal. It never holds a batch open
+across a wait, so it never blocks rotation, and every state transition is an
+**append**, not an `UPDATE` — so the zero-bloat property carries straight
+through to the workflow layer.
 
-Net: **moderate-to-low feasibility for a standalone workflow-engine play;
-moderate-to-high feasibility for a focused "durable steps" extension of the
-queue.** The recommendation is the latter, phased and explicitly experimental.
+**What this means for strategy:** the well-leveraged bet is no longer "stay out
+of the workflow category." It is to build an **event-sourced durable-execution
+layer that is rotation-native**, shipped as an optional, experimental
+`pgque-api` layer that reduces to PgQ primitives plus a small bounded
+current-state projection. This stays inside PgQue's identity ("the zero-bloat
+Postgres queue") and turns the engine into a genuine competitive moat for
+high-throughput, fan-out-heavy, short-step durable workflows — precisely the
+AI-agent-loop and event-processing workloads the whole category is currently
+chasing.
+
+**Honest scoping:** the part to defer is *not* the engine — it is the
+"write-it-as-ordinary-linear-code" developer experience (Temporal/DBOS magic
+checkpointing). PgQue's natural programming model is a message-driven state
+machine (closer to AWS Step Functions / actors). That is a DX difference, not a
+capability gap, and it is recoverable later with an SDK that compiles linear
+code into re-enqueued continuations.
+
+Net: **moderate-to-high feasibility**, with a real and defensible
+differentiator — conditional on solving one genuinely hard piece
+(`awaitEvent`/join semantics) and accepting a state-machine programming model
+first, linear-code DX later.
 
 ---
 
@@ -61,241 +90,281 @@ Signals worth internalizing:
 - **The market keeps asking "why not just Postgres?"** Restate (own RocksDB
   store, BSL) took repeated HN criticism on exactly this. Rivet hedged back
   toward Postgres as a self-host backend. That recurring question *is* PgQue's
-  thesis — but absurd already answered it first in the workflow space.
+  thesis.
 - **Licensing trust is a real axis.** Restate's BSL drew loud "open source is
   misleading" criticism; Rivet's Apache-2.0 drew none. PgQue (Apache-2.0,
   literally "your own Postgres") inherits maximum trust by default.
 - **The wedge against Temporal is operational, not technical.** Every
   competitor's pitch is the same: *don't run a second distributed system; reuse
-  the database you already operate.* The complaints about Temporal are
+  the database you already operate.* The complaints about Temporal are the
   determinism learning curve, immutable shard-count decisions, and the
   Cassandra/Elasticsearch operational floor — not correctness.
-- **AI agents are the current demand driver.** DBOS, absurd, Restate, and
-  Temporal are all repositioning durable execution as the substrate for
-  long-running LLM agent loops. absurd's canonical example is an agent loop;
-  Temporal's Series C narrative is "durable AI workloads."
+- **AI agents are the current demand driver**, and they are
+  **high-volume, short-step, fan-out-heavy** — the exact workload shape where
+  append+rotate beats update+vacuum (see §5).
 
-So the category is real and PgQue's "Postgres-native, OSI-licensed, no new
-infra" framing is genuinely well-aligned with where the market is pulling. The
-problem is not the thesis — it is **who already occupies the exact niche**.
+So the category is real, PgQue's "Postgres-native, OSI-licensed, no new infra"
+framing is well-aligned with where the market is pulling, *and* — once the
+event-sourced architecture is adopted — PgQue's engine is a substrate advantage
+rather than the liability the first draft assumed.
 
 ---
 
-## 3. The technical crux: a concurrency-model mismatch
+## 3. The architecture: durable execution as event sourcing
 
-This is the single most important finding of the study.
+### 3.1 The core pattern — continuation-passing over the log
 
-Every durable-execution engine examined (DBOS, absurd, Silo, and Temporal's
-matching service) claims work units with **`SELECT … FOR UPDATE SKIP LOCKED` +
-a time-limited lease**: one run is claimed exclusively by one worker, the lease
-auto-extends while the worker checkpoints, and if the worker dies the lease
-expires and another worker steals the run. Sleep/await is modelled as
-`available_at` re-scheduling on a per-run row.
+A workflow is a state machine. Each step is a short, independently-triggered
+handler that does its work and **enqueues its successor state as a new event**:
 
-**PgQue does not work this way and must not be made to.** PgQ's engine is
-*snapshot + TRUNCATE batch rotation*: consumers read all events committed
-between two ticks using `pg_snapshot` visibility, and old event tables are
-rotated and TRUNCATEd wholesale. There is:
+```
+msg {wf: 42, state: charge}  → charge_card();      enqueue {wf:42, state: ship};   ack
+msg {wf: 42, state: ship}    → create_shipment();  enqueue {wf:42, state: notify}; ack
+msg {wf: 42, state: notify}  → notify();           ack          -- terminal
+```
 
-- no per-item exclusive claim (consumption is cooperative, batch-oriented,
-  at-least-once);
-- no lease / steal-on-crash for an individual message;
-- no per-row `available_at` rescheduling;
-- and — critically — **a hard conflict with long-lived state**: a workflow that
-  `sleep`s for a week or `awaitEvent`s indefinitely must persist its run and
-  checkpoints far longer than any rotating event window survives. An open batch
-  already blocks rotation; a long-running workflow on the rotation tables would
-  be pathological.
+There is no long-running function held in a worker process, so there is nothing
+to "replay" (contrast §3.4). State lives in the event chain (and, for large
+state, in a side row keyed by workflow id; for small state, in the payload
+itself — continuation-passing). Every transition is an **append**. No
+`UPDATE`, no per-step dead tuple, no VACUUM dependence on the hot path.
 
-`CLAUDE.md` Rule #2 ("the PgQ engine is sacred") forecloses retrofitting
-rotation to behave like a claim/lease queue. So a durable layer on PgQue would
-require a **new SKIP-LOCKED claim/lease table living *beside* the PgQ engine**,
-not on top of it. That means **PgQue would carry two concurrency models at
-once** — the rotation engine for streaming/CDC/fan-out, and a claim/lease engine
-for durable runs.
+### 3.2 Exactly-once handoff between steps (PgQue is *stronger* here)
 
-This is the crux of the whole decision:
+`pgque.insert_event()` (enqueue) and `pgque.finish_batch()` (ack) both run in
+the consumer's own transaction, so a step's effect, its successor enqueue, and
+the batch ack are **one atomic commit**:
 
-> PgQue's marketing identity is "the one Postgres queue that never bloats
-> because it uses rotation instead of SKIP LOCKED + DELETE." A durable-execution
-> layer is, by necessity, **a SKIP-LOCKED + UPDATE engine** — exactly the
-> mechanism PgQue defines itself against. The zero-bloat differentiator does not
-> apply to the workflow tables; they will accumulate dead tuples and need VACUUM
-> like everyone else's (mitigated by partition-detach, as absurd does).
+```sql
+begin;
+  -- step's own DB side effects (idempotent or in-txn)
+  perform pgque.insert_event(queue, next_state);  -- enqueue successor
+  perform pgque.ack(batch_id);                     -- finish_batch
+commit;
+```
 
-The latency objection, by contrast, **is no longer real**: PgQue 0.2.0 ticks at
-a 100 ms cadence (`ticker_loop()` runs `pgque.ticker()` every
-`tick_period_ms`, default 100 ms, committing between iterations), so end-to-end
-delivery is sub-second — squarely in the same range as absurd's and DBOS's
-worker polling loops. Latency is not what would hold a durable layer back.
+Commit → successor durably enqueued *and* batch finished atomically. Crash
+before commit → txn aborts, no successor exists, the step redelivers cleanly via
+PgQ's normal at-least-once redelivery. This is **exactly-once handoff** — the
+capability DBOS markets as "piggyback the checkpoint in the transaction," except
+here it is literally just SQL in the caller's transaction, and PgQue can
+*demonstrate* it where DBOS documents it only indirectly.
+
+### 3.3 The five durable-execution requirements, on this model
+
+1. **Exclusive ownership — structural, not lease-based.** One logical consumer +
+   cooperative subconsumers (`COOPERATIVE_CONSUMERS.md`, shipping experimental
+   in 0.2). Invariant: **one live message per workflow** (each step enqueues
+   exactly one successor). Each message goes to exactly one subconsumer, so only
+   one worker touches a given workflow at any instant. absurd/DBOS need
+   claim-with-lease + steal-on-crash; PgQue gets exclusivity for free from the
+   single-live-continuation invariant, with the cooperative `dead_interval`
+   takeover already designed for the worker-died-mid-batch case.
+
+2. **Mutable run state — re-enqueue, don't update.** A transition appends a new
+   event carrying the new state. For small state it rides in the payload and
+   there is no long-lived table at all.
+
+3. **Long-lived persistence — PR #237 is the foundation.** A step that sleeps a
+   week acks immediately and enqueues a *scheduled* continuation:
+   `sleep("7 days")` = `send_at(continuation, now()+7d)`. PR #237 makes
+   `send_at` itself **TRUNCATE-rotated and zero-bloat**. A long sleep costs one
+   row in a rotating delayed table — never an open batch, never a vacuum
+   problem. (This dissolves the old "open batch blocks rotation" objection: the
+   workflow does not hold a batch across the wait.)
+
+4. **Per-row scheduling — half solved, half genuinely hard.** Timers/sleep:
+   solved by PR #237's rotating `send_at`. Waking on an **external event**
+   (`awaitEvent`) with a timeout is the real new design work — a small "waiting"
+   registry keyed by `(workflow_id, event_name)`, an `emit` path that injects
+   the continuation, and a maint sweep for timeouts. Low-volume (bounded by
+   in-flight waiters, not throughput), tractable, but it must be designed
+   carefully (first-write-wins event caching to avoid emit/await races — absurd's
+   `e_`/`w_` table pair is a good reference shape).
+
+5. **Checkpoint replay — not needed (see §3.4).**
+
+### 3.4 Why "checkpoint replay" is unnecessary here
+
+In Temporal/DBOS/absurd a workflow is one linear function run in one process; to
+survive a crash, each step's result is saved, and on restart the function is
+**re-run from the top** with completed steps short-circuited from the saved log
+("replay"). That requires a long-lived run owned by a worker for its whole life.
+
+The continuation-passing model **eliminates the concept**: there is no
+long-running function to resume, so nothing to replay. Recovery is just
+redelivery of the single in-flight step, and correctness comes from the
+exactly-once handoff in §3.2 plus per-step idempotency keyed by
+`(workflow_id, step_seq)` (a unique index that prevents double-advance). This is
+strictly simpler than replay and native to a queue.
+
+### 3.5 The one piece of mutable state — bounded by concurrency, not throughput
+
+For observability, addressing, cancellation, and joins, keep a **current-state
+projection**: one row per *live* workflow, replaced as it advances, deleted on
+completion. This is the only mutable table, and it is bounded by **in-flight
+concurrency, not total throughput** — a million finished runs leave zero rows.
+VACUUM load scales with concurrency (fine), not with step volume.
+
+**This split is the whole trick:** hot, high-churn step transitions → rotating
+append-only log (zero bloat); cold, low-volume current-state index → tiny
+mutable table (negligible bloat). DBOS/absurd put the high-churn part on the
+mutable table and inherit the bloat wall; PgQue keeps the high-churn part on the
+log.
 
 ---
 
 ## 4. What is reusable vs. net-new
 
-**Reusable / aligned (low cost):**
+**Reusable / already in flight (low cost):**
 
-- **Single-file, anti-extension, managed-PG install.** absurd's `absurd.sql`
-  philosophy is identical to PgQue's `\i pgque.sql`. Validated approach.
-- **pg_cron for maintenance.** absurd uses pg_cron for partition
-  provisioning/cleanup/detach; PgQue already uses pg_cron for the ticker and
-  `maint()`. Same muscle.
-- **The data model** (tasks / runs / steps / checkpoints / events / waits) is
-  clean and orthogonal to how raw events are queued underneath. PgQue could
-  adopt absurd's schema shape almost verbatim as a reference.
-- **The no-determinism, checkpoint-replay, task-level-retry design.** This is
-  the most reusable idea and the one that *does* reduce cleanly to primitives
-  (Rule #3): a `pgque.step()` checkpoint table + replay-on-retry needs no change
-  to the PgQ engine. It also sidesteps Temporal's biggest adoption tax (the
-  determinism paradigm and "deploy correct code, break all running workflows").
-- **SQL-native observability comes free.** Workflows-as-rows means `psql`
-  inspection, `list_workflows`-style queries, and forking — all trivial in a
-  system that *is* SQL. DBOS markets this heavily; PgQue gets it for free.
+- **Single-file, anti-extension, managed-PG install** — identical to absurd's
+  validated `absurd.sql` philosophy and PgQue's `\i pgque.sql`.
+- **Cooperative consumers** (0.2) — gives parallel execution + structural
+  per-workflow exclusivity.
+- **Rotating `send_at`** (PR #237) — gives zero-bloat timers/sleep.
+- **Transactional `insert_event` + `finish_batch`** — gives exactly-once handoff
+  with no new primitive.
+- **`jsontriga`** — CDC-triggered workflow starts, native to the engine.
+- **SQL-native observability** — workflows-as-rows/events are `psql`-inspectable.
 
-**Net-new (the real cost):**
+**Net-new (the real cost, in order of difficulty):**
 
-1. **The deterministic/checkpoint replay *runtime*, per language.** This is
-   SDK-side logic — step memoization, resume-from-checkpoint, crash recovery
-   coordination across executors. The DBOS study's headline finding:
-   **~80% of DBOS's engineering lives in the multi-language SDK + replay runtime,
-   not in SQL.** PgQ's PL/pgSQL gives you the substrate, not this.
-2. **Claim / lease / watchdog machinery.** Claim expiry, lease extension on
-   checkpoint write, watchdog termination of broken workers — net-new, and
-   exactly the part absurd had to harden over five months in production.
-3. **Long-lived-state lifecycle.** Non-rotated run/checkpoint tables with TTL /
-   partition-detach cleanup, decoupled from event rotation.
-4. **Event caching / first-write-wins** races (await/emit), needing a
-   uniquely-indexed events table carefully ordered against wait registrations.
-5. **N synchronized SDKs.** DBOS maintains four (Python, TS mature; Go, Java
-   still 0.x). Keeping each in lockstep with engine semantics is the dominant
-   ongoing cost — well beyond the "~1,500 lines" budgeted for pgque-api in
-   SPECx. Durable workflows are a different order of magnitude.
+1. **`awaitEvent` / wait registry + emit path** (§3.3.4) — the genuinely hard
+   design: race-free event caching, timeout sweep, join/fan-in semantics.
+2. **Fan-out / join primitive** — a step that spawns N children (distinct child
+   workflow ids, each independently single-live) and a parent that awaits all N
+   (a counter in the projection, or children emit completion events the parent
+   awaits).
+3. **Current-state projection + step idempotency index** (§3.5) — small, but
+   needs careful transition logic so advance is exactly-once.
+4. **A reference SDK** — *one* language first (Python for AI-agent gravity, or
+   TypeScript for absurd-parity), exposing the state-machine API. Linear-code
+   DX (compiling an `async` function with `await` points into re-enqueued
+   continuations) is a *later* library project, not an engine requirement.
+
+Critically, **none of these touch the PgQ engine** (Rule #2) and all reduce to
+PgQ primitives + a couple of small side tables (Rule #3). The expensive
+multi-language deterministic-replay runtime that dominates DBOS's effort
+**does not exist in this model** — that cost simply isn't incurred.
 
 ---
 
-## 5. Adoption analysis — can PgQue win here?
+## 5. Adoption analysis — where PgQue wins, and the tradeoffs
 
-### Where PgQue *could* win
+### Where PgQue wins *because of* the model
 
-- **"It's literally just your Postgres."** No new datastore (vs Restate's
-  RocksDB, Silo's SlateDB, Temporal's Cassandra), Apache-2.0 (vs Restate's BSL),
-  managed-PG compatible. The strongest anti-lock-in story in the field.
-- **True transactional exactly-once for in-DB effects.** Because PgQue *is*
-  SQL, enqueue is just an `INSERT` in the caller's transaction — so "commit your
-  business write and the workflow enqueue atomically" is a first-class,
-  demonstrable feature. **DBOS markets a version of this but the study could not
-  find it explicitly documented** — there is an opening to own it cleanly.
-- **Proven-engine credibility.** Silo openly calls itself a prototype; absurd is
-  "an experiment in durability"; Restate has no rigorous benchmarks. PgQue's
-  PgQ lineage (15+ years, Skype/Microsoft scale) is the inverse story.
-- **Concurrency/rate-limiting as native primitives.** Silo's standout feature
-  (per-key concurrency queues, floating limits) is something Postgres does
-  atomically and well — a credible differentiator if pursued.
+1. **Zero-bloat at high step-throughput — the differentiator now transfers.**
+   DBOS/absurd do `UPDATE workflow_status` + `INSERT operation_outputs` per
+   step: mutable-row churn → the exact bloat wall PgQue exists to defeat. In the
+   event-sourced model every transition is an append to the rotating log; a
+   million agent iterations leave zero dead tuples on the hot path. For the
+   AI-agent-loop-at-scale workload everyone is chasing, **append+rotate
+   structurally beats update+vacuum.** This is the headline.
+2. **Native fan-out + batch step execution.** PgQ hands a *batch* of many
+   workflows' step-events at once, snapshot-isolated — advance thousands of
+   workflows in one transaction. DBOS is 1-write-per-step over per-row
+   `SKIP LOCKED`. PgQue amortizes where they pay per item.
+3. **Transactional exactly-once handoff** (§3.2) — stronger than at-least-once
+   competitors, and just SQL.
+4. **"It's literally just your Postgres"** — no new datastore (vs Restate's
+   RocksDB, Silo's SlateDB, Temporal's Cassandra), Apache-2.0 (vs Restate's
+   BSL), managed-PG compatible. Strongest anti-lock-in story in the field.
+5. **Proven-engine credibility** — PgQ's 15+ years vs absurd's "an experiment in
+   durability" and Silo's self-described prototype.
 
-### Where PgQue would *struggle*
+### The honest tradeoffs
 
-- **absurd already owns the exact niche.** "Single SQL file, Postgres-only,
-  self-hostable, thin SDK, no determinism" is *precisely* the slot a PgQue
-  durable layer would target — and absurd has ~1.95k stars, Apache-2.0,
-  production hardening, a Rust port (TensorZero), and **Armin Ronacher's
-  distribution**. PgQue would arrive second with a near-identical pitch.
-- **The differentiator doesn't transfer.** Zero-bloat rotation — the entire
-  reason to choose PgQue over pgmq — is irrelevant to the claim/lease workflow
-  tables. On the workflow layer PgQue is just another SKIP-LOCKED engine.
-- **Two concurrency models = a muddier story.** "We never use SKIP LOCKED" and
-  "our workflow engine uses SKIP LOCKED" coexisting invites the exact
-  "isn't this just a complicated queue with state?" critique DBOS already takes
-  on HN.
-- **SDK breadth is years of work.** Competing on the workflow programming model
-  means carrying replay runtimes in multiple languages — the opposite of
-  PgQue's "language-agnostic, the SQL API *is* the product" advantage.
-- **Single-Postgres ceiling.** DBOS guides ~a few thousand state
-  transitions/sec on one Postgres; honest, but it concedes hyperscale to
-  Temporal. Fine for a queue; a constraint to state loudly for workflows.
+- **State-machine programming model, not magic linear code.** Workflows are
+  expressed as message-driven steps (Step-Functions/actor style), not Temporal's
+  "write normal code, we checkpoint it invisibly." A *DX* difference, recoverable
+  later via a continuation-compiling SDK.
+- **`awaitEvent`/join is real new design** (§4.1–4.2), the main engineering risk.
+- **Single-Postgres ceiling** — honest "up to a few thousand workflow
+  transitions/sec per database" framing, as DBOS does; concede hyperscale to
+  Temporal.
+- **absurd already has distribution** in the "Postgres-only durable workflows"
+  framing. PgQue's counter is not "also Postgres" but "**zero-bloat at
+  throughput absurd's mutable-row design can't sustain**" — a concrete,
+  benchmarkable claim, not a me-too.
 
-### Honest read on success probability
+### Success probability (revised)
 
-A **standalone "PgQue Workflows" engine** competing with DBOS/absurd head-on:
-**low chance of breakout adoption.** Late entry, transferable differentiator
-absent, high and ongoing SDK cost, against a founder-distribution incumbent
-(absurd) and a credential incumbent (DBOS).
+- A **rotation-native, event-sourced durable-execution layer** marketed on
+  *zero-bloat high-throughput durable workflows*: **moderate-to-high** — it is
+  differentiated, reduces to existing primitives, and rides existing adoption.
+- A **DBOS/absurd clone** (mutable status row + multi-language replay runtime):
+  **low** — late, undifferentiated, and it would forfeit the one advantage.
 
-A **thin "durable steps + transactional enqueue" extension** of the existing
-queue: **moderate-to-good chance of being genuinely useful and adopted by
-PgQue's own users** — because it deepens the queue they already chose rather
-than asking them to evaluate PgQue as a workflow platform. It rides existing
-adoption instead of opening a new, contested front.
+The strategic point: don't enter the category the way the incumbents built it.
+Enter it the way only PgQue *can* build it.
 
 ---
 
 ## 6. Strategic options
 
-**Tier 0 — Stay the course (no change).** Keep SPECx §2.3's stance: PgQue is a
-queue; if you need step-by-step workflows, use Temporal/Restate/absurd. Lowest
-risk. Forgoes the category's momentum.
+**Tier 0 — Stay a pure queue.** Lowest risk; forgoes a genuine, defensible
+differentiator that the engine uniquely enables.
 
-**Tier 1 — Own "transactional durable enqueue" (recommended, low risk).**
-No workflow engine. Lean into what PgQue already does better than DBOS can
-document: enqueue inside the caller's transaction, exactly-once consumption
-patterns, idempotency helpers, and the supporting docs/examples. Pure
-extension of the queue identity. Mostly documentation + small helpers +
-TDD-tested examples. Reduces trivially to PgQ primitives.
+**Tier 1 — Own "transactional durable enqueue" now (low risk).** Document and
+helper-ize the exactly-once handoff (§3.2) and idempotent-step patterns. Pure
+extension of the queue identity; mostly docs + small helpers + TDD examples.
+Also the foundation the durable layer builds on.
 
-**Tier 2 — Experimental absurd-style "durable steps" (optional, medium risk).**
-Add a `sql/experimental/durable.sql` layer:
-- a **new claim/lease run table** beside the PgQ engine (not on rotation),
-- `tasks / runs / steps / checkpoints / events / waits` modelled on absurd,
-- checkpoint-replay with **task-level retry, no determinism requirement**,
-- pg_cron partition-detach cleanup for long-lived state,
-- **exactly one** reference SDK (Python *or* TypeScript — whichever the user
-  base skews to), explicitly experimental.
-Gated behind the `blueprints/PHASES.md` promotion rule. Honest "experimental,
-single-Postgres, up to a few thousand runs/sec" labelling. This is the only
-tier that touches the workflow space, and it does so additively and reversibly.
+**Tier 2 — Event-sourced durable steps (recommended, medium risk).** A
+`sql/experimental/durable.sql` layer:
+- continuation-passing steps over the rotating log (no mutable status row on the
+  hot path),
+- transactional handoff (`insert_event` + `finish_batch` in one txn),
+- rotating `send_at` (PR #237) for sleep/timers,
+- a bounded current-state projection + `(workflow_id, step_seq)` idempotency
+  index,
+- the `awaitEvent`/emit registry + fan-out/join primitive (the hard part —
+  design and TDD this first),
+- exactly **one** reference SDK, explicitly experimental, gated behind the
+  `PHASES.md` promotion rule.
+Marketed on the zero-bloat-at-throughput advantage, not "also Postgres."
 
-**Tier 3 — Full multi-language deterministic-replay workflow platform
-(not recommended).** Competing with Temporal/DBOS on their terms. Highest cost,
-weakest differentiation, contradicts PgQue's language-agnostic identity.
+**Tier 3 — Multi-language deterministic-replay platform (not recommended).**
+Competing with Temporal/DBOS on their terms and their costs, forfeiting the
+model's advantage.
 
 ---
 
 ## 7. Recommendation
 
-1. **Adopt Tier 1 now.** It is low-cost, on-identity, and claims a feature DBOS
-   leaves under-specified. It also makes the eventual Tier 2 story coherent.
-2. **Prototype Tier 2 as an explicit experiment**, behind `sql/experimental/`,
-   only if there is real pull from PgQue users (especially AI-agent use cases).
-   Treat absurd's schema and the no-determinism checkpoint-replay model as the
-   reference design. Build the claim/lease table as a *separate* mechanism and
-   document plainly that this layer is a SKIP-LOCKED engine — do not pretend it
-   inherits the zero-bloat property.
-3. **Do not pursue Tier 3.** Concede hyperscale and full polyglot workflow
-   orchestration to Temporal/DBOS; that honesty is itself credibility.
-4. **Keep the queue the headline.** PgQue's winning, defensible story remains
-   "the zero-bloat, managed-PG-compatible, language-agnostic Postgres queue."
-   Durable steps are a *feature of that queue*, never a repositioning of it.
+1. **Adopt Tier 1 now** — low-cost, on-identity, and the foundation for Tier 2.
+2. **Prototype Tier 2 as an explicit experiment**, leading with the
+   `awaitEvent`/join design (the one place the model has real new risk) and a
+   throughput+bloat benchmark vs a mutable-status-row baseline (absurd/DBOS
+   shape) — that benchmark *is* the marketing.
+3. **Do not pursue Tier 3.**
+4. **Keep the queue the headline; durable steps are a feature of the engine's
+   zero-bloat append-and-rotate design**, which is exactly why PgQue can offer
+   them where SKIP-LOCKED systems hit a wall.
 
 ---
 
 ## 8. Open questions for the maintainers
 
-- Is there demonstrated demand from PgQue's users for durable steps, or is this
-  driven by category FOMO? (Tier 2 should wait for the former.)
-- If Tier 2 proceeds, which single SDK first — Python (AI-agent gravity) or
-  TypeScript (absurd's primary)?
-- Are we comfortable carrying two concurrency models in one project, and
-  messaging that without diluting the zero-bloat story?
-- Does the transactional-enqueue feature (Tier 1) warrant a dedicated
-  benchmark + example against DBOS's `DBOSClient` enqueue path?
+- Is there demonstrated user pull for durable steps (especially AI-agent
+  use cases), or is this category FOMO? Tier 2 should follow real pull.
+- Reference SDK first: Python (AI-agent gravity) or TypeScript (absurd-parity)?
+- `awaitEvent` semantics: race-free emit/await caching, timeout handling, and
+  fan-in/join — design and TDD before any code.
+- Does the throughput+bloat benchmark vs a mutable-status-row baseline hold up
+  on server hardware? (If yes, it is the whole pitch.)
+- Are we comfortable shipping a state-machine programming model first, with
+  linear-code DX as a later SDK project?
 
 ---
 
 ## Appendix — per-system one-liners
 
 - **DBOS** — embedded library, Postgres `dbos` system schema
-  (`workflow_status`, `operation_outputs`, …), 1 write/step + 2/workflow,
-  SKIP-LOCKED queue dequeue, ~40k workflows/sec on one Postgres, replay runtime
-  is ~80% of the work, Conductor (ops) is the proprietary money-maker.
+  (`workflow_status`, `operation_outputs`, …), **mutable status row updated per
+  step**, SKIP-LOCKED queue dequeue, ~40k workflows/sec on one Postgres, replay
+  runtime is ~80% of the work, Conductor (ops) is the proprietary money-maker.
 - **absurd** — single `absurd.sql`, per-queue `t_/r_/c_/e_/w_/i_` tables,
   SKIP-LOCKED claim-with-lease, task-level retry, no determinism, pg_cron
   partition detach, thin TS/Python SDKs, Rust port (TensorZero).
@@ -310,4 +379,3 @@ weakest differentiation, contradicts PgQue's language-agnostic identity.
   queue* (not workflow engine), single-shard-per-tenant (~4k jobs/sec cap),
   first-class concurrency + rate limiting, self-described prototype.
 </content>
-</invoke>
