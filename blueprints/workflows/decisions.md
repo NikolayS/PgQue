@@ -40,3 +40,21 @@
 - accepted rB-9: Corrected the cross-reference: the no-subtransaction constraint is cited to §5.1/§5.13, not §5.10 (§5.2).
 - accepted rB-10: Populated the canonical architecture:begin/end block with the layered diagram, removing the stale '(architecture not yet specified)' placeholder (§4).
 - accepted rB-11: Added an assertion that a transient-failure step re-executes its body once per retry attempt up to max_retries then lands in the DLQ, guarding the dedup-vs-retry path (§6.2 item 3).
+
+## Round 3 — 2026-05-30T11:37:14.368Z
+
+- accepted rB-1: Actually populated the canonical architecture:begin/end block with the layered SDK→durable-layer→sacred-engine diagram, replacing the literal '(architecture not yet specified)' placeholder the v0.3 changelog had falsely claimed filled (§4).
+- accepted rB-2: Removed the 'tens of thousands of transitions/sec' / 'not throughput-timid' framing from §1/§2 and aligned all of §1, §2, and §12 to the idea's honest concession of ~a few thousand transitions/sec per database with hyperscale conceded to Temporal.
+- accepted rB-3: Redesigned poison-pill containment to use only the existing next_batch max_events bound (reduce to size 1), withdrawing the implied sub-range/partial-ack primitive, and pinned that bound as explicit engine contract #4 gated at install (§5.2/§5.9/§5.13).
+- accepted rB-4: Pinned per-join completion serialization (SELECT … FOR UPDATE / advisory lock on the join id) at READ COMMITTED so the final concurrent completers are ordered and the parent resumes exactly once — closing the lost-resume (zero-resume) race (§5.8).
+- accepted rB-5: Added an engine-contract regression test for the next_batch max_events bound (contract #4) plus a multi-tenant batch poison-isolation test asserting innocent co-tenants are not DLQ'd, and an install-floor gate covering all four contracts (§6.2/§6.3).
+- accepted rB-6: Dropped the undefined 'within-horizon pre-registration' clause; live wf_registry membership (held for a workflow's whole lifetime) is the sole emit-liveness source and already covers emit-before-await (§5.10.2/§5.12).
+- accepted rB-7: Reduced the 'all clients get workflows' claim to the single Python reference client actually staffed/scheduled, with Go/TS/WIP clients explicitly deferred, making §1/§2/§9/§11/§12 consistent with §7/§8 (§1/§2).
+
+## Round 4 — 2026-05-30T11:56:01.783Z
+
+- accepted contradiction#1: Pasted a real layered architecture diagram into the §4 architecture:begin/end block and corrected the false v0.4 changelog claim to admit the placeholder had remained, ending the twice-repeated conflict between the changelog and the actual block.
+- accepted ambiguity#1: Moved the poison-pill max_events reduction from process-local dispatcher state into a new consumer-wide wf_dispatch_control row read by every subconsumer before each next_batch, so a redelivered poison event cannot be re-aggregated at K by another subconsumer, and added a multi-subconsumer redelivery test plus a cross-subconsumer clause to engine contract #4.
+- accepted ambiguity#2: Specified the up-ramp: current_max_events is restored to K only after quarantine_cooldown consecutive clean size-1 commits (count-gated, not time-gated) so the poison is DLQ'd before batches re-aggregate, with a regression test for the restoration.
+- accepted contradiction#2: Withdrew the inconsistent 'append-based, rotating, not insert+delete' description and pinned wf_live as a single one-row-per-live-workflow HOT-UPDATEd projection (concurrency-bounded row-count; dead-tuple rate = update rate) so §4.2, §5.5, and §5.6 agree.
+- accepted ambiguity#3: Pinned the §5.4.1 staleness check as a pre-body, route-not-process gate that commits cleanly before any user body runs, scoped the contract-#2 'only durable counter' claim to the aborting-batch channel only, reconciling the two DLQ routes and adding a gate-ordering test.
