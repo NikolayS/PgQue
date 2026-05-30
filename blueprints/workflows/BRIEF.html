@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brief — PgQue Durable Workflows — SPEC v0.1 (v0.1)</title>
+<style>:root {
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fs: 15px; --lh: 1.5rem; --measure: 88ch;
+  --paper: #faf7f0; --paper-2: #f3efe4; --paper-3: #ebe6d6;
+  --ink: #1a1714; --ink-2: #4a443c; --ink-3: #847b6a;
+  --rule: #d8d0bc; --rule-2: #c2b89e;
+  --grid: rgba(26,23,20,0.045);
+  --accent: #1f6f3f; --accent-soft: #e6f0e0;
+  --ok: #1f6f3f; --ok-bg: #e6f0e0;
+  --warn: #a85a07; --warn-bg: #f5e8d0;
+  --bad: #9b2226; --bad-bg: #f3dfdc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14110d; --paper-2: #1c1814; --paper-3: #25201a;
+    --ink: #ece4d3; --ink-2: #b9b0a0; --ink-3: #7a7263;
+    --rule: #2f2a23; --rule-2: #423c33;
+    --grid: rgba(236,228,211,0.04);
+    --accent: #6fcf8a; --accent-soft: #1d2c20;
+    --ok: #6fcf8a; --ok-bg: #1d2c20;
+    --warn: #e0a14a; --warn-bg: #2c2317;
+    --bad: #e07a7d; --bad-bg: #2a1c1c;
+  }
+}
+[data-theme="dark"] {
+  --paper: #14110d; --paper-2: #1c1814; --paper-3: #25201a;
+  --ink: #ece4d3; --ink-2: #b9b0a0; --ink-3: #7a7263;
+  --rule: #2f2a23; --rule-2: #423c33;
+  --grid: rgba(236,228,211,0.04);
+  --accent: #6fcf8a; --accent-soft: #1d2c20;
+  --ok: #6fcf8a; --ok-bg: #1d2c20;
+  --warn: #e0a14a; --warn-bg: #2c2317;
+  --bad: #e07a7d; --bad-bg: #2a1c1c;
+}
+[data-theme="light"] {
+  --paper: #faf7f0; --paper-2: #f3efe4; --paper-3: #ebe6d6;
+  --ink: #1a1714; --ink-2: #4a443c; --ink-3: #847b6a;
+  --rule: #d8d0bc; --rule-2: #c2b89e;
+  --grid: rgba(26,23,20,0.045);
+  --accent: #1f6f3f; --accent-soft: #e6f0e0;
+  --ok: #1f6f3f; --ok-bg: #e6f0e0;
+  --warn: #a85a07; --warn-bg: #f5e8d0;
+  --bad: #9b2226; --bad-bg: #f3dfdc;
+}
+*,*::before,*::after { box-sizing: border-box; }
+html,body { margin: 0; padding: 0; }
+body {
+  font-family: var(--mono);
+  font-size: var(--fs); line-height: var(--lh);
+  color: var(--ink); background: var(--paper);
+  text-rendering: optimizeLegibility;
+  background-image: linear-gradient(
+    to bottom,
+    transparent calc(var(--lh) - 1px),
+    var(--grid) calc(var(--lh) - 1px)
+  );
+  background-size: 100% var(--lh);
+}
+::selection { background: var(--accent); color: var(--paper); }
+a { color: var(--ink); text-decoration: underline; text-underline-offset: 0.18em;
+    text-decoration-thickness: 1px; text-decoration-color: var(--rule-2); }
+a:hover { color: var(--accent); text-decoration-color: var(--accent); }
+p,ul,ol,pre,details { margin: 0 0 var(--lh); }
+ul { padding-left: 3ch; list-style: none; }
+ul > li::before { content: "\2500\00a0"; color: var(--ink-3);
+                  margin-left: -3ch; display: inline-block; width: 3ch; }
+ol { padding-left: 3ch; }
+li { margin: 0; }
+strong,b { font-weight: 700; }
+em,i { font-style: normal; color: var(--accent); }
+code,samp {
+  font-family: var(--mono); font-size: 0.92em;
+  background: var(--paper-2); border: 1px solid var(--rule);
+  padding: 0 0.4ch; border-radius: 2px;
+}
+pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+h1,h2,h3 { font-weight: 700; margin: 0 0 var(--lh); line-height: var(--lh); }
+h1 { font-size: 1.8rem; line-height: calc(var(--lh) * 2); }
+h2 { font-size: 1.1rem; }
+h3 { font-size: 1rem; color: var(--ink-2); font-weight: 600; }
+/* reading progress */
+.progress {
+  position: fixed; top: 0; left: 0; right: 0; height: 2px;
+  z-index: 60; background: transparent; pointer-events: none;
+}
+.progress > i { display: block; height: 100%; width: 0%;
+                background: var(--accent); transition: width 80ms linear; }
+/* sticky metabar */
+.metabar {
+  position: sticky; top: 0; z-index: 50;
+  background: var(--paper); border-bottom: 1px solid var(--rule);
+}
+.metabar-row {
+  max-width: var(--measure); margin: 0 auto; padding: 0 2ch;
+  display: flex; align-items: center;
+  height: calc(var(--lh) * 2); font-size: 0.85rem; gap: 2ch;
+}
+.metabar-left { display: flex; align-items: center; flex: 1 1 auto;
+                min-width: 0; white-space: nowrap; overflow: hidden; }
+.metabar-left .brand { font-weight: 700; color: var(--ink); padding-right: 1.5ch; }
+.metabar-left .chip { color: var(--ink-2); padding: 0 1.5ch;
+                      border-left: 1px solid var(--rule); }
+.metabar-left .chip b { color: var(--ink); font-weight: 600; }
+.metabar-right { display: flex; align-items: center; gap: 1.5ch; flex: 0 0 auto; }
+.metabar .status { color: var(--ink-3); white-space: nowrap; }
+.theme-sw { display: inline-flex; border: 1px solid var(--rule-2);
+            border-radius: 3px; overflow: hidden;
+            height: calc(var(--lh) * 1.1); }
+.theme-sw button {
+  background: transparent; border: 0; border-right: 1px solid var(--rule);
+  cursor: pointer; font-family: var(--mono); font-size: 0.95rem;
+  color: var(--ink-3); padding: 0 1.1ch;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 3ch;
+}
+.theme-sw button:last-child { border-right: 0; }
+.theme-sw button:hover { background: var(--paper-2); color: var(--ink); }
+.theme-sw button.active { background: var(--ink); color: var(--paper); }
+@media (max-width: 600px) {
+  .metabar .status { display: none; }
+  .metabar-left .chip:nth-of-type(2) { display: none; }
+}
+/* page */
+.brief {
+  max-width: var(--measure); margin: 0 auto;
+  padding: calc(var(--lh) * 2) 2ch calc(var(--lh) * 4);
+}
+/* hero */
+.brief-hero {
+  margin-bottom: calc(var(--lh) * 1.5);
+  border-bottom: 1px solid var(--rule); padding-bottom: var(--lh);
+}
+.brief-kicker {
+  font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-3); margin: 0 0 0.5rem;
+}
+.brief-title { font-size: 2rem; line-height: calc(var(--lh) * 2);
+               margin: 0 0 calc(var(--lh) * 0.5); }
+.brief-subtitle { color: var(--ink-2); margin: 0 0 var(--lh); font-size: 0.9rem; }
+.brief-subtitle code { font-size: 0.9em; }
+.brief-warning {
+  color: var(--ink-2); border-left: 2px solid var(--accent);
+  padding-left: 1.5ch; margin: var(--lh) 0 0; font-size: 0.92rem;
+}
+.brief-fallback {
+  background: var(--warn-bg); color: var(--warn);
+  border: 1px solid var(--rule-2); border-radius: 2px;
+  padding: calc(var(--lh) * 0.5) 1.5ch;
+  margin: 0 0 var(--lh); font-size: 0.9rem;
+}
+/* table of contents */
+.brief-toc {
+  margin: 0 0 calc(var(--lh) * 1.5);
+  padding: var(--lh) 2ch; border: 1px solid var(--rule);
+  background: var(--paper-2);
+}
+.brief-toc-title {
+  font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 0.5rem;
+}
+.brief-toc ol {
+  display: grid; grid-template-columns: repeat(auto-fit,minmax(20ch,1fr));
+  gap: 0 2ch; margin: 0; padding-left: 0; list-style: none;
+}
+.brief-toc li::before { content: ""; }
+.brief-toc a {
+  display: flex; gap: 1ch; padding: 2px 1ch;
+  text-decoration: none; color: var(--ink-2);
+  border-left: 2px solid transparent; margin-left: -1ch;
+}
+.brief-toc a .num { color: var(--ink-3); min-width: 3ch; }
+.brief-toc a:hover { color: var(--ink); background: var(--paper-3);
+                     border-left-color: var(--rule-2); }
+/* sections */
+.brief-goal,
+.brief-section {
+  scroll-margin-top: calc(var(--lh) * 3);
+  margin-bottom: calc(var(--lh) * 1.5);
+  border-top: 1px solid var(--rule); padding-top: var(--lh);
+}
+.brief-goal h2,
+.brief-section h2 {
+  display: flex; gap: 1ch; align-items: baseline; margin: 0 0 var(--lh);
+}
+.brief-goal h2 .n,
+.brief-section h2 .n {
+  color: var(--ink-3); font-weight: 500; font-size: 0.88rem;
+  min-width: 3ch; letter-spacing: 0.05em;
+}
+.brief-empty { color: var(--ink-3); font-style: italic; }
+.brief-more { list-style: none; }
+.brief-more::before { content: "" !important; }
+pre {
+  background: var(--paper-2); border: 1px solid var(--rule);
+  border-radius: 2px; padding: var(--lh) 2ch;
+  overflow-x: auto; font-size: 0.88em;
+  line-height: calc(var(--lh) * 0.9); margin: 0 0 var(--lh);
+}
+.brief-subsections { margin: 0 0 var(--lh); }
+.brief-subsections > summary { cursor: pointer; color: var(--ink-3); padding: 0.25rem 0; }
+.brief-subsections ol { margin: 0.5rem 0 0; padding-left: 3ch; }
+/* section kind variants */
+.brief-section-scope-out {
+  background: var(--paper-2); border-top-color: transparent;
+  border-left: 3px solid var(--rule-2);
+  margin-left: -2ch; padding-left: calc(2ch - 3px); border-radius: 2px;
+}
+.brief-section-risks {
+  background: var(--bad-bg); border-top-color: transparent;
+  border-left: 3px solid var(--bad);
+  margin-left: -2ch; padding-left: calc(2ch - 3px); border-radius: 2px;
+}
+.brief-section-risks h2 .n { color: var(--bad); }
+.brief-section-open-questions {
+  background: var(--paper-2); border-top-color: transparent;
+  border-left: 3px solid var(--accent);
+  margin-left: -2ch; padding-left: calc(2ch - 3px); border-radius: 2px;
+}
+.brief-section-open-questions h2 .n { color: var(--accent); }
+/* provenance */
+.brief-provenance {
+  margin-top: calc(var(--lh) * 2); padding-top: var(--lh);
+  border-top: 1px solid var(--rule);
+  color: var(--ink-3); font-size: 0.85rem;
+}
+.brief-provenance p { margin: 0 0 0.5rem; }
+.brief-provenance a { color: var(--ink-2); }
+.brief-provenance code { font-size: 0.9em; }
+@media print {
+  .progress,.metabar { display: none; }
+  .brief { max-width: none; padding: 0; }
+  .brief-goal,.brief-section { break-inside: avoid; }
+}</style>
+</head>
+<body>
+<div class="progress" aria-hidden="true"><i id="pb"></i></div>
+<header class="metabar">
+<div class="metabar-row">
+<div class="metabar-left">
+<span class="brand">workflows</span>
+<span class="chip">v<b>v0.1</b></span>
+<span class="chip">2026-05-30</span>
+</div>
+<div class="metabar-right">
+<span class="status">brief</span>
+<span class="theme-sw" role="group" aria-label="Theme">
+<button data-v="light" title="Light">&#9728;</button>
+<button data-v="dark" title="Dark">&#9790;</button>
+<button data-v="auto" title="System" class="active">&#9680;</button>
+</span>
+</div>
+</div>
+</header>
+<main class="brief">
+<header class="brief-hero">
+<p class="brief-kicker">Brief — derivative summary</p>
+<h1 class="brief-title">PgQue Durable Workflows — SPEC v0.1</h1>
+<p class="brief-subtitle">
+<code>workflows</code> ·
+ Version v0.1 ·
+ Published <time>2026-05-30T09:41:56.622Z</time> ·
+ <a href="./SPEC.md">canonical SPEC.md →</a>
+</p>
+<p class="brief-warning">
+Summary, not the spec. Skim this for shape, architecture, scope, risks, decisions, and open questions in 5–10 minutes; consult <a href="./SPEC.md">SPEC.md</a> for the full text.
+</p>
+</header>
+<nav class="brief-toc">
+<div class="brief-toc-title">In this brief</div>
+<ol>
+<li><a href="#s-goal"><span class="num">01</span><span>Goal</span></a></li>
+<li><a href="#s-1-goal-why-it-s-needed"><span class="num">02</span><span>1. Goal &amp; why it&#39;s needed</span></a></li>
+<li><a href="#s-2-scope-resolved-interview-decisions"><span class="num">03</span><span>2. Scope &amp; resolved interview decisions</span></a></li>
+<li><a href="#s-3-user-stories"><span class="num">04</span><span>3. User stories</span></a></li>
+<li><a href="#s-4-architecture"><span class="num">05</span><span>4. Architecture</span></a></li>
+<li><a href="#s-5-implementation-details"><span class="num">06</span><span>5. Implementation details</span></a></li>
+<li><a href="#s-6-tests-plan"><span class="num">07</span><span>6. Tests plan</span></a></li>
+<li><a href="#s-7-team-veteran-experts-to-hire"><span class="num">08</span><span>7. Team (veteran experts to hire)</span></a></li>
+<li><a href="#s-8-implementation-plan-sprints-parallelization-ordering"><span class="num">09</span><span>8. Implementation plan (sprints, parallelization, ordering)</span></a></li>
+<li><a href="#s-9-topic-specific-api-surface-reference-sdk-python-v0-1"><span class="num">10</span><span>9. Topic-specific: API surface (reference SDK, Python v0.1)</span></a></li>
+<li><a href="#s-10-non-goals-disclaimers-honored-strictly-not-reintroduced-anywhere-above"><span class="num">11</span><span>10. Non-goals / disclaimers (honored strictly — not reintroduced anywhere above)</span></a></li>
+<li><a href="#s-11-embedded-changelog"><span class="num">12</span><span>11. Embedded Changelog</span></a></li>
+</ol>
+</nav>
+<section class="brief-goal" id="s-goal">
+<h2><span class="n">01</span><span>Goal</span></h2>
+<p>&gt; Status: <strong>experimental</strong>, ships as optional <code>sql/experimental/durable.sql</code> gated by the project promotion rule. One reference SDK. Engine layer is sacred and untouched.</p>
+</section>
+<section class="brief-section brief-section-generic" id="s-1-goal-why-it-s-needed">
+<h2><span class="n">02</span><span>1. Goal &amp; why it&#39;s needed</span></h2>
+<p><strong>Goal.</strong> Provide a durable-execution / durable-workflow layer for PgQue that models each workflow as an <strong>append-only stream of state-transition events</strong> running over PgQ&#39;s existing snapshot + TRUNCATE rotation engine, so durable workflows inherit PgQ&#39;s zero-bloat property instead of fighting it.</p>
+<p><strong>Why this exists.</strong> Every Postgres-native durable-execution engine in the category (DBOS, absurd, and the long tail of <code>SELECT … FOR UPDATE SKIP LOCKED</code> + <code>DELETE</code> queues) shares one structural liability: they model a workflow as a <strong>mutable <code>workflow_status</code> row that is <code>UPDATE</code>d on every step</strong>. At the throughput the category is actually chasing — AI agent loops doing millions of cheap iterations — that per-step <code>UPDATE</code> churns dead tuples until the workload hits a VACUUM wall, and throughput degrades. PgQ already solved exactly this problem for <em>queues</em> with snapshot-batch isolation + wholesale <code>TRUNCATE</code> rotation: zero dead-tuple bloat under sustained load. The insight this spec operationalizes is that <strong>durable execution is event sourcing</strong>, PgQ is <strong>already an append-only event log</strong>, and therefore a workflow can be modeled as a stream of appended transitions (continuation-passing) rather than a mutated row. The zero-bloat property then carries through, <em>for free</em>, from the queue layer to the workflow layer.</p>
+<p>This exists because no one else can credibly claim &quot;durable workflows with a flat dead-tuple curve at agent-loop throughput, on just your managed Postgres, no separate datastore.&quot; That is the entire pitch, and it is only reachable by building <strong>on top of</strong> the rotation engine rather than re-introducing a mutable-status model beside it.</p>
+</section>
+<section class="brief-section brief-section-decisions" id="s-2-scope-resolved-interview-decisions">
+<h2><span class="n">03</span><span>2. Scope &amp; resolved interview decisions</span></h2>
+<p>The interview answers were all delegated to the lead (&quot;decide for me&quot;). Resolved:</p>
+<p>| Question | Decision (v0.1) | |---|---| | <strong>Primary users</strong> | Backend engineers running long-lived or high-iteration orchestration (AI agent loops, multi-step business processes, fan-out jobs) <strong>on managed Postgres</strong> who refuse a second datastore and refuse a VACUUM wall. | | <strong>Core job</strong> | Advance a workflow from one step to the next with <strong>exactly-once handoff</strong> and <strong>at-least-once step execution</strong>, never losing or silently duplicating a workflow&#39;s progress — on a hot path that appends and rotates rather than updates. | | <strong>Durability / recovery guarantee</strong> | At-least-once step execution + exactly-once handoff between steps; per-step idempotency keyed on <code>(workflow_id, step_seq)</code>. On crash, exactly the single in-flight step redelivers (PgQ&#39;s existing redelivery); there is no long function to replay. | | <strong>Success metric</strong> | A throughput-and-bloat benchmark vs a mutable-status-row baseline (DBOS/absurd shape) on server hardware: <strong>flat dead-tuple count + sustained throughput</strong> on the append+rotate hot path where the baseline degrades. | | <strong>Out of scope for v0.1</strong> | Cancellation / orphan-join propagation; linear-code (<code>async/await</code>-compiled) DX; N synchronized SDKs; hyperscale (&gt;~ a few thousand transitions/sec/db); deterministic replay. |</p>
+<p>---</p>
+</section>
+<section class="brief-section brief-section-generic" id="s-3-user-stories">
+<h2><span class="n">04</span><span>3. User stories</span></h2>
+<p>Each story is persona + action + outcome and is directly exercised as a manual acceptance test (§6.4).</p>
+<p>---</p>
+<ul>
+<li><strong>Agent-loop builder (zero-bloat at iteration scale).</strong> <em>As</em> a backend engineer running an AI agent that loops thousands of times per run, <em>I</em> define each iteration as a step that processes and enqueues its successor, <em>so that</em> a million iterations complete with a <strong>flat dead-tuple count</strong> on the hot tables and no VACUUM-driven throughput cliff — verifiable with <code>pg_stat_user_tables.n_dead_tup</code> staying flat through the run.</li>
+</ul>
+</section>
+<section class="brief-section brief-section-architecture" id="s-4-architecture">
+<h2><span class="n">05</span><span>4. Architecture</span></h2>
+<p>&lt;!-- architecture:begin --&gt;</p>
+<p>&lt;!-- architecture:end --&gt;</p>
+<p>The durable layer <strong>only calls</strong> the five PgQ primitives + <code>send_at</code>. It adds <strong>no</strong> modification to rotation/tick/batch logic and introduces <strong>no</strong> second concurrency model.</p>
+<ul>
+<li><strong>Workflow</strong> — a logical state machine identified by <code>workflow_id</code>. At any instant it is in exactly one of three conditions: <strong>(a)</strong> one <em>in-flight</em> message (a step-event sitting in a PgQ batch being processed), <strong>(b)</strong> <em>scheduled</em> (a <code>send_at</code> continuation awaiting a wake time, or a registered wait awaiting an event), or <strong>(c)</strong> <em>terminal</em>. The <strong>single-live-continuation invariant</strong> — each processed step enqueues <em>exactly one</em> successor — is what makes exclusivity structural rather than lease-based.</li>
+<li><strong>Step-event</strong> — the message on the PgQ queue. Payload carries: <code>workflow_id</code>, <code>step_seq</code> (monotonic progress anchor), <code>step_name</code>/state tag, and small continuation state (continuation-passing). Large state is the user&#39;s responsibility to hold in their own tables, addressed by <code>workflow_id</code>.</li>
+<li><strong>Transition</strong> — process a step → emit successor as a <em>new append</em>. Never an <code>UPDATE</code> of a status row.</li>
+<li><strong>Coordination side tables</strong> (the only mutable state; see §5.5) — <code>wf_wait</code>, <code>wf_event_cache</code>, <code>wf_join</code>, <code>wf_join_done</code>, <code>wf_dedup</code>, <code>wf_live</code> (current-state projection). Their churn is bounded by <strong>concurrency and coordination-point count, not total step volume</strong> (the honest correction, §5.6).</li>
+</ul>
+<pre data-lang="text"><code class="language-text">(architecture not yet specified)</code></pre>
+<pre><code>┌──────────────────────────────────────────────────────────┐
+│  Reference SDK (Python, v0.1)                            │  ← thin client
+│  defineWorkflow / step / sleep / awaitEvent / emit /     │
+│  spawn / awaitAll  →  plain SQL function calls           │
+├──────────────────────────────────────────────────────────┤
+│  Durable layer  (sql/experimental/durable.sql)          │  ← THIS SPEC
+│  • dispatch loop over PgQ batches                        │
+│  • coordination side tables (waits, joins, dedup, proj.) │
+│  • SECURITY DEFINER fns, search_path=pgque,pg_catalog    │
+├──────────────────────────────────────────────────────────┤
+│  PgQ engine  (SACRED — UNMODIFIED)                       │  ← do not touch
+│  insert_event · next_batch · get_batch_events ·          │
+│  finish_batch · event_retry · send_at (PR #237) ·        │
+│  ticks · snapshot rotation · TRUNCATE · cooperative      │
+│  consumers (dead_interval takeover)                      │
+└──────────────────────────────────────────────────────────┘</code></pre>
+<details class="brief-subsections">
+<summary>Subsections (3)</summary>
+<ol><li>4.1 Layering (the sacred boundary)</li>
+<li>4.2 Key abstractions</li>
+<li>4.3 Concurrency / ownership model</li></ol>
+</details>
+</section>
+<section class="brief-section brief-section-generic" id="s-5-implementation-details">
+<h2><span class="n">06</span><span>5. Implementation details</span></h2>
+<p>The foundational guarantee. <code>insert_event()</code> (enqueue successor) and <code>finish_batch()</code> (ack) run in the <strong>consumer&#39;s own transaction</strong>, so a step&#39;s side effects, its successor enqueue, and its batch ack are <strong>one atomic commit</strong>:</p>
+<p>No subtransactions are used on this path (hard constraint).</p>
+<p>A batch may contain step-events for <strong>thousands of distinct workflows</strong>; they advance in <strong>one transaction</strong> (native fan-out + batch step execution). A step that fails transiently calls <code>pgque.event_retry()</code> for that single event rather than aborting the whole batch where the engine allows per-event retry; a poisoned step lands in PgQ&#39;s existing DLQ after max retries.</p>
+<ul>
+<li><strong>Commit</strong> ⇒ successor durably enqueued <strong>AND</strong> batch finished, atomically ⇒ exactly-once handoff.</li>
+<li><strong>Crash before commit</strong> ⇒ txn aborts ⇒ no successor, no dedup marker, batch not finished ⇒ the step redelivers cleanly.</li>
+</ul>
+<pre><code>begin;
+  -- 1. step&#39;s own DB side effects (idempotent or naturally in-txn)
+  -- 2. record per-step dedup marker (workflow_id, step_seq)   [if first delivery]
+  perform pgque.insert_event(queue, next_state);   -- enqueue exactly one successor
+  perform pgque.finish_batch(batch_id);            -- ack this step
+commit;</code></pre>
+<pre><code>loop:
+  batch_id := pgque.next_batch(queue, consumer)        -- snapshot-bounded
+  if batch_id is null: sleep to next tick; continue
+  events  := pgque.get_batch_events(batch_id)          -- many workflows at once
+  begin
+    for each event in events:                          -- batch step execution
+        advance_one(event)                             -- §5.3, appends successor(s)
+    pgque.finish_batch(batch_id)
+  commit</code></pre>
+<details class="brief-subsections">
+<summary>Subsections (8)</summary>
+<ol><li>5.1 The hot path: one transition = append + ack, atomically</li>
+<li>5.2 Dispatch loop</li>
+<li>5.3 The five durable-execution requirements, mapped</li>
+<li>5.4 Per-step idempotency</li>
+<li>5.5 Coordination side tables</li>
+<li>5.6 The honest zero-bloat claim (stated precisely, never overstated)</li>
+<li>5.7 `awaitEvent` / `emit` — the ~20% with real risk (designed and TDD&#39;d first)</li>
+<li>5.8 fan-out / join (spawn + `awaitAll`)</li></ol>
+</details>
+</section>
+<section class="brief-section brief-section-generic" id="s-6-tests-plan">
+<h2><span class="n">07</span><span>6. Tests plan</span></h2>
+<p><strong>Red/green TDD for ALL new code.</strong> Every function below is written test-first: a failing test asserting the behavior, then the implementation that makes it pass. CI rejects any new SQL function or SDK method without a preceding failing-then-passing test in the same change.</p>
+<p>These are the pieces explicitly required to be designed and TDD&#39;d <strong>first</strong>, before any happy-path step plumbing:</p>
+<p>Each of the five user stories has a runnable scenario script the reviewer executes by hand against a managed-PG-like instance.</p>
+<ul>
+<li><strong>Exactly-once handoff</strong> (§5.1) — red test: kill the txn between <code>insert_event</code> and <code>commit</code>, assert no successor + clean redelivery; assert no double-handoff on commit.</li>
+<li><strong>Per-step idempotency</strong> (§5.4) — red test: deliver the same <code>(workflow_id, step_seq)</code> twice, assert exactly one successor + one side effect.</li>
+<li><strong><code>awaitEvent</code> / <code>emit</code> race matrix</strong> (§5.7) — one red test per row of the race table (emit-before-await, interleave, double-resume, stale cache, await redelivery, timeout). Single-resume token proven by concurrent emit+sweep test.</li>
+<li><strong>fan-out / join</strong> (§5.8) — red tests: race-free join-total recording; idempotent completed-set under duplicated completion; exactly-once parent resume; per-child failure surfaced in the result array.</li>
+</ul>
+<details class="brief-subsections">
+<summary>Subsections (5)</summary>
+<ol><li>6.1 Hard repo rule</li>
+<li>6.2 Built test-first, in this order (highest risk first)</li>
+<li>6.3 CI test suites</li>
+<li>6.4 Manual acceptance (maps 1:1 to §3 user stories)</li>
+<li>6.5 Success-criterion benchmark (the entire pitch)</li></ol>
+</details>
+</section>
+<section class="brief-section brief-section-generic" id="s-7-team-veteran-experts-to-hire">
+<h2><span class="n">08</span><span>7. Team (veteran experts to hire)</span></h2>
+<p>Veteran <strong>&quot;Durable Workflow Engineer&quot;</strong> (accepted).</p>
+<p>---</p>
+<ul>
+<li><strong>Veteran PostgreSQL internals / MVCC engineer (1)</strong> — owns the snapshot/visibility reasoning, <code>xid8</code>/<code>pg_snapshot</code>, rotation interaction, no-subtransaction guarantee.</li>
+<li><strong>Veteran durable-execution / distributed-systems engineer (1)</strong> — owns the await/emit and fan-out/join race designs and the single-resume-token correctness proofs.</li>
+<li><strong>Veteran PL/pgSQL + SQL test engineer (pgTAP) (1)</strong> — owns the red/green TDD harness, concurrency/property tests, crash-recovery injection.</li>
+<li><strong>Veteran SDK / developer-experience engineer (Python) (1)</strong> — owns the one reference SDK and the thin-client surface.</li>
+<li><strong>Veteran performance / benchmarking engineer (1)</strong> — owns the throughput-and-bloat benchmark harness and the published curves.</li>
+<li><strong>Veteran technical writer / DX reviewer (0.5, shared)</strong> — owns the experimental-feature docs and the honest-claim framing.</li>
+</ul>
+<details class="brief-subsections">
+<summary>Subsections (1)</summary>
+<ol><li>7.1 Persona for this spec round</li></ol>
+</details>
+</section>
+<section class="brief-section brief-section-generic" id="s-8-implementation-plan-sprints-parallelization-ordering">
+<h2><span class="n">09</span><span>8. Implementation plan (sprints, parallelization, ordering)</span></h2>
+<p><strong>Sprint 0 — Foundations &amp; harness (1 wk).</strong></p>
+<p><strong>Sprint 1 — Exactly-once core (1.5 wk).</strong> <em>(highest risk first, per constraint)</em></p>
+<p><strong>Sprint 2 — Coordination primitives (2 wk).</strong> <em>Two independent tracks in parallel:</em></p>
+<ul>
+<li>Test engineer: stand up pgTAP red/green harness, CI matrix (PG 14–18), engine-sacredness diff-guard. <em>(blocks everyone — must land first.)</em></li>
+<li>PG-internals engineer: spike <code>next_batch</code>/<code>get_batch_events</code>/<code>finish_batch</code> reduction; confirm <code>send_at</code> (PR #237) shape.</li>
+<li><em>Parallel:</em> SDK engineer scaffolds the thin Python client surface against stub SQL signatures.</li>
+</ul>
+</section>
+<section class="brief-section brief-section-generic" id="s-9-topic-specific-api-surface-reference-sdk-python-v0-1">
+<h2><span class="n">10</span><span>9. Topic-specific: API surface (reference SDK, Python v0.1)</span></h2>
+<p>Every SDK call compiles to one of the five PgQ primitives + a coordination-table touch. <strong>No</strong> <code>async/await</code>-compiled linear-code DX in v0.1 (deferred, §10).</p>
+<p>---</p>
+<pre data-lang="python"><code class="language-python">wf = defineWorkflow(&quot;order_fulfillment&quot;)
+
+@wf.step(&quot;charge&quot;)
+def charge(ctx, state):
+    ctx.side_effect(...)              # user&#39;s own idempotent/in-txn write
+    return ctx.goto(&quot;await_ship&quot;, state)        # append successor
+
+@wf.step(&quot;await_ship&quot;)
+def await_ship(ctx, state):
+    return ctx.await_event(&quot;shipped&quot;, timeout=&quot;24h&quot;,
+                           on_event=&quot;notify&quot;, on_timeout=&quot;escalate&quot;)
+
+@wf.step(&quot;fan&quot;)
+def fan(ctx, state):
+    return ctx.spawn([...N children...], join=&quot;collect&quot;)   # awaitAll → result array
+
+# external producer, anywhere:
+emit(workflow_id, &quot;shipped&quot;, payload)</code></pre>
+</section>
+<section class="brief-section brief-section-scope-out" id="s-10-non-goals-disclaimers-honored-strictly-not-reintroduced-anywhere-above">
+<h2><span class="n">11</span><span>10. Non-goals / disclaimers (honored strictly — not reintroduced anywhere above)</span></h2>
+<p>---</p>
+<ul>
+<li><strong>NOT</strong> a Temporal/DBOS-style deterministic-replay engine. No workflow-determinism requirement, no replay of a long linear function, no per-step <code>workflow_status</code> UPDATE churn.</li>
+<li><strong>NOT</strong> a multi-language deterministic-replay runtime in v1. No N synchronized SDKs — one reference SDK.</li>
+<li><strong>NOT</strong> a separate server, daemon, or external datastore. No Cassandra, RocksDB, FoundationDB, or Redis.</li>
+<li><strong>NOT</strong> targeting hyperscale (&gt;~ a few thousand workflow transitions/sec per database) — conceded to Temporal honestly.</li>
+<li><strong>NOT</strong> changing the sacred PgQ engine, and <strong>NOT</strong> introducing a second <code>SELECT … FOR UPDATE SKIP LOCKED</code> claim/lease concurrency model as the primary mechanism — exclusivity comes from the single-live-continuation invariant over the existing rotation engine.</li>
+<li><strong>Cancellation / orphan-join propagation is deferred</strong> to a follow-up, not in v0.1.</li>
+<li>Linear-code (<code>async/await</code>-compiled) DX is an explicit <strong>later</strong> SDK project, not an engine requirement.</li>
+</ul>
+</section>
+<section class="brief-section brief-section-generic" id="s-11-embedded-changelog">
+<h2><span class="n">12</span><span>11. Embedded Changelog</span></h2>
+<ul>
+<li><strong>v0.1</strong> (2026-05-30) — Initial spec scaffold fleshed into full structure. Resolved all five delegated interview questions (primary users, core job, durability model, success metric, out-of-scope). Added Goal-&amp;-why framing, 5 user stories, layered architecture with the sacred-engine boundary, hot-path/coordination implementation detail incl. the honest zero-bloat correction, await/emit + fan-out/join race designs, red/green TDD-first ordering, team roster, 5-sprint plan with parallel tracks, SDK surface, and strict non-goals. No reviewer findings yet (first authoring round).</li>
+</ul>
+</section>
+<footer class="brief-provenance">
+<p>
+Generated by <code>samospec brief workflows</code> on <time>2026-05-30T09:42:03.025Z</time>.
+ 1 review round —
+ lead —,
+ reviewers — +
+ —.
+</p>
+<p>Re-run after each <code>samospec publish</code> to refresh. Canonical document: <a href="./SPEC.md">SPEC.md</a>.</p>
+</footer>
+</main>
+<script>(function(){
+var r=document.documentElement,bs=document.querySelectorAll('.theme-sw button');
+var s=localStorage.getItem('brief-theme')||'auto';
+function apply(v){r.dataset.theme=v==='auto'?'':v;
+  bs.forEach(function(b){b.classList.toggle('active',b.dataset.v===v);});}
+apply(s);
+bs.forEach(function(b){b.addEventListener('click',function(){
+  var v=b.dataset.v||'auto';localStorage.setItem('brief-theme',v);apply(v);});});
+var bar=document.getElementById('pb');
+if(bar){var upd=function(){var m=document.body.scrollHeight-window.innerHeight;
+  bar.style.width=(m>0?window.scrollY/m*100:0)+'%';};
+  window.addEventListener('scroll',upd,{passive:true});upd();}
+})();</script>
+</body>
+</html>
