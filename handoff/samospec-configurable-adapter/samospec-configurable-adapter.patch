@@ -1,0 +1,581 @@
+From 64a09a187ad50275d47028328f3bcf35cbf84b53 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 30 May 2026 09:39:18 +0000
+Subject: [PATCH] feat(adapter): make reviewer panel adapter configurable per
+ seat
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reviewer A was hardcoded to CodexAdapter in
+buildReviewLoopAdaptersFromConfig, so a Claude-only environment
+(no codex CLI) could not run the review panel. The per-seat config
+block already carried an `adapter` field, but from-config.ts only
+honored model_id / fallback_chain and ignored the vendor selector.
+
+Thread a per-seat `adapter` vendor ("claude" | "codex") through
+readAdaptersConfig / AdapterRoleConfig and use it to build Reviewer
+A. Absent or "codex" keeps the CodexAdapter (default unchanged);
+"claude" builds a new ClaudeReviewerAAdapter that mirrors
+ClaudeReviewerBAdapter: it subclasses ClaudeAdapter and overrides
+critique() to prepend the verbatim security/ops persona prefix
+(re-exported from codex.ts as CODEX_CRITIQUE_PERSONA_PREFIX). A
+Claude Reviewer A joins the lead + reviewer_b shared resolver so it
+honors SPEC §11 coupled fallback. The §11 reviewer_b coupling
+footgun warning is unchanged.
+
+Defaults are identical when no `adapter` key is present
+(lead->claude, reviewer_a->codex, reviewer_b->claude), so this is a
+non-breaking change.
+
+Tests (red/green TDD): new
+tests/adapter/from-config-reviewer-adapter.test.ts asserts vendor
+selection (claude -> ClaudeReviewerAAdapter, vendor "claude";
+absent/"codex" -> CodexAdapter), persona parity (verbatim prefix
+forwarded to stdin), and the adapter field threading through
+readAdaptersConfig. Docs: README review-panel config section +
+CHANGELOG Added entry document adapters.<seat>.adapter.
+
+https://claude.ai/code/session_01JncZZd3qqSWLP2EvBJ2jet
+---
+ CHANGELOG.md                                  |  15 ++
+ README.md                                     |  19 ++
+ src/adapter/claude-reviewer-a.ts              |  83 +++++++
+ src/adapter/codex.ts                          |   2 +-
+ src/adapter/from-config.ts                    |  81 ++++++-
+ .../from-config-reviewer-adapter.test.ts      | 228 ++++++++++++++++++
+ 6 files changed, 415 insertions(+), 13 deletions(-)
+ create mode 100644 src/adapter/claude-reviewer-a.ts
+ create mode 100644 tests/adapter/from-config-reviewer-adapter.test.ts
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 24d1f31..4fcea7d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ 
+ ## [Unreleased]
+ 
++### Added
++
++- **Per-seat review-panel adapter selection.** Each panel seat now reads
++  `adapters.<seat>.adapter` from `.samo/config.json` (`"claude"` or
++  `"codex"`) to choose the CLI vendor that fills it. Reviewer A is no
++  longer hardcoded to Codex: set `adapters.reviewer_a.adapter` to
++  `"claude"` to run the whole panel on Claude in Codex-less (Claude-only)
++  environments. A Claude-vendor Reviewer A keeps the same paranoid
++  security/ops persona as the Codex seat (weighting toward missing-risk,
++  weak-implementation, unnecessary-scope) and joins the lead +
++  reviewer_b shared Claude fallback resolver (coupled fallback). The
++  field is fully back-compatible: absent (or `"codex"`) preserves the
++  existing defaults — lead → claude, reviewer_a → codex, reviewer_b →
++  claude.
++
+ ## [0.9.0] - 2026-05-29
+ 
+ ### Added
+diff --git a/README.md b/README.md
+index fa8543b..e47baf0 100644
+--- a/README.md
++++ b/README.md
+@@ -193,6 +193,25 @@ Both must be **repo-relative** (absolute paths and `..`-escapes are rejected). P
+ 
+ > **Heads-up:** the next minor release flips the defaults to `samo/spec` and `samo/blueprints` (visible, Pages-friendly out of the box). Set the keys above to keep the legacy layout when that lands. `.samo/config.json` itself stays put — the `.samo/` directory remains the home for runtime/config files.
+ 
++### Configuring the review panel
++
++Each panel seat is configured under `adapters.<seat>` in `.samo/config.json`. A seat picks its CLI vendor with `adapter` (`"claude"` or `"codex"`), its preferred model with `model_id`, and its degrade order with `fallback_chain`:
++
++```json
++{
++  "schema_version": 1,
++  "adapters": {
++    "lead": { "adapter": "claude", "model_id": "claude-opus-4-8" },
++    "reviewer_a": { "adapter": "codex", "model_id": "gpt-5.5" },
++    "reviewer_b": { "adapter": "claude", "model_id": "claude-opus-4-8" }
++  }
++}
++```
++
++- `adapters.<seat>.adapter` — which CLI runs the seat: `"claude"` or `"codex"`. Omit it to keep the default (lead → `claude`, reviewer_a → `codex`, reviewer_b → `claude`).
++- Reviewer A defaults to Codex. In a Claude-only environment (no `codex` CLI), set `adapters.reviewer_a.adapter` to `"claude"` to run the whole panel on Claude — the seat keeps the same paranoid security/ops persona (weighting toward missing-risk, weak-implementation, unnecessary-scope).
++- The lead and reviewer_b share one Claude fallback resolver (coupled fallback), so a `claude` reviewer_a and a divergent `adapters.reviewer_b` model config track the lead's pin rather than diverging.
++
+ ---
+ 
+ ## Stack
+diff --git a/src/adapter/claude-reviewer-a.ts b/src/adapter/claude-reviewer-a.ts
+new file mode 100644
+index 0000000..0acda42
+--- /dev/null
++++ b/src/adapter/claude-reviewer-a.ts
+@@ -0,0 +1,83 @@
++// Copyright 2026 Nikolay Samokhvalov.
++
++// SPEC §7 (Model roles), §11 (coupled_fallback): a Claude-vendor
++// Reviewer A adapter — a Claude session wrapping the lead ClaudeAdapter
++// that carries the SECURITY/OPS persona normally owned by the Codex
++// Reviewer A seat. Same vendor + plumbing as the lead and Reviewer B,
++// different persona.
++//
++// Why this exists: the Reviewer A seat is configurable per seat via
++// `adapters.reviewer_a.adapter` in `.samo/config.json`. The default is
++// `codex` (unchanged), but Claude-only environments (no `codex` CLI)
++// can set it to `claude` and still get a paranoid security/ops reviewer.
++// This class preserves persona parity with the Codex Reviewer A: it
++// prepends the SAME literal persona prefix exported from `codex.ts`
++// (`CODEX_CRITIQUE_PERSONA_PREFIX`) so the taxonomy weighting toward
++// missing-risk / weak-implementation / unnecessary-scope is identical
++// regardless of which vendor fills the seat.
++//
++// Design note: like `ClaudeReviewerBAdapter`, this is a thin
++// compose-over-inherit wrapper. It extends `ClaudeAdapter` to share the
++// full spawn / JSON-parse / timeout / error-classification plumbing. The
++// only functional override is `critique()`, which prepends the persona
++// prefix to the caller's guidelines and delegates to `super.critique()`.
++// `ask()` and `revise()` delegate to the inherited implementations
++// unchanged so the full Adapter contract stays live.
++//
++// Shared resolver (SPEC §11 coupled fallback): when constructed with a
++// shared `ClaudeResolver` (as `buildReviewLoopAdaptersFromConfig` does
++// for a Claude-vendor Reviewer A), this seat advances in lockstep with
++// the lead + Reviewer B exactly like Reviewer B does.
++
++import {
++  ClaudeAdapter,
++  buildCritiquePrompt,
++  type ClaudeAdapterOpts,
++} from "./claude.ts";
++import { CODEX_CRITIQUE_PERSONA_PREFIX } from "./codex.ts";
++import { type CritiqueInput, type CritiqueOutput } from "./types.ts";
++
++// SPEC §7: literal security/ops persona prefix applied to Reviewer A
++// critique() calls. Re-exported from the canonical Codex definition so
++// the Claude-vendor seat is byte-for-byte identical to the Codex seat —
++// the persona must not drift between vendors.
++export const REVIEWER_A_PERSONA_PREFIX = CODEX_CRITIQUE_PERSONA_PREFIX;
++
++/**
++ * Build the full critique prompt for a Claude-vendor Reviewer A:
++ * persona prefix + the caller's guidelines + the standard critique
++ * prompt structure (schema + spec text). Exported so tests can inspect
++ * the assembled prompt without spawning.
++ */
++export function buildCritiquePromptForReviewerA(input: CritiqueInput): string {
++  const composedGuidelines = [REVIEWER_A_PERSONA_PREFIX, input.guidelines]
++    .filter((s) => s.trim().length > 0)
++    .join("\n\n");
++  return buildCritiquePrompt({ ...input, guidelines: composedGuidelines });
++}
++
++// ---------- ClaudeReviewerAAdapter ----------
++
++export class ClaudeReviewerAAdapter extends ClaudeAdapter {
++  // Vendor stays "claude": this seat uses the Claude CLI identically to
++  // the lead. Contract tests and the `doctor` layer key on vendor.
++
++  constructor(opts: ClaudeAdapterOpts = {}) {
++    super(opts);
++  }
++
++  override critique(input: CritiqueInput): Promise<CritiqueOutput> {
++    // Prepend the security/ops persona prefix to the guidelines, then
++    // delegate to super.critique() so the inherited spawn + JSON-parse +
++    // retry plumbing runs unchanged.
++    const composedGuidelines = [REVIEWER_A_PERSONA_PREFIX, input.guidelines]
++      .filter((s) => s.trim().length > 0)
++      .join("\n\n");
++
++    const withPersona: CritiqueInput = {
++      ...input,
++      guidelines: composedGuidelines,
++    };
++    return super.critique(withPersona);
++  }
++}
+diff --git a/src/adapter/codex.ts b/src/adapter/codex.ts
+index 81631f3..44cfa1c 100644
+--- a/src/adapter/codex.ts
++++ b/src/adapter/codex.ts
+@@ -125,7 +125,7 @@ const EFFORT_TO_REASONING: Readonly<Record<EffortLevel, string>> = {
+ 
+ // Persona + taxonomy weighting (SPEC §7 Model roles). Literal wording
+ // is pinned by test; issue #23 forbids paraphrasing.
+-const CODEX_CRITIQUE_PERSONA_PREFIX =
++export const CODEX_CRITIQUE_PERSONA_PREFIX =
+   "You are a paranoid security/ops engineer reviewing this spec. " +
+   "Focus especially on missing-risk, weak-implementation, and " +
+   "unnecessary-scope. You may surface findings in other categories " +
+diff --git a/src/adapter/from-config.ts b/src/adapter/from-config.ts
+index 3d1c4fc..837d74f 100644
+--- a/src/adapter/from-config.ts
++++ b/src/adapter/from-config.ts
+@@ -21,11 +21,24 @@ import { existsSync, readFileSync } from "node:fs";
+ import path from "node:path";
+ 
+ import { ClaudeAdapter } from "./claude.ts";
++import { ClaudeReviewerAAdapter } from "./claude-reviewer-a.ts";
+ import { ClaudeReviewerBAdapter } from "./claude-reviewer-b.ts";
+ import { ClaudeResolver } from "./claude-resolver.ts";
+ import { CodexAdapter } from "./codex.ts";
+ import type { Adapter, ModelInfo } from "./types.ts";
+ 
++/**
++ * Per-seat adapter vendor selector, read from
++ * `adapters.<seat>.adapter` in `.samo/config.json`. A seat may be filled
++ * by either the Claude CLI or the Codex CLI. Absent / unrecognized
++ * values fall back to each seat's pinned default vendor (lead → claude,
++ * reviewer_a → codex, reviewer_b → claude), so the field is fully
++ * back-compatible.
++ */
++export type AdapterVendor = "claude" | "codex";
++
++const ADAPTER_VENDORS: ReadonlySet<string> = new Set(["claude", "codex"]);
++
+ /**
+  * Chain sentinels that are NOT real model ids and must be stripped
+  * before a chain is handed to an adapter / resolver. `terminal` marks
+@@ -39,6 +52,11 @@ const NON_MODEL_CHAIN_ENTRIES: ReadonlySet<string> = new Set([
+ 
+ /** One adapter role's pinned config, as read from `.samo/config.json`. */
+ export interface AdapterRoleConfig {
++  /**
++   * Which CLI vendor fills this seat. Absent (or malformed) keeps the
++   * seat's pinned-default vendor, so existing configs are unchanged.
++   */
++  readonly adapter?: AdapterVendor;
+   readonly model_id?: string;
+   readonly fallback_chain?: readonly string[];
+ }
+@@ -82,15 +100,23 @@ function roleEntry(
+   const raw = rec[role];
+   if (typeof raw !== "object" || raw === null) return {};
+   const r = raw as Record<string, unknown>;
++  const adapterRaw = r["adapter"];
++  const adapter =
++    typeof adapterRaw === "string" && ADAPTER_VENDORS.has(adapterRaw)
++      ? (adapterRaw as AdapterVendor)
++      : undefined;
+   const modelId = typeof r["model_id"] === "string" ? r["model_id"] : undefined;
+   const chainRaw = r["fallback_chain"];
+   const chain =
+     Array.isArray(chainRaw) && chainRaw.every((x) => typeof x === "string")
+       ? (chainRaw as readonly string[])
+       : undefined;
+-  if (modelId === undefined && chain === undefined) return {};
++  if (adapter === undefined && modelId === undefined && chain === undefined) {
++    return {};
++  }
+   return {
+     [role]: {
++      ...(adapter !== undefined ? { adapter } : {}),
+       ...(modelId !== undefined ? { model_id: modelId } : {}),
+       ...(chain !== undefined ? { fallback_chain: chain } : {}),
+     },
+@@ -160,11 +186,46 @@ function defaultWarn(line: string): void {
+   process.stderr.write(`${line}\n`);
+ }
+ 
++/**
++ * Construct the Reviewer A seat from its per-seat config. The vendor is
++ * `adapters.reviewer_a.adapter` ("codex" | "claude"); absent → codex,
++ * preserving the historical default. A claude Reviewer A is wired to the
++ * shared Claude `resolver` (SPEC §11 coupled fallback, like lead +
++ * Reviewer B) and carries the security/ops persona; a codex Reviewer A
++ * is pinned from its own configured fallback chain.
++ */
++function buildReviewerA(
++  cfg: AdapterRoleConfig | undefined,
++  resolver: ClaudeResolver,
++): Adapter {
++  const chain = resolveChain(cfg);
++  if (cfg?.adapter === "claude") {
++    return new ClaudeReviewerAAdapter({
++      resolver,
++      ...(chain !== undefined
++        ? { models: toModelInfo(chain, "claude"), defaultModel: chain[0] }
++        : {}),
++    });
++  }
++  // Default (codex) — unchanged behavior.
++  return chain !== undefined
++    ? new CodexAdapter({
++        models: toModelInfo(chain, "codex"),
++        defaultModel: chain[0],
++      })
++    : new CodexAdapter();
++}
++
+ /**
+  * Build the full review-loop adapter trio from `.samo/config.json`.
+  * Lead + reviewer-B share one config-pinned {@link ClaudeResolver}
+- * (coupled fallback); reviewer-A (codex) is pinned from its own
+- * configured chain. Absent config falls back to pinned defaults.
++ * (coupled fallback). Reviewer-A's vendor is selected per seat via
++ * `adapters.reviewer_a.adapter` ("codex" | "claude"); absent → codex
++ * (the pinned default). A codex Reviewer A is pinned from its own
++ * configured chain; a claude Reviewer A ({@link ClaudeReviewerAAdapter})
++ * joins the shared Claude resolver (coupled fallback) and carries the
++ * same security/ops persona as the codex seat. Absent config falls back
++ * to pinned defaults.
+  *
+  * SPEC §11 couples reviewer-B to the lead's shared Claude resolver, so a
+  * distinct `adapters.reviewer_b.{model_id,fallback_chain}` is INERT. That
+@@ -226,15 +287,11 @@ export function buildReviewLoopAdaptersFromConfig(
+       : {}),
+   });
+ 
+-  // Reviewer A (codex).
+-  const reviewerAChain = resolveChain(cfg.reviewer_a);
+-  const reviewerA =
+-    reviewerAChain !== undefined
+-      ? new CodexAdapter({
+-          models: toModelInfo(reviewerAChain, "codex"),
+-          defaultModel: reviewerAChain[0],
+-        })
+-      : new CodexAdapter();
++  // Reviewer A: vendor is selectable per seat (default codex, unchanged).
++  // A claude Reviewer A joins the shared resolver (coupled fallback) like
++  // the lead + Reviewer B; a codex Reviewer A is pinned from its own
++  // configured chain.
++  const reviewerA = buildReviewerA(cfg.reviewer_a, resolver);
+ 
+   return { lead, reviewerA, reviewerB };
+ }
+diff --git a/tests/adapter/from-config-reviewer-adapter.test.ts b/tests/adapter/from-config-reviewer-adapter.test.ts
+new file mode 100644
+index 0000000..390f5c4
+--- /dev/null
++++ b/tests/adapter/from-config-reviewer-adapter.test.ts
+@@ -0,0 +1,228 @@
++// Copyright 2026 Nikolay Samokhvalov.
++
++// Per-seat Reviewer A adapter selection (samospec configurable-panel
++// pass).
++//
++// The headline behavior these tests lock down: `adapters.reviewer_a`
++// gains an `adapter` vendor selector ("claude" | "codex"). Absent or
++// "codex" keeps the historical CodexAdapter (back-compatible); "claude"
++// builds a Claude-vendor Reviewer A that (a) reports vendor "claude",
++// (b) joins the lead's shared resolver (SPEC §11 coupled fallback), and
++// (c) carries the SAME security/ops persona as the codex seat.
++
++import { describe, expect, test } from "bun:test";
++import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++
++import {
++  buildReviewLoopAdaptersFromConfig,
++  readAdaptersConfig,
++} from "../../src/adapter/from-config.ts";
++import { ClaudeAdapter } from "../../src/adapter/claude.ts";
++import {
++  ClaudeReviewerAAdapter,
++  REVIEWER_A_PERSONA_PREFIX,
++} from "../../src/adapter/claude-reviewer-a.ts";
++import { CodexAdapter } from "../../src/adapter/codex.ts";
++import type { SpawnCliInput, SpawnCliResult } from "../../src/adapter/spawn.ts";
++import type { CritiqueInput } from "../../src/adapter/types.ts";
++
++// ---------- helpers ----------
++
++function writeConfig(cwd: string, config: unknown): void {
++  mkdirSync(join(cwd, ".samo"), { recursive: true });
++  writeFileSync(
++    join(cwd, ".samo", "config.json"),
++    JSON.stringify(config, null, 2),
++  );
++}
++
++function tmpRepo(): string {
++  return mkdtempSync(join(tmpdir(), "samospec-fc-ra-"));
++}
++
++function installedHost(): Record<string, string | undefined> {
++  // A directory with fake `claude`/`codex` binaries. Work-call spawns are
++  // intercepted by the injected spy, so the binaries are never executed.
++  const dir = mkdtempSync(join(tmpdir(), "samospec-fc-ra-host-"));
++  writeFileSync(join(dir, "claude"), "#!/usr/bin/env bash\necho 2.1.156\n");
++  writeFileSync(join(dir, "codex"), "#!/usr/bin/env bash\necho 1.0.0\n");
++  return { PATH: dir, HOME: "/tmp", ANTHROPIC_API_KEY: "sk-ant-test" };
++}
++
++interface SpawnSpy {
++  readonly spawn: (input: SpawnCliInput) => Promise<SpawnCliResult>;
++  readonly calls: { cmd: readonly string[]; stdinLen: number; stdin: string }[];
++}
++
++function makeSpy(stdout: string): SpawnSpy {
++  const calls: { cmd: readonly string[]; stdinLen: number; stdin: string }[] =
++    [];
++  const spawn = (input: SpawnCliInput): Promise<SpawnCliResult> => {
++    calls.push({
++      cmd: [...input.cmd],
++      stdinLen: input.stdin.length,
++      stdin: input.stdin,
++    });
++    return Promise.resolve({ ok: true, exitCode: 0, stdout, stderr: "" });
++  };
++  return { spawn, calls };
++}
++
++function sampleCritique(): CritiqueInput {
++  return {
++    spec: "# SPEC\n\nplaceholder",
++    guidelines: "be pedantic",
++    opts: { effort: "max", timeout: 120_000 },
++  };
++}
++
++// ---------- persona parity ----------
++
++describe("ClaudeReviewerAAdapter — persona parity (SPEC §7)", () => {
++  test("re-exports the verbatim codex security/ops persona prefix", () => {
++    expect(REVIEWER_A_PERSONA_PREFIX).toBe(
++      "You are a paranoid security/ops engineer reviewing this spec. " +
++        "Focus especially on missing-risk, weak-implementation, and " +
++        "unnecessary-scope. You may surface findings in other categories " +
++        "when warranted, but weight your effort toward these.",
++    );
++  });
++
++  test("critique() forwards the security/ops persona to the CLI via stdin", async () => {
++    const spy = makeSpy(
++      '{"findings":[{"category":"missing-risk","text":"x",' +
++        '"severity":"major"}],"summary":"s",' +
++        '"suggested_next_version":"0.1.1","usage":null,' +
++        '"effort_used":"max"}',
++    );
++    const adapter = new ClaudeReviewerAAdapter({
++      host: installedHost(),
++      spawn: spy.spawn,
++    });
++
++    await adapter.critique(sampleCritique());
++
++    const workCall = spy.calls.find((c) => c.stdinLen > 0);
++    expect(workCall).toBeDefined();
++    if (workCall === undefined) return;
++    expect(workCall.stdin).toContain(
++      "You are a paranoid security/ops engineer reviewing this spec.",
++    );
++    expect(workCall.stdin).toContain("missing-risk");
++    expect(workCall.stdin).toContain("unnecessary-scope");
++  });
++});
++
++// ---------- readAdaptersConfig threads the adapter field ----------
++
++describe("readAdaptersConfig — per-seat adapter field", () => {
++  test("extracts adapter alongside model_id / fallback_chain", () => {
++    const cwd = tmpRepo();
++    writeConfig(cwd, {
++      adapters: {
++        reviewer_a: {
++          adapter: "claude",
++          model_id: "claude-opus-4-8",
++          fallback_chain: ["claude-opus-4-8", "terminal"],
++        },
++      },
++    });
++    expect(readAdaptersConfig(cwd)).toEqual({
++      reviewer_a: {
++        adapter: "claude",
++        model_id: "claude-opus-4-8",
++        fallback_chain: ["claude-opus-4-8", "terminal"],
++      },
++    });
++  });
++
++  test("ignores an unrecognized adapter value (keeps the seat default vendor)", () => {
++    const cwd = tmpRepo();
++    writeConfig(cwd, {
++      adapters: { reviewer_a: { adapter: "gemini", model_id: "x" } },
++    });
++    expect(readAdaptersConfig(cwd)).toEqual({
++      reviewer_a: { model_id: "x" },
++    });
++  });
++});
++
++// ---------- review-loop trio honors the reviewer_a vendor ----------
++
++describe("buildReviewLoopAdaptersFromConfig — reviewer_a vendor selection", () => {
++  test('adapter: "claude" -> reviewerA is a Claude-vendor adapter', () => {
++    const cwd = tmpRepo();
++    writeConfig(cwd, {
++      adapters: {
++        lead: {
++          model_id: "claude-opus-4-8",
++          fallback_chain: ["claude-opus-4-8", "terminal"],
++        },
++        reviewer_a: {
++          adapter: "claude",
++          model_id: "claude-opus-4-8",
++          fallback_chain: ["claude-opus-4-8", "terminal"],
++        },
++      },
++    });
++    const { reviewerA } = buildReviewLoopAdaptersFromConfig(cwd);
++    expect(reviewerA).toBeInstanceOf(ClaudeReviewerAAdapter);
++    expect(reviewerA).toBeInstanceOf(ClaudeAdapter);
++    expect(reviewerA.vendor).toBe("claude");
++    expect(reviewerA).not.toBeInstanceOf(CodexAdapter);
++  });
++
++  test('adapter: "claude" reviewerA tracks the lead pin (SPEC §11 coupled resolver)', () => {
++    const cwd = tmpRepo();
++    writeConfig(cwd, {
++      adapters: {
++        lead: {
++          model_id: "claude-opus-4-8",
++          fallback_chain: ["claude-opus-4-8", "claude-sonnet-4-6", "terminal"],
++        },
++        reviewer_a: { adapter: "claude" },
++      },
++    });
++    const { lead, reviewerA } = buildReviewLoopAdaptersFromConfig(cwd);
++    // Lead and a Claude Reviewer A start at the same configured head and
++    // read the same pin — they are coupled through the shared resolver.
++    expect((lead as ClaudeAdapter).currentModelId()).toBe("claude-opus-4-8");
++    expect((reviewerA as ClaudeAdapter).currentModelId()).toBe(
++      "claude-opus-4-8",
++    );
++  });
++
++  test("absent adapter key -> reviewerA is CodexAdapter (default unchanged)", () => {
++    const cwd = tmpRepo();
++    writeConfig(cwd, {
++      adapters: {
++        reviewer_a: {
++          model_id: "gpt-5.5",
++          fallback_chain: ["gpt-5.5", "gpt-5.4", "terminal"],
++        },
++      },
++    });
++    const { reviewerA } = buildReviewLoopAdaptersFromConfig(cwd);
++    expect(reviewerA).toBeInstanceOf(CodexAdapter);
++    expect(reviewerA.vendor).toBe("codex");
++    expect((reviewerA as CodexAdapter).currentModelId()).toBe("gpt-5.5");
++  });
++
++  test('adapter: "codex" -> reviewerA is CodexAdapter (explicit default)', () => {
++    const cwd = tmpRepo();
++    writeConfig(cwd, {
++      adapters: { reviewer_a: { adapter: "codex", model_id: "gpt-5.4" } },
++    });
++    const { reviewerA } = buildReviewLoopAdaptersFromConfig(cwd);
++    expect(reviewerA).toBeInstanceOf(CodexAdapter);
++    expect((reviewerA as CodexAdapter).currentModelId()).toBe("gpt-5.4");
++  });
++
++  test("absent config -> reviewerA is CodexAdapter pinned default", () => {
++    const { reviewerA } = buildReviewLoopAdaptersFromConfig(tmpRepo());
++    expect(reviewerA).toBeInstanceOf(CodexAdapter);
++    expect((reviewerA as CodexAdapter).currentModelId()).toBe("gpt-5.5");
++  });
++});
+-- 
+2.43.0
+
