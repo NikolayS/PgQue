@@ -67,6 +67,20 @@
 /* Tighter, more technical heading rhythm */
 .sl-markdown-content h2 { margin-top: 2.25rem; }
 
+/* Per-function signature level (h4 on /docs/reference): render at body size,
+   not as a large heading. Keep a modest weight + clear top margin so each
+   entry stays scannable; the signature's inline-code chip still reads as a
+   code line. Does NOT touch h1/h2/h3. */
+.sl-markdown-content h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 2rem;
+}
+.sl-markdown-content h4 code {
+  font-size: 1em;
+}
+
 /* Code reads as JetBrains Mono everywhere, including inline code inside headings
    (e.g. reference signature headings like pgque.name(arg text) -> type). */
 .sl-markdown-content code,
