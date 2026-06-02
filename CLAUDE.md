@@ -176,6 +176,32 @@ test first, then the implementation that turns it green.
    the implementation. Applies to pgque-api, observability, client libraries,
    CLI. Does NOT apply to pgque-core repackaging (PgQ already has tests).
    See SPECx.md section 13.2.
+7. **Separate-transactions rule (snapshot visibility).** PgQue is
+   snapshot-based. The following operations MUST run in distinct, committed
+   transactions to be observable downstream — combining them in one tx
+   silently produces empty batches and dropped messages:
+   - `pgque.send` / `pgque.insert_event` (producer commit)
+     → `pgque.ticker` / `pgque.force_tick` (snapshot is taken here)
+     → `pgque.receive` / `pgque.next_batch` (sees only what committed
+        before the snapshot).
+   - `pgque.maint_retry_events` (re-inserts retry rows into event tables
+     with `pg_current_xact_id()`) → `pgque.ticker` (must run in a later
+     tx so the new ev_txids are visible in its snapshot) → `pgque.receive`.
+   - `pgque.maint_rotate_tables_step1` → `pgque.maint_rotate_tables_step2`
+     (PgQ design requirement; already documented in `sql/pgque-api/maint.sql`).
+
+   In SQL tests, this means one `do $$ ... $$` block per logical step
+   (see `tests/test_api_receive.sql` for the canonical pattern). In
+   client code, default-mode `pgxpool` / `pg.Pool` / `psycopg(autocommit)`
+   already runs each call in its own implicit tx — the rule is
+   transparently satisfied. The footgun is reaching for `Pool()` /
+   `client.conn` to wrap send + receive in one explicit tx; the consumer
+   side won't see what the producer just sent.
+
+   When adding a new test that crosses these boundaries, mark each
+   transaction boundary in a `-- separate transaction (snapshot
+   visibility)` comment. When adding new client examples, do not place
+   send/tick/receive inside a shared `BEGIN`/`COMMIT`.
 
 ## Copyright
 

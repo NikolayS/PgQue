@@ -128,11 +128,11 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 select * from pgque.receive('orders', 'processor', 100);
 ```
 
-**Batch-ownership caveat.** `max_return` limits the number of rows returned to the caller, but `ack(batch_id)` advances the consumer cursor past the entire underlying batch. If `max_return < ticker_max_count`, calling `ack()` after a partial receive will drop the unreturned rows from the consumer's perspective. Either consume the full batch before acking, or use `max_return >= ticker_max_count` for safe pagination.
+**Partial-receive safety (#134).** `max_return` caps the rows returned to the caller. The underlying PgQ batch may contain more rows (the dual-tick window is sized by `ticker_max_count` / `ticker_max_lag`). `pgque.receive()` records which msg_ids it actually yielded, and `pgque.ack()` re-queues the unreturned events to `pgque.retry_queue` (with `ev_retry` preserved — these events were never delivered to a handler) before closing the batch. The next `pgque.maint_retry_events()` cycle moves them back into the main event table for re-delivery. Callers using lower-level primitives (`next_batch` + `finish_batch` directly) are unaffected.
 
 #### `pgque.ack(batch_id bigint) → integer`
 
-Closes the batch and advances the consumer position. Modern alias for `pgque.finish_batch`. Returns `1` on success, `0` if the batch was not found.
+Closes the batch and advances the consumer position. Returns `1` on success, `0` if the batch was not found. Before calling `pgque.finish_batch`, re-queues any events the batch contained but `pgque.receive()` did not yield (see #134 above).
 Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 #### `pgque.nack(batch_id bigint, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
