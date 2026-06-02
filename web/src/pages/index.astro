@@ -67,14 +67,16 @@ const comparison = {
 };
 
 /*
- * Language brand marks, inlined (no external/CDN requests), used nominatively.
- * Official simple-icons (CC0-1.0) single-path glyphs, verified against the
- * package SVGs (TypeScript, Python, Go). The three brand marks have
- * incompatible silhouettes in full colour — a filled blue square, organic
- * two-tone snakes, and a wide cyan "GO" wordmark — so they are unified into
- * one deliberate set: a single monochrome steel treatment, each glyph
- * normalised to the same optical cap-height on an identical tile. Monochrome
- * removes the saturated-cyan-Go imbalance and reads as one designed system.
+ * Language brand marks, inlined (no external/CDN requests), used nominatively,
+ * in full brand colour on identical neutral tiles so the three read as one
+ * deliberate set:
+ *  - TypeScript: official simple-icons (CC0-1.0) glyph in TS blue (#3178C6).
+ *  - Python: official PSF two-tone mark (blue #3776AB + gold #FFD43B), the
+ *    devicon `python-original` geometry with gradients flattened to solids.
+ *  - Go: an original, simplified flat gopher mascot drawn here as plain SVG
+ *    primitives in the Go brand cyan (#00ADD8). It is our own minimal
+ *    rendition (no third-party asset), so it carries no attribution
+ *    requirement and is clean enough to sit beside the flat TS/Python marks.
  */
 const clients = [
   {
@@ -85,26 +87,67 @@ const clients = [
     viewBox: '0 0 24 24',
     fit: 'square',
     icon: 'M1.125 0C.502 0 0 .502 0 1.125v21.75C0 23.498.502 24 1.125 24h21.75c.623 0 1.125-.502 1.125-1.125V1.125C24 .502 23.498 0 22.875 0zm17.363 9.75c.612 0 1.154.037 1.627.111a6.38 6.38 0 0 1 1.306.34v2.458a3.95 3.95 0 0 0-.643-.361 5.093 5.093 0 0 0-.717-.26 5.453 5.453 0 0 0-1.426-.2c-.3 0-.573.028-.819.086a2.1 2.1 0 0 0-.623.242c-.17.104-.3.229-.393.374a.888.888 0 0 0-.14.49c0 .196.053.373.156.529.104.156.252.304.443.444s.423.276.696.41c.273.135.582.274.926.416.47.197.892.407 1.266.628.374.222.695.473.963.753.268.279.472.598.614.957.142.359.214.776.214 1.253 0 .657-.125 1.21-.373 1.656a3.033 3.033 0 0 1-1.012 1.085 4.38 4.38 0 0 1-1.487.596c-.566.12-1.163.18-1.79.18a9.916 9.916 0 0 1-1.84-.164 5.544 5.544 0 0 1-1.512-.493v-2.63a5.033 5.033 0 0 0 3.237 1.2c.333 0 .624-.03.872-.09.249-.06.456-.144.623-.25.166-.108.29-.234.373-.38a1.023 1.023 0 0 0-.074-1.089 2.12 2.12 0 0 0-.537-.5 5.597 5.597 0 0 0-.807-.444 27.72 27.72 0 0 0-1.007-.436c-.918-.383-1.602-.852-2.053-1.405-.45-.553-.676-1.222-.676-2.005 0-.614.123-1.141.369-1.582.246-.441.58-.804 1.004-1.089a4.494 4.494 0 0 1 1.47-.629 7.536 7.536 0 0 1 1.77-.201zm-15.113.188h9.563v2.166H9.506v9.646H6.789v-9.646H3.375z',
+    fill: '#3178C6',
   },
   {
     name: 'Python',
     key: 'py',
     pkg: 'pgque',
     href: 'https://github.com/NikolayS/pgque/tree/main/clients/python',
-    viewBox: '0 0 24 24',
+    /* Tight viewBox around the two snake bodies (incl. the translate offset). */
+    viewBox: '13.5 11.5 101 105',
     fit: 'square',
-    /* Official simple-icons single-path Python mark. */
-    icon: 'M14.25.18l.9.2.73.26.59.3.45.32.34.34.25.34.16.33.1.3.04.26.02.2-.01.13V8.5l-.05.63-.13.55-.21.46-.26.38-.3.31-.33.25-.35.19-.35.14-.33.1-.3.07-.26.04-.21.02H8.77l-.69.05-.59.14-.5.22-.41.27-.33.32-.27.35-.2.36-.15.37-.1.35-.07.32-.04.27-.02.21v3.06H3.17l-.21-.03-.28-.07-.32-.12-.35-.18-.36-.26-.36-.36-.35-.46-.32-.59-.28-.73-.21-.88-.14-1.05-.05-1.23.06-1.22.16-1.04.24-.87.32-.71.36-.57.4-.44.42-.33.42-.24.4-.16.36-.1.32-.05.24-.01h.16l.06.01h8.16v-.83H6.18l-.01-2.75-.02-.37.05-.34.11-.31.17-.28.25-.26.31-.23.38-.2.44-.18.51-.15.58-.12.64-.1.71-.06.77-.04.84-.02 1.27.05zm-6.3 1.98l-.23.33-.08.41.08.41.23.34.33.22.41.09.41-.09.33-.22.23-.34.08-.41-.08-.41-.23-.33-.33-.22-.41-.09-.41.09zm13.09 3.95l.28.06.32.12.35.18.36.27.36.35.35.47.32.59.28.73.21.88.14 1.04.05 1.23-.06 1.23-.16 1.04-.24.86-.32.71-.36.57-.4.45-.42.33-.42.24-.4.16-.36.09-.32.05-.24.02-.16-.01h-8.22v.82h5.84l.01 2.76.02.36-.05.34-.11.31-.17.29-.25.25-.31.24-.38.2-.44.17-.51.15-.58.13-.64.09-.71.07-.77.04-.84.01-1.27-.04-1.07-.14-.9-.2-.73-.25-.59-.3-.45-.33-.34-.34-.25-.34-.16-.33-.1-.3-.04-.25-.02-.2.01-.13v-5.34l.05-.64.13-.54.21-.46.26-.38.3-.32.33-.24.35-.2.35-.14.33-.1.3-.06.26-.04.21-.02.13-.01h5.84l.69-.05.59-.14.5-.21.41-.28.33-.32.27-.35.2-.36.15-.36.1-.35.07-.32.04-.28.02-.21V6.07h2.09l.14.01zm-6.47 14.25l-.23.33-.08.41.08.41.23.33.33.23.41.08.41-.08.33-.23.23-.33.08-.41-.08-.41-.23-.33-.33-.23-.41-.08-.41.08z',
+    /* PSF two-tone mark; gradients flattened to solid brand blue + gold. */
+    paths: [
+      { fill: '#3776AB', d: 'M63.391 1.988c-4.222.02-8.252.379-11.8 1.007-10.45 1.846-12.346 5.71-12.346 12.837v9.411h24.693v3.137H29.977c-7.176 0-13.46 4.313-15.426 12.521-2.268 9.405-2.368 15.275 0 25.096 1.755 7.311 5.947 12.519 13.124 12.519h8.491V67.234c0-8.151 7.051-15.34 15.426-15.34h24.665c6.866 0 12.346-5.654 12.346-12.548V15.833c0-6.693-5.646-11.72-12.346-12.837-4.244-.706-8.645-1.027-12.866-1.008zM50.037 9.557c2.55 0 4.634 2.117 4.634 4.721 0 2.593-2.083 4.69-4.634 4.69-2.56 0-4.633-2.097-4.633-4.69-.001-2.604 2.073-4.721 4.633-4.721z' },
+      { fill: '#FFD43B', d: 'M91.682 28.38v10.966c0 8.5-7.208 15.655-15.426 15.655H51.591c-6.756 0-12.346 5.783-12.346 12.549v23.515c0 6.691 5.818 10.628 12.346 12.547 7.816 2.297 15.312 2.713 24.665 0 6.216-1.801 12.346-5.423 12.346-12.547v-9.412H63.938v-3.138h37.012c7.176 0 9.852-5.005 12.348-12.519 2.578-7.735 2.467-15.174 0-25.096-1.774-7.145-5.161-12.521-12.348-12.521h-9.268zM77.809 87.927c2.561 0 4.634 2.097 4.634 4.692 0 2.602-2.074 4.719-4.634 4.719-2.55 0-4.633-2.117-4.633-4.719 0-2.595 2.083-4.692 4.633-4.692z' },
+    ],
+    transform: 'translate(0 10.26)',
   },
   {
     name: 'Go',
     key: 'go',
     pkg: 'pgque-go',
     href: 'https://github.com/NikolayS/pgque/tree/main/clients/go',
-    /* Tight viewBox: the simple-icons "GO" glyph occupies x 0–23.1, y 9.8–16.6. */
-    viewBox: '0 9.5 23.1 7.3',
-    fit: 'wide',
-    icon: 'M1.811 10.231c-.047 0-.058-.023-.035-.059l.246-.315c.023-.035.081-.058.128-.058h4.172c.046 0 .058.035.035.07l-.199.303c-.023.036-.082.07-.117.07zM.047 11.306c-.047 0-.059-.023-.035-.058l.245-.316c.023-.035.082-.058.129-.058h5.328c.047 0 .07.035.058.07l-.093.28c-.012.047-.058.07-.105.07zm2.828 1.075c-.047 0-.059-.035-.035-.07l.163-.292c.023-.035.07-.07.117-.07h2.337c.047 0 .07.035.07.082l-.023.28c0 .047-.047.082-.082.082zm12.129-2.36c-.736.187-1.239.327-1.963.514-.176.046-.187.058-.34-.117-.174-.199-.303-.327-.548-.444-.737-.362-1.45-.257-2.115.175-.795.514-1.204 1.274-1.192 2.22.011.935.654 1.706 1.577 1.835.795.105 1.46-.175 1.987-.77.105-.13.198-.27.315-.434H10.47c-.245 0-.304-.152-.222-.35.152-.362.432-.97.596-1.274a.315.315 0 01.292-.187h4.253c-.023.316-.023.631-.07.947a4.983 4.983 0 01-.958 2.29c-.841 1.11-1.94 1.8-3.33 1.986-1.145.152-2.209-.07-3.143-.77-.865-.655-1.356-1.52-1.484-2.595-.152-1.274.222-2.419.993-3.424.83-1.086 1.928-1.776 3.272-2.02 1.098-.2 2.15-.07 3.096.571.62.41 1.063.97 1.356 1.648.07.105.023.164-.117.2m3.868 6.461c-1.064-.024-2.034-.328-2.852-1.029a3.665 3.665 0 01-1.262-2.255c-.21-1.32.152-2.489.947-3.529.853-1.122 1.881-1.706 3.272-1.95 1.192-.21 2.314-.095 3.33.595.923.63 1.496 1.484 1.648 2.605.198 1.578-.257 2.863-1.344 3.962-.771.783-1.718 1.273-2.805 1.495-.315.06-.63.07-.934.106zm2.78-4.72c-.011-.153-.011-.27-.034-.387-.21-1.157-1.274-1.81-2.384-1.554-1.087.245-1.788.935-2.045 2.033-.21.912.234 1.835 1.075 2.21.643.28 1.285.244 1.905-.07.923-.48 1.425-1.228 1.484-2.233z',
+    /* Official Go brand logo (raster), theme-aware: blue on light, white on dark. */
+    img: '/images/go-logo-blue.png',
+    imgDark: '/images/go-logo-white.png',
+  },
+];
+
+/*
+ * Planned clients, shown as quiet "soon" tiles: grayscale/desaturated marks,
+ * reduced opacity, a "soon" badge, and not clickable. IP-safe marks only:
+ *  - Ruby, Rust: official simple-icons (CC0-1.0) glyphs, rendered grayscale.
+ *  - Java: the recognizable "Java" coffee-cup mark (devicon `java-original`).
+ *    "Java" is a trademark of Oracle; this is nominative use to denote a
+ *    planned Java client, rendered desaturated/grayscale like the others.
+ */
+const soonClients = [
+  {
+    name: 'Ruby',
+    key: 'ruby',
+    viewBox: '0 0 24 24',
+    icon: 'M20.156.083c3.033.525 3.893 2.598 3.829 4.77L24 4.822 22.635 22.71 4.89 23.926h.016C3.433 23.864.15 23.729 0 19.139l1.645-3 2.819 6.586.503 1.172 2.805-9.144-.03.007.016-.03 9.255 2.956-1.396-5.431-.99-3.9 8.82-.569-.615-.51L16.5 2.114 20.159.073l-.003.01zM0 19.089zM5.13 5.073c3.561-3.533 8.157-5.621 9.922-3.84 1.762 1.777-.105 6.105-3.673 9.636-3.563 3.532-8.103 5.734-9.864 3.957-1.766-1.777.045-6.217 3.612-9.75l.003-.003z',
+  },
+  {
+    name: 'Java',
+    key: 'java',
+    /* devicon `java-original` coffee-cup mark (the familiar Java logo). */
+    viewBox: '0 0 128 128',
+    paths: [
+      { fill: '#0074BD', d: 'M47.617 98.12s-4.767 2.774 3.397 3.71c9.892 1.13 14.947.968 25.845-1.092 0 0 2.871 1.795 6.873 3.351-24.439 10.47-55.308-.607-36.115-5.969zm-2.988-13.665s-5.348 3.959 2.823 4.805c10.567 1.091 18.91 1.18 33.354-1.6 0 0 1.993 2.025 5.132 3.131-29.542 8.64-62.446.68-41.309-6.336z' },
+      { fill: '#EA2D2E', d: 'M69.802 61.271c6.025 6.935-1.58 13.17-1.58 13.17s15.289-7.891 8.269-17.777c-6.559-9.215-11.587-13.792 15.635-29.58 0 .001-42.731 10.67-22.324 34.187z' },
+      { fill: '#0074BD', d: 'M102.123 108.229s3.529 2.91-3.888 5.159c-14.102 4.272-58.706 5.56-71.094.171-4.451-1.938 3.899-4.625 6.526-5.192 2.739-.593 4.303-.485 4.303-.485-4.953-3.487-32.013 6.85-13.743 9.815 49.821 8.076 90.817-3.637 77.896-9.468zM49.912 70.294s-22.686 5.389-8.033 7.348c6.188.828 18.518.638 30.011-.326 9.39-.789 18.813-2.474 18.813-2.474s-3.308 1.419-5.704 3.053c-23.042 6.061-67.544 3.238-54.731-2.958 10.832-5.239 19.644-4.643 19.644-4.643zm40.697 22.747c23.421-12.167 12.591-23.86 5.032-22.285-1.848.385-2.677.72-2.677.72s.688-1.079 2-1.543c14.953-5.255 26.451 15.503-4.823 23.725 0-.002.359-.327.468-.617z' },
+      { fill: '#EA2D2E', d: 'M76.491 1.587S89.459 14.563 64.188 34.51c-20.266 16.006-4.621 25.13-.007 35.559-11.831-10.673-20.509-20.07-14.688-28.815C58.041 28.42 81.722 22.195 76.491 1.587z' },
+      { fill: '#0074BD', d: 'M52.214 126.021c22.476 1.437 57-.8 57.817-11.436 0 0-1.571 4.032-18.577 7.231-19.186 3.612-42.854 3.191-56.887.874 0 .001 2.875 2.381 17.647 3.331z' },
+    ],
+  },
+  {
+    name: 'Rust',
+    key: 'rust',
+    viewBox: '0 0 24 24',
+    icon: 'M23.8346 11.7033l-1.0073-.6236a13.7268 13.7268 0 00-.0283-.2936l.8656-.8069a.3483.3483 0 00-.1154-.578l-1.1066-.414a8.4958 8.4958 0 00-.087-.2856l.6904-.9587a.3462.3462 0 00-.2257-.5446l-1.1683-.1894a9.3811 9.3811 0 00-.1407-.2627l.4892-1.0739a.3462.3462 0 00-.3265-.4886l-1.1875.0411-.1873-.2236.2728-1.1556a.3462.3462 0 00-.4174-.4172l-1.1556.2728-.2236-.1873.0411-1.1875a.346.346 0 00-.4886-.3265l-1.0739.4892a9.331 9.331 0 00-.2627-.1407l-.1894-1.1683a.3462.3462 0 00-.5446-.2257l-.9587.6904a8.4856 8.4856 0 00-.2856-.087l-.414-1.1066a.3483.3483 0 00-.578-.1154l-.8069.8656a8.6291 8.6291 0 00-.2936-.0283L12.2967.1654a.3483.3483 0 00-.5934 0l-.6236 1.0073a13.7268 13.7268 0 00-.2936.0283l-.8069-.8656a.3483.3483 0 00-.578.1154l-.414 1.1066a8.4856 8.4856 0 00-.2856.087L7.226.7894a.3462.3462 0 00-.5446.2257l-.1894 1.1683a9.331 9.331 0 00-.2627.1407L5.156 2.0349a.346.346 0 00-.4886.3265l.0411 1.1875-.2236.1873-1.1556-.2728a.3462.3462 0 00-.4174.4172l.2728 1.1556-.1873.2236-1.1875-.0411a.3462.3462 0 00-.3265.4886l.4892 1.0739a9.3811 9.3811 0 00-.1407.2627l-1.1683.1894a.3462.3462 0 00-.2257.5446l.6904.9587a8.4958 8.4958 0 00-.087.2856l-1.1066.414a.3483.3483 0 00-.1154.578l.8656.8069a13.7268 13.7268 0 00-.0283.2936l-1.0073.6236a.3483.3483 0 000 .5934l1.0073.6236a13.7268 13.7268 0 00.0283.2936l-.8656.8069a.3483.3483 0 00.1154.578l1.1066.414c.0277.0967.0564.1922.087.2856l-.6904.9587a.3462.3462 0 00.2257.5446l1.1683.1894c.0461.0885.0922.1759.1407.2627l-.4892 1.0739a.3462.3462 0 00.3265.4886l1.1875-.0411.1873.2236-.2728 1.1556a.3462.3462 0 00.4174.4172l1.1556-.2728.2236.1873-.0411 1.1875a.346.346 0 00.4886.3265l1.0739-.4892c.0868.0485.1742.0946.2627.1407l.1894 1.1683a.3462.3462 0 00.5446.2257l.9587-.6904c.0946.0306.1901.0593.2856.087l.414 1.1066a.3483.3483 0 00.578.1154l.8069-.8656c.0976.011.1956.0203.2936.0283l.6236 1.0073a.3483.3483 0 00.5934 0l.6236-1.0073c.098-.008.196-.0173.2936-.0283l.8069.8656a.3483.3483 0 00.578-.1154l.414-1.1066a8.4856 8.4856 0 00.2856-.087l.9587.6904a.3462.3462 0 00.5446-.2257l.1894-1.1683c.0885-.0461.1759-.0922.2627-.1407l1.0739.4892a.346.346 0 00.4886-.3265l-.0411-1.1875.2236-.1873 1.1556.2728a.3462.3462 0 00.4174-.4172l-.2728-1.1556.1873-.2236 1.1875.0411a.3462.3462 0 00.3265-.4886l-.4892-1.0739c.0485-.0868.0946-.1742.1407-.2627l1.1683-.1894a.3462.3462 0 00.2257-.5446l-.6904-.9587c.0306-.0946.0593-.1901.087-.2856l1.1066-.414a.3483.3483 0 00.1154-.578l-.8656-.8069c.011-.0976.0203-.1956.0283-.2936l1.0073-.6236a.3483.3483 0 000-.5934zm-6.7943 8.3284a.7138.7138 0 01.2997-1.396.7139.7139 0 01-.2997 1.396zm-.3417-2.3115a.6492.6492 0 00-.7714.5l-.3577 1.67a8.7155 8.7155 0 01-3.631.7857 8.7159 8.7159 0 01-3.7081-.82l-.3577-1.6699a.6492.6492 0 00-.7713-.4997l-1.4744.3164a8.7155 8.7155 0 01-.762-.8986h7.1747c.0812 0 .1354-.0147.1354-.0886v-2.5384c0-.0739-.0542-.0886-.1354-.0886h-2.0985v-1.6093h2.2693c.207 0 1.1078.0592 1.3956 1.2117.0901.3538.2879 1.5064.4229 1.875.1349.4137.6839 1.2399 1.2691 1.2399h3.5781a.7439.7439 0 00.1283-.0132 8.7568 8.7568 0 01-.8124.9527zM6.8328 20.0024a.7138.7138 0 01-.2997-1.396.7139.7139 0 01.2997 1.396zM4.1131 8.9826a.7137.7137 0 11-1.304-.5798.7137.7137 0 011.304.5798zm-.8352 1.9811l1.5358-.6827a.6492.6492 0 00.3297-.8574l-.3161-.715h1.2438v5.6071H3.766a8.7405 8.7405 0 01-.282-3.3293zm6.7456-.5445v-1.653h2.9637c.1531 0 1.0813.1772 1.0813.8709 0 .5758-.7115.7821-1.2961.7821zm10.7935 1.3683c0 .2185-.0081.4351-.024.6494h-.9019c-.0902 0-.1265.0592-.1265.1478v.4137c0 .9749-.5497 1.1866-1.0315 1.2404-.4586.0518-.9669-.1921-1.0298-.4728-.2707-1.5212-.7212-1.8461-1.4329-2.4072.8832-.5611 1.8024-1.3886 1.8024-2.4965 0-1.1965-.8213-1.9499-1.3811-2.3192-.7858-.5184-1.6557-.6219-1.8906-.6219H5.2056a8.7424 8.7424 0 014.8929-2.7619l1.0945 1.1481a.6492.6492 0 00.9189.0213l1.2244-1.1716a8.7428 8.7428 0 015.9823 4.2618l-.8382 1.8938a.6493.6493 0 00.3297.8574l1.6188.7193c.0282.2876.0426.5771.0426.8682zm-9.3496-9.6486a.7137.7137 0 11.984 1.0344.7137.7137 0 01-.984-1.0344zm8.4738 6.8204a.7138.7138 0 011.304-.5798.7138.7138 0 01-1.304.5798z',
   },
 ];
 
@@ -160,7 +203,7 @@ const cell = (v) =>
         <a href="/docs/tutorial">Tutorial</a>
         <a href="/docs">Docs</a>
         <a href="/docs/concepts">Concepts</a>
-        <a href="https://github.com/NikolayS/pgque">GitHub</a>
+        <a href="https://github.com/NikolayS/pgque" target="_blank" rel="noopener">GitHub<span class="ext-arrow" aria-hidden="true">↗</span></a>
         <a
           class="gh-star"
           href="https://github.com/NikolayS/pgque"
@@ -200,7 +243,7 @@ const cell = (v) =>
 
     <main>
       <section class="hero">
-        <div class="hero-copy">
+        <div class="hero-copy hero-copy--full">
           <p class="eyebrow"><span class="eyebrow-dot"></span>PgQ, universal edition</p>
           <h1>Zero-bloat Postgres queue.</h1>
           <p class="subhead accent">One SQL file to install.</p>
@@ -212,7 +255,7 @@ const cell = (v) =>
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="/docs/tutorial">Get started</a>
-            <a class="btn btn-ghost" href="https://github.com/NikolayS/pgque">View on GitHub</a>
+            <a class="btn btn-ghost" href="https://github.com/NikolayS/pgque" target="_blank" rel="noopener">View on GitHub<span class="ext-arrow" aria-hidden="true">↗</span></a>
           </div>
           <div class="install">
             <span class="install-prompt">$</span>
@@ -220,10 +263,12 @@ const cell = (v) =>
             <span class="install-note">then <code>select pgque.start();</code></span>
           </div>
         </div>
-        <figure class="hero-visual">
+      </section>
+
+      <figure class="bench-figure reveal">
           <div class="console">
             <div class="console-bar">
-              <span class="console-title">benchmark · <code>SKIP&nbsp;LOCKED</code> under sustained load</span>
+              <span class="console-title">event-table dead tuples under a held xmin horizon</span>
             </div>
             <div class="console-body">
               <img
@@ -241,8 +286,7 @@ const cell = (v) =>
             The death spiral of a <code>SKIP LOCKED</code> queue under sustained
             load — the failure mode PgQue avoids by construction.
           </figcaption>
-        </figure>
-      </section>
+      </figure>
 
       <section class="band">
         <div class="band-inner split reveal">
@@ -338,22 +382,44 @@ const cell = (v) =>
         </p>
         <div class="client-row">
           {clients.map((c) => (
-            <a class="client-card" href={c.href}>
-              <span class={`client-logo client-logo--${c.key} fit-${c.fit}`} aria-hidden="true">
-                <svg viewBox={c.viewBox} role="img" preserveAspectRatio="xMidYMid meet">
-                  <g transform={c.transform}>
-                    {c.paths
-                      ? c.paths.map((p) => <path fill={p.fill} d={p.d} />)
-                      : <path fill="currentColor" d={c.icon} />}
-                  </g>
-                </svg>
+            <a class={`client-card client-card--${c.key}`} href={c.href} target="_blank" rel="noopener">
+              <span class={`client-logo client-logo--${c.key}`} aria-hidden="true">
+                {c.img ? (
+                  <>
+                    <img class="client-logo-img img-light" src={c.img} alt="" width="32" height="32" />
+                    {c.imgDark && <img class="client-logo-img img-dark" src={c.imgDark} alt="" width="32" height="32" />}
+                  </>
+                ) : (
+                  <svg viewBox={c.viewBox} role="img" preserveAspectRatio="xMidYMid meet">
+                    <g transform={c.transform}>
+                      {c.paths
+                        ? c.paths.map((p) => <path fill={p.fill} d={p.d} />)
+                        : <path fill={c.fill || 'currentColor'} d={c.icon} />}
+                    </g>
+                  </svg>
+                )}
               </span>
               <span class="client-text">
-                <span class="client-name">{c.name}</span>
+                <span class="client-name">{c.name}<span class="ext-arrow" aria-hidden="true">↗</span></span>
                 <code>{c.pkg}</code>
               </span>
               <span class="client-arrow" aria-hidden="true">→</span>
             </a>
+          ))}
+          {soonClients.map((c) => (
+            <div class={`client-card client-card--soon client-card--${c.key}`} aria-disabled="true">
+              <span class="client-logo client-logo--soon" aria-hidden="true">
+                <svg viewBox={c.viewBox} role="img" preserveAspectRatio="xMidYMid meet">
+                  {c.paths
+                    ? c.paths.map((p) => <path fill={p.fill} d={p.d} />)
+                    : <path fill="currentColor" d={c.icon} />}
+                </svg>
+              </span>
+              <span class="client-text">
+                <span class="client-name">{c.name}</span>
+                <code>planned</code>
+              </span>
+            </div>
           ))}
         </div>
       </section>
@@ -382,7 +448,7 @@ const cell = (v) =>
           <p class="footer-copy">
             © 2026 Nik Samokhvalov · Apache-2.0
             <span class="footer-social">
-              <a href="https://x.com/samokhvalovdb" target="_blank" rel="noopener" aria-label="Nik Samokhvalov on X">
+              <a href="https://x.com/samokhvalov" target="_blank" rel="noopener" aria-label="Nik Samokhvalov on X">
                 <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
                   <path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
                 </svg>
@@ -398,13 +464,21 @@ const cell = (v) =>
             <a href="/docs/concepts">Built on PgQ</a>
           </p>
         </div>
-        <nav class="footer-links" aria-label="Footer">
-          <span class="footer-links-title">Resources</span>
-          <a href="/docs">Docs</a>
-          <a href="/docs/tutorial">Tutorial</a>
-          <a href="/docs/reference">Reference</a>
-          <a href="https://github.com/NikolayS/pgque">GitHub</a>
-        </nav>
+        <div class="footer-cols">
+          <nav class="footer-links" aria-label="Documentation">
+            <span class="footer-links-title">Docs</span>
+            <a href="/docs/tutorial">Tutorial</a>
+            <a href="/docs/reference">Reference</a>
+            <a href="/docs/examples">Examples</a>
+            <a href="/docs/concepts">Concepts</a>
+          </nav>
+          <nav class="footer-links" aria-label="Project">
+            <span class="footer-links-title">Project</span>
+            <a href="https://github.com/NikolayS/pgque" target="_blank" rel="noopener">GitHub<span class="ext-arrow" aria-hidden="true">↗</span></a>
+            <a href="https://github.com/NikolayS/pgque/releases" target="_blank" rel="noopener">Releases<span class="ext-arrow" aria-hidden="true">↗</span></a>
+            <a href="https://github.com/NikolayS/pgque/blob/main/LICENSE" target="_blank" rel="noopener">License<span class="ext-arrow" aria-hidden="true">↗</span></a>
+          </nav>
+        </div>
       </div>
     </footer>
 
@@ -587,7 +661,7 @@ const cell = (v) =>
       }
 
       * { box-sizing: border-box; }
-      html { scroll-behavior: smooth; }
+      html { scroll-behavior: smooth; overflow-x: hidden; }
       body {
         margin: 0;
         background: var(--bg);
@@ -703,10 +777,11 @@ const cell = (v) =>
       :root:not([data-theme-pref]) .theme-toggle .ic-auto { display: block; }
 
       /* hero */
-      .hero {
-        display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 56px;
-        align-items: center; padding: 72px 0 88px;
-      }
+      /* Hero copy is full-width; the benchmark is promoted to its own large
+         figure below (so the chart renders near its native ~900px and stays
+         legible). */
+      .hero { padding: 72px 0 40px; }
+      .hero-copy--full { max-width: 64ch; }
       .eyebrow {
         display: inline-flex; align-items: center; gap: 8px;
         text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.74rem;
@@ -745,8 +820,12 @@ const cell = (v) =>
       .install > code { color: var(--accent); font-weight: 600; }
       .install-note { color: var(--muted); font-size: 0.9rem; }
 
-      .hero-visual { margin: 0; }
-      .hero-visual figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 16px; line-height: 1.55; }
+      /* Large standalone benchmark figure: centred, capped at the chart's
+         native width so labels stay legible (never upscaled past 900px). */
+      .bench-figure {
+        margin: 0 auto; width: 100%; max-width: 820px; padding: 0 0 72px;
+      }
+      .bench-figure figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 16px; line-height: 1.55; }
 
       /* Restrained console frame around the benchmark readout: a single title
          bar with a hairline divider, precise radii, aligned padding. */
@@ -784,6 +863,13 @@ const cell = (v) =>
       .split-copy strong { color: var(--text); }
       .split-copy .muted { color: var(--muted); font-size: 0.95rem; }
       .split-code :global(.expressive-code) { font-size: 0.86rem; }
+      /* Grid items must be allowed to shrink below content width so the wide
+         code block never forces page-level horizontal scroll on narrow views. */
+      .split-copy, .split-code { min-width: 0; }
+      .split-code :global(.expressive-code) { max-width: 100%; }
+      .split-code :global(.expressive-code pre),
+      .split-code :global(.expressive-code .code),
+      .split-code :global(.frame) { overflow-x: auto; max-width: 100%; }
 
       .section-title {
         font-size: clamp(1.7rem, 3vw, 2.1rem); text-align: center; margin: 0 0 14px;
@@ -854,39 +940,55 @@ const cell = (v) =>
 
       /* clients */
       .clients { padding: var(--section-y) 0; }
+      /* Balanced 3-col grid: 3 live (colour) + 3 planned (grayscale) = two rows. */
       .client-row {
         display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
-        max-width: 760px; margin: 0 auto;
+        max-width: 780px; margin: 0 auto;
       }
       .client-card {
         position: relative; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
         padding: 22px 24px; display: flex; align-items: center; gap: 16px;
         color: var(--text); transition: border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;
       }
-      .client-card:hover { border-color: var(--accent); text-decoration: none; transform: translateY(-3px); box-shadow: 0 18px 40px -24px var(--glow); }
-      /* One unified logo system: identical 48x48 tiles, 8px radius, 1px border,
-         same inner padding. Each glyph is normalised to the same optical
-         cap-height and centred on the shared tile (no nested tiles, no bleed). */
+      a.client-card:hover { border-color: var(--accent); text-decoration: none; transform: translateY(-3px); box-shadow: 0 18px 40px -24px var(--glow); }
+      /* One unified logo system: identical 48x48 tiles, 8px radius, 1px border.
+         Every mark normalised to the same optical cap-height, centred on the
+         shared tile — full colour for live clients, grayscale for planned. */
       .client-logo {
         flex: none; display: inline-flex; align-items: center; justify-content: center;
         width: 48px; height: 48px; border-radius: 8px;
         border: 1px solid var(--border); background: var(--panel-2);
         color: var(--text-2); transition: border-color 0.18s ease, background 0.18s ease;
       }
-      .client-logo svg { display: block; }
-      /* One monochrome steel set: every glyph in the same tone via currentColor,
-         normalised to the same optical cap-height (TS/Python ~24 box, Go wide
-         wordmark scaled to match) so the three read as one designed system. */
-      .client-logo.fit-square svg { height: 25px; width: 25px; }
-      .client-logo.fit-wide   svg { height: 14px; width: auto; }
-      .client-logo { color: var(--accent-2); }
-      .client-card:hover .client-logo { border-color: var(--accent); color: var(--accent); }
+      /* Marks fill the 48px tile confidently (less inner padding). SVG glyphs
+         at 36px; the Go wordmark PNG runs a touch larger to match optically,
+         since its art carries built-in whitespace. */
+      .client-logo svg { display: block; height: 36px; width: 36px; }
+      .client-logo-img { display: block; width: 40px; height: 40px; object-fit: contain; }
+      /* Go: theme-aware official logo (blue on light, white on dark). */
+      .client-logo .img-dark { display: none; }
+      :root[data-theme='dark'] .client-logo .img-light { display: none; }
+      :root[data-theme='dark'] .client-logo .img-dark { display: block; }
+      a.client-card:hover .client-logo { border-color: var(--accent); }
       .client-text { display: flex; flex-direction: column; gap: 4px; }
       .client-name { font-weight: 700; font-size: 1.05rem; }
       /* Sublabel one contrast step up from the faint grey, toward body ink. */
       .client-card code { color: color-mix(in srgb, var(--text-2) 55%, var(--text)); }
       .client-arrow { position: absolute; top: 16px; right: 18px; color: var(--accent); opacity: 0; transform: translateX(-4px); transition: opacity 0.2s ease, transform 0.2s ease; }
-      .client-card:hover .client-arrow { opacity: 1; transform: none; }
+      a.client-card:hover .client-arrow { opacity: 1; transform: none; }
+
+      /* Planned ("soon") clients: quieter, grayscale, not clickable. */
+      .client-card--soon { cursor: default; opacity: 0.62; }
+      .client-card--soon .client-logo { color: var(--muted); }
+      .client-card--soon .client-logo svg { filter: grayscale(1); opacity: 0.85; }
+      .client-card--soon .client-name { color: var(--text-2); font-weight: 600; }
+      .client-card--soon code { color: var(--muted); }
+
+      /* External-link indicator: subtle mono ↗ so users know they leave the site. */
+      .ext-arrow {
+        font-family: var(--mono); font-size: 0.78em; line-height: 1;
+        margin-left: 0.28em; color: var(--muted); vertical-align: baseline;
+      }
 
       /* final cta */
       .cta-final { padding: var(--section-y) 0; }
@@ -908,8 +1010,11 @@ const cell = (v) =>
       .footer { border-top: 1px solid var(--border); background: var(--panel); position: relative; z-index: 1; }
       .footer-inner {
         max-width: 1140px; margin: 0 auto; padding: 48px 24px;
-        display: flex; align-items: flex-start; gap: 72px; flex-wrap: wrap;
+        display: flex; justify-content: space-between; align-items: flex-start;
+        gap: 48px; flex-wrap: wrap;
       }
+      /* Link columns grouped at the right edge so the full width reads balanced. */
+      .footer-cols { display: flex; gap: 72px; }
       .footer-brand { display: flex; flex-direction: column; gap: 12px; }
       .footer-copy { color: var(--text-2); font-size: 0.92rem; margin: 0; font-weight: 500; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
       .footer-social { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; }
@@ -933,14 +1038,15 @@ const cell = (v) =>
 
       @media (max-width: 880px) {
         :root { --section-y: 64px; }
-        .hero { grid-template-columns: 1fr; gap: 40px; padding: 40px 0 56px; }
+        .hero { padding: 40px 0 24px; }
         .split { grid-template-columns: 1fr; gap: 30px; }
         .feature-grid { grid-template-columns: 1fr; }
-        .client-row { grid-template-columns: 1fr; max-width: 420px; }
+        .client-row { grid-template-columns: repeat(2, 1fr); max-width: 520px; }
         .nav-links a:nth-child(3) { display: none; }
         .gh-star span:not(.gh-count) { display: none; }
       }
       @media (max-width: 520px) {
+        .client-row { grid-template-columns: 1fr; max-width: 420px; }
         .nav-links { gap: 12px; }
         .nav-links a:not(.gh-star):not([href='/docs']) { display: none; }
       }
