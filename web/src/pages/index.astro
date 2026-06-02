@@ -1,5 +1,12 @@
 ---
 import { Code } from '@astrojs/starlight/components';
+import '@fontsource-variable/jetbrains-mono';
+import '@fontsource/saira-semi-condensed/500.css';
+import '@fontsource/saira-semi-condensed/600.css';
+import '@fontsource/saira-semi-condensed/700.css';
+import '@fontsource/ibm-plex-sans/400.css';
+import '@fontsource/ibm-plex-sans/500.css';
+import '@fontsource/ibm-plex-sans/600.css';
 
 const installSql = `-- one file, any Postgres 14+, managed or self-hosted
 \\i sql/pgque.sql
@@ -93,13 +100,11 @@ const cell = (v) =>
     <script is:inline>
       (() => {
         const stored = localStorage.getItem('starlight-theme');
-        const theme =
-          stored === 'light' || stored === 'dark'
-            ? stored
-            : window.matchMedia('(prefers-color-scheme: light)').matches
-              ? 'light'
-              : 'dark';
-        document.documentElement.dataset.theme = theme;
+        const pref = stored === 'light' || stored === 'dark' ? stored : 'auto';
+        const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const root = document.documentElement;
+        root.dataset.themePref = pref;
+        root.dataset.theme = pref === 'auto' ? (sysDark ? 'dark' : 'light') : pref;
       })();
     </script>
   </head>
@@ -134,8 +139,8 @@ const cell = (v) =>
         <button
           class="theme-toggle"
           type="button"
-          aria-label="Toggle color theme"
-          title="Toggle theme"
+          aria-label="Color theme: system"
+          title="Theme: system (click to cycle)"
         >
           <svg class="ic-sun" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
             <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -145,6 +150,10 @@ const cell = (v) =>
           </svg>
           <svg class="ic-moon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
             <path fill="currentColor" d="M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>
+          </svg>
+          <svg class="ic-auto" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M9 21h6M12 17v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
           </svg>
         </button>
       </nav>
@@ -172,8 +181,15 @@ const cell = (v) =>
           </div>
         </div>
         <figure class="hero-visual">
-          <div class="hero-visual-frame">
-            <span class="frame-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div class="hud-frame">
+            <span class="hud-corner tl" aria-hidden="true"></span>
+            <span class="hud-corner tr" aria-hidden="true"></span>
+            <span class="hud-corner bl" aria-hidden="true"></span>
+            <span class="hud-corner br" aria-hidden="true"></span>
+            <span class="hud-bar" aria-hidden="true">
+              <span class="hud-dots"><i></i><i></i><i></i></span>
+              <span class="hud-label">sensor readout · sustained-load</span>
+            </span>
             <img
               src="/images/death_spiral.gif"
               alt="Throughput of a SKIP LOCKED queue collapsing under sustained load — the failure mode PgQue avoids by construction"
@@ -325,22 +341,49 @@ const cell = (v) =>
     </footer>
 
     <script is:inline>
-      // Theme toggle: cycle light <-> dark, persisted under Starlight's key.
+      // Theme: 3-state preference (auto -> light -> dark -> auto), synced with
+      // Starlight. "auto" means follow the OS; we never persist it (Starlight
+      // treats a missing stored value as auto), so the docs stay in sync.
       (() => {
         const root = document.documentElement;
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        const sysTheme = () => (mq.matches ? 'dark' : 'light');
+
+        const apply = (pref) => {
+          root.dataset.themePref = pref;
+          root.dataset.theme = pref === 'auto' ? sysTheme() : pref;
+          const btn = document.querySelector('.theme-toggle');
+          if (btn) {
+            btn.setAttribute('aria-label', 'Color theme: ' + pref);
+            btn.setAttribute('title', 'Theme: ' + pref + ' (click to cycle)');
+          }
+        };
+
+        const currentPref = () => {
+          const s = localStorage.getItem('starlight-theme');
+          return s === 'light' || s === 'dark' ? s : 'auto';
+        };
+
         const btn = document.querySelector('.theme-toggle');
         if (btn) {
           btn.addEventListener('click', () => {
-            const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
-            root.dataset.theme = next;
-            try { localStorage.setItem('starlight-theme', next); } catch {}
+            const next = { auto: 'light', light: 'dark', dark: 'auto' }[currentPref()];
+            try {
+              if (next === 'auto') localStorage.removeItem('starlight-theme');
+              else localStorage.setItem('starlight-theme', next);
+            } catch {}
+            apply(next);
           });
         }
-        // Stay in sync if the theme is changed in another tab (e.g. the docs).
+
+        // Live-follow the OS preference while in auto.
+        mq.addEventListener('change', () => {
+          if (currentPref() === 'auto') apply('auto');
+        });
+
+        // Stay in sync if the theme changes in another tab (e.g. the docs).
         window.addEventListener('storage', (e) => {
-          if (e.key === 'starlight-theme' && (e.newValue === 'light' || e.newValue === 'dark')) {
-            root.dataset.theme = e.newValue;
-          }
+          if (e.key === 'starlight-theme') apply(currentPref());
         });
 
         // Lightweight GitHub star count, async + cached, fails silently.
@@ -401,41 +444,54 @@ const cell = (v) =>
     <style is:global>
       :root {
         color-scheme: light dark;
-        --blue: #336791;
-        --blue-light: #5b9bd5;
-        --amber: #f0883e;
-        --radius: 14px;
+        /* brand + frontier accents */
+        --blue: #336791;          /* Postgres steel-blue, kept on-brand */
+        --blue-light: #6ea3c9;
+        --amber: #f0883e;         /* dusk rust-amber */
+        --sand: #c9a86a;          /* desert ochre */
+        --radius: 12px;
+        --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --display: 'Saira Semi Condensed', 'JetBrains Mono Variable', system-ui, sans-serif;
+        --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       }
-      /* Dark (default) */
+      /* Dark = "deep-space dusk": charcoal gunmetal + amber/steel glows */
       :root[data-theme='dark'] {
-        --bg: #0a0e14;
-        --bg-soft: #0e141c;
-        --panel: #141b25;
-        --panel-2: #19222e;
-        --border: #222c3a;
-        --border-soft: #1a232f;
-        --text: #e8eef4;
-        --text-2: #ccd6e0;
-        --muted: #a4b1bf;
-        --accent: var(--blue-light);
-        --grid: rgba(91, 155, 213, 0.06);
-        --glow: rgba(51, 103, 145, 0.30);
+        --bg: #0c0d10;
+        --bg-soft: #121317;
+        --panel: #181a1f;
+        --panel-2: #1f2228;
+        --border: #2c3038;
+        --border-soft: #23262d;
+        --text: #e9e6df;
+        --text-2: #c8c4ba;
+        --muted: #989488;
+        --accent: var(--amber);
+        --accent-2: var(--blue-light);
+        --grid: rgba(201, 168, 106, 0.05);
+        --glow: rgba(240, 136, 62, 0.18);
+        --glow-steel: rgba(51, 103, 145, 0.28);
+        --metal: linear-gradient(180deg, #1c1e23, #16181c);
+        --scan: rgba(255, 255, 255, 0.022);
         color-scheme: dark;
       }
-      /* Light */
+      /* Light = "desert daylight": warm sand/parchment + steel ink */
       :root[data-theme='light'] {
-        --bg: #f7f9fb;
-        --bg-soft: #eef2f6;
-        --panel: #ffffff;
-        --panel-2: #f3f6f9;
-        --border: #d9e1e9;
-        --border-soft: #e6ecf2;
-        --text: #142231;
-        --text-2: #32424f;
-        --muted: #4c5a68;
-        --accent: var(--blue);
-        --grid: rgba(51, 103, 145, 0.05);
-        --glow: rgba(51, 103, 145, 0.16);
+        --bg: #ece5d6;
+        --bg-soft: #e3dac8;
+        --panel: #f6f1e6;
+        --panel-2: #ece4d3;
+        --border: #cabfa6;
+        --border-soft: #d8cdb6;
+        --text: #2a2620;
+        --text-2: #4a443a;
+        --muted: #6b6456;
+        --accent: #b8632a;
+        --accent-2: var(--blue);
+        --grid: rgba(80, 64, 40, 0.05);
+        --glow: rgba(184, 99, 42, 0.14);
+        --glow-steel: rgba(51, 103, 145, 0.14);
+        --metal: linear-gradient(180deg, #f7f2e7, #efe7d6);
+        --scan: rgba(40, 30, 16, 0.018);
         color-scheme: light;
       }
 
@@ -445,7 +501,7 @@ const cell = (v) =>
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-family: var(--sans);
         line-height: 1.6;
         -webkit-font-smoothing: antialiased;
         overflow-x: hidden;
@@ -453,37 +509,32 @@ const cell = (v) =>
       }
       a { color: var(--accent); text-decoration: none; }
       a:hover { text-decoration: underline; }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
-      h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; }
+      code { font-family: var(--mono); font-size: 0.92em; }
+      /* display headings = condensed frontier-tech face */
+      h1, h2, h3, .section-title {
+        font-family: var(--display); letter-spacing: 0.01em; text-transform: none;
+      }
+      /* mono-forward chrome: labels, nav, buttons, tables, terminal bits */
+      .eyebrow, .nav-links, .gh-star, .btn,
+      .feature-n, .client-name, table.cmp, .legend, .footer-copy, .hud-label {
+        font-family: var(--mono);
+      }
+      h1, h2, h3 { line-height: 1.1; letter-spacing: 0; font-weight: 700; }
       main { max-width: 1140px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
       .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
-      /* animated background: dot grid + slow drifting glow + a faint "flowing log" sweep */
+      /* atmosphere: a static dusk-horizon gradient + faint scanlines + a thin grid.
+         No motion lives here — the only animation on the page is the benchmark GIF. */
       .bg-field {
         position: fixed; inset: 0; z-index: 0; pointer-events: none;
         background:
-          radial-gradient(circle at 18% 12%, var(--glow), transparent 42%),
-          radial-gradient(circle at 84% 78%, var(--glow), transparent 46%),
-          radial-gradient(var(--grid) 1px, transparent 1px);
-        background-size: auto, auto, 30px 30px;
-        background-position: 0 0, 0 0, 0 0;
-        animation: drift 26s ease-in-out infinite alternate;
-      }
-      .bg-field::after {
-        content: ''; position: absolute; inset: 0;
-        background: linear-gradient(115deg, transparent 0%, var(--glow) 48%, transparent 60%);
-        opacity: 0.5; mix-blend-mode: screen;
-        background-size: 280% 280%;
-        animation: flow 22s linear infinite;
-      }
-      :root[data-theme='light'] .bg-field::after { mix-blend-mode: multiply; opacity: 0.35; }
-      @keyframes drift {
-        0%   { background-position: 0 0, 0 0, 0 0; }
-        100% { background-position: 4% 3%, -3% -2%, 30px 30px; }
-      }
-      @keyframes flow {
-        0%   { background-position: 0% 0%; }
-        100% { background-position: 280% 280%; }
+          radial-gradient(120% 80% at 50% -10%, var(--glow), transparent 55%),
+          radial-gradient(90% 60% at 12% 4%, var(--glow-steel), transparent 50%),
+          linear-gradient(180deg, transparent 55%, var(--glow) 140%),
+          repeating-linear-gradient(0deg, var(--scan) 0 1px, transparent 1px 3px),
+          repeating-linear-gradient(90deg, var(--grid) 0 1px, transparent 1px 40px);
+        opacity: 0.85;
+        mask-image: linear-gradient(180deg, #000 0%, #000 65%, transparent 100%);
       }
 
       /* reveal-on-scroll */
@@ -505,7 +556,7 @@ const cell = (v) =>
       .brand-mark span:nth-child(3) { background: var(--amber); }
       .brand:hover .brand-mark span:nth-child(1) { transform: translateX(3px); }
       .brand:hover .brand-mark span:nth-child(3) { transform: translateX(-3px); }
-      .brand-word { font-family: ui-monospace, monospace; font-weight: 700; font-size: 1.3rem; letter-spacing: -0.03em; }
+      .brand-word { font-family: var(--mono); font-weight: 700; font-size: 1.3rem; letter-spacing: -0.03em; }
       .brand.small .brand-word { font-size: 1.1rem; }
       .nav-links { display: flex; gap: 20px; align-items: center; }
       .nav-links a:not(.gh-star) { color: var(--muted); font-size: 0.95rem; }
@@ -533,10 +584,14 @@ const cell = (v) =>
         transition: border-color 0.18s ease, color 0.18s ease, transform 0.1s ease;
       }
       .theme-toggle:hover { border-color: var(--accent); transform: translateY(-1px); }
-      .theme-toggle .ic-moon { display: none; }
-      .theme-toggle .ic-sun { display: none; }
-      :root[data-theme='dark'] .theme-toggle .ic-moon { display: block; }
-      :root[data-theme='light'] .theme-toggle .ic-sun { display: block; }
+      /* Icon reflects the chosen preference (auto/light/dark), not the resolved theme. */
+      .theme-toggle .ic-moon,
+      .theme-toggle .ic-sun,
+      .theme-toggle .ic-auto { display: none; }
+      :root[data-theme-pref='dark'] .theme-toggle .ic-moon { display: block; }
+      :root[data-theme-pref='light'] .theme-toggle .ic-sun { display: block; }
+      :root[data-theme-pref='auto'] .theme-toggle .ic-auto,
+      :root:not([data-theme-pref]) .theme-toggle .ic-auto { display: block; }
 
       /* hero */
       .hero {
@@ -562,35 +617,63 @@ const cell = (v) =>
       .cta-row { display: flex; gap: 14px; flex-wrap: wrap; }
       .cta-row.center { justify-content: center; }
       .btn {
-        display: inline-flex; align-items: center; padding: 12px 24px; border-radius: 9px;
-        font-weight: 600; font-size: 0.98rem; border: 1px solid transparent;
+        display: inline-flex; align-items: center; padding: 12px 22px; border-radius: 6px;
+        font-weight: 600; font-size: 0.92rem; letter-spacing: 0.03em; border: 1px solid transparent;
+        text-transform: uppercase;
         transition: transform 0.1s ease, background 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
       }
       .btn:hover { text-decoration: none; transform: translateY(-2px); }
-      .btn-primary { background: var(--blue); color: #fff; box-shadow: 0 8px 24px -10px var(--glow); }
-      .btn-primary:hover { background: #3d76a3; box-shadow: 0 12px 30px -10px var(--glow); }
+      .btn-primary { background: var(--blue); color: #fff; box-shadow: 0 8px 24px -10px var(--glow-steel); }
+      .btn-primary:hover { background: #3d76a3; box-shadow: 0 0 0 1px var(--accent-2), 0 12px 30px -10px var(--glow-steel); }
       .btn-ghost { border-color: var(--border); color: var(--text); background: var(--panel); }
-      .btn-ghost:hover { border-color: var(--accent); }
+      .btn-ghost:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
       .install {
         margin-top: 28px; padding: 12px 16px; background: var(--panel);
         border: 1px solid var(--border); border-radius: 10px; display: inline-flex;
-        gap: 10px; align-items: baseline; flex-wrap: wrap; font-family: ui-monospace, monospace;
+        gap: 10px; align-items: baseline; flex-wrap: wrap; font-family: var(--mono);
       }
       .install-prompt { color: var(--amber); font-weight: 700; }
       .install > code { color: var(--accent); font-weight: 600; }
       .install-note { color: var(--muted); font-size: 0.9rem; }
 
       .hero-visual { margin: 0; }
-      .hero-visual-frame {
-        position: relative; border-radius: var(--radius); border: 1px solid var(--border);
-        background: var(--panel); padding: 32px 12px 12px; overflow: hidden;
-        box-shadow: 0 30px 70px -34px var(--glow), 0 2px 0 var(--border-soft);
+      .hero-visual figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 16px; line-height: 1.55; }
+
+      /* HUD / console frame around the benchmark readout */
+      .hud-frame {
+        position: relative; border-radius: var(--radius);
+        border: 1px solid var(--border);
+        background: var(--metal); padding: 38px 14px 14px; overflow: hidden;
+        box-shadow: 0 30px 70px -34px var(--glow-steel), inset 0 0 0 1px rgba(255,255,255,0.02);
       }
-      .frame-dots { position: absolute; top: 12px; left: 14px; display: flex; gap: 6px; }
-      .frame-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--border); display: block; }
-      .frame-dots i:nth-child(1) { background: var(--amber); }
-      .hero-visual img { width: 100%; display: block; border-radius: 8px; }
-      .hero-visual figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 14px; }
+      .hud-frame::after {
+        /* faint scanline texture over the console */
+        content: ''; position: absolute; inset: 0; pointer-events: none;
+        background: repeating-linear-gradient(0deg, var(--scan) 0 1px, transparent 1px 3px);
+      }
+      .hud-bar {
+        position: absolute; top: 0; left: 0; right: 0; height: 28px;
+        display: flex; align-items: center; gap: 12px; padding: 0 14px;
+        border-bottom: 1px solid var(--border-soft);
+        background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent);
+        z-index: 2;
+      }
+      .hud-dots { display: flex; gap: 6px; }
+      .hud-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--border); display: block; }
+      .hud-dots i:nth-child(1) { background: var(--amber); }
+      .hud-dots i:nth-child(2) { background: var(--sand); }
+      .hud-dots i:nth-child(3) { background: var(--accent-2); }
+      .hud-label {
+        font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase;
+        color: var(--muted);
+      }
+      .hud-frame img { width: 100%; display: block; border-radius: 6px; position: relative; z-index: 1; }
+      /* corner brackets */
+      .hud-corner { position: absolute; width: 14px; height: 14px; z-index: 3; pointer-events: none; }
+      .hud-corner.tl { top: 7px; left: 7px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+      .hud-corner.tr { top: 7px; right: 7px; border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+      .hud-corner.bl { bottom: 7px; left: 7px; border-bottom: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+      .hud-corner.br { bottom: 7px; right: 7px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
 
       /* bands */
       .band { position: relative; background: var(--bg-soft); border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
@@ -624,7 +707,7 @@ const cell = (v) =>
       .feature-card:hover { border-color: var(--border); transform: translateY(-3px); box-shadow: 0 18px 40px -24px var(--glow); }
       .feature-card:hover::before { transform: scaleX(1); }
       .feature-n {
-        font-family: ui-monospace, monospace; font-size: 0.78rem; font-weight: 700;
+        font-family: var(--mono); font-size: 0.78rem; font-weight: 700;
         color: var(--accent); letter-spacing: 0.08em; opacity: 0.7;
       }
       .feature-card h3 { margin: 8px 0 10px; font-size: 1.14rem; color: var(--text); }

@@ -1,0 +1,68 @@
+---
+/* Docs header override: replace Starlight's theme <select> with the same
+   3-state icon toggle used on the landing (auto -> light -> dark -> auto),
+   sharing the `starlight-theme` storage key so both stay in sync. */
+---
+
+<button class="theme-toggle" type="button" aria-label="Color theme: system" title="Theme: system (click to cycle)">
+  <svg class="ic-sun" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    <g stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>
+    </g>
+  </svg>
+  <svg class="ic-moon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <path fill="currentColor" d="M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>
+  </svg>
+  <svg class="ic-auto" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    <path d="M9 21h6M12 17v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  </svg>
+</button>
+
+<script is:inline>
+  (() => {
+    const root = document.documentElement;
+    const btn = document.querySelector('.theme-toggle');
+    if (!btn) return;
+    const mq = matchMedia('(prefers-color-scheme: dark)');
+    const sys = () => (mq.matches ? 'dark' : 'light');
+    const pref = () => {
+      const s = localStorage.getItem('starlight-theme');
+      return s === 'light' || s === 'dark' ? s : 'auto';
+    };
+    const apply = (p) => {
+      root.dataset.themePref = p;
+      root.dataset.theme = p === 'auto' ? sys() : p;
+      btn.setAttribute('aria-label', 'Color theme: ' + p);
+      btn.setAttribute('title', 'Theme: ' + p + ' (click to cycle)');
+    };
+    apply(pref());
+    btn.addEventListener('click', () => {
+      const next = { auto: 'light', light: 'dark', dark: 'auto' }[pref()];
+      try {
+        if (next === 'auto') localStorage.setItem('starlight-theme', '');
+        else localStorage.setItem('starlight-theme', next);
+      } catch {}
+      apply(next);
+    });
+    mq.addEventListener('change', () => { if (pref() === 'auto') apply('auto'); });
+    window.addEventListener('storage', (e) => { if (e.key === 'starlight-theme') apply(pref()); });
+  })();
+</script>
+
+<style>
+  .theme-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--sl-color-gray-5); background: var(--sl-color-gray-6, transparent);
+    color: var(--sl-color-text);
+    transition: border-color 0.18s ease, transform 0.1s ease;
+  }
+  .theme-toggle:hover { border-color: var(--pgque-amber, #f0883e); transform: translateY(-1px); }
+  .theme-toggle .ic-sun, .theme-toggle .ic-moon, .theme-toggle .ic-auto { display: none; }
+  :root[data-theme-pref='dark'] .theme-toggle .ic-moon { display: block; }
+  :root[data-theme-pref='light'] .theme-toggle .ic-sun { display: block; }
+  :root[data-theme-pref='auto'] .theme-toggle .ic-auto,
+  :root:not([data-theme-pref]) .theme-toggle .ic-auto { display: block; }
+</style>

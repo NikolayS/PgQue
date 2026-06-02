@@ -1,0 +1,61 @@
+---
+/* Docs header override: keep Starlight's social icons, then append the same
+   GitHub star widget used on the landing so the top-right corner matches. */
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+---
+
+<Default><slot /></Default>
+<a
+  class="gh-star"
+  href="https://github.com/NikolayS/pgque"
+  target="_blank"
+  rel="noopener"
+  aria-label="Star NikolayS/pgque on GitHub"
+>
+  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+    <path fill="currentColor" d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/>
+  </svg>
+  <span class="gh-star-text">Star</span>
+  <span class="gh-count" data-gh-count>★</span>
+</a>
+
+<script is:inline>
+  (() => {
+    const el = document.querySelector('[data-gh-count]');
+    if (!el) return;
+    const KEY = 'pgque-gh-stars';
+    const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : '' + n);
+    try {
+      const c = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (c && Date.now() - c.t < 3600000) el.textContent = fmt(c.n);
+    } catch {}
+    fetch('https://api.github.com/repos/NikolayS/pgque')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.stargazers_count === 'number') {
+          el.textContent = fmt(d.stargazers_count);
+          try { localStorage.setItem(KEY, JSON.stringify({ n: d.stargazers_count, t: Date.now() })); } catch {}
+        }
+      })
+      .catch(() => {});
+  })();
+</script>
+
+<style>
+  .gh-star {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border: 1px solid var(--sl-color-gray-5); border-radius: 6px;
+    background: var(--sl-color-gray-6, var(--sl-color-black));
+    color: var(--sl-color-white) !important; font-size: 0.8rem; font-weight: 600;
+    font-family: var(--sl-font-mono, monospace); text-transform: uppercase; letter-spacing: 0.04em;
+    margin-left: 0.5rem;
+    transition: border-color 0.18s ease, transform 0.1s ease;
+  }
+  .gh-star:hover { opacity: 1; border-color: var(--pgque-amber, #f0883e); transform: translateY(-1px); }
+  .gh-star svg { color: var(--pgque-amber, #f0883e); }
+  .gh-count {
+    font-variant-numeric: tabular-nums; color: var(--sl-color-gray-3);
+    padding-left: 7px; border-left: 1px solid var(--sl-color-gray-5);
+  }
+  @media (max-width: 50rem) { .gh-star-text { display: none; } }
+</style>

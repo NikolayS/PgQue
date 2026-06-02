@@ -53,10 +53,23 @@ export default defineConfig({
       social: {
         github: 'https://github.com/NikolayS/pgque',
       },
+      components: {
+        SocialIcons: './src/components/docs/SocialIcons.astro',
+        ThemeSelect: './src/components/docs/ThemeSelect.astro',
+      },
       editLink: {
         baseUrl: 'https://github.com/NikolayS/pgque/edit/main/docs/',
       },
-      customCss: ['./src/styles/custom.css'],
+      customCss: [
+        '@fontsource-variable/jetbrains-mono',
+        '@fontsource/saira-semi-condensed/500.css',
+        '@fontsource/saira-semi-condensed/600.css',
+        '@fontsource/saira-semi-condensed/700.css',
+        '@fontsource/ibm-plex-sans/400.css',
+        '@fontsource/ibm-plex-sans/500.css',
+        '@fontsource/ibm-plex-sans/600.css',
+        './src/styles/custom.css',
+      ],
       head: [
         {
           tag: 'meta',
@@ -65,6 +78,12 @@ export default defineConfig({
         {
           tag: 'meta',
           attrs: { name: 'twitter:card', content: 'summary_large_image' },
+        },
+        {
+          /* Set data-theme-pref before paint so the toggle icon is correct (no FOUC). */
+          tag: 'script',
+          content:
+            "(()=>{var s=localStorage.getItem('starlight-theme');document.documentElement.dataset.themePref=(s==='light'||s==='dark')?s:'auto';})();",
         },
       ],
       sidebar: [

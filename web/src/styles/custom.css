@@ -1,27 +1,116 @@
-/* PgQue brand theming for Starlight docs. PostgreSQL blue (#336791) accent. */
+/*
+ * PgQue docs theme — "futuristic space-western / frontier terminal".
+ * Gunmetal + desert-dusk palette, JetBrains Mono for code/UI chrome,
+ * Saira Semi Condensed display headings, IBM Plex Sans for readable body prose.
+ * Original interpretation only — no franchise assets.
+ */
+
 :root {
-  --sl-color-accent-low: #16242f;
-  --sl-color-accent: #336791;
-  --sl-color-accent-high: #b9d4e8;
-  --sl-color-white: #ffffff;
-
   --pgque-blue: #336791;
-  --pgque-blue-light: #5b9bd5;
+  --pgque-blue-light: #6ea3c9;
   --pgque-amber: #f0883e;
+  --pgque-sand: #c9a86a;
+
+  /* Fonts (self-hosted via @fontsource, offline-safe) */
+  --sl-font: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sl-font-mono-system: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --pgque-display: 'Saira Semi Condensed', var(--sl-font-mono);
 }
 
+/* Dark = deep-space dusk: charcoal gunmetal + amber/steel */
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #2a1e12;
+  --sl-color-accent: var(--pgque-amber);
+  --sl-color-accent-high: #f6c79b;
+  --sl-color-white: #f0ede5;
+  --sl-color-gray-1: #e3ded3;
+  --sl-color-gray-2: #c2bdb1;
+  --sl-color-gray-3: #989488;
+  --sl-color-gray-4: #5d5a51;
+  --sl-color-gray-5: #2c3038;
+  --sl-color-gray-6: #1f2228;
+  --sl-color-black: #0c0d10;
+  --sl-color-bg: #0c0d10;
+  --sl-color-bg-nav: #121317;
+  --sl-color-bg-sidebar: #121317;
+}
+
+/* Light = desert daylight: warm sand/parchment + steel ink */
 :root[data-theme='light'] {
-  --sl-color-accent-low: #d7e6f1;
-  --sl-color-accent: #2a587c;
-  --sl-color-accent-high: #16313f;
+  --sl-color-accent-low: #ecdcc6;
+  --sl-color-accent: #b8632a;
+  --sl-color-accent-high: #5a2f12;
+  --sl-color-white: #2a2620;
+  --sl-color-gray-1: #2a2620;
+  --sl-color-gray-2: #4a443a;
+  --sl-color-gray-3: #6b6456;
+  --sl-color-gray-4: #8a8474;
+  --sl-color-gray-5: #cabfa6;
+  --sl-color-gray-6: #ece4d3;
+  --sl-color-gray-7: #f1ead9;
+  --sl-color-black: #f6f1e6;
+  --sl-color-bg: #ece5d6;
+  --sl-color-bg-nav: #e3dac8;
+  --sl-color-bg-sidebar: #e3dac8;
 }
 
-/* Slightly tighter, more technical heading rhythm. */
-.sl-markdown-content h2 {
-  margin-top: 2.25rem;
+/* Display headings in the condensed frontier-tech face */
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.site-title {
+  font-family: var(--pgque-display);
+  letter-spacing: 0.01em;
 }
 
-/* Monospace inline code with a subtle accent border, matching the SQL focus. */
+/* Tighter, more technical heading rhythm */
+.sl-markdown-content h2 { margin-top: 2.25rem; }
+
+/* Code reads as JetBrains Mono everywhere, including inline code inside headings
+   (e.g. reference signature headings like pgque.name(arg text) -> type). */
+.sl-markdown-content code,
+.sl-markdown-content pre,
+.sl-markdown-content h1 code,
+.sl-markdown-content h2 code,
+.sl-markdown-content h3 code,
+.sl-markdown-content h4 code,
+.sl-markdown-content h5 code {
+  font-family: var(--sl-font-mono);
+}
+
+/* Inline code: subtle bracketed terminal chip */
 .sl-markdown-content :not(pre) > code {
   border: 1px solid var(--sl-color-gray-5);
+  border-radius: 4px;
+}
+
+/* HUD corner-bracket accent on code blocks */
+.expressive-code .frame { position: relative; }
+.expressive-code .frame::before,
+.expressive-code .frame::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  z-index: 2;
+}
+.expressive-code .frame::before {
+  top: 6px; left: 6px;
+  border-top: 2px solid var(--sl-color-accent);
+  border-left: 2px solid var(--sl-color-accent);
+}
+.expressive-code .frame::after {
+  bottom: 6px; right: 6px;
+  border-bottom: 2px solid var(--sl-color-accent);
+  border-right: 2px solid var(--sl-color-accent);
+}
+
+/* Header chrome: align the right-side controls of the override components */
+.right-group, .social-icons { align-items: center; }
+
+/* Faint scanline texture on the top nav for the console feel */
+header.header {
+  background-image: repeating-linear-gradient(0deg, rgba(127,127,127,0.03) 0 1px, transparent 1px 3px);
 }
