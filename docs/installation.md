@@ -134,6 +134,103 @@ before the next, so an external loop should commit between iterations.
 > Without a working ticker, enqueue succeeds but consumers see nothing. If
 > `receive()` returns no rows, check that a ticker is running first.
 
+## Enabling pg_cron on managed platforms
+
+`pgque.start()` needs `pg_cron` in the database, and PgQue's 1-second ticker
+relies on the sub-minute (`'1 second'`) schedule syntax that arrived in
+`pg_cron` 1.5. Most managed platforms ship `pg_cron` 1.6.x, which is fine. If a
+platform only offers `pg_cron` older than 1.5, skip `pgque.start()` and drive
+the ticker from an external scheduler instead — see
+[Option C](#option-c--manual-or-external-scheduler).
+
+`pg_cron` runs jobs in one database (`cron.database_name`, default `postgres`).
+If your PgQue schema lives elsewhere, point `cron.database_name` at it or use
+`cron.schedule_in_database` as shown under [ticking](#option-a--pg_cron-recommended).
+
+After enabling `pg_cron` on any platform below, install it in the target
+database and start the ticker:
+
+```sql
+create extension if not exists pg_cron;
+select pgque.start();
+```
+
+### Managed clouds
+
+**Amazon RDS / Amazon Aurora.** Add `pg_cron` to `shared_preload_libraries` in
+a custom DB (cluster) parameter group, then reboot the instance. Connect as an
+`rds_superuser` and `create extension pg_cron;`. To run the ticker in your PgQue
+database rather than `postgres`, set the `cron.database_name` parameter to it.
+
+**Azure Database for PostgreSQL — Flexible Server.** Add `pg_cron` to the
+`azure.extensions` server parameter and to `shared_preload_libraries`, then
+restart the server. `create extension pg_cron;` in the target database. Azure
+does not use `cron.database_name`; use `cron.schedule_in_database(...)` to run
+jobs in a specific database, and omit the job username (jobs run as the
+scheduling user, which needs `azure_pg_admin`).
+
+**Google Cloud SQL for PostgreSQL.** Set the database flag
+`cloudsql.enable_pg_cron=on` (this restarts the instance), then
+`create extension pg_cron;`. Set the `cron.database_name` flag if you want cron
+in a non-default database.
+
+**Google AlloyDB for PostgreSQL.** Set the instance flag
+`alloydb.enable_pg_cron=on` (requires an instance restart), then
+`create extension pg_cron;` in each target database. The `cron.database_name`
+flag is settable once enabled.
+
+**Supabase.** Enable the `pg_cron` extension from the Dashboard
+(Integrations → Cron), or run `create extension if not exists pg_cron;`. No
+restart needed. On the standard project database no `cron.database_name` change
+is required.
+
+**Neon.** Set `cron.database_name` to the target database via the compute
+endpoint settings, restart the compute, then
+`create extension if not exists pg_cron;`. Note the auto-ticker only fires while
+the compute is active — disable scale-to-zero (or run the compute 24/7) so ticks
+keep flowing during idle periods.
+
+**Aiven for PostgreSQL.** `pg_cron` is already preloaded; just
+`create extension pg_cron;` in the target database as `avnadmin` (or another
+admin user).
+
+**DigitalOcean Managed PostgreSQL.** `create extension pg_cron;` — no special
+preload step. `cron.database_name` is not configurable on this platform, so
+`pg_cron` (and therefore the auto-ticker) only operates in the `defaultdb`
+database; install PgQue there if you want the in-database ticker.
+
+### Postgres-compatible platforms
+
+**PlanetScale for Postgres.** Enable `pg_cron` from the dashboard
+(Clusters → branch → Extensions), queue and apply the change (this restarts the
+database), then `create extension if not exists pg_cron;`. Set
+`cron.database_name` to the database where you created the extension.
+
+**YugabyteDB.** Set the cluster-wide gflag `enable_pg_cron=true` on all
+YB-Masters and YB-TServers, optionally set `ysql_cron_database_name` (defaults
+to `yugabyte`), then `create extension pg_cron;` as a superuser. Jobs run on a
+single elected `pg_cron` leader; expect a worst-case ~60 s gap on leader
+failover or job changes — acceptable for the rotation ticker.
+
+### Kubernetes operators
+
+**StackGres.** Declare `pg_cron` in the `SGCluster` extensions list (StackGres
+downloads it into the container — no custom image), add
+`shared_preload_libraries = 'pg_cron'` to the referenced `SGPostgresConfig`,
+trigger a restart via an `SGDbOps` operation, then `create extension pg_cron;`.
+
+**CloudNativePG.** `pg_cron` is not in the stock CNPG image — build a custom
+operand image with the PGDG `postgresql-NN-cron` package. Declare it in
+`.spec.postgresql.shared_preload_libraries: ["pg_cron"]`, create the extension
+via `.spec.bootstrap.initdb.postInitSQL` (or manually), and let the operator do
+the rolling restart that the `shared_preload_libraries` change requires.
+
+**Percona Operator for PostgreSQL.** Add `pg_cron` as a custom extension package
+under `.spec.extensions.custom` and list it in the Patroni
+`shared_preload_libraries`. Applying the CR restarts the cluster Pods; then
+connect to the primary and `create extension pg_cron;` in each target database.
+You may need to host the extension package yourself for your Postgres major.
+
 ## Tick rate
 
 The default tick period is 100 ms (10 ticks per second). Tune it with:
