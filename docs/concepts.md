@@ -111,7 +111,8 @@ Per-system notes:
 
 - **[PgQ](https://github.com/pgq/pgq)** is the Skype-era engine PgQue derives from — same snapshot/rotation architecture, but it requires a C extension and the external `pgqd` daemon, neither available on managed Postgres. PgQue removes both.
 - **PGMQ** retry is visibility-timeout re-delivery (`read_ct` tracking), without configurable backoff or a max-attempts cap.
-- **[Que](https://github.com/que-rb/que)** uses advisory locks rather than `SKIP LOCKED` — so claiming creates no dead tuples — but completed jobs are still `DELETE`d, which does. Ruby-only.
+- **River** is a Go background-job framework on Postgres: it claims jobs with `SKIP LOCKED` and `DELETE`s completed jobs, so its job table accumulates dead tuples under sustained load, and it needs a long-running Go worker process. Competing-consumers over a job table, not a shared log with independent cursors.
+- **Que** uses advisory locks rather than `SKIP LOCKED` — so claiming creates no dead tuples — but completed jobs are still `DELETE`d, which does. Ruby-only.
 - **pg-boss** fan-out is copy-per-queue (`publish()`/`subscribe()` inserts one row per subscriber per event), not a shared log with independent cursors.
 - **Category:** River, Que, and pg-boss are job-queue frameworks (per-job lifecycle, a worker binary in Go/Ruby/Node.js). PgQue is an event/message queue — a shared log with fan-out, closer to a Kafka topic.
 
