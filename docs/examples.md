@@ -39,6 +39,85 @@ Result: all three `receive` calls return the same event, each through its own cu
 
 Late-subscriber caveat: `subscribe` (which calls `register_consumer`) starts the consumer at the most recent tick. A consumer will not see events that were sent before it subscribed. Subscribe each consumer before you start producing.
 
+## Cooperative consumers (experimental)
+
+> **Experimental in PgQue 0.2.** The cooperative-consumer functions ship in the default install but are marked experimental: names, edge-case behavior, and the client API may change before they are stable. Use idempotent handlers and test stale-worker takeover before relying on this as the only path for critical work.
+
+Goal: split *one* subscriber's events across a pool of competing workers, so each event is handled by exactly one worker in the pool — without giving up PgQue's shared-log model.
+
+Native fan-out gives every registered consumer its own cursor over the whole log, so every consumer sees every event (see [Fan-out](#fan-out--many-consumers-one-shared-log)). Cooperative consumers are the opposite split: one logical consumer (`workers`) owns a single cursor, and several *subconsumers* (`w1`, `w2`, …) draw *different* batches from it. Each event is delivered to one subconsumer, not all of them — competing consumers inside a single fan-out cursor. See [concepts](concepts.md#cooperative-consumers-vs-fan-out) for when to pick which.
+
+Register the group, then send and tick as usual:
+
+```sql
+-- a tick must already exist before registering (register starts at the latest tick)
+select pgque.force_next_tick('demo');  -- separate transaction; skip if pg_cron ticks
+select pgque.ticker('demo');           -- separate transaction; skip if pg_cron ticks
+
+-- register the cooperative group before producing, so the workers' shared
+-- cursor starts ahead of the events you are about to send
+select pgque.register_subconsumer('demo', 'workers', 'w1');
+select pgque.register_subconsumer('demo', 'workers', 'w2');
+```
+
+`register_subconsumer(queue, consumer, subconsumer)` creates the `workers` main cursor on first call and a member row per subconsumer. You can skip it entirely: `receive_coop()` auto-registers a missing consumer or subconsumer on the fly, so a cold worker can call `receive_coop()` directly. Register explicitly only when you need to control *when* the cursor starts, or to convert an existing normal consumer (`register_subconsumer(..., convert_normal => true)`).
+
+Now each worker polls with `receive_coop()`. Successive calls hand out successive batches:
+
+```sql
+-- worker w1 (its own process / connection)
+select msg_id, batch_id, payload
+from pgque.receive_coop('demo', 'workers', 'w1', 100);
+
+-- worker w2 (a different process / connection)
+select msg_id, batch_id, payload
+from pgque.receive_coop('demo', 'workers', 'w2', 100);
+```
+
+Result (two batches of three events, one tick apart):
+
+```
+ msg_id | batch_id | payload
+--------+----------+----------
+   2002 |        3 | {"n": 1}     -- w1 gets batch 3
+   2003 |        3 | {"n": 2}
+   2004 |        3 | {"n": 3}
+
+ msg_id | batch_id | payload
+--------+----------+----------
+   4006 |        4 | {"n": 4}     -- w2 gets batch 4
+   4007 |        4 | {"n": 5}
+   4008 |        4 | {"n": 6}
+```
+
+w1 and w2 drew *different* slices of the same `(demo, workers)` subscriber — no event went to both. Ack each batch under whichever worker received it, exactly as with normal `receive` / `ack`:
+
+```sql
+select pgque.ack(3);  -- w1's batch
+select pgque.ack(4);  -- w2's batch
+```
+
+Keep idle subconsumers alive and remove them when a worker shuts down:
+
+```sql
+-- heartbeat: mark a subconsumer live without opening a batch (lets stale-worker
+-- takeover via receive_coop's dead_interval leave healthy workers alone)
+select pgque.touch_subconsumer('demo', 'workers', 'w1');
+
+-- remove a subconsumer that has no open batch
+select pgque.unregister_subconsumer('demo', 'workers', 'w2');
+```
+
+Gotchas (each verified against a live install):
+
+- **A subconsumer with an open (un-acked) batch refuses to unregister.** `unregister_subconsumer` raises unless you pass `batch_handling => 1`, which routes the in-flight messages through the queue's retry/DLQ policy first.
+- **Normal `receive` / `next_batch` raise on cooperative rows.** Calling `pgque.receive('demo', 'workers', …)` on the cooperative main errors with `… is a cooperative main consumer; use cooperative receive/next_batch with a subconsumer`. Member rows are reachable only through `receive_coop()` / cooperative `next_batch()`.
+- **`finish_batch` (and `ack`) reject a `coop_main` batch.** Acks apply to the member-owned batch the subconsumer received, never to the group cursor directly.
+- **Empty tick windows are auto-finished.** When a poll lands on a tick window with no events, `receive_coop()` finishes it internally and returns no rows and no `batch_id` — unlike `receive()`, which still hands back an empty batch token to ack.
+- **One hot row.** Batch hand-out serializes on a `FOR UPDATE` of the `workers` main row, so many workers polling tiny batches contend. If you scale the pool, raise `ticker_max_count` / tick cadence so each batch is big enough to amortize the lock.
+
+`pgque.get_consumer_info('demo')` lists the group as `workers` (the main cursor) and each member as `workers.w1`, `workers.w2`. Full signatures are in the [reference](reference.md#cooperative-consumers--subconsumers).
+
 ## Exactly-once processing
 
 Goal: process a message and commit your business writes such that the message is never lost and never applied twice.
