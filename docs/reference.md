@@ -150,7 +150,9 @@ perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed')
 
 ## Cooperative consumers / subconsumers
 
-**Experimental.** Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.
+> **Experimental in PgQue 0.2.** Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.
+
+For a usage walkthrough see the [cooperative-consumers recipe](examples.md#cooperative-consumers--subconsumers-experimental); for when to choose it over fan-out see [concepts](concepts.md#cooperative-consumers-vs-fan-out).
 
 Cooperative consumers let several subconsumers share one logical consumer cursor. The main consumer row (`sub_role = 'coop_main'`) owns the group cursor; member rows (`sub_role = 'coop_member'`) own active batches. The feature is bundled in the default SQL install, but downgrade after creating subconsumers is unsupported unless subconsumers are unregistered first.
 

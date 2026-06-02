@@ -15,7 +15,9 @@ Short docs for users, plus a contributor primer.
 - **[Installation and operations](installation.md)** — install, ticking,
   role grants, uninstall, and troubleshooting.
 - **[Examples](examples.md)** — short patterns: fan-out, exactly-once,
-  batch send, recurring jobs, DLQ inspection.
+  batch send, recurring jobs, DLQ inspection, and
+  [cooperative consumers / subconsumers](examples.md#cooperative-consumers--subconsumers-experimental)
+  (experimental).
 - **[Monitoring and health](monitoring.md)** — queue, consumer, and batch
   introspection; lag and pending-event signals; what to alert on.
 

@@ -56,7 +56,18 @@ The two compose: a queue can have several independent fan-out consumers, and any
 - **Use fan-out** when every consumer needs every event (different subsystems, different side effects).
 - **Use cooperative consumers** when one subscriber's events should be split across interchangeable workers for throughput, and a given event must be handled once within that pool.
 
-See [examples](examples.md#cooperative-consumers-experimental) for the cooperative recipe and [reference](reference.md#cooperative-consumers--subconsumers) for signatures.
+See [examples](examples.md#cooperative-consumers--subconsumers-experimental) for the cooperative recipe and [reference](reference.md#cooperative-consumers--subconsumers) for signatures.
+
+### When cooperative consumers matter
+
+The use case that keeps coming up: the queue itself is fast, but the downstream *side effect* is not. When one message means one slow external call — a transactional email API call (Resend, SendGrid), an SMS request, a webhook, or a slow HTTP POST — consumer-side parallelism is what decides whether the backlog drains or lingers. PgQue does not need a second queue to spread that load: one main consumer fetches a batch and fans the work out to a pool of subconsumers, each pulling its own slice cooperatively.
+
+<figure>
+  <img src="/images/backlog_race.gif" alt="Backlog drain race for 1, 2, 4, 8, and 16 cooperative subconsumers draining the same backlog with fixed per-message work">
+  <figcaption>The same preloaded backlog drained by 1, 2, 4, 8, and 16 cooperative subconsumers, with the email-provider call replaced by a fixed per-message sleep so only consumer parallelism varies.</figcaption>
+</figure>
+
+The takeaway is qualitative: when downstream work dominates, a single consumer is throughput-bound by that work, and adding cooperative subconsumers scales throughput and backlog drain close to linearly until some other bottleneck appears. The effect is reproducible on your own hardware.
 
 ## Why zero bloat
 

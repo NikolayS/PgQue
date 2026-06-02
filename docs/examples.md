@@ -39,7 +39,7 @@ Result: all three `receive` calls return the same event, each through its own cu
 
 Late-subscriber caveat: `subscribe` (which calls `register_consumer`) starts the consumer at the most recent tick. A consumer will not see events that were sent before it subscribed. Subscribe each consumer before you start producing.
 
-## Cooperative consumers (experimental)
+## Cooperative consumers / subconsumers (experimental)
 
 > **Experimental in PgQue 0.2.** The cooperative-consumer functions ship in the default install but are marked experimental: names, edge-case behavior, and the client API may change before they are stable. Use idempotent handlers and test stale-worker takeover before relying on this as the only path for critical work.
 
