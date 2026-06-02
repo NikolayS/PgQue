@@ -1,21 +1,24 @@
-# PgQue tutorial
+---
+title: Tutorial
+description: A hands-on PgQue walkthrough — install, send, tick, receive, retry, dead-letter, and health checks, end to end.
+---
 
-A hands-on walkthrough. With psql access to a Postgres 14+ instance and ten minutes, you can follow every step end to end. You will type SQL, see what comes back, and build an intuition for how PgQue moves messages.
+A guided, hands-on walkthrough. With `psql` access to a Postgres 14+ database and about ten minutes, you can follow every step end to end. You will type SQL, see what comes back, and build an intuition for how PgQue moves messages through an order-processing queue.
 
-By the end, you will have a working `orders` queue with a `processor` consumer, a retry flow, a dead letter queue, and health checks.
+By the end you will have a working `orders` queue with a `processor` consumer, a happy-path delivery, a retry that reappears after a delay, a message driven all the way to the dead-letter queue, and a health check.
 
-Prerequisites: Postgres 14 or newer, a database to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker manually so it works anywhere.
+Prerequisites: Postgres 14 or newer, a database to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker by hand, so it works on any managed or self-managed Postgres.
 
-Each step shows the exact SQL and the expected output. Your `msg_id` / `ev_id` / `pending_events` / `ev_new` numbers will differ from the examples — every `pgque.force_next_tick` call skips the event sequence forward by about 1000, so exact numeric output depends on when you call it. Treat those numbers as illustrative. When transaction boundaries matter (and they matter — PgQue is snapshot-based), the text calls that out.
+Each step shows the exact SQL and the expected output. Your `msg_id` / `batch_id` / `ev_new` numbers will differ from the examples — each `pgque.force_next_tick` call advances the event sequence by a large amount, so exact numeric output depends on when you call it. Treat the numbers as illustrative. Where transaction boundaries matter — and they matter, because PgQue is snapshot-based — the text calls that out.
 
-You can run every snippet in `psql` with `--no-psqlrc` and `PAGER=cat` if you want reproducible output. From the cloned repo, so `\i sql/pgque.sql` resolves:
+For reproducible output, run psql with `--no-psqlrc` and `PAGER=cat`. Start from the cloned repo so `\i sql/pgque.sql` resolves:
 
 ```bash
 cd /path/to/pgque
 PAGER=cat psql --no-psqlrc -d mydb
 ```
 
-For vocabulary — "batch", "tick", "rotation" — see the [concepts glossary](pgq-concepts.md).
+For vocabulary — "event", "batch", "tick", "rotation" — see the [concepts glossary](concepts.md).
 
 ## Step 1: Install
 
@@ -34,31 +37,32 @@ select pgque.version();
 ```
 
 ```
-    version
-----------------
- [[your version]]
+   version
+-------------
+ 0.2.0
+(1 row)
 ```
 
-The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you will call in the rest of this tutorial. The roles are siblings: `pgque_writer` produces (`send`, `send_batch`); `pgque_reader` consumes (`subscribe`, `receive`, `ack`, `nack`); `pgque_admin` is a member of both.
+The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you call in the rest of this tutorial. The roles are siblings, not parent and child: `pgque_writer` produces (`send`, `send_batch`); `pgque_reader` consumes (`subscribe`, `receive`, `ack`, `nack`); `pgque_admin` is a member of both.
 
-**Skip the next snippet if you are following this tutorial as the install owner** — the rest of the tutorial works without any extra grants. The block below is the typical app-role setup you would do in production, where `app_orders` / `app_webhook` / `metrics` are app-role names you create yourself:
+Following along as the install owner needs no extra grants — skip the next snippet. In production you grant the roles to your own app roles. An app that both produces and consumes needs both roles:
 
 ```sql
--- Produce + consume:
+-- produce and consume:
 grant pgque_reader, pgque_writer to app_orders;
 
--- Pure producer:
+-- produce only:
 grant pgque_writer to app_webhook;
 
--- Pure consumer / dashboard / metrics:
+-- consume only (dashboard, metrics):
 grant pgque_reader to metrics;
 ```
 
-See [reference.md — Roles and grants](reference.md#roles-and-grants) for the full table and rationale. If you already have PgQue installed, see [upgrading.md](upgrading.md) before re-running the installer on an existing schema.
+See [Installation & operations](installation.md) for the full role and grant story.
 
 ## Step 2: Create the queue and the consumer
 
-A queue is a named, shared event log. A consumer is a named cursor into that log. Any number of producers can write to the same queue concurrently, and any number of consumers can subscribe — each sees every event through its own cursor, independently (fan-out by default). You can create as many queues as you want in the same database; this tutorial uses one.
+A queue is a named, shared event log. A consumer is a named cursor into that log. Any number of producers can write to the same queue concurrently, and any number of consumers can subscribe — each sees every event through its own cursor, independently (fan-out by default).
 
 ```sql
 select pgque.create_queue('orders');
@@ -69,12 +73,15 @@ select pgque.subscribe('orders', 'processor');
  create_queue
 --------------
             1
+(1 row)
+
  subscribe
 -----------
          1
+(1 row)
 ```
 
-`create_queue` returns `1` when it created the queue (and `0` if it already existed — the call is idempotent). `subscribe` is the modern alias for `register_consumer`.
+`create_queue` returns `1` when it created the queue, `0` if it already existed — the call is idempotent. `subscribe` is the modern alias for PgQ's `register_consumer`.
 
 ## Step 3: Send an order
 
@@ -88,11 +95,10 @@ select pgque.send('orders', '{"order_id": 42, "total": 99.95}'::jsonb);
  send
 ------
     1
+(1 row)
 ```
 
-That is the event id (`ev_id`) — unique within the queue, monotonically increasing within a rotation window.
-
-`pgque.send` also accepts a raw `text` payload — useful for protobuf, msgpack, or XML that you encode yourself. Untyped string literals like `'{"x":1}'` without the `::jsonb` cast resolve to the `text` overload. This tutorial stays on `jsonb` for clarity; see the [reference](reference.md) for the full overload rules and the NUL-byte caveat for binary payloads.
+That return value is the event id — unique within the queue. `pgque.send` also accepts a raw `text` payload for formats you encode yourself (protobuf, msgpack, XML). Note that an untyped literal like `'{"x":1}'` without the `::jsonb` cast resolves to the `text` overload and is stored verbatim, with no JSON validation. This tutorial stays on `jsonb`; see the [reference](reference.md) for the full overload rules.
 
 ## Step 4: Try to receive — and get nothing
 
@@ -108,61 +114,59 @@ select * from pgque.receive('orders', 'processor', 100);
 (0 rows)
 ```
 
-Zero rows. This surprises every first-time user. Here is why.
+Zero rows. This surprises every first-time user, and it is not an error. Here is why.
 
-PgQue is **tick-based**, not row-claiming. Producers append events to the queue, but consumers do not see rows directly — they see **batches**. A batch is the set of events between two ticks. Until a tick happens, there is no batch boundary, so `pgque.receive` has nothing to return.
+PgQue is tick-based, not row-claiming. Producers append events, but consumers do not see rows directly — they see batches. A batch is the set of events between two ticks. Until a tick happens there is no batch boundary, so `pgque.receive` has nothing to return and reports zero rows.
 
-In normal operation, a scheduler (`pg_cron` or an external loop) drives ticks continuously. With the default `pg_cron` path, PgQue ticks every 100 ms (10 ticks/sec) inside a single 1-second cron slot. In this tutorial you have not started a scheduler, so no tick has run yet.
-
-See the [concepts glossary](pgq-concepts.md) for the full definitions of event, batch, tick, and consumer.
+In normal operation a scheduler (`pg_cron` or an external loop) drives ticks continuously — PgQue ticks 10 times per second by default (every 100 ms). In this tutorial you have not started a scheduler, so no tick has run yet. That is the next step.
 
 ## Step 5: Force the next tick, then receive
 
-For demos and tests, PgQue provides `pgque.force_next_tick` to bypass the tick thresholds for one queue. It does **not** create the tick by itself — you still have to call `pgque.ticker()` afterwards to produce the tick:
+For demos and tests, `pgque.force_next_tick` lets one queue bypass the tick thresholds. It does **not** create a tick by itself — it only advances the queue's event sequence past the tick threshold so that the next ticker run is guaranteed to materialize a tick. You still have to call `pgque.ticker()` afterwards:
 
 ```sql
--- separate transactions (psql autocommit). Do not wrap in begin/commit:
--- ticker() must see the prior send committed before it can include it in a batch.
 select pgque.force_next_tick('orders');
-select pgque.ticker();  -- separate transaction
+select pgque.ticker();
 ```
 
 ```
  force_next_tick
-------------
-          1
+-----------------
+               1
+(1 row)
 
  ticker
 --------
       1
+(1 row)
 ```
 
-`force_next_tick` returns the current tick id (the queue was seeded with tick `1` by `create_queue`). `ticker()` returns the number of queues it processed.
+`force_next_tick` returns the current last tick id (the queue was seeded with tick `1` by `create_queue`). `ticker()` returns the number of queues it ticked.
 
-> Each statement above runs in its own transaction — required, not stylistic. PgQue is snapshot-based: the ticker captures a snapshot, and `receive` only returns events whose `send` committed before it. Wrapping `send` + `force_next_tick` + `ticker` + `receive` in one `begin`/`commit` returns zero rows. See the [snapshot rule](pgq-concepts.md#snapshot-rule).
+> Each statement above runs in its own transaction. This is required, not stylistic. PgQue marks batch boundaries with a `pg_snapshot`: the ticker captures a snapshot, and `receive` only returns events whose `send` committed before that snapshot. An event sent in the *same* transaction as the tick is still in-progress at snapshot time and is excluded from the batch. Wrapping `send` + `force_next_tick` + `ticker` + `receive` in one `begin`/`commit` returns zero rows. In psql autocommit, each `select` is already its own transaction — just do not wrap them.
 
-Now try receiving again:
+Now receive again:
 
 ```sql
 select * from pgque.receive('orders', 'processor', 100);
 ```
 
 ```
- msg_id | batch_id | type    | payload                            | retry_count | created_at
---------+----------+---------+------------------------------------+-------------+----------------------
-      1 |        1 | default | {"total": 99.95, "order_id": 42}   |             | 2026-04-17 10:00:00+00
+ msg_id | batch_id | type    | payload                          | retry_count | created_at
+--------+----------+---------+----------------------------------+-------------+------------------------
+      1 |        1 | default | {"total": 99.95, "order_id": 42} |             | 2026-06-02 10:00:00+00
 (1 row)
 ```
 
-The event is back. `retry_count` is null because this is the first delivery attempt. The `batch_id` is the important value for the next step.
+The event is back. `retry_count` is null because this is the first delivery attempt. The `batch_id` is the value you need for the next step. (The `jsonb` overload stored a canonical form, so the keys come back ordered by length then alphabetically — `"total"` before `"order_id"` — rather than in the order you typed them.)
 
-In production, `pg_cron` calls `pgque.ticker_loop()` once per second, and that procedure calls `pgque.ticker()` every `tick_period_ms` ms (100 ms by default). An external worker loop can call `pgque.ticker()` at whatever cadence you choose. `force_next_tick` exists for the situation here: advancing the queue without waiting on the ticker's lag threshold.
+In production you never call `force_next_tick`: `pg_cron` runs the ticker continuously, or an external worker loop calls `pgque.ticker()` on its own cadence. `force_next_tick` exists exactly for the situation here — advancing one queue on demand without waiting on the tick thresholds.
 
 ## Step 6: Ack the batch
 
-A batch stays assigned to a consumer until the consumer calls `ack`. Until then, the same batch is returned every time you call `receive` — the consumer has not moved forward.
+A batch stays assigned to its consumer until the consumer calls `ack`. Until then the same batch is returned on every `receive` — the cursor has not moved.
 
-Capture the `batch_id` from step 5 and ack it. In psql you can use `\gset`:
+Capture the `batch_id` and ack it. In psql, `\gset` saves a single-row result into a variable:
 
 ```sql
 select batch_id from pgque.receive('orders', 'processor', 100) limit 1 \gset
@@ -173,17 +177,12 @@ select pgque.ack(:batch_id);
  ack
 -----
    1
+(1 row)
 ```
 
-Or, if you already saw `batch_id = 1` in the output, call it directly:
+Or, if you already saw `batch_id = 1`, call it directly with `select pgque.ack(1);`.
 
-```sql
-select pgque.ack(1);
-```
-
-`ack` is the modern alias for PgQ's `finish_batch`. It finalizes the batch and advances the consumer's cursor past it.
-
-Call `receive` once more to confirm there is nothing left:
+`ack` is the modern alias for PgQ's `finish_batch`. It finalizes the batch and advances the consumer cursor past it. Confirm there is nothing left:
 
 ```sql
 select * from pgque.receive('orders', 'processor', 100);
@@ -193,51 +192,35 @@ select * from pgque.receive('orders', 'processor', 100);
 (0 rows)
 ```
 
-**What you just did, in PgQ terms.** The modern `receive`/`ack` pair wraps PgQ's canonical consumer loop:
+Every row `pgque.receive` returns is a `pgque.message` composite: `msg_id` (PgQ's `ev_id`), `batch_id`, `type`, `payload` (text — cast to `jsonb` for JSON access), `retry_count` (null on first delivery, an integer after a retry), `created_at`, and four free-form `extra1..4` text columns. The modern `receive`/`ack`/`nack` surface reduces cleanly to PgQ primitives; see the [reference](reference.md).
 
-```
-batch_id = next_batch(queue, consumer)   -- NULL → sleep and retry
-events   = get_batch_events(batch_id)
-process(events)                           -- event_retry per event on failure
-finish_batch(batch_id)
-commit
-```
+## Step 7: Send a bad order, nack with a delay, watch it reappear
 
-`pgque.receive` = `next_batch` + `get_batch_events`. `pgque.ack` = `finish_batch`. `pgque.nack` = `event_retry` (with DLQ routing when `retry_count >= max_retries`). Both surfaces ship; the primitives are available for advanced use. See the [reference](reference.md) or the [concepts glossary](pgq-concepts.md).
-
-Every row `pgque.receive` returns is a `pgque.message` composite: `msg_id` (PgQ's `ev_id`), `batch_id`, `type`, `payload` (text — cast to `jsonb` for JSON access), `retry_count` (NULL on first delivery), `created_at`, and four free-form `extra1..4` text columns.
-
-## Step 7: Send, nack, retry
-
-Consumers sometimes fail. `nack` handles that: the message is scheduled for redelivery after a delay you choose. Before demoing it, lower the retry ceiling so you can drive a message to the DLQ in step 8:
+Consumers sometimes fail. `nack` handles that: it schedules the message for redelivery after a delay you choose, and routes it to the dead-letter queue once it has exhausted its retries. By default a message retries up to 5 times before the DLQ. To reach the DLQ quickly in step 8, lower the ceiling first:
 
 ```sql
 select pgque.set_queue_config('orders', 'max_retries', '2');
 ```
 
-The parameter is `max_retries`, not `queue_max_retries` — `set_queue_config` prepends `queue_` for you.
+The parameter is `max_retries`; `set_queue_config` prepends `queue_` for you.
 
-Send another event, tick, and receive (each select is a separate transaction — required, see [snapshot rule](pgq-concepts.md#snapshot-rule)):
+Send another order, tick, and receive — four separate transactions in psql autocommit:
 
 ```sql
--- send / force_next_tick / ticker / receive are four separate transactions in psql
--- autocommit. Do not wrap them in begin/commit — the snapshot rule still applies.
 select pgque.send('orders', '{"order_id": 43, "total": 10.00}'::jsonb);
 select pgque.force_next_tick('orders');
-select pgque.ticker();  -- separate transaction
-select * from pgque.receive('orders', 'processor', 100);  -- separate transaction
+select pgque.ticker();
+select * from pgque.receive('orders', 'processor', 100);
 ```
 
 ```
- msg_id | batch_id | type    | payload                            | retry_count | ...
---------+----------+---------+------------------------------------+-------------+----
-      2 |        2 | default | {"total": 10.00, "order_id": 43}   |             |
+ msg_id | batch_id | type    | payload                          | retry_count | created_at
+--------+----------+---------+----------------------------------+-------------+------------------------
+      2 |        2 | default | {"total": 10.00, "order_id": 43} |             | 2026-06-02 10:01:00+00
 (1 row)
 ```
 
-Now pretend the handler failed. `nack` takes the full `pgque.message` row, so the natural pattern is a `do` block that receives and nacks in one place.
-
-**Both `nack` and `ack` are needed on the same batch.** They are not alternatives: `nack` per-event schedules a retry (or routes to the DLQ if `retry_count >= max_retries`); `ack` per-batch finalizes the batch and advances the consumer cursor. Without the `ack`, the consumer never moves past the batch and the same events are redelivered forever.
+Now pretend the handler failed. `nack` takes the full `pgque.message` row. Note that `nack` and `ack` are **both** needed on the same batch — they are not alternatives. `nack` per-event schedules the retry (or routes to the DLQ); `ack` per-batch finalizes the batch and advances the cursor. Without the `ack`, the consumer never moves past this batch. A `do` block that receives, nacks, and acks in one place is the natural pattern:
 
 ```sql
 do $$
@@ -250,32 +233,33 @@ begin
 end $$;
 ```
 
-The event is now in PgQ's retry queue. Moving it back into the main event stream is a separate maintenance step: `pgque.maint_retry_events()`. After that, the next tick makes it visible again:
+The event is now in PgQ's retry queue, with a redelivery time set by the interval you passed (here `'0 seconds'`, so it is due immediately; in real code you would pass a backoff like `'60 seconds'`). Moving a due event back into the main stream is a separate maintenance step, `pgque.maint_retry_events()`. After that, the next tick makes it visible again:
 
 ```sql
--- four separate transactions (psql autocommit). Do not wrap in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_next_tick('orders');
-select pgque.ticker();  -- separate transaction
-select * from pgque.receive('orders', 'processor', 100);  -- separate transaction
+select pgque.ticker();
+select * from pgque.receive('orders', 'processor', 100);
 ```
 
-In production, `pgque.start()` schedules `maint_retry_events` on its own cadence — you never call it by hand. See [`pgque.maint()`](reference.md#pgquemaint--integer) and the surrounding Lifecycle entries in the reference.
-
 ```
- msg_id | batch_id | type    | payload                            | retry_count | ...
---------+----------+---------+------------------------------------+-------------+----
-      2 |        3 | default | {"total": 10.00, "order_id": 43}   |           1 |
+ msg_id | batch_id | type    | payload                          | retry_count | created_at
+--------+----------+---------+----------------------------------+-------------+------------------------
+      2 |        3 | default | {"total": 10.00, "order_id": 43} |           1 | 2026-06-02 10:01:00+00
 (1 row)
 ```
 
-Same `msg_id = 2`, new `batch_id = 3`, `retry_count = 1` — that's the redelivery.
+Same `msg_id = 2`, new `batch_id = 3`, and `retry_count = 1` — that is the redelivery. (In production, `pgque.start()` schedules `maint_retry_events` on its own cadence and you never call it by hand.)
 
-## Step 8: Drive the message to the dead letter queue
+## Step 8: Drive the bad order into the dead-letter queue
 
-Keep nacking. You set `max_retries = 2` in step 7, and the message was just redelivered with `retry_count = 1`. On the next `nack` it becomes `retry_count = 2`; one more `nack` after that, and `nack` sees `retry_count >= max_retries` and routes the message to `pgque.dead_letter` instead of the retry queue.
+`nack` routes a message to the dead-letter queue when its stored retry count has reached the ceiling — specifically when `coalesce(ev_retry, 0) >= max_retries`. Walk the arithmetic with `max_retries = 2`:
 
-Two more nack cycles. Run the following block twice — the `nack` `do` block followed by `maint_retry_events` + tick:
+- First nack: the event's `retry_count` is null, so `coalesce(null, 0) = 0`. `0 >= 2` is false → retry. The retry bumps the stored count to `1`. (This is the nack you did in step 7.)
+- Second nack: `retry_count = 1`. `1 >= 2` is false → retry. The stored count becomes `2`.
+- Third nack: `retry_count = 2`. `2 >= 2` is true → the message goes to `pgque.dead_letter` instead of the retry queue.
+
+You have done the first nack. Run the block below twice to do the second and third. The first iteration redelivers with `retry_count = 2`; the second iteration sees `2 >= 2` and dead-letters the message:
 
 ```sql
 do $$
@@ -287,16 +271,12 @@ begin
     perform pgque.ack(v_msg.batch_id);
 end $$;
 
--- the do-block above is one transaction; the three statements below are
--- three more, in psql autocommit. Do not wrap them in begin/commit.
 select pgque.maint_retry_events();
 select pgque.force_next_tick('orders');
-select pgque.ticker();  -- separate transaction
+select pgque.ticker();
 ```
 
-The second iteration sees `retry_count = 2` and routes to the DLQ instead of the retry queue. After it runs, `receive` returns nothing — the event has moved to `pgque.dead_letter`.
-
-Inspect the DLQ:
+After the second iteration, `receive` returns nothing — the event has left the main queue for `pgque.dead_letter`. Inspect it:
 
 ```sql
 select dl_id, dl_reason, ev_id, ev_retry, ev_data
@@ -310,36 +290,35 @@ from pgque.dlq_inspect('orders');
 (1 row)
 ```
 
-From here, two moves. After you have fixed the upstream bug, put the event back on the queue:
+From here you have two moves. Once the upstream bug is fixed, replay the event onto the queue — it re-enters with a fresh event id and is delivered on the next tick, and the DLQ row is removed:
 
 ```sql
 select pgque.dlq_replay(1);
 ```
 
-The event re-enters the main queue with a fresh event id and will be delivered on the next tick. The DLQ row is removed.
-
-To empty the DLQ, use `dlq_purge` — it deletes rows older than the interval you pass (`'0 seconds'` clears everything for that queue; the default is `'30 days'`):
+Or empty the DLQ. `dlq_purge` deletes rows older than the interval you pass; `'0 seconds'` clears everything for the queue (the default is `'30 days'`):
 
 ```sql
 select pgque.dlq_purge('orders', '0 seconds'::interval);
 ```
 
-## Step 9: Look at queue and consumer health
+## Step 9: Check queue and consumer health
 
-Three functions read out queue and consumer health.
+Two observability functions read out queue and consumer health; `status()` rolls them up.
 
 ```sql
-select queue_name, ticker_lag, ev_per_sec, ev_new, last_tick_id
+select queue_name, ticker_lag, ev_new, last_tick_id
 from pgque.get_queue_info('orders');
 ```
 
 ```
- queue_name | ticker_lag      | ev_per_sec | ev_new | last_tick_id
-------------+-----------------+------------+--------+--------------
- orders     | 00:00:03.412    |       0.12 |      0 |            7
+ queue_name | ticker_lag   | ev_new | last_tick_id
+------------+--------------+--------+--------------
+ orders     | 00:00:03.412 |      0 |            7
+(1 row)
 ```
 
-`ticker_lag` is the wall time since the last tick. If this grows without bound, the ticker is not running.
+`ticker_lag` is the wall time since the last tick. If it grows without bound, the ticker is not running.
 
 ```sql
 select queue_name, consumer_name, lag, last_seen, pending_events
@@ -349,97 +328,50 @@ from pgque.get_consumer_info('orders', 'processor');
 ```
  queue_name | consumer_name | lag          | last_seen    | pending_events
 ------------+---------------+--------------+--------------+----------------
- orders     | processor     | 00:00:02.11  | 00:00:01.50  |              0
+ orders     | processor     | 00:00:02.110 | 00:00:01.500 |              0
+(1 row)
 ```
 
-`lag` is the age of the consumer's last finished batch — high means the consumer is falling behind. `last_seen` is the elapsed time since the consumer last processed a batch — high means the consumer has stopped calling `receive`. `pending_events` is the count waiting in the current table for the next tick. For a healthy system, `lag` and `last_seen` both stay low and `ticker_lag` stays under a few seconds.
+`lag` is the age of the consumer's last finished batch — high means it is falling behind. `last_seen` is the elapsed time since the consumer last processed a batch — high means it has stopped calling `receive`. `pending_events` is the count waiting for the next tick. In a healthy system, `lag` and `last_seen` stay low and `ticker_lag` stays under a few seconds.
 
 ```sql
 select * from pgque.status();
 ```
 
 ```
- component  | status      | detail
-------------+-------------+----------------------------------
- postgresql | info        | PostgreSQL 17.2 on ...
- pgque      | info        | [[your version]]
- pg_cron    | unavailable | pg_cron not installed -- call ...
- queues     | info        | 1 queues configured
- consumers  | info        | 1 active subscriptions
+ component    | status      | detail
+--------------+-------------+----------------------------------------------------------
+ postgresql   | info        | PostgreSQL 17.2 on ...
+ pgque        | info        | 0.2.0
+ scheduler    | manual      | ticker_job_id=NULL, maint_job_id=NULL, tick_period_ms=100 (10.00 ticks/sec)
+ ticker       | stopped     | not scheduled (tick_period_ms=100)
+ maintenance  | stopped     | not scheduled
+ pg_cron      | unavailable | use pgque.start_timetable() for pg_timetable, or call ...
+ pg_timetable | unavailable | run pg_timetable against this database, then ...
+ queues       | info        | 1 queues configured
+ consumers    | info        | 1 active subscriptions
+(9 rows)
 ```
 
-`status()` is the one-stop health check. If `pg_cron` is installed and `pgque.start()` has been run, you will see `ticker` and `maintenance` rows with `scheduled` status and the cron job id.
+`status()` is the one-stop health check. Here it reflects manual ticking: with no scheduler, the `scheduler` row reads `manual` and the `ticker`/`maintenance` rows read `stopped`. With `pg_cron` installed and `pgque.start()` run, the `scheduler` row would show `pg_cron` with job ids and the ticker/maintenance rows would flip to `scheduled`.
 
-## Next steps
+## Where to go from here
 
-### Production cadence: use pg_cron
+You have driven the ticker by hand all the way through. In production you let a scheduler do it — one call, `select pgque.start();`, schedules `pg_cron` to run the ticker (and the maintenance jobs) for you, so messages flow without manual ticks and land within roughly 50 ms median at the default 100 ms tick.
 
-You have been driving the ticker by hand. In production you want a scheduler driving it. The recommended default is `pg_cron` — pre-installed or one-command available on every major managed Postgres provider (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon). For self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron).
-
-With `pg_cron` available in the same database as PgQue:
+To tear down the queue you built here:
 
 ```sql
-select pgque.start();
+select pgque.drop_queue('orders', true);  -- force=true unregisters the consumer first
 ```
 
-That one call schedules four cron jobs: `pgque_ticker` every second, `pgque_retry_events` every thirty seconds (moves `nack`'d events back into the main stream), `pgque_maint` every thirty seconds (rotation step 1 and vacuum), and `pgque_rotate_step2` every ten seconds (rotation step 2). Check them with `select * from pgque.status();` or `select * from cron.job;`.
+To remove PgQue entirely (drops the `pgque` schema; leaves the roles), see [Installation & operations](installation.md).
 
-**Sub-second ticking, by default.** `pg_cron`'s minimum schedule is 1 second, but PgQue's `pgque_ticker` job calls `CALL pgque.ticker_loop()`, a procedure that re-invokes `pgque.ticker()` every `tick_period_ms` ms inside that one slot, committing between iterations. The default is **100 ms (10 ticks/sec)**, so end-to-end delivery typically lands within ~50 ms median.
+Next:
 
-Tune the rate at runtime — no need to re-run `start()`, the change applies on the next pg_cron slot (≤1 s):
-
-```sql
-select pgque.set_tick_period_ms(50);    -- 20 ticks/sec
-select pgque.set_tick_period_ms(1000);  -- 1 tick/sec (the original pgqd cadence)
-```
-
-Why a procedure with `commit` between iterations: each `pgque.ticker()` call has to run in its own transaction (it records a `pg_snapshot` to mark the batch boundary, and the snapshot must be committed before the next tick records its own). Without per-iteration commits, all the ticks in the 1-second slot would share one snapshot and the held xmin would block PgQ's metadata rotation.
-
-WAL budget: inactive queues are cheap. The 100 ms default is a check cadence; with no events, most checks return `NULL` and PgQue backs off toward `ticker_idle_period` (default 1 minute). The larger WAL estimates apply only to queues that materialize ticks continuously. A forced-tick PG18 measurement isolated about **280 bytes of WAL per materialized tick per queue**; if a queue materializes continuously, that projects to roughly **240 MiB/day** at 10 materialized ticks/sec, or **24 MiB/day** at 1 materialized tick/sec. For small projects, WAL-constrained systems, or slow logical-replication subscribers, `pgque.set_tick_period_ms(1000)` is a reasonable starting point if ~500 ms median delivery latency is acceptable. See [tick-frequency.md](tick-frequency.md) for details.
-
-**pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker_loop()`, `pgque.maint_retry_events()`, and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
-
-**pg_cron log hygiene.** `pg_cron` logs every job execution to `cron.job_run_details`. PgQue's four scheduled jobs together add roughly **5,000 rows per hour**, with no built-in purge — the table grows forever otherwise.
-
-Worth knowing: PgQue's sub-second ticker does **not** make this worse. The internal loop runs inside a single 1-second pg_cron slot, so the per-second `cron.job_run_details` row count is the same whether `tick_period_ms` is 1000 or 1.
-
-Recommended: keep pg_cron logging enabled if you want run history for other jobs, and purge only PgQue's high-volume job records:
-
-```sql
-select cron.schedule(
-  'pgque_purge_cron_log',
-  '0 * * * *',
-  $$
-  delete from cron.job_run_details d
-  using cron.job j
-  where d.jobid = j.jobid
-    and j.jobname in (
-      'pgque_ticker',
-      'pgque_retry_events',
-      'pgque_maint',
-      'pgque_rotate_step2',
-      'pgque_purge_cron_log'
-    )
-    and d.end_time < now() - interval '1 day'
-  $$
-);
-```
-
-If you do not need successful-run history for any pg_cron job on the instance, you can disable it globally instead:
-
-```sql
-alter system set cron.log_run = off;
--- requires a Postgres restart; errors from failed jobs still land in
--- the Postgres server log via cron.log_min_messages (default WARNING)
-```
-
-*Todo: a future `pgque.start()` will warn about this overhead and offer to schedule the purge job.*
-
-Without `pg_cron` at all, call `pgque.ticker()` and `pgque.maint()` from your application or an external scheduler (system `cron`, systemd, a worker loop) on the cadence you want. `tick_period_ms` is only consulted by `pgque.ticker_loop()` — outside the pg_cron path, your driver chooses the rate.
-
-### Where to go from here
-
-- [reference](reference.md) — every function with signatures, return types, and role grants.
-- [examples](examples.md) — patterns: fan-out, exactly-once consumption, batch loading, recurring jobs.
-- [concepts](pgq-concepts.md) — glossary of batch, tick, rotation, and the consumer loop.
-- [history](pgq-history.md) — how this engine came from PgQ.
+- [Installation & operations](installation.md) — `pg_cron` setup, the production ticker cadence, roles, and teardown.
+- [Latency & tick tuning](latency-and-tuning.md) — how `tick_period_ms` trades latency against overhead.
+- [Reference](reference.md) — every function with signatures, return types, and role grants.
+- [Examples](examples.md) — patterns: fan-out, exactly-once consumption, batch loading, recurring jobs.
+- [Concepts](concepts.md) — glossary of event, batch, tick, rotation, and the consumer loop.
+- [Monitoring](monitoring.md) — health metrics and what to alert on.

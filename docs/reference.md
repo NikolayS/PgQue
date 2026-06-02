@@ -1,33 +1,35 @@
-# Function reference
+---
+title: Function reference
+description: Every function and type in the default PgQue install — signature, return type, behavior, and role grant.
+---
 
 Every function shipped in the default install (`\i sql/pgque.sql`). Each entry lists the signature, return type, the role it is granted to, and the source file. A short code example appears where the signature alone leaves the call ambiguous.
 
-If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the end-to-end `send` / `receive` / `ack` loop. If you are updating an existing install, see [upgrading.md](upgrading.md). Use this as the lookup table.
+If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the end-to-end `send` / `receive` / `ack` loop. For task-oriented patterns see [examples.md](examples.md), and for tick-rate and delivery-latency tuning see [latency-and-tuning.md](latency-and-tuning.md). Use this page as the lookup table.
+
+Functions are grouped into the **modern API** (the preferred surface: `send`, `receive`, `ack`, `nack`, DLQ, lifecycle) and the **inherited PgQ primitives** (advanced; the modern API wraps them 1:1).
 
 Each entry takes this form:
-
 
 #### `pgque.<name>(arg text, …) → returntype`
 
 One-line description. Optional second line with a caveat.
 Grant: `role_name`. Source: `sql/<path>`.
 
-
-
 Functions shipped outside the default install are in the [Experimental](#experimental-not-in-default-install) section.
 
 ## Publishing
 
-Single-message `send` wrappers delegate to `pgque.insert_event`; batch `send_batch` wrappers delegate to the internal set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller. See [SPECx.md §4.1](../blueprints/SPECx.md) for details on overload resolution.
+Single-message `send` wrappers delegate to `pgque.insert_event`; batch `send_batch` wrappers delegate to the internal set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller.
 
 ### Publishing argument names and types
 
-Argument names are part of the SQL API because PostgreSQL supports named calls (`arg := value`). Available publishing arguments:
+Argument names are part of the SQL API because Postgres supports named calls (`arg := value`). Available publishing arguments:
 
 | Argument | SQL type | Meaning |
 |----------|----------|---------|
 | `queue_name` | `text` | PgQue queue name. |
-| `type_name` | `text` | Application event type stored in `ev_type` (`'default'` for 2-arg `send`). Free-form text such as `order.created`; this is not a PostgreSQL type. |
+| `type_name` | `text` | Application event type stored in `ev_type` (`'default'` for 2-arg `send`). Free-form text such as `order.created`; this is not a Postgres type. |
 | `payload` | `text` or `jsonb` | Single event payload. `text` is opaque/verbatim; `jsonb` validates and stores canonical JSON text. |
 | `payloads` | `text[]` or `jsonb[]` | Batch payload array. Result array positions correspond to input positions. |
 
@@ -115,7 +117,7 @@ The consume API wraps `pgque.next_batch`, `pgque.get_batch_events`, `pgque.finis
 
 All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`) are granted to `pgque_reader`, mirroring upstream PgQ's producer/consumer role split. Apps that both produce and consume must hold both `pgque_reader` and `pgque_writer` — `pgque_writer` does not inherit `pgque_reader`.
 
-<a id="snapshot-rule"></a>**Snapshot rule.** `pgque.send` → `pgque.ticker` → `pgque.receive` must each run in its own committed transaction (the ticker's snapshot must be taken after `send` commits; `receive` only sees what committed before it). Same for `pgque.maint_retry_events` → `pgque.ticker` → `pgque.receive`. Go (`pgxpool`) and TypeScript (`pg.Pool`) satisfy this transparently; Python `pgque.connect()` is non-autocommit by default and needs explicit commit boundaries (the high-level Python `Consumer` handles this internally). The footgun in every driver is reaching for the underlying pool/connection (`Client.Pool()`, `client.rawPool`, `client.conn`) to wrap producer + consumer calls in one explicit transaction. See [pgq-concepts.md#snapshot-rule](pgq-concepts.md#snapshot-rule).
+<a id="snapshot-rule"></a>**Snapshot rule.** `pgque.send` → `pgque.ticker` → `pgque.receive` must each run in its own committed transaction (the ticker's snapshot must be taken after `send` commits; `receive` only sees what committed before it). Same for `pgque.maint_retry_events` → `pgque.ticker` → `pgque.receive`. Each call must be its own committed transaction; never wrap producer and consumer calls together in one transaction. See [concepts.md#snapshot-rule](concepts.md#snapshot-rule).
 
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
@@ -137,7 +139,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 Negative-acknowledges one message. Only `msg.msg_id` (and the `batch_id` argument) are honored from the composite — `type`, `payload`, `retry_count`, `created_at`, and the `extra*` fields are **ignored**. `nack()` re-queries the canonical event from the active batch and uses those server-side values for all decisions and writes.
 
-- If the canonical `ev_retry` is below the queue's `max_retries`, re-queues after `retry_after` (via `pgque.event_retry`).
+- If the canonical `ev_retry` is below the queue's `max_retries` (effective default 5 — see `pgque.set_queue_config`), re-queues after `retry_after` (via `pgque.event_retry`).
 - If `ev_retry >= max_retries`, routes the canonical event to `pgque.dead_letter` (via `pgque.event_dead`). This is idempotent: repeated calls for the same terminal message produce exactly one DLQ row (the second call does nothing).
 - If `msg.msg_id` is not present in the active batch — including a `NULL` msg_id or a msg_id from a different batch — raises `msg_id % not found in batch %`.
 Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
@@ -209,7 +211,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/send.sql` (see note above).
 
 #### `pgque.create_queue(queue text) → integer`
 
-Creates a queue with default settings (3 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists. Queue names are limited to 57 bytes (UTF-8); the `pgque_<name>` LISTEN/NOTIFY channel must fit within PostgreSQL's 63-byte identifier limit.
+Creates a queue with default settings (3 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists. Queue names are limited to 57 bytes (UTF-8); the `pgque_<name>` LISTEN/NOTIFY channel must fit within Postgres's 63-byte identifier limit.
 Grant: `pgque_admin`. Source: `sql/pgque.sql`.
 
 #### `pgque.drop_queue(queue text) → integer`
@@ -228,6 +230,20 @@ Sets one queue parameter. Accepted `param` values (without the `queue_` prefix):
 Grant: `pgque_admin`. Source: `sql/pgque.sql` (extended in `sql/pgque-additions/queue_max_retries.sql`).
 
 Observable behavior: numeric/interval settings are range-checked (`max_retries >= 0`; ticker counts/lags/idle/rotation periods must be positive). Passing SQL `NULL` resets the column to its schema default.
+
+Defaults per parameter:
+
+| `param` | Column | Default | Controls |
+|---------|--------|---------|----------|
+| `ticker_max_count` | `queue_ticker_max_count` | `500` | max events before a forced tick |
+| `ticker_max_lag` | `queue_ticker_max_lag` | `'3 seconds'` | max event age before a tick |
+| `ticker_idle_period` | `queue_ticker_idle_period` | `'1 minute'` | tick cadence when idle |
+| `ticker_paused` | `queue_ticker_paused` | `false` | pause ticking on this queue |
+| `rotation_period` | `queue_rotation_period` | `'2 hours'` | table rotation period |
+| `external_ticker` | `queue_external_ticker` | `false` | ticks come from an external source |
+| `max_retries` | `queue_max_retries` | `NULL` → effective `5` | retry cap before the dead-letter queue |
+
+The `queue_max_retries` column default is SQL `NULL`; `nack()` applies `coalesce(queue_max_retries, 5)`, so the **effective default is 5 retries** before a message is dead-lettered. The global tick rate is separate — see `pgque.set_tick_period_ms`.
 
 ```sql
 select pgque.set_queue_config('orders', 'max_retries', '10');
@@ -260,7 +276,7 @@ select pgque.set_tick_period_ms(50);    -- 20 ticks/sec
 select pgque.set_tick_period_ms(1000);  -- 1 tick/sec (the pg_cron floor; pgqd-compatible)
 ```
 
-Trade-offs at higher rates: more WAL per second, more metadata-table churn, more NOTIFY traffic. Inactive queues are cheap: if no events are coming, most ticker calls return `NULL` and PgQue backs off toward `ticker_idle_period`. A forced-tick PG18 measurement isolated about 280 bytes of WAL per materialized tick per queue; the ~240 MiB/day estimate only applies to a queue materializing 10 ticks/sec continuously. See [tick-frequency.md](tick-frequency.md) for caveats and [three-latencies.md](three-latencies.md) for the latency table.
+Trade-offs at higher rates: more WAL per second, more metadata-table churn, more NOTIFY traffic. Inactive queues are cheap: if no events are coming, most ticker calls return `NULL` and PgQue backs off toward `ticker_idle_period` (default 1 minute). See [latency-and-tuning.md](latency-and-tuning.md) for the rate/latency trade-off.
 Grant: `pgque_admin`. Source: `sql/pgque-additions/lifecycle.sql`.
 
 #### `pgque.stop() → void`
@@ -279,8 +295,8 @@ select * from pgque.status();
 
 #### `pgque.version() → text`
 
-Returns the installed PgQue version string (set by `build/transform.sh` at assembly time; varies per build).
-Grant: `pgque_reader`. Source: `sql/pgque-additions/lifecycle.sql`.
+Returns the installed PgQue version string. Granted to `pgque_reader` (the only lifecycle function that is) so consumers can self-report the version.
+Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.maint() → integer`
 
@@ -443,7 +459,7 @@ Grant: `pgque_writer` (replay is a produce action — it calls `insert_event` to
 
 #### `pgque.dlq_replay_all(queue text) → (replayed bigint, failed bigint, first_error text)`
 
-Replays every dead-letter entry for `queue`. Per-event failures are isolated (one bad row does not abort the rest), surfaced via `raise warning`, and counted in `failed`; `first_error` carries the first failure's `dl_id` and `sqlerrm` for diagnostics.
+Replays every dead-letter entry for `queue`. Per-event failures are isolated (one bad row does not abort the rest), surfaced via `raise warning`, and counted in `failed`; `first_error` carries the first failure's `dl_id` and `sqlerrm` for diagnostics. This function returns a `record` of `(replayed bigint, failed bigint, first_error text)` — a breaking change from the bare `integer` it returned in the previous release. Callers that read it as a single integer must be updated.
 
 Read the result with the columns by name:
 
@@ -504,7 +520,7 @@ Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_events(batch_id bigint) → setof record`
 
-Streams the events in a batch. Out columns: `ev_id bigint`, `ev_time timestamptz`, `ev_txid bigint`, `ev_retry int4`, `ev_type text`, `ev_data text`, `ev_extra1..4 text`.
+Streams the events in a batch. Out columns: `ev_id bigint`, `ev_time timestamptz`, `ev_txid bigint`, `ev_retry int4`, `ev_type text`, `ev_data text`, `ev_extra1..4 text`. Note: `ev_txid` is exposed here as `bigint` (the legacy PgQ signature), even though it is stored on the event tables as `xid8` — the value is the same transaction id, narrowed for the function result.
 Grant: `pgque_reader`. Source: `sql/pgque.sql`.
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4) → setof record`

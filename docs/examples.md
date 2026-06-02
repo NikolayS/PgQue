@@ -1,62 +1,54 @@
-# Examples
+---
+title: Examples
+description: Copy-paste PgQue recipes — fan-out, exactly-once, batch send, recurring jobs, and dead-letter replay.
+---
 
-Common PgQue patterns. For a guided first-run, see [the tutorial](tutorial.md). For every function signature, see [the reference](reference.md).
+Short, copy-paste patterns for common PgQue tasks. Each recipe is goal, SQL, result. For a guided first run see [the tutorial](tutorial.md); for every function signature see [the reference](reference.md). For queue and consumer health see [monitoring](monitoring.md).
 
-## Send with event type
+All psql snippets assume psql autocommit (one statement per transaction). Run them with the pager and startup file disabled so output is verbatim:
 
-The event type is a string tag consumers can filter on.
-
-```sql
-select pgque.send('orders', 'order.created',
-  '{"order_id": 42}'::jsonb);
-
-select pgque.send('orders', 'order.shipped',
-  '{"order_id": 42, "tracking": "1Z999AA10123456784"}'::jsonb);
+```bash
+PAGER=cat psql --no-psqlrc -d mydb
 ```
 
-## Batch send
+A few recipes depend on a ticker turning sent events into deliverable batches. If pg_cron is running `pgque.start()`, ticking is automatic — skip the explicit `force_next_tick` / `ticker` lines. If you tick manually, keep them, and keep `send`, `force_next_tick`, `ticker`, and `receive` in separate transactions (see the snapshot note under exactly-once).
 
-Both `jsonb[]` and `text[]` overloads exist — the [reference](reference.md) explains the trade-off.
+## Fan-out — many consumers, one shared log
 
-```sql
-select pgque.send_batch('orders', 'order.created', array[
-  '{"order_id": 1}'::jsonb,
-  '{"order_id": 2}'::jsonb,
-  '{"order_id": 3}'::jsonb
-]);
-```
+Goal: deliver every event to several independent consumers, each at its own pace, without duplicating the event per consumer.
 
-## Fan-out with multiple consumers
-
-Three subscribers on the same queue, each tracking its own cursor. Unlike SKIP LOCKED queues, every consumer sees every event.
-
-Subscribe **before** producing — a new consumer starts from the latest tick and will not see events that were sent before its `subscribe` call.
+Fan-out is native. Every registered consumer keeps its own cursor over the same shared event log — the event is stored once, and each consumer advances independently. This is unlike a SKIP-LOCKED queue, where a row is handed to exactly one worker.
 
 ```sql
 select pgque.subscribe('orders', 'audit_logger');
 select pgque.subscribe('orders', 'notification_sender');
 select pgque.subscribe('orders', 'analytics_pipeline');
 
--- send / force_next_tick / ticker / receive are separate transactions in psql
--- autocommit. Do not wrap them in begin/commit — the snapshot rule applies.
 select pgque.send('orders', 'order.created', '{"order_id": 1}'::jsonb);
-select pgque.force_next_tick('orders');  -- separate transaction
-select pgque.ticker();                    -- separate transaction
+select pgque.force_next_tick('orders');  -- separate transaction; skip if pg_cron ticks
+select pgque.ticker();                    -- separate transaction; skip if pg_cron ticks
 
-select * from pgque.receive('orders', 'audit_logger', 100);          -- separate transaction
-select * from pgque.receive('orders', 'notification_sender', 100);
+select * from pgque.receive('orders', 'audit_logger', 500);
+select * from pgque.receive('orders', 'notification_sender', 500);
+select * from pgque.receive('orders', 'analytics_pipeline', 500);
 ```
 
-Each consumer sees the same event through its own cursor — no producer-side duplication, independent cursors on the consumer side.
+Result: all three `receive` calls return the same event, each through its own cursor. Acking one consumer's batch does not affect the others.
 
-## Exactly-once processing (transactional pattern)
+`max_return` is 500 here to match the default `ticker_max_count`: because `ack` advances past the entire underlying batch, returning fewer rows than the batch holds would silently drop the rest. Use `max_return >= ticker_max_count` whenever you ack what you received.
 
-Wrap the receive, your writes, and the ack in one transaction — either all commit or none do.
+Late-subscriber caveat: `subscribe` (which calls `register_consumer`) starts the consumer at the most recent tick. A consumer will not see events that were sent before it subscribed. Subscribe each consumer before you start producing.
+
+## Exactly-once processing
+
+Goal: process a message and commit your business writes such that the message is never lost and never applied twice.
+
+The exactly-once property comes entirely from wrapping `receive` + your writes + `ack` in a single transaction. If the transaction rolls back, all three roll back together — the batch is not acked, so the next `receive` redelivers it. Outside this wrapping, PgQue's default is at-least-once.
 
 ```sql
 begin;
   with msgs as (
-    select * from pgque.receive('orders', 'processor', 100)
+    select * from pgque.receive('orders', 'processor', 500)
   ),
   inserted as (
     insert into processed_orders (order_id, status)
@@ -67,108 +59,155 @@ begin;
 commit;
 ```
 
-The `inserted` CTE runs to completion even though the main query does not reference it (data-modifying CTEs always execute). Every row in `msgs` shares the same `batch_id`, so the scalar subquery picks any one of them and `pgque.ack` runs exactly once. **Batch-ownership caveat:** `pgque.ack(batch_id)` advances the consumer past the entire underlying batch, even if `receive()` returned fewer rows than the batch contains (due to `max_return`). Either consume the full batch before acking, or use `max_return >= ticker_max_count` (default 500) to ensure all rows are returned.
+Result: the `processed_orders` rows and the ack commit atomically. A crash before `commit` leaves the batch un-acked and it is redelivered.
 
-> **Anti-pattern: send + receive in one transaction.** Above merges `receive` + writes + `ack` into one tx — correct. Do **not** also merge `send` / `force_next_tick` / `ticker` into the same tx; the ticker's snapshot must be taken *after* `send` commits.
->
-> ```sql
-> -- WRONG -- consumer sees 0 rows
-> begin;
->   select pgque.send('orders', 'order.created', '{"id": 1}'::jsonb);
->   select pgque.force_next_tick('orders');
->   select pgque.ticker();
->   select * from pgque.receive('orders', 'processor', 100);  -- 0 rows
-> commit;
-> ```
->
-> See [pgq-concepts.md#snapshot-rule](pgq-concepts.md#snapshot-rule).
+Notes:
+
+- The `inserted` CTE runs even though the final `select` does not reference it — data-modifying CTEs always execute.
+- Every row in a batch shares one `batch_id`, so the scalar subquery picks any row and `pgque.ack` runs once.
+- Batch-ownership caveat: `pgque.ack(batch_id)` advances the consumer past the whole underlying batch even if `receive` returned fewer rows than the batch holds. Consume the full batch before acking, or pass `max_return >= ticker_max_count` (default 500) so every row is returned.
+
+Snapshot rule — do not extend this transaction to cover `send` / `force_next_tick` / `ticker`. The ticker's snapshot must be taken after `send` commits, or the new event is still in-progress at tick time and is excluded from the batch:
+
+```sql
+-- WRONG -- consumer sees 0 rows
+begin;
+  select pgque.send('orders', 'order.created', '{"id": 1}'::jsonb);
+  select pgque.force_next_tick('orders');
+  select pgque.ticker();
+  select * from pgque.receive('orders', 'processor', 100);  -- 0 rows
+commit;
+```
+
+See [concepts](concepts.md) for the snapshot mechanics.
+
+## Batch send
+
+Goal: enqueue many events in one round trip.
+
+`send_batch` takes an array of payloads and returns the assigned `ev_id`s in order. There are `jsonb[]` and `text[]` overloads; the `jsonb[]` form parses and canonicalizes each payload, the `text[]` form stores verbatim.
+
+```sql
+select pgque.send_batch('orders', 'order.created', array[
+  '{"order_id": 1}'::jsonb,
+  '{"order_id": 2}'::jsonb,
+  '{"order_id": 3}'::jsonb
+]);
+```
+
+Result: a `bigint[]` of new `ev_id`s, one per payload, in array order. An empty array returns `{}`; a NULL array raises.
 
 ## Recurring jobs with pg_cron
+
+Goal: produce an event on a schedule — a scheduled producer that feeds workers through PgQue.
 
 ```sql
 select cron.schedule('daily_report',
   '0 9 * * *',
-  $$select pgque.send('jobs', 'report.generate',
-      '{"type": "daily"}'::jsonb)$$);
+  $$select pgque.send('jobs', 'report.generate', '{"type": "daily"}'::jsonb)$$);
 ```
 
-## Dead letter queue inspection
+Result: every day at 09:00 the cron job sends one `report.generate` event onto the `jobs` queue, where your workers `receive` it. The producer is the schedule; PgQue decouples it from the consumers.
 
-`pgque.dlq_inspect()` lists entries for a queue. Replay a single row by its `dl_id`, or purge rows older than a given interval.
+## Dead-letter queue — inspect and replay
+
+Goal: see what failed past its retry budget, and put it back.
+
+Events retry up to five times by default (`max_retries`) before `nack` routes them to the dead-letter queue. From there you can inspect, replay one, replay all, or purge.
 
 ```sql
+-- inspect failed events for a queue (default limit 100)
 select dl_id, dl_reason, ev_type, ev_data
 from pgque.dlq_inspect('orders');
 
--- replay a single entry (returns the new ev_id)
+-- replay one entry by its dl_id; returns the new ev_id
 select pgque.dlq_replay(42);
 
--- or drop entries older than 7 days
+-- replay every dead-lettered event for a queue
+select * from pgque.dlq_replay_all('orders');
+
+-- purge entries older than 7 days (default interval is 30 days)
 select pgque.dlq_purge('orders', interval '7 days');
 ```
 
-See [the tutorial](tutorial.md) for the full DLQ flow including retry budgets and nack.
+Result and return shapes:
 
-## Monitoring: queue + consumer health
+- `dlq_inspect` lists dead-letter rows; each `dl_id` identifies one entry.
+- `dlq_replay(dl_id)` re-inserts the event, removes the dead-letter row, and returns the new `ev_id`.
+- `dlq_replay_all(queue)` returns a record `(replayed, failed, first_error)` — how many were re-inserted, how many failed, and the first error message if any.
+- `dlq_purge(queue [, older_than])` deletes old entries and returns the count removed; `older_than` defaults to `'30 days'`.
 
-Two functions inherited from PgQ read out queue and consumer health. Use `\x` in psql for the per-column layout below.
+See [the tutorial](tutorial.md) for the full retry-and-nack flow that feeds the dead-letter queue.
 
-A healthy snapshot:
+## Client libraries
 
-```
-\x
+PgQue is SQL-first, so any Postgres driver works. First-party clients for Python, Go, and TypeScript wrap the same `send` / `receive` / `ack` surface. Each has its own README with the full API.
 
-select * from pgque.get_queue_info('orders');
--[ RECORD 1 ]------------+------------------------
-queue_name               | orders
-queue_ntables            | 3
-queue_cur_table          | 2
-queue_rotation_period    | 02:00:00
-queue_switch_time        | 2026-04-17 08:03:11+00
-queue_external_ticker    | f
-queue_ticker_paused      | f
-queue_ticker_max_count   | 500
-queue_ticker_max_lag     | 00:00:03
-queue_ticker_idle_period | 00:01:00
-ticker_lag               | 00:00:01.842
-ev_per_sec               | 3.40
-ev_new                   | 12
-last_tick_id             | 1247
+Python ([clients/python/README.md](../clients/python/README.md)):
 
-select * from pgque.get_consumer_info('orders', 'processor');
--[ RECORD 1 ]--+--------------
-queue_name     | orders
-consumer_name  | processor
-lag            | 00:00:00.520
-last_seen      | 00:00:00.201
-last_tick      | 1247
-current_batch  |
-next_tick      |
-pending_events | 0
+```bash
+pip install --pre pgque-py
 ```
 
-A stuck consumer, same queue, a couple of hours later:
+```python
+import pgque
 
-```
-select * from pgque.get_consumer_info('orders', 'processor');
--[ RECORD 1 ]--+----------------
-queue_name     | orders
-consumer_name  | processor
-lag            | 02:15:33.204
-last_seen      | 02:14:59.817
-last_tick      | 1247
-current_batch  |
-next_tick      | 1389
-pending_events | 847
+with pgque.connect("postgresql://localhost/mydb") as client:
+    client.send("orders", {"order_id": 42}, type="order.created")
+    client.conn.commit()
+    messages = client.receive("orders", "processor", 100)
+    if messages:
+        client.ack(messages[0].batch_id)
 ```
 
-The ticker is still running — `ticker_lag` stays low. But the worker stopped draining: `lag` and `last_seen` climbed to hours, and `pending_events` filled up.
+Go ([clients/go/README.md](../clients/go/README.md)):
 
-Red flags to alert on:
+```bash
+go get github.com/NikolayS/pgque-go
+```
 
-- **`ticker_lag`** climbing past `queue_ticker_max_lag` (default 3 s) — the ticker is not running. Check `pg_cron` (or your external scheduler).
-- **`lag`** climbing into minutes or longer — the consumer is not finishing batches. Check the worker.
-- **`last_seen`** climbing into minutes or longer — the consumer has stopped calling `receive` at all. Check the worker process is alive.
-- **`pending_events`** growing without bound while `lag` is high — a stuck consumer also blocks table rotation; event tables will grow.
+```go
+client, _ := pgque.Connect(ctx, "postgresql://localhost/mydb")
+defer client.Close()
 
-`pgque.status()` rolls up cron-job state, version, queue count, and consumer count into a single diagnostic view — run it first when something looks off.
+_, _ = client.Send(ctx, "orders", pgque.Event{
+    Type:    "order.created",
+    Payload: map[string]any{"order_id": 42},
+})
+msgs, _ := client.Receive(ctx, "orders", "processor", 100)
+if len(msgs) > 0 {
+    _, _ = client.Ack(ctx, msgs[0].BatchID)
+}
+```
+
+TypeScript ([clients/typescript/README.md](../clients/typescript/README.md)):
+
+```bash
+npm install pgque@rc   # or: bun add pgque@rc
+```
+
+```ts
+import { connect } from 'pgque';
+
+const client = await connect('postgresql://localhost/mydb');
+try {
+  await client.send('orders', { type: 'order.created', payload: { order_id: 42 } });
+  const messages = await client.receive('orders', 'processor', 100);
+  if (messages.length > 0) await client.ack(messages[0]!.batchId);
+} finally {
+  await client.close();
+}
+```
+
+## A note on payloads and roles
+
+Payload overload: an unquoted string literal resolves to the `text` overload, which stores the payload verbatim with no JSON validation. Cast `::jsonb` to validate and canonicalize:
+
+```sql
+select pgque.send('orders', 'order.created', '{"order_id": 1}');         -- text, stored as-is
+select pgque.send('orders', 'order.created', '{"order_id": 1}'::jsonb);  -- jsonb, validated
+```
+
+Roles: producing and consuming are separate privileges. `pgque_reader` can consume, `pgque_writer` can produce, and they are siblings — neither inherits the other. An application that both produces and consumes must be granted both `pgque_writer` and `pgque_reader`. See [installation](installation.md) for grant setup.
+
+For tick-rate and latency tuning, see [latency and tuning](latency-and-tuning.md).

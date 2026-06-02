@@ -74,7 +74,7 @@ PgQue gives you queue semantics **inside** Postgres, with Postgres durability an
 
 PgQue is built around **snapshot-based batching**, not row-by-row claiming. That's what gives it zero bloat in the hot path, stable behavior under sustained load, and clean ACID semantics inside Postgres.
 
-The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. In the default configuration, end-to-end delivery typically lands around ~50–150 ms: PgQue ticks **10 times per second** (every 100 ms) by default, so the wait for the next tick is ~50 ms on average and at most ~100 ms, plus the consumer's poll interval. Per-call latency (the `send` / `receive` / `ack` functions themselves) stays in the microsecond range.
+The trade-off is **end-to-end delivery latency** — the gap between `send` and when a consumer can `receive` the event. PgQue ticks **10 times per second** (every 100 ms) by default, so the wait for the next tick is about half the tick period on average. A committed benchmark (`benchmark/tick-rate/`) measures median end-to-end delivery around 52 ms at the default 100 ms tick, with a max around 105 ms, plus the consumer's poll interval. The `send` / `receive` / `ack` calls themselves are individually fast. See [docs/latency-and-tuning.md](docs/latency-and-tuning.md) for the full breakdown.
 
 Ways to reduce delivery latency: tune the tick period (for example `pgque.set_tick_period_ms(50)` for 20 ticks/sec; accepted periods are exact divisors of 1000 ms) and queue thresholds; use `force_next_tick()` for tests and demos or to force an immediate batch. Future versions may add logical-decoding-based wake-ups for sub-millisecond delivery without burning more WAL on ticking.
 
@@ -84,11 +84,11 @@ If your top priority is single-digit-millisecond dispatch, PgQue is the wrong to
 
 "Queue latency" is three numbers, not one:
 
-1. **Producer latency** — `send` / `insert_event`. Sub-ms.
-2. **Subscriber latency** — `next_batch` over a pre-built batch. Sub-ms.
-3. **End-to-end delivery** — `send` → consumer visibility. ≈ tick period (default 100 ms). Tunable from 1 ms to 1000 ms via `pgque.set_tick_period_ms(ms)`. Does not grow with load.
+1. **Producer latency** — `send` / `insert_event`. Individually fast.
+2. **Subscriber latency** — `next_batch` over a pre-built batch. Individually fast.
+3. **End-to-end delivery** — `send` → consumer visibility. About half the tick period on average (default 100 ms tick), measured at a median around 52 ms in the committed `benchmark/tick-rate/` benchmark. Tunable from 1 ms to 1000 ms via `pgque.set_tick_period_ms(ms)`. Does not grow with load.
 
-See [docs/three-latencies.md](docs/three-latencies.md) for the breakdown, tick-cadence trade-off table, and comparison with UPDATE/DELETE-based designs.
+See [docs/latency-and-tuning.md](docs/latency-and-tuning.md) for the breakdown, tick-cadence trade-off table, and comparison with UPDATE/DELETE-based designs.
 
 ## Comparison
 
@@ -185,22 +185,22 @@ PgQue ticks **10 times per second by default** (every 100 ms), even though `pg_c
 Tune at runtime — no need to call `start()` again, the change picks up on the next scheduler slot (≤1 s):
 
 ```sql
-select pgque.set_tick_period_ms(50);    -- 20 ticks/sec, ~25 ms median e2e
-select pgque.set_tick_period_ms(10);    -- 100 ticks/sec, ~5 ms median e2e
+select pgque.set_tick_period_ms(50);    -- 20 ticks/sec
+select pgque.set_tick_period_ms(10);    -- 100 ticks/sec (~8 ms median e2e, benchmark/tick-rate/)
 select pgque.set_tick_period_ms(1000);  -- 1 tick/sec, the pgqd-compatible cadence
 ```
 
 Allowed values: exact divisors of `1000` in the `1`..`1000` ms range. Inspect the current rate with `select * from pgque.status();`.
 
 Trade-offs to keep in mind when raising the rate:
-- **Idle queues are cheap.** The 100 ms default is the *check cadence*, not a promise to write 10 ticks/sec forever. With no producer writes, most ticker calls return `NULL`; PgQue backs off toward `ticker_idle_period` (default 1 minute), so inactive queues produce occasional metadata writes, not hundreds of MiB/day. The larger WAL numbers apply only to queues that actually materialize ticks continuously. As a planning unit, a forced-tick PG18 measurement isolated about **280 bytes of WAL per materialized tick per queue**; that projects to roughly **240 MiB/day** at 10 materialized ticks/sec versus **24 MiB/day** at 1 materialized tick/sec. See [docs/tick-frequency.md](docs/tick-frequency.md) for caveats and tuning guidance.
+- **Idle queues are cheap.** The 100 ms default is the *check cadence*, not a promise to write 10 ticks/sec forever. With no producer writes, most ticker calls return `NULL`; PgQue backs off toward `ticker_idle_period` (default 1 minute), so inactive queues produce occasional metadata writes rather than a steady tick stream. Continuous WAL cost applies only to queues that actually materialize ticks every period. See [docs/latency-and-tuning.md](docs/latency-and-tuning.md) for caveats and tuning guidance.
 - **NOTIFY rate.** `pgque.ticker()` emits `pg_notify('pgque_<queue>', ...)` per tick. Postgres's NOTIFY queue is global (8 GiB SLRU); slow LISTEN consumers can fall behind at very high rates.
 - **Metadata-table dead tuples.** `pgque.tick` and `pgque.subscription` are UPDATEd on every tick. PgQue rotates these tables to keep dead-tuple peaks bounded; at sub-50 ms tick periods, drop the rotation period proportionally.
-- **`pg_cron` background workers.** `pgque.ticker_loop()` holds one pg_cron worker for ~1 s per slot (vs. ~10 ms for the previous 1-second-cadence ticker). With pg_cron's default `cron.max_running_jobs = 32`, that bounds roughly **30 pgque-bearing databases per cluster** before the worker pool saturates. Not a per-database concern; matters if you fan PgQue across many databases on one instance.
+- **`pg_cron` background workers.** `pgque.ticker_loop()` holds one pg_cron worker for the full ~1 s slot. With pg_cron's default `cron.max_running_jobs = 32`, the number of pgque-bearing databases sharing one cluster is bounded by the worker pool. Not a per-database concern; matters if you fan PgQue across many databases on one instance.
 
 **pg_cron in a different database.** `pg_cron` runs jobs in one designated database (`cron.database_name`, typically `postgres`). If your PgQue schema lives in a different database, use the [cross-database pattern](https://github.com/citusdata/pg_cron#creating-a-cron-job-in-a-different-database) to call `pgque.ticker_loop()`, `pgque.maint_retry_events()`, and `pgque.maint()` across databases. *Todo: a future release will detect this and emit the correct `cron.schedule_in_database` calls from `pgque.start()` automatically.*
 
-**Scheduler log hygiene.** Every `pg_cron` job execution writes a row to `cron.job_run_details`, with no built-in purge. PgQue's internal sub-second loop does **not** make this worse — there is still only **one** `pg_cron` slot per second per job, regardless of `tick_period_ms`, so the per-second row count is the same as a 1 tick/sec schedule. Across PgQue's four scheduled jobs (ticker, retry, maint, rotate_step2), that is roughly **5,000 rows per hour** on top of any other pg_cron jobs, growing forever unless you intervene. Prefer a PgQue-specific purge job; disable `cron.log_run` globally only if you do not need successful-run history for any pg_cron jobs. See [the tutorial](docs/tutorial.md#production-cadence-use-pg_cron) for both recipes. *(Independent issue: `pg_cron` itself has no per-job log toggle as of 1.6.)* If you use pg_timetable, monitor and purge pg_timetable's own execution history tables according to its retention policy; PgQue does not manage those logs.
+**Scheduler log hygiene.** Every `pg_cron` job execution writes a row to `cron.job_run_details`, with no built-in purge. PgQue's internal sub-second loop does **not** make this worse — there is still only **one** `pg_cron` slot per second per job, regardless of `tick_period_ms`, so the per-second row count is the same as a 1 tick/sec schedule. Across PgQue's four scheduled jobs (ticker every 1 s, retry every 30 s, maint every 30 s, rotate_step2 every 10 s), those rows accumulate on top of any other pg_cron jobs and grow forever unless you intervene. Prefer a PgQue-specific purge job; disable `cron.log_run` globally only if you do not need successful-run history for any pg_cron jobs. See [Latency and tick tuning](docs/latency-and-tuning.md#pg_cron-log-hygiene) for the purge recipe. *(Independent issue: `pg_cron` itself has no per-job log toggle as of 1.6.)* If you use pg_timetable, monitor and purge pg_timetable's own execution history tables according to its retention policy; PgQue does not manage those logs.
 
 Without `pg_cron` or `pg_timetable`, PgQue still installs. Drive ticking and maintenance from your application or an external scheduler:
 
@@ -214,7 +214,7 @@ For sub-second ticking from an external driver, loop `pgque.ticker()` at your ta
 
 **Important:** PgQue does not deliver messages without a working ticker. Enqueueing still works, but consumers will see nothing new because no ticks are created. If you do not use `pg_cron`, run `pgque.ticker()`, `pgque.maint_retry_events()`, and `pgque.maint()` yourself. Skipping `maint_retry_events()` means nack'd events will never be redelivered.
 
-For existing installs, follow the SQL-file upgrade procedure in [docs/upgrading.md](docs/upgrading.md). To uninstall: `\i sql/pgque_uninstall.sql`.
+For existing installs, follow the SQL-file upgrade procedure in [docs/installation.md](docs/installation.md#upgrading). To uninstall: `\i sql/pgque_uninstall.sql`.
 
 ### Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension
 
@@ -285,13 +285,12 @@ The default install stays small; additional APIs live under `sql/experimental/` 
 ## Docs
 
 - [Tutorial](docs/tutorial.md) — a hands-on walkthrough. Start here if you are new.
-- [Reference](docs/reference.md) — every shipped function and role.
-- [Upgrading](docs/upgrading.md) — SQL-file upgrade procedure for existing installs.
+- [Installation and operations](docs/installation.md) — install, ticking, role grants, upgrading, uninstall, troubleshooting.
 - [Examples](docs/examples.md) — patterns: fan-out, exactly-once, batch loading, recurring jobs.
-- [Benchmarks](docs/benchmarks.md) — throughput measurements and methodology.
-- [Tick frequency tuning](docs/tick-frequency.md) — latency/WAL trade-offs, idle tick behavior, and pg_cron logging caveats.
-- [PgQ concepts](docs/pgq-concepts.md) — glossary (batch, tick, rotation) for contributors.
-- [PgQ history](docs/pgq-history.md) — where this engine came from.
+- [Monitoring and health](docs/monitoring.md) — queue, consumer, and batch info views.
+- [Function reference](docs/reference.md) — every shipped function and role.
+- [Latency and tick tuning](docs/latency-and-tuning.md) — latency breakdown, tick-cadence trade-offs, idle tick behavior, and pg_cron logging caveats.
+- [Concepts and heritage](docs/concepts.md) — batch/tick/rotation glossary, the snapshot/diff engine, and where this engine came from.
 
 ## Quick start
 
@@ -428,24 +427,24 @@ select pgque.ack(1);  -- replace with the batch_id from above
 
 ## Benchmarks
 
-Preliminary laptop numbers: ~86k ev/s batched PL/pgSQL insert, ~2.4M ev/s
-primitive batch read rate (`get_batch_events`), zero dead-tuple growth under a
-30-minute sustained test with a blocked xmin horizon (a concurrent long-running
-transaction holding an assigned XID — the worst case for SKIP LOCKED queues).
-The batch read figure reflects raw PgQ primitive throughput, not end-to-end
-`receive()`/`ack()` consumer throughput. See
-[docs/benchmarks.md](docs/benchmarks.md) for the full table and methodology.
+The headline result is **zero bloat under a pinned xmin horizon** — the worst
+case for SKIP LOCKED queues. A committed benchmark (`benchmark/xmin-horizon/`,
+with reproducer and raw results) holds an xmin and compares a SKIP LOCKED queue
+against PgQue. Under the held xmin, the SKIP LOCKED queue's dead tuples grow
+about **14×**, its table size about **15×**, and dequeue throughput drops about
+**35%**; PgQue keeps **`n_dead_tup = 0` across all `pgque.event_*` tables** and
+its throughput is unchanged. See [docs/concepts.md](docs/concepts.md) for the
+full comparison table and methodology.
 
-Preliminary cross-system measurements live in [`benchmark/`](benchmark/).
+Cross-system measurements and reproducers live in [`benchmark/`](benchmark/).
 Numbers there are for reference and exploration, not a final verdict —
 benchmarking Postgres queues is hard (cf. Brendan Gregg) and the
 methodology continues to evolve.
 
-The dedicated subconsumer demo harness lives in
+The cooperative-consumer demo harness lives in
 [`benchmark/subconsumer-scaling/`](benchmark/subconsumer-scaling/). It fixes the
-per-message downstream work at 250 ms and varies only consumer parallelism, so
-the scaling story is easy to see without mixing in producer cadence or tick
-tuning.
+per-message downstream work and varies only consumer parallelism, so the
+scaling story is easy to see without mixing in producer cadence or tick tuning.
 
 ## Subconsumers / cooperative consumers
 
@@ -455,40 +454,25 @@ call (Resend, SendGrid), one SMS request, one webhook, or one slow HTTP POST,
 then consumer-side parallelism is what decides whether the backlog melts or
 lingers.
 
-PgQue does not need a second queue to show that effect. One main consumer can
-fetch a batch and fan the work out to a pool of subconsumers. To make the point
-concrete, the demo harness preloads the same 160-message backlog every time and
-replaces the email-provider call with a fixed `sleep(250 ms)` per message — an
-intentional stand-in for a service like Resend or SendGrid. That means one
-worker should top out near 4 messages / second. Then we increase only the
-number of subconsumers.
+Cooperative consumers ship in the default install but are **experimental in
+0.2** (the functions carry runtime "Experimental in PgQue 0.2" markers). PgQue
+does not need a second queue to show the effect. One main consumer fetches a
+batch and fans the work out to a pool of subconsumers, each pulling its own
+slice cooperatively. To make the point concrete, the demo harness preloads the
+same backlog every time and replaces the email-provider call with a fixed
+per-message sleep — an intentional stand-in for a service like Resend or
+SendGrid — then increases only the number of subconsumers.
 
-<p align="center"><img src="docs/images/backlog_race.gif" alt="Backlog drain race for 1, 2, 4, 8, and 16 subconsumers on the same 160-message queue with 250 ms of work per message" width="760"></p>
+<p align="center"><img src="docs/images/backlog_race.gif" alt="Backlog drain race for 1, 2, 4, 8, and 16 cooperative subconsumers draining the same backlog with fixed per-message work" width="760"></p>
 
-Observed drain times from the demo run above:
-
-| Subconsumers | Avg throughput | Drain time |
-|---:|---:|---:|
-| 1  | 4.0 msg/s  | 40.4 s |
-| 2  | 7.9 msg/s  | 20.3 s |
-| 4  | 15.8 msg/s | 10.1 s |
-| 8  | 31.3 msg/s | 5.1 s  |
-| 16 | 61.8 msg/s | 2.6 s  |
-
-The static view below keeps the y-axis on **throughput**. That makes the
-scaling story more obvious: one worker buys you ~4 messages / second, and the
-observed line tracks the ideal `4 × workers` line closely.
-
-<p align="center"><img src="docs/images/scaling_linearity.png" alt="Observed throughput vs ideal linear scaling for 1, 2, 4, 8, and 16 subconsumers on the same 160-message backlog" width="760"></p>
-
-These are demo numbers, not a product claim. The point is narrower and more
-useful: when downstream work costs ~250 ms / message, one worker buys you ~4
-messages / second, and extra subconsumers scale throughput and backlog drain
-close to linearly until some other bottleneck shows up.
+The takeaway is qualitative: when downstream work dominates, a single consumer
+is throughput-bound by that work, and adding cooperative subconsumers scales
+throughput and backlog drain close to linearly until some other bottleneck
+shows up. The harness above lets you reproduce that on your own hardware.
 
 ## Architecture
 
-PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, three-table TRUNCATE rotation on the hot path, separate retry / delayed / dead-letter tables, and independent per-consumer cursors — and adds a modern API layer on top. See [blueprints/SPECx.md](blueprints/SPECx.md) for the full specification and [docs/pgq-concepts.md](docs/pgq-concepts.md) for the batch/tick/rotation glossary.
+PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, three-table TRUNCATE rotation on the hot path, separate retry / delayed / dead-letter tables, and independent per-consumer cursors — and adds a modern API layer on top. See [blueprints/SPECx.md](blueprints/SPECx.md) for the full specification and [docs/concepts.md](docs/concepts.md) for the batch/tick/rotation glossary.
 
 ## Roadmap
 
