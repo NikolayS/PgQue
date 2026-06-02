@@ -153,6 +153,54 @@ const soonClients = [
 
 const cell = (v) =>
   v === true ? 'yes' : v === false ? 'no' : 'partial';
+
+/*
+ * "Runs on" platform wall. Every mark is a REAL official brand logo (not a
+ * monogram), saved under /public/logos/ and recoloured to a single steel tone
+ * via CSS `mask-image` for a cohesive set that stays legible in both themes.
+ * All marks are used nominatively — solely to indicate that these platforms
+ * ship pg_cron, so PgQue's automated ticker works out of the box. No
+ * endorsement or affiliation is implied. Logo sources:
+ *   amazonrds / amazonaurora — gilbarbara/logos (AWS Architecture Icons)
+ *   googlecloud (Cloud SQL + AlloyDB) — simple-icons (CC0-1.0)
+ *   azure — svgl.app (Microsoft Azure brand)
+ *   supabase / neon / digitalocean / planetscale / percona — simple-icons (CC0)
+ *   aiven — aiven.io brand symbol (CNCF landscape hosted_logos)
+ *   yugabyte — gilbarbara/logos (YugabyteDB brand icon)
+ *   stackgres — stackgres.io brand symbol
+ *   cloudnativepg — cloudnative-pg/artwork (CNCF project mark)
+ */
+const platformGroups = [
+  {
+    label: 'Managed cloud',
+    items: [
+      { name: 'Amazon RDS', logo: 'amazonrds' },
+      { name: 'Google Cloud SQL', logo: 'googlecloud' },
+      { name: 'Azure Database', logo: 'azure' },
+      { name: 'Supabase', logo: 'supabase' },
+      { name: 'Neon', logo: 'neon' },
+      { name: 'Aiven', logo: 'aiven-icon' },
+      { name: 'DigitalOcean', logo: 'digitalocean' },
+      { name: 'PlanetScale', logo: 'planetscale' },
+    ],
+  },
+  {
+    label: 'Postgres-compatible',
+    items: [
+      { name: 'Amazon Aurora', logo: 'amazonaurora' },
+      { name: 'Google AlloyDB', logo: 'googlecloud' },
+      { name: 'YugabyteDB', logo: 'yugabyte-icon' },
+    ],
+  },
+  {
+    label: 'Kubernetes operators',
+    items: [
+      { name: 'StackGres', logo: 'stackgres' },
+      { name: 'CloudNativePG', logo: 'cloudnativepg-icon' },
+      { name: 'Percona Operator', logo: 'percona' },
+    ],
+  },
+];
 ---
 
 <!doctype html>
@@ -370,6 +418,40 @@ const cell = (v) =>
             <li><span class="lg lg-no" aria-hidden="true">—</span> no</li>
             <li><span class="lg lg-partial" aria-hidden="true">•</span> partial / indirect</li>
           </ul>
+        </div>
+      </section>
+
+      <section class="runson reveal">
+        <h2 class="section-title">Runs on</h2>
+        <p class="section-sub">
+          PgQue runs on any Postgres 14+. These platforms ship pg_cron, so the
+          automated ticker works out of the box.
+        </p>
+        <div class="runson-groups">
+          {platformGroups.map((g) => (
+            <div class="runson-group">
+              <h3 class="runson-label"><span class="runson-tick" aria-hidden="true"></span>{g.label}</h3>
+              <div class="runson-wall">
+                {g.items.map((p) => (
+                  <div class="plat-tile">
+                    <span
+                      class="plat-logo"
+                      style={`-webkit-mask-image:url(/logos/${p.logo}.svg);mask-image:url(/logos/${p.logo}.svg)`}
+                      aria-hidden="true"
+                    ></span>
+                    <span class="plat-name">{p.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div class="runson-notes">
+          <p>Not listed? PgQue runs on any Postgres that has pg_cron 1.5 or newer.</p>
+          <p>
+            No pg_cron at all? PgQue still works — drive the tick from any
+            <a href="/docs/installation">external scheduler</a> instead.
+          </p>
         </div>
       </section>
 
@@ -937,6 +1019,70 @@ const cell = (v) =>
       .legend .lg-yes { color: var(--amber); font-weight: 700; }
       .legend .lg-no { color: var(--muted); }
       .legend .lg-partial { color: var(--amber); }
+
+      /* runs on — platform logo wall */
+      .runson { padding: var(--section-y) 0; }
+      .runson-groups {
+        display: flex; flex-direction: column; gap: 38px;
+        max-width: 940px; margin: 0 auto;
+      }
+      .runson-label {
+        display: flex; align-items: center; gap: 9px;
+        font-family: var(--mono); font-size: 0.72rem; font-weight: 700;
+        letter-spacing: 0.16em; text-transform: uppercase;
+        color: var(--muted); margin: 0 0 16px;
+      }
+      .runson-tick {
+        width: 7px; height: 7px; flex: none; border-radius: 1px;
+        background: var(--amber);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent);
+      }
+      .runson-wall {
+        display: grid; gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(182px, 1fr));
+      }
+      .plat-tile {
+        display: flex; align-items: center; gap: 13px; min-width: 0;
+        padding: 14px 16px; border-radius: var(--radius);
+        background: var(--panel); border: 1px solid var(--border);
+        transition: border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;
+      }
+      .plat-tile:hover {
+        border-color: var(--accent); transform: translateY(-2px);
+        box-shadow: 0 16px 36px -26px var(--glow);
+      }
+      /* Uniform steel treatment: real logo geometry, single brand-steel tone,
+         recoloured from the source SVG via mask so light + dark both stay legible. */
+      .plat-logo {
+        flex: none; width: 26px; height: 26px; display: block;
+        background-color: var(--accent-2);
+        -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+        -webkit-mask-position: center; mask-position: center;
+        -webkit-mask-size: contain; mask-size: contain;
+        transition: background-color 0.18s ease;
+      }
+      :root[data-theme='light'] .plat-logo { background-color: var(--blue); }
+      .plat-tile:hover .plat-logo { background-color: var(--accent); }
+      .plat-name {
+        font-family: var(--mono); font-size: 0.86rem; font-weight: 500;
+        color: var(--text-2); letter-spacing: -0.01em;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .runson-notes {
+        max-width: 940px; margin: 30px auto 0;
+        display: flex; flex-direction: column; gap: 7px;
+      }
+      .runson-notes p {
+        margin: 0; font-family: var(--mono); font-size: 0.78rem;
+        line-height: 1.5; color: var(--muted);
+      }
+      .runson-notes a { color: var(--accent); border-bottom: 1px dotted color-mix(in srgb, var(--accent) 55%, transparent); }
+      .runson-notes a:hover { border-bottom-style: solid; }
+      @media (max-width: 460px) {
+        .runson-wall { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+        .plat-tile { padding: 12px 13px; gap: 11px; }
+        .plat-name { font-size: 0.8rem; }
+      }
 
       /* clients */
       .clients { padding: var(--section-y) 0; }
