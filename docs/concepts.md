@@ -41,9 +41,31 @@ This is also what keeps the diff cheap under load. Rather than scanning every ev
 
 One consequence follows directly: a producer's insert and the tick that should pick it up must commit in separate transactions. An event inserted in the same transaction as the tick is still in progress at snapshot time, so it is not yet visible and is excluded from that batch. Conversely, `receive` → process → `ack` belongs in one transaction when you want exactly-once side effects on the same database. The shipped Go and TypeScript clients satisfy the producer-side rule transparently because each call runs in its own implicit transaction; the Python client needs an explicit commit between `send` and the consumer side. See [examples.md](examples.md) for the transactional pattern.
 
+## Cooperative consumers vs fan-out
+
+> **Experimental in PgQue 0.2.** The cooperative-consumer API ships in the default install but is marked experimental; treat it as subject to change.
+
+PgQue offers two different consumer shapes on top of the same shared log. They are easy to confuse because both involve "several workers on one queue", but they distribute events in opposite ways.
+
+**Native fan-out** is the default. Every registered consumer keeps its own cursor (`sub_last_tick`) and independently sees *every* event. Three consumers — say `audit`, `email`, `analytics` — each receive a full copy of the stream from their own point of view, advancing at their own pace. The event is stored once; there is no per-consumer copy. This is the right model when distinct subsystems each need all the events.
+
+**Cooperative consumers** invert that within a single consumer. One logical consumer (the cooperative *main*, `sub_role = 'coop_main'`) owns a single cursor, and a pool of *subconsumers* (`sub_role = 'coop_member'`) draw *different* batches from it. Each event is delivered to exactly one subconsumer in the pool — competing consumers sharing one fan-out cursor. This is the right model when you want to spread one subscriber's workload across a horizontally scaled pool of identical workers.
+
+The two compose: a queue can have several independent fan-out consumers, and any one of them can be a cooperative group with its own pool of subconsumers underneath.
+
+- **Use fan-out** when every consumer needs every event (different subsystems, different side effects).
+- **Use cooperative consumers** when one subscriber's events should be split across interchangeable workers for throughput, and a given event must be handled once within that pool.
+
+See [examples](examples.md#cooperative-consumers-experimental) for the cooperative recipe and [reference](reference.md#cooperative-consumers--subconsumers) for signatures.
+
 ## Why zero bloat
 
 A `SKIP LOCKED` queue stores work as rows that are inserted, locked, processed, and deleted. Every processed job leaves a dead tuple behind, and the table relies on `VACUUM` to reclaim that space. That is fine until something holds the xmin horizon — a long-running transaction, a stalled replica, a forgotten `REPEATABLE READ` session — at which point `VACUUM` cannot reclaim anything newer than the held xmin, dead tuples pile up, and the hot table bloats.
+
+<figure>
+  <img src="/images/death_spiral.gif" alt="Side-by-side run from the xmin-horizon benchmark: under a held xmin horizon a SKIP LOCKED queue's event-table dead tuples climb steeply while PgQue's stay flat at zero">
+  <figcaption>Event-table dead tuples under a held xmin horizon, from the committed <code>benchmark/xmin-horizon/</code> run: the <code>SKIP LOCKED</code> queue accumulates dead tuples it cannot vacuum, while PgQue stays flat at zero.</figcaption>
+</figure>
 
 PgQue's hot path never deletes a row. Events accumulate in the active child table; old events are reclaimed by rotation, not by `VACUUM`. Each queue is three child tables under a parent (using table **inheritance**, `INHERITS`, not declarative partitioning). When the rotation period elapses, the ticker advances to the next child and `TRUNCATE`s the one it is reusing. `TRUNCATE` drops the whole table's storage at once and leaves no dead tuples to vacuum. Inheritance is used rather than native partitioning precisely because a cheap, per-table `TRUNCATE`-and-reuse cycle is exactly what rotation needs.
 
@@ -93,7 +115,8 @@ Per-system notes:
 
 - **[PgQ](https://github.com/pgq/pgq)** is the Skype-era engine PgQue derives from — same snapshot/rotation architecture, but it requires a C extension and the external `pgqd` daemon, neither available on managed Postgres. PgQue removes both.
 - **PGMQ** retry is visibility-timeout re-delivery (`read_ct` tracking), without configurable backoff or a max-attempts cap.
-- **[Que](https://github.com/que-rb/que)** uses advisory locks rather than `SKIP LOCKED` — so claiming creates no dead tuples — but completed jobs are still `DELETE`d, which does. Ruby-only.
+- **River** is a Go background-job framework on Postgres: it claims jobs with `SKIP LOCKED` and `DELETE`s completed jobs, so its job table accumulates dead tuples under sustained load, and it needs a long-running Go worker process. Competing-consumers over a job table, not a shared log with independent cursors.
+- **Que** uses advisory locks rather than `SKIP LOCKED` — so claiming creates no dead tuples — but completed jobs are still `DELETE`d, which does. Ruby-only.
 - **pg-boss** fan-out is copy-per-queue (`publish()`/`subscribe()` inserts one row per subscriber per event), not a shared log with independent cursors.
 - **Category:** River, Que, and pg-boss are job-queue frameworks (per-job lifecycle, a worker binary in Go/Ruby/Node.js). PgQue is an event/message queue — a shared log with fan-out, closer to a Kafka topic.
 
