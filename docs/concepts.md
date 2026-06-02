@@ -129,8 +129,10 @@ Lineage: PgQ (Skype, ISC, © Marko Kreen / Skype Technologies OU) → SkyTools 2
 
 ### Further reading
 
+- Marko Kreen (Skype), [PGCon 2009 — PgQ](https://www.pgcon.org/2009/schedule/attachments/91_pgq.pdf) — the original deck on the queue engine.
 - Alexander Kukushkin (Microsoft), [Rediscovering PgQ](https://speakerdeck.com/cyberdemn/rediscovering-pgq) — a 2026 deck revisiting the PgQ architecture.
 - Christophe Pettus, [Two Snapshots and a Diff](https://thebuild.com/blog/2026/05/03/pgque-two-snapshots-and-a-diff/) — a walk-through of the snapshot-diff mechanism and why it avoids row locks and dead-tuple bloat.
+- [SkyTools](https://wiki.postgresql.org/wiki/SkyTools) — the Postgres toolkit Skype open-sourced, where PgQ shipped as the queuing component alongside Londiste replication.
 - [Hacker News discussion](https://news.ycombinator.com/item?id=47817349).
 
 ## Where to go next
