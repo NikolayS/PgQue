@@ -335,7 +335,7 @@ Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, e
 
 ## Client libraries
 
-PgQue is SQL-first, so any Postgres driver works. First-party client libraries live in this repo for **Python**, **Go**, and **TypeScript**, all published at `v0.2.0`.
+PgQue is SQL-first, so any Postgres driver works. First-party client libraries live in this repo for **Python**, **Go**, and **TypeScript** (all published at `v0.2.0`), plus **Ruby**, shipping in v0.3.
 
 ### Python (`pgque-py`) — psycopg 3
 
@@ -407,6 +407,32 @@ try {
 } finally {
   await client.close();
 }
+```
+
+### Ruby (`pgque`) — pg gem
+
+```bash
+gem install pgque --pre        # or pin: gem "pgque", "0.3.0.rc.1"
+```
+
+```ruby
+require "pgque"
+
+Pgque.connect("postgresql://localhost/mydb") do |client|
+  # one-time setup (typically in a migration)
+  client.conn.exec("select pgque.create_queue('orders')")
+  client.conn.exec("select pgque.subscribe('orders', 'processor')")
+
+  client.send("orders", { "order_id" => 42 }, type: "order.created")
+end
+
+consumer = Pgque::Consumer.new(
+  "postgresql://localhost/mydb",
+  queue: "orders",
+  name: "processor",
+)
+consumer.on("order.created") { |msg| process_order(msg.payload) }
+consumer.start  # blocks until SIGTERM/SIGINT; needs pgque.ticker() running
 ```
 
 ### Any language
