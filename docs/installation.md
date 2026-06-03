@@ -199,6 +199,27 @@ preload step. `cron.database_name` is not configurable on this platform, so
 `pg_cron` (and therefore the auto-ticker) only operates in the `defaultdb`
 database; install PgQue there if you want the in-database ticker.
 
+**Crunchy Bridge.** `pg_cron` is preloadable on Bridge; just
+`create extension pg_cron;` in the target database. Set `cron.database_name` if
+you want cron in a non-default database.
+
+**Tiger Data (Tiger Cloud).** Connect as the `tsdbadmin` user and run
+`create extension if not exists pg_cron;`.
+
+**ClickHouse Cloud (Managed Postgres).** Connect and run
+`create extension pg_cron;` — `pg_cron` 1.6 is available, no preload step.
+
+**IBM Cloud Databases for PostgreSQL.** `create extension pg_cron;`, then
+schedule jobs with `cron.schedule()` against the target database.
+
+**Oracle OCI Database with PostgreSQL.** Enable `pg_cron` in a custom database
+configuration (via the OCI Extension Manager in the Console), apply it to the
+database system, then `create extension pg_cron;`. `pg_cron` runs in the
+`postgres` database by default; set `pg_cron.database_name` to target another.
+
+**Ubicloud Managed PostgreSQL.** `create extension pg_cron;` — `pg_cron` 1.6
+ships in the managed image, no preload step.
+
 ### Postgres-compatible platforms
 
 **PlanetScale for Postgres.** Enable `pg_cron` from the dashboard
@@ -213,6 +234,20 @@ single elected `pg_cron` leader; expect a worst-case ~60 s gap on leader
 failover or job changes — acceptable for the rotation ticker.
 
 ### Kubernetes operators
+
+**Zalando postgres-operator.** `pg_cron` ships in the Spilo image but is not
+preloaded by default. Add it to `shared_preload_libraries` in the cluster
+manifest, then `create extension pg_cron;`:
+
+```yaml
+spec:
+  postgresql:
+    parameters:
+      shared_preload_libraries: "bg_mon,pg_stat_statements,pg_cron"
+```
+
+Applying the manifest triggers the restart the `shared_preload_libraries` change
+needs; default DB is `postgres`, or set `cron.database_name`.
 
 **StackGres.** Declare `pg_cron` in the `SGCluster` extensions list (StackGres
 downloads it into the container — no custom image), add
