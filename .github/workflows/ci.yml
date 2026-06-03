@@ -41,6 +41,11 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f sql/pgque.sql
 
+      - name: Run two-session receive lock harness
+        run: |
+          PGQUE_TEST_DSN=postgresql://postgres:pgque_test@localhost:5432/pgque_test \
+            tests/two_session_receive_lock.sh
+
       - name: Run regression tests
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \

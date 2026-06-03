@@ -245,6 +245,10 @@ declare
     cons_id integer;
     sub_role text;
 begin
+    -- Serialize same-consumer legacy receive()/next_batch_custom() calls by
+    -- locking the subscription cursor row before reading sub_batch. This keeps
+    -- the cooperative override's non-coop path aligned with the transformed
+    -- PgQ base function above (#97/#125).
     select
         s.sub_queue,
         s.sub_consumer,
