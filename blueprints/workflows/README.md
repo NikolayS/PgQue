@@ -4,7 +4,9 @@ This directory holds the versioned specification for the proposed
 **event-sourced durable-execution layer** on PgQue (see
 `../DURABLE_EXECUTION_FEASIBILITY.md` for the strategy this spec realizes).
 
-- `SPEC.md` — the spec (current version in its header).
+- `SPEC.md` — the spec (current version in its header). It now includes
+  `pg_durable` as fresh prior art and keeps the product boundary explicit:
+  workflow durability in Postgres, workflow code in app repositories.
 - `BRIEF.html` / `index.html` — self-contained HTML brief (derivative of
   SPEC.md). `index.html` is the GitHub Pages entry point.
 - `TLDR.md`, `decisions.md`, `changelog.md`, `architecture.json` — auxiliary

@@ -2,7 +2,7 @@
 
 ## Goal
 
-> Status: **experimental**, ships as optional `sql/experimental/durable.sql` gated by the project promotion rule. Workflow support ships first as **one thin-SQL-wrapper reference client (Python)**; the other PgQue clients (Go, TypeScript, + WIP) are a planned follow-up, not v0.1 (§7–§9, §12). Engine layer is sacred and untouched.
+> Status: **experimental**, ships as optional `sql/experimental/durable.sql` gated by the project promotion rule. Workflow support ships first as **one thin-SQL-wrapper reference client (Python)**; the other PgQue clients (Go, TypeScript, + WIP) are a planned follow-up, not v0.1 (§7–§9, §12). Engine layer is sacred and untouched. Fresh prior art: `pg_durable` is considered explicitly, but the PgQue boundary remains workflow durability in Postgres with workflow code in application repositories.
 
 ## Scope summary
 
@@ -22,4 +22,5 @@
 
 ## Next action
 
-`already published as v0.1`
+Keep as draft until the benchmark hypothesis is tested and the `pg_durable`
+comparison is reviewed.

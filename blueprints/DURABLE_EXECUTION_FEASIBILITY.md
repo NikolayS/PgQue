@@ -14,7 +14,11 @@
 This study was produced after a deep review of the Hacker News thread
 ["Building durable workflows on Postgres"](https://news.ycombinator.com/item?id=48313530)
 and a parallel investigation of the six systems that thread orbits around:
-**DBOS, absurd, Temporal, Restate, Rivet, and Gadget's Silo**.
+**DBOS, absurd, Temporal, Restate, Rivet, and Gadget's Silo**. It was updated
+after Microsoft open-sourced
+[`pg_durable`](https://github.com/microsoft/pg_durable), because `pg_durable`
+is now the most relevant fresh prior art for the "durable execution inside
+Postgres" branch of the category.
 
 > **Revision note (2026-05-30):** An earlier draft of this study concluded that
 > PgQue's zero-bloat differentiator "does not transfer" to a workflow layer,
@@ -81,6 +85,7 @@ variant specifically is where the energy is:
 | **Temporal** | Separate Go cluster, event-sourced replay, Cassandra/MySQL/PG | MIT | ~20.6k | ~$350M total, $1.72B valuation |
 | **DBOS** | Embedded library, Postgres system-DB, checkpoint+replay | MIT (Transact) / proprietary (Conductor) | ~3.5k across 4 SDKs | $8.5M seed; Stonebraker + Zaharia |
 | **absurd** | Single SQL file + thin SDK, SKIP-LOCKED claim/lease, checkpoint-replay | Apache-2.0 | ~1.95k | Armin Ronacher / Earendil |
+| **pg_durable** | PG17/18 pgrx extension, background worker, Duroxide checkpoint runtime, SQL graph DSL | PostgreSQL License | ~580 at open-source launch | Microsoft / Azure HorizonDB |
 | **Restate** | Self-contained Rust binary, RocksDB+log, journaling-replay | BSL 1.1 → Apache | ~3.9k | $7M seed (Redpoint); ex-Flink team |
 | **Rivet** | Actor platform, Postgres/RocksDB/FoundationDB | Apache-2.0 | ~5.6k | YC W23 |
 | **Silo (Gadget)** | Rust broker on SlateDB/object storage | MIT | ~31 (prototype) | Internal Gadget project |
@@ -107,6 +112,44 @@ So the category is real, PgQue's "Postgres-native, OSI-licensed, no new infra"
 framing is well-aligned with where the market is pulling, *and* — once the
 event-sourced architecture is adopted — PgQue's engine is a substrate advantage
 rather than the liability the first draft assumed.
+
+### 2.1 Fresh prior art: pg_durable
+
+`pg_durable` is serious engineering and should be studied, but not copied. It
+is a pgrx extension for Postgres 17/18 that runs a Duroxide durable-task
+runtime in a background worker. Users define durable function graphs with a SQL
+DSL (`~>`, `&`, `df.if`, `df.loop`, `df.sleep`, `df.wait_for_signal`,
+`df.http`); the runtime persists instances, nodes, checkpoints, timers, and
+results in Postgres tables and resumes after restarts.
+
+What is worth learning from:
+
+- **Primitives:** durable timers, signals, join/race, monitoring views, and
+  explicit failed/running/completed instance state are the right shape of
+  product surface.
+- **Security work:** submitted-user execution, RLS on instance/node tables,
+  explicit grants, HTTP SSRF defenses, and execution-time permission checks are
+  the correct level of paranoia for code that runs inside Postgres.
+- **Operational honesty:** it needs `shared_preload_libraries`, a trusted
+  background worker, and careful lifecycle/upgrade handling. Those are real
+  costs, not packaging trivia.
+
+What PgQue should avoid:
+
+- **Workflow code in SQL.** The HN thread's strongest objection is lifecycle:
+  versioning, reviewing, debugging, testing, and rolling out control flow stored
+  as SQL/migrations is painful unless the tooling is excellent.
+- **A giant in-database DSL.** PgQue's better boundary is "workflow durability
+  in Postgres, workflow code in app." Keep the engine boring; let application
+  code and Git own control flow.
+- **Broad "exactly-once effects" language.** `pg_durable` can checkpoint graph
+  execution, but arbitrary SQL/HTTP side effects are still safe only when the
+  step is idempotent or its effect and checkpoint/handoff commit atomically.
+
+Strategic translation for PgQue: learn from `pg_durable`'s primitive checklist
+and security model, but keep PgQue as the durable event substrate plus thin
+application-code workflow helpers. No SQL graph language, no replay runtime
+until there is real user pull.
 
 ---
 
@@ -368,6 +411,10 @@ model's advantage.
 - **absurd** — single `absurd.sql`, per-queue `t_/r_/c_/e_/w_/i_` tables,
   SKIP-LOCKED claim-with-lease, task-level retry, no determinism, pg_cron
   partition detach, thin TS/Python SDKs, Rust port (TensorZero).
+- **pg_durable** — Microsoft/Azure pgrx extension, BGW + Duroxide runtime,
+  SQL graph DSL, checkpoints/timers/signals/HTTP inside Postgres, serious
+  security work (RLS, submitted-user execution, SSRF controls), but chooses
+  workflow control flow inside the database and inherits that lifecycle cost.
 - **Temporal** — separate cluster (Frontend/History/Matching/Worker),
   event-sourced deterministic replay, Cassandra at scale, immutable
   `numHistoryShards`, 7 SDKs, determinism is the adoption tax.

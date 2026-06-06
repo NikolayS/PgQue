@@ -1,5 +1,15 @@
 {
   "version": "1",
-  "nodes": [],
-  "edges": []
+  "nodes": [
+    {"id": "app", "label": "Application / SDK", "role": "workflow code and handlers"},
+    {"id": "durable", "label": "sql/experimental/durable.sql", "role": "workflow coordination and transactional handoff"},
+    {"id": "pgque", "label": "PgQue engine", "role": "sacred append+rotate queue primitives"},
+    {"id": "postgres", "label": "Postgres", "role": "app state, transactions, HA, auth, backup"}
+  ],
+  "edges": [
+    {"from": "app", "to": "durable", "label": "thin SQL calls"},
+    {"from": "durable", "to": "pgque", "label": "insert_event / next_batch / finish_batch / send_at"},
+    {"from": "durable", "to": "postgres", "label": "coordination tables and app transactions"},
+    {"from": "pgque", "to": "postgres", "label": "rotating event tables"}
+  ]
 }

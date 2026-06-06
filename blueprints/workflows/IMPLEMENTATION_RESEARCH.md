@@ -2,13 +2,19 @@
 
 - **Status:** research / grounding (input to `sql/experimental/durable.sql`, not yet code)
 - **Date:** 2026-05-30
-- **Companion:** `blueprints/workflows/SPEC.md` (the conceptual spec, v0.5) and
+- **Companion:** `blueprints/workflows/SPEC.md` (the conceptual spec, v0.6) and
   `blueprints/DURABLE_EXECUTION_FEASIBILITY.md` (why this route). This document
   grounds the spec's design in **pgque's actual primitives, tables, and verified
   transaction semantics** — read straight from `sql/pgque.sql` (7,044 lines).
 - **Method:** every claim below is checked against the real `sql/pgque.sql`
   function bodies and table DDL (line numbers cited), not against the conceptual
   spec.
+- **Fresh prior art note:** Microsoft `pg_durable` is intentionally *not* the
+  implementation template here. It proves durable execution primitives can live
+  inside Postgres, but its pgrx background worker + Duroxide checkpoint runtime
+  + SQL graph DSL is a different product boundary. PgQue's implementation keeps
+  workflow code in app clients and reduces durable progress to queue events plus
+  small coordination tables.
 
 ---
 

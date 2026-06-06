@@ -38,12 +38,12 @@
 - accepted rB-7: Restated timeout liveness as conditional on a continuously-running dispatcher, with pg_cron required for scale-to-zero — resolved jointly with rA-3 (§5.7.1).
 - accepted rB-8: Reframed the CSPRNG check as a decidable static assertion: id column defaulted by gen_random_uuid()/pgcrypto and CI rejects any sequence/serial-derived id path (§5.11, §6.2 item 6).
 - accepted rB-9: Corrected the cross-reference: the no-subtransaction constraint is cited to §5.1/§5.13, not §5.10 (§5.2).
-- accepted rB-10: Populated the canonical architecture:begin/end block with the layered diagram, removing the stale '(architecture not yet specified)' placeholder (§4).
+- accepted rB-10: Claimed to populate the canonical architecture:begin/end block with the layered diagram, but later review found the stale '(architecture not yet specified)' placeholder still present; corrected for real in the 2026-06-06 manual pass (§4).
 - accepted rB-11: Added an assertion that a transient-failure step re-executes its body once per retry attempt up to max_retries then lands in the DLQ, guarding the dedup-vs-retry path (§6.2 item 3).
 
 ## Round 3 — 2026-05-30T11:37:14.368Z
 
-- accepted rB-1: Actually populated the canonical architecture:begin/end block with the layered SDK→durable-layer→sacred-engine diagram, replacing the literal '(architecture not yet specified)' placeholder the v0.3 changelog had falsely claimed filled (§4).
+- accepted rB-1: Claimed to actually populate the canonical architecture:begin/end block with the layered SDK→durable-layer→sacred-engine diagram, but later review found the literal '(architecture not yet specified)' placeholder still present; corrected for real in the 2026-06-06 manual pass (§4).
 - accepted rB-2: Removed the 'tens of thousands of transitions/sec' / 'not throughput-timid' framing from §1/§2 and aligned all of §1, §2, and §12 to the idea's honest concession of ~a few thousand transitions/sec per database with hyperscale conceded to Temporal.
 - accepted rB-3: Redesigned poison-pill containment to use only the existing next_batch max_events bound (reduce to size 1), withdrawing the implied sub-range/partial-ack primitive, and pinned that bound as explicit engine contract #4 gated at install (§5.2/§5.9/§5.13).
 - accepted rB-4: Pinned per-join completion serialization (SELECT … FOR UPDATE / advisory lock on the join id) at READ COMMITTED so the final concurrent completers are ordered and the parent resumes exactly once — closing the lost-resume (zero-resume) race (§5.8).
@@ -58,3 +58,22 @@
 - accepted ambiguity#2: Specified the up-ramp: current_max_events is restored to K only after quarantine_cooldown consecutive clean size-1 commits (count-gated, not time-gated) so the poison is DLQ'd before batches re-aggregate, with a regression test for the restoration.
 - accepted contradiction#2: Withdrew the inconsistent 'append-based, rotating, not insert+delete' description and pinned wf_live as a single one-row-per-live-workflow HOT-UPDATEd projection (concurrency-bounded row-count; dead-tuple rate = update rate) so §4.2, §5.5, and §5.6 agree.
 - accepted ambiguity#3: Pinned the §5.4.1 staleness check as a pre-body, route-not-process gate that commits cleanly before any user body runs, scoped the contract-#2 'only durable counter' claim to the aborting-batch channel only, reconciling the two DLQ routes and adding a gate-ordering test.
+
+## Manual correction — 2026-06-06T00:45:00Z
+
+- accepted manual-1: Added `pg_durable` as fresh prior art and drew the
+  boundary clearly: PgQue should learn from its primitives and security work,
+  but keep workflow control flow in application code rather than a SQL graph
+  DSL inside Postgres.
+- accepted manual-2: Replaced the stale architecture placeholder for real in
+  SPEC v0.6 and corrected the historical changelog notes that previously
+  claimed v0.5 had done it.
+- accepted manual-3: Replaced broad exactly-once workflow language with the
+  honest contract: at-least-once step execution, exactly-once transactional
+  handoff, and idempotent external effects.
+- accepted manual-4: Downgraded unbenchmarked throughput claims to benchmark
+  hypotheses and expanded the benchmark comparison to include a pg_durable-style
+  checkpointed graph baseline where feasible.
+- accepted manual-5: Tightened the `workflow_id` security model: raw ids may
+  exist in protected hot queue rows / `ev_extra1`, while lower-trust audit, DLQ,
+  metrics, errors, and exports must hash or truncate them.
