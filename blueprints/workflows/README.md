@@ -9,6 +9,8 @@ This directory holds the versioned specification for the proposed
   workflow durability in Postgres, workflow code in app repositories.
 - `BRIEF.html` / `index.html` — self-contained HTML brief (derivative of
   SPEC.md). `index.html` is the GitHub Pages entry point.
+- `HOT_PATH_BENCHMARK.md` — the first benchmark design: prove or kill the
+  batching-amortization claim before implementing real workflow machinery.
 - `TLDR.md`, `decisions.md`, `changelog.md`, `architecture.json` — auxiliary
   artifacts.
 
