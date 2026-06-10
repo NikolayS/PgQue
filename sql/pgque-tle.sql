@@ -8,8 +8,10 @@
 -- After loading this script, the extension is registered with pg_tle and can
 -- be created or dropped via the standard create / drop extension commands.
 --
--- This file is self-contained: it works in psql, GUI tools (DBeaver, etc.),
--- JDBC, libpq-direct callers — anywhere that accepts SQL.
+-- This file is a psql script: it uses backslash meta-commands (\set
+-- ON_ERROR_STOP, \echo), so run it with psql. From other clients (GUI
+-- tools, JDBC, direct libpq), call pgtle.install_extension() directly,
+-- passing the contents of sql/pgque.sql as the extension body.
 --
 -- Prerequisites:
 --   1. pg_tle is installed in this database:
