@@ -102,6 +102,29 @@ end $$;
 -- regression and acceptance suites running against the pg_tle install path
 -- in CI; nothing extra to assert here.
 
+-- pgque.uninstall() must refuse extension installs with a clear pointer to
+-- drop extension, instead of failing on the schema drop with a confusing
+-- dependency error ("extension pgque requires it").
+do $$
+begin
+    begin
+        perform pgque.uninstall();
+        raise exception 'sentinel: pgque.uninstall() did not raise';
+    exception
+        when raise_exception then
+            if sqlerrm like 'sentinel:%' then
+                raise;
+            end if;
+            assert sqlerrm like '%drop extension pgque cascade%',
+                format('uninstall() error must point to drop extension, got: %s', sqlerrm);
+    end;
+    assert exists (select 1 from pg_catalog.pg_namespace where nspname = 'pgque'),
+        'pgque schema must survive the refused uninstall()';
+    assert exists (select 1 from pg_catalog.pg_extension where extname = 'pgque'),
+        'pgque extension must survive the refused uninstall()';
+    raise notice 'PASS: uninstall() refuses extension install, points to drop extension';
+end $$;
+
 -- drop extension cascade removes the schema and the extension membership.
 drop extension pgque cascade;
 
