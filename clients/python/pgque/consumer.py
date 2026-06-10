@@ -158,10 +158,19 @@ class Consumer:
                 )
 
                 while self._running:
-                    self._poll_once(conn)
+                    processed = self._poll_once(conn)
 
                     if not self._running:
                         break
+
+                    if processed:
+                        # Non-empty batch: more batches may already be
+                        # ticked (backlog). Their notifies fired while
+                        # we were not listening, so waiting for a new
+                        # NOTIFY would drain the backlog at one batch
+                        # per poll_interval. Re-poll immediately until
+                        # the queue comes back empty.
+                        continue
 
                     # Wait for NOTIFY or poll_interval timeout in short
                     # bounded slices. psycopg's conn.notifies() can
@@ -228,8 +237,13 @@ class Consumer:
                     pass
                 return
 
-    def _poll_once(self, conn: psycopg.Connection) -> None:
+    def _poll_once(self, conn: psycopg.Connection) -> bool:
         """Receive one batch and dispatch messages.
+
+        Returns True when a non-empty batch was processed and acked
+        (the caller should re-poll immediately to drain any backlog),
+        False when the queue was empty or the batch was left unacked
+        for redelivery (the caller should wait for NOTIFY/timeout).
 
         If any per-message ``nack()`` raises, all remaining messages in
         the batch are still dispatched (their handlers run), but the
@@ -256,7 +270,7 @@ class Consumer:
                 )
 
             if not msgs:
-                return
+                return False
 
             batch_id = msgs[0].batch_id
             logger.debug(
@@ -318,8 +332,10 @@ class Consumer:
                         continue
 
             if nack_failed:
-                # Do NOT ack -- redeliver on next poll.
-                return
+                # Do NOT ack -- redeliver on next poll. Report False so
+                # the caller waits before re-polling instead of
+                # redelivering the same batch in a hot loop.
+                return False
 
             # pgque.ack returns 1 on success, 0 if the batch was already
             # finished or not found (stale/double ack, cross-consumer
@@ -331,3 +347,5 @@ class Consumer:
                     "(batch already finished or not found)",
                     batch_id,
                 )
+
+            return True
