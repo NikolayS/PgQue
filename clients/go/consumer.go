@@ -100,6 +100,9 @@ func (c *Consumer) dispatchWithRecover(ctx context.Context, fn HandlerFunc, msg 
 //     that PgQue redelivers it on the next Receive — losing the Nack
 //     would otherwise mean losing the failure information for that
 //     message.
+//   - When a Nack or Ack failure leaves the batch unfinished, the loop
+//     waits the configured poll interval before re-polling, since the
+//     next Receive returns the same batch and re-runs every handler.
 func (c *Consumer) Start(ctx context.Context) error {
 	for {
 		select {
@@ -181,12 +184,29 @@ func (c *Consumer) Start(ctx context.Context) error {
 		if batchID != 0 {
 			if nackFailed {
 				log.Printf("pgque: skipping ack for batch %d due to prior nack failures; PgQue will redeliver", batchID)
+				// The batch is unfinished, so the next Receive returns
+				// the same batch immediately and re-runs every handler.
+				// Wait pollInterval to avoid a tight re-poll loop.
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(c.pollInterval):
+				}
 				continue
 			}
 			n, err := c.backend.Ack(ctx, batchID)
 			if err != nil {
 				log.Printf("pgque: ack error: %v", err)
-			} else if n == 0 {
+				// Same as the nack-failure case: the batch was never
+				// finished, so back off before re-receiving it.
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(c.pollInterval):
+				}
+				continue
+			}
+			if n == 0 {
 				log.Printf("pgque: ack batch %d returned 0 rows — stale or double ack (batch already finished or not found)", batchID)
 			}
 		}
