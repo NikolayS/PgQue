@@ -4,7 +4,7 @@
 
 """Message and Event types for pgque."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
@@ -46,4 +46,3 @@ class Event:
 
     payload: Any
     type: str = "default"
-    extra: dict[str, str] = field(default_factory=dict)
