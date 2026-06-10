@@ -456,6 +456,104 @@ describe('Consumer (in-memory mocks)', () => {
     ).toThrow(/retryAfter/);
   });
 
+  it('sleeps pollInterval before re-polling after a nack failure', async () => {
+    const msg: Message = {
+      msgId: 4n,
+      batchId: 102n,
+      type: 'will_fail',
+      payload: '{}',
+      retryCount: null,
+      createdAt: new Date(),
+      extra1: null,
+      extra2: null,
+      extra3: null,
+      extra4: null,
+    };
+
+    // receive always returns the same batch (PgQ redelivers an unfinished
+    // batch instantly) and nack always fails, so an unfixed loop re-polls
+    // at full speed. With a 60s pollInterval, a backoff-respecting loop
+    // must call receive exactly once within the observation window.
+    const fakeClient = {
+      receive: vi.fn(async () => [msg]),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => {
+        throw new Error('synthetic persistent nack failure');
+      }),
+    };
+
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 60_000,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+    consumer.handle('will_fail', async () => {
+      throw new Error('handler boom');
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.nack.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    // Give an unfixed (hot-looping) consumer time to re-poll.
+    await sleep(300);
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.receive).toHaveBeenCalledTimes(1);
+    expect(fakeClient.nack).toHaveBeenCalledTimes(1);
+    expect(fakeClient.ack).toHaveBeenCalledTimes(0);
+  });
+
+  it('sleeps pollInterval before re-polling after an ack error', async () => {
+    const msg: Message = {
+      msgId: 5n,
+      batchId: 103n,
+      type: 'fine',
+      payload: '{}',
+      retryCount: null,
+      createdAt: new Date(),
+      extra1: null,
+      extra2: null,
+      extra3: null,
+      extra4: null,
+    };
+
+    let handlerCalls = 0;
+    const fakeClient = {
+      receive: vi.fn(async () => [msg]),
+      ack: vi.fn(async () => {
+        throw new Error('synthetic ack failure');
+      }),
+      nack: vi.fn(async () => undefined),
+    };
+
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 60_000,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+    consumer.handle('fine', async () => {
+      handlerCalls += 1;
+    });
+
+    const ac = new AbortController();
+    const startPromise = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.ack.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    // Give an unfixed (hot-looping) consumer time to re-poll and re-run
+    // the handler with duplicate side effects.
+    await sleep(300);
+    ac.abort();
+    await startPromise;
+
+    expect(fakeClient.receive).toHaveBeenCalledTimes(1);
+    expect(fakeClient.ack).toHaveBeenCalledTimes(1);
+    expect(handlerCalls).toBe(1);
+  });
+
   it('does not call ack when nack fails for an unknown event type', async () => {
     const msg: Message = {
       msgId: 2n,

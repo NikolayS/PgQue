@@ -6,7 +6,10 @@
 
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import pg from 'pg';
 import { connect, type Client } from './client.js';
+
+const { escapeIdentifier } = pg;
 
 const dsn = process.env.PGQUE_TEST_DSN;
 const batchSizes = [1, 100, 1000] as const;
@@ -112,11 +115,23 @@ async function verifyCount(client: Client, queue: string, expected: number): Pro
   );
   const table = tableResult.rows[0]?.current_event_table;
   if (!table) throw new Error(`current_event_table returned no row for ${queue}`);
-  const countResult = await client.rawPool.query<{ count: string }>(`select count(*) from ${table}`);
-  const got = Number.parseInt(countResult.rows[0]?.count ?? 'NaN', 10);
-  if (got !== expected) {
-    throw new Error(`${queue}: expected ${expected} events, got ${got}`);
+  // count(*) is int8, which the pgque pool parses to BigInt (OID 20).
+  const countResult = await client.rawPool.query<{ count: bigint }>(
+    `select count(*) from ${quoteQualifiedIdent(table)}`,
+  );
+  const got = countResult.rows[0]?.count;
+  if (got !== BigInt(expected)) {
+    throw new Error(`${queue}: expected ${expected} events, got ${got ?? 'no row'}`);
   }
+}
+
+// Quote a possibly schema-qualified relation name (e.g. "pgque.event_1_0")
+// part by part so it is safe to splice into SQL as an identifier.
+function quoteQualifiedIdent(name: string): string {
+  return name
+    .split('.')
+    .map((part) => escapeIdentifier(part))
+    .join('.');
 }
 
 function median(values: number[]): number {
