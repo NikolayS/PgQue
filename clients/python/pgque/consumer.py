@@ -15,6 +15,7 @@ import psycopg
 from psycopg import sql
 
 from .client import PgqueClient
+from .errors import PgqueError
 from .types import Message
 
 logger = logging.getLogger("pgque")
@@ -124,6 +125,11 @@ class Consumer:
         Opens its own connection, subscribes to LISTEN, and polls for
         batches. Each batch is processed and acked in a single
         transaction.
+
+        Database errors (failover, restart, network blip) do not kill
+        the loop: the consumer logs the error, waits ``poll_interval``,
+        reconnects, and resumes. Only ``stop()`` / SIGTERM / SIGINT end
+        the loop.
         """
         self._running = True
 
@@ -146,47 +152,83 @@ class Consumer:
             signal.signal(signal.SIGINT, _stop)
 
         try:
-            with psycopg.connect(self.dsn, autocommit=True) as conn:
-                # Subscribe for wakeup notifications
-                channel = f"pgque_{self.queue}"
-                conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
-                logger.info(
-                    "consumer %s listening on %s (poll=%ds)",
-                    self.name,
-                    self.queue,
-                    self.poll_interval,
-                )
-
-                while self._running:
-                    processed = self._poll_once(conn)
-
+            while self._running:
+                # Each session owns one connection. Any database error
+                # (connect failure, receive/ack failure, dead socket in
+                # the LISTEN wait) lands here: log it, wait, reconnect.
+                # Handler exceptions and nack failures never reach this
+                # point -- they are contained inside _poll_once.
+                # KeyboardInterrupt is a BaseException and propagates.
+                try:
+                    self._run_session()
+                except (psycopg.Error, PgqueError):
                     if not self._running:
                         break
-
-                    if processed:
-                        # Non-empty batch: more batches may already be
-                        # ticked (backlog). Their notifies fired while
-                        # we were not listening, so waiting for a new
-                        # NOTIFY would drain the backlog at one batch
-                        # per poll_interval. Re-poll immediately until
-                        # the queue comes back empty.
-                        continue
-
-                    # Wait for NOTIFY or poll_interval timeout in short
-                    # bounded slices. psycopg's conn.notifies() can
-                    # block uninterruptibly for the full timeout, which
-                    # makes stop() slow and can miss prompt wakeups.
-                    # Polling the underlying socket with
-                    # select() lets us re-check _running every SLICE
-                    # seconds and drain any pending NOTIFY immediately.
-                    self._wait_for_notify_or_stop(conn)
-
+                    logger.exception(
+                        "consumer %s: database error; retrying in %ds",
+                        self.name,
+                        self.poll_interval,
+                    )
+                    self._sleep_before_reconnect()
         finally:
             if in_main_thread:
                 signal.signal(signal.SIGTERM, original_sigterm)
                 signal.signal(signal.SIGINT, original_sigint)
 
         logger.info("consumer %s stopped", self.name)
+
+    def _run_session(self) -> None:
+        """Connect, LISTEN, and poll until ``stop()`` or a database error.
+
+        Database errors propagate to ``start()``, which closes the
+        connection (via the ``with`` block here) and reconnects after a
+        ``poll_interval`` wait.
+        """
+        with psycopg.connect(self.dsn, autocommit=True) as conn:
+            # Subscribe for wakeup notifications
+            channel = f"pgque_{self.queue}"
+            conn.execute(sql.SQL("LISTEN {}").format(sql.Identifier(channel)))
+            logger.info(
+                "consumer %s listening on %s (poll=%ds)",
+                self.name,
+                self.queue,
+                self.poll_interval,
+            )
+
+            while self._running:
+                processed = self._poll_once(conn)
+
+                if not self._running:
+                    break
+
+                if processed:
+                    # Non-empty batch: more batches may already be
+                    # ticked (backlog). Their notifies fired while
+                    # we were not listening, so waiting for a new
+                    # NOTIFY would drain the backlog at one batch
+                    # per poll_interval. Re-poll immediately until
+                    # the queue comes back empty.
+                    continue
+
+                # Wait for NOTIFY or poll_interval timeout in short
+                # bounded slices. psycopg's conn.notifies() can
+                # block uninterruptibly for the full timeout, which
+                # makes stop() slow and can miss prompt wakeups.
+                # Polling the underlying socket with
+                # select() lets us re-check _running every SLICE
+                # seconds and drain any pending NOTIFY immediately.
+                self._wait_for_notify_or_stop(conn)
+
+    def _sleep_before_reconnect(self) -> None:
+        """Wait ``poll_interval`` before reconnecting, in short slices
+        so ``stop()`` is observed within ~SLICE seconds.
+        """
+        deadline = time.monotonic() + self.poll_interval
+        while self._running:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(_WAIT_SLICE_SECONDS, remaining))
 
     def stop(self) -> None:
         """Request graceful shutdown (safe to call from another thread)."""
