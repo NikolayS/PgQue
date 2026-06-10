@@ -31,6 +31,17 @@ def test_send_event_object(conn, setup_queue):
     assert isinstance(eid, int)
 
 
+def test_event_rejects_extra_kwarg():
+    """``Event`` must not accept an ``extra`` field.
+
+    ``send()`` never transmitted it (the SQL ``pgque.send`` overloads
+    carry only queue, type, and payload), so accepting the kwarg
+    silently dropped user data. Constructing with it must fail loudly.
+    """
+    with pytest.raises(TypeError):
+        pgque.Event(payload={"x": 1}, type="t", extra={"k": "v"})
+
+
 def test_send_str_payload_passes_through(conn, setup_queue):
     queue, _ = setup_queue
     client = pgque.PgqueClient(conn)
