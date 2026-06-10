@@ -133,5 +133,8 @@
 \echo 'Running: test_legacy_next_batch_role_guard'
 \i tests/test_legacy_next_batch_role_guard.sql
 
+\echo 'Running: test_uninstall_guard'
+\i tests/test_uninstall_guard.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='
