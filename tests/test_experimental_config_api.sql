@@ -25,3 +25,24 @@ begin
   perform pgque.drop_queue('test_opts');
   raise notice 'PASS: experimental config API';
 end $$;
+
+-- Negative max_retries must be rejected with the same error as the
+-- canonical pgque.set_queue_config() path.
+do $$
+begin
+  begin
+    perform pgque.create_queue('test_opts_neg', '{"max_retries": -1}'::jsonb);
+    raise exception 'create_queue should reject negative max_retries';
+  exception
+    when others then
+      if sqlerrm not like '%max_retries must be >= 0%' then
+        raise;
+      end if;
+  end;
+
+  assert not exists (
+    select 1 from pgque.queue where queue_name = 'test_opts_neg'
+  ), 'queue should not exist after rejected create_queue';
+
+  raise notice 'PASS: create_queue rejects negative max_retries';
+end $$;
