@@ -5187,7 +5187,7 @@ begin
        from pgque.queue
       where queue_id = v_queue_id;
 
-    perform pg_notify('pgque_' || i_queue_name, i_tick_id::text); -- PgQue transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
+    perform pg_notify('pgque_' || i_queue_name, i_tick_id::text);
     return i_tick_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
