@@ -28,10 +28,19 @@ jobs:
             postgres:${{ matrix.pg_version }}
 
           # Wait for PG to be ready
-          for i in $(seq 1 30); do
-            docker exec pgque-test pg_isready -U postgres && break
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec pgque-test pg_isready -U postgres; then
+              ready=1
+              break
+            fi
             sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 30 seconds"
+            docker logs pgque-test
+            exit 1
+          fi
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -442,10 +451,19 @@ jobs:
             -p 5432:5432 \
             postgres:18
 
-          for i in $(seq 1 30); do
-            docker exec pgque-python-test pg_isready -U postgres && break
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec pgque-python-test pg_isready -U postgres; then
+              ready=1
+              break
+            fi
             sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 30 seconds"
+            docker logs pgque-python-test
+            exit 1
+          fi
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -498,10 +516,19 @@ jobs:
             -p 5432:5432 \
             postgres:18
 
-          for i in $(seq 1 30); do
-            docker exec pgque-go-test pg_isready -U postgres && break
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec pgque-go-test pg_isready -U postgres; then
+              ready=1
+              break
+            fi
             sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 30 seconds"
+            docker logs pgque-go-test
+            exit 1
+          fi
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -541,10 +568,19 @@ jobs:
             -p 5432:5432 \
             postgres:18
 
-          for i in $(seq 1 30); do
-            docker exec pgque-ts-test pg_isready -U postgres && break
+          ready=0
+          for _ in $(seq 1 30); do
+            if docker exec pgque-ts-test pg_isready -U postgres; then
+              ready=1
+              break
+            fi
             sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "PG not ready after 30 seconds"
+            docker logs pgque-ts-test
+            exit 1
+          fi
 
       - name: Build pgque
         run: bash build/transform.sh
