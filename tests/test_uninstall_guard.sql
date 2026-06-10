@@ -8,7 +8,8 @@
 --
 -- These tests swap pgque.stop() for instrumented fakes; the real definition
 -- is saved first and restored at the end, so the rest of the suite is
--- unaffected. Runs without pg_cron / pg_tle.
+-- unaffected. Runs without pg_cron / pg_tle. The TLE uninstall sub-tests
+-- only run against a plain (non-extension) install; see the gate below.
 --
 -- Run from the repo root: the \i commands below resolve relative to cwd.
 
@@ -35,6 +36,21 @@ begin
         'pgque schema must survive when pgque.stop() raises during uninstall';
     raise notice 'PASS: pgque_uninstall.sql aborts before drop when stop() fails';
 end $$;
+
+-- Tests 2 and 3 execute sql/pgque-tle-uninstall.sql, which (correctly)
+-- drops the pgque extension -- taking the whole schema with it -- and
+-- unregisters pgque from pg_tle. Against an extension install (the pg_tle
+-- CI job) that would destroy the install mid-suite, so the script must not
+-- run at all there: skip both sub-tests. The extension path of the script
+-- is covered by tests/test_tle_install.sql.
+select exists (select 1 from pg_catalog.pg_extension where extname = 'pgque') as pgque_is_extension
+\gset
+
+\if :pgque_is_extension
+
+\echo 'SKIP: pgque is installed as an extension; TLE uninstall sub-tests need a plain install'
+
+\else
 
 -- Test 2 (C4): sql/pgque-tle-uninstall.sql must call pgque.stop() before
 -- drop extension, so pg_cron / pg_timetable jobs do not outlive the schema.
@@ -78,6 +94,10 @@ begin
     raise notice 'PASS: pgque-tle-uninstall.sql aborts before drop when stop() fails';
 end $$;
 
+drop table pg_temp.tle_stop_called;
+
+\endif
+
 -- Restore the real pgque.stop() and verify the restoration.
 do $$
 declare
@@ -91,4 +111,3 @@ begin
 end $$;
 
 drop table pg_temp.saved_stop;
-drop table pg_temp.tle_stop_called;
