@@ -11,26 +11,11 @@ declare
 begin
     v_ret := pgque.create_queue(i_queue);
 
+    -- Route every option through pgque.set_queue_config() so its
+    -- per-parameter validation (e.g. max_retries >= 0) always applies.
     for v_key, v_val in select key, value #>> '{}' from jsonb_each(i_options)
     loop
-        if v_key = 'max_retries' then
-            update pgque.queue
-            set queue_max_retries = v_val::int4
-            where queue_name = i_queue;
-        else
-            perform pgque.set_queue_config(
-                i_queue,
-                case v_key
-                    when 'rotation_period' then 'rotation_period'
-                    when 'ticker_max_count' then 'ticker_max_count'
-                    when 'ticker_max_lag' then 'ticker_max_lag'
-                    when 'ticker_idle_period' then 'ticker_idle_period'
-                    when 'ticker_paused' then 'ticker_paused'
-                    else v_key
-                end,
-                v_val
-            );
-        end if;
+        perform pgque.set_queue_config(i_queue, v_key, v_val);
     end loop;
 
     return v_ret;

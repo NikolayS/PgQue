@@ -46,6 +46,22 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/run_all.sql
 
+      - name: Run experimental tests
+        run: |
+          # sql/experimental/*.sql is not part of sql/pgque.sql; install it
+          # into a separate database so the steps below keep testing the
+          # default install.
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c 'create database pgque_experimental'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_experimental \
+            -v ON_ERROR_STOP=1 \
+            -f sql/pgque.sql \
+            -f sql/experimental/delayed.sql \
+            -f sql/experimental/observability.sql \
+            -f sql/experimental/config_api.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_experimental \
+            -v ON_ERROR_STOP=1 -f tests/run_experimental.sql
+
       - name: Run acceptance tests
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
