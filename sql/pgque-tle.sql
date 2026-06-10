@@ -8,8 +8,10 @@
 -- After loading this script, the extension is registered with pg_tle and can
 -- be created or dropped via the standard create / drop extension commands.
 --
--- This file is self-contained: it works in psql, GUI tools (DBeaver, etc.),
--- JDBC, libpq-direct callers — anywhere that accepts SQL.
+-- This file is a psql script: it uses backslash meta-commands (\set
+-- ON_ERROR_STOP, \echo), so run it with psql. From other clients (GUI
+-- tools, JDBC, direct libpq), call pgtle.install_extension() directly,
+-- passing the contents of sql/pgque.sql as the extension body.
 --
 -- Prerequisites:
 --   1. pg_tle is installed in this database:
@@ -4641,6 +4643,14 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.uninstall()
 returns void as $$
 begin
+    -- Extension installs (pg_tle) must go through the extension machinery:
+    -- dropping the schema out from under the extension would fail with a
+    -- confusing dependency error ("extension pgque requires it").
+    if exists (select 1 from pg_catalog.pg_extension where extname = 'pgque') then
+        raise exception 'pgque is installed as an extension; run: '
+            'drop extension pgque cascade; (for pg_tle installs, use '
+            'sql/pgque-tle-uninstall.sql to also unregister from pg_tle)';
+    end if;
     -- Stop pg_cron jobs before dropping the schema.
     if exists (select 1 from pg_extension where extname = 'pg_cron') then
         perform pgque.stop();
