@@ -131,11 +131,14 @@ export class Consumer {
       if (batchId !== null) {
         if (anyNackFailed) {
           // At least one required nack failed. Skip ack so PgQ redelivers
-          // the batch on the next poll instead of advancing the consumer
-          // past messages we couldn't route.
+          // the batch instead of advancing the consumer past messages we
+          // couldn't route. The batch is unfinished, so `next_batch` would
+          // return it again immediately — sleep one poll interval before
+          // re-polling to avoid a hot loop that re-runs every handler.
           this.logger.error(
             `pgque: skipping ack for batch ${batchId}; one or more nacks failed and the batch will be redelivered`,
           );
+          await sleep(this.pollIntervalMs, signal);
         } else {
           try {
             const n = await this.client.ack(batchId);
@@ -145,7 +148,10 @@ export class Consumer {
               );
             }
           } catch (err) {
+            // Unfinished batch: same redelivery situation as the failed-nack
+            // path above, so back off one poll interval before re-polling.
             this.logger.error(`pgque: ack error: ${formatErr(err)}`);
+            await sleep(this.pollIntervalMs, signal);
           }
         }
       }
