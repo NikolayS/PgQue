@@ -139,6 +139,95 @@ begin
   raise notice 'PASS: error_rate() returns % rows', v_count;
 end $$;
 
+-- Test 9: throughput() with sub-minute bucket size
+do $$
+declare
+  v_row record;
+  v_count int := 0;
+begin
+  for v_row in
+    select * from pgque.throughput('obs_queue', '1 hour'::interval, '30 seconds'::interval)
+  loop
+    v_count := v_count + 1;
+    assert extract(epoch from v_row.bucket_start)::numeric % 30 = 0,
+      'bucket_start should align to 30-second boundaries, got ' || v_row.bucket_start;
+  end loop;
+  assert v_count >= 1, 'throughput(30s) should return at least one bucket';
+  raise notice 'PASS: throughput() handles 30-second buckets (% rows)', v_count;
+end $$;
+
+-- Test 10: throughput() buckets non-minute-multiple sizes correctly
+do $$
+declare
+  v_queue_id int4;
+  v_seq0 bigint;
+  v_anchor timestamptz;
+  v_row record;
+  v_count int := 0;
+begin
+  perform pgque.create_queue('obs_bucket_queue');
+
+  select q.queue_id into v_queue_id
+  from pgque.queue q
+  where q.queue_name = 'obs_bucket_queue';
+
+  select t.tick_event_seq into v_seq0
+  from pgque.tick t
+  where t.tick_queue = v_queue_id
+  order by t.tick_id desc
+  limit 1;
+
+  -- Anchor on a 90-second epoch boundary in the recent past, then insert
+  -- synthetic ticks at known offsets: +10 s and +40 s fall in bucket
+  -- [anchor, anchor+90), +100 s falls in [anchor+90, anchor+180).
+  v_anchor := to_timestamp(
+    floor(extract(epoch from now() - interval '15 minutes') / 90) * 90);
+
+  insert into pgque.tick (tick_queue, tick_id, tick_time, tick_event_seq)
+  values
+    (v_queue_id, 1001, v_anchor + interval '10 seconds', v_seq0),
+    (v_queue_id, 1002, v_anchor + interval '40 seconds', v_seq0 + 100),
+    (v_queue_id, 1003, v_anchor + interval '100 seconds', v_seq0 + 250);
+
+  for v_row in
+    select * from pgque.throughput('obs_bucket_queue', '1 hour'::interval, '90 seconds'::interval)
+  loop
+    v_count := v_count + 1;
+    if v_count = 1 then
+      assert v_row.bucket_start = v_anchor,
+        'first bucket should start at ' || v_anchor || ', got ' || v_row.bucket_start;
+      assert v_row.events = 100,
+        'first bucket should have 100 events, got ' || v_row.events;
+    elsif v_count = 2 then
+      assert v_row.bucket_start = v_anchor + interval '90 seconds',
+        'second bucket should start at ' || (v_anchor + interval '90 seconds')
+          || ', got ' || v_row.bucket_start;
+      assert v_row.events = 150,
+        'second bucket should have 150 events, got ' || v_row.events;
+    end if;
+  end loop;
+  assert v_count = 2, 'throughput(90s) should return 2 buckets, got ' || v_count;
+
+  perform pgque.drop_queue('obs_bucket_queue');
+  raise notice 'PASS: throughput() buckets 90-second intervals from epoch';
+end $$;
+
+-- Test 11: throughput() rejects non-positive bucket size
+do $$
+begin
+  begin
+    perform count(*)
+    from pgque.throughput('obs_queue', '1 hour'::interval, '0 seconds'::interval);
+    raise exception 'throughput() should reject non-positive bucket size';
+  exception
+    when others then
+      if sqlerrm not like '%bucket size must be > 0%' then
+        raise;
+      end if;
+  end;
+  raise notice 'PASS: throughput() rejects non-positive bucket size';
+end $$;
+
 -- Teardown
 do $$ begin
   perform pgque.unregister_consumer('obs_queue', 'obs_consumer');

@@ -322,13 +322,20 @@ returns table (
 ) as $$
 declare
     v_queue_id int4;
+    v_bucket_sec numeric;
 begin
+    if i_bucket_size is null or i_bucket_size <= interval '0' then
+        raise exception 'throughput: bucket size must be > 0, got %', i_bucket_size;
+    end if;
+
     select q.queue_id into v_queue_id
     from pgque.queue q where q.queue_name = i_queue_name;
 
     if not found then
         raise exception 'queue not found: %', i_queue_name;
     end if;
+
+    v_bucket_sec := extract(epoch from i_bucket_size);
 
     return query
     with ticks as (
@@ -342,10 +349,8 @@ begin
     ),
     bucketed as (
         select
-            date_trunc('minute', tk.tick_time)
-                - (extract(minute from date_trunc('minute', tk.tick_time))::int
-                   % (extract(epoch from i_bucket_size)::int / 60))
-                  * interval '1 minute' as bucket,
+            to_timestamp(floor(extract(epoch from tk.tick_time) / v_bucket_sec)
+                         * v_bucket_sec) as bucket,
             sum(coalesce(tk.tick_event_seq - tk.prev_event_seq, 0))::bigint as events
         from ticks tk
         where tk.prev_event_seq is not null
@@ -354,9 +359,7 @@ begin
     select
         b.bucket as bucket_start,
         b.events,
-        case when extract(epoch from i_bucket_size) > 0
-            then b.events::numeric / extract(epoch from i_bucket_size)
-            else 0 end as events_per_sec
+        b.events::numeric / v_bucket_sec as events_per_sec
     from bucketed b
     order by b.bucket;
 end;
