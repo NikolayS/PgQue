@@ -228,7 +228,7 @@ Producer-side dedup is a **TTL window** (SQS/NATS model), append-only, GC'd by
 rotation — a separate spec. In a log, "processed" is a per-consumer fact the
 producer cannot see, so dedup must be a producer-side time window, while
 ordering/serialization is this consumer-side partition feature. Rationale and
-prior art: `blueprints/IDEMPOTENCY_DESIGN.md`.
+prior art: `blueprints/idempotency/DESIGN.md`.
 
 ## 13. Team of veteran experts (review panel)
 

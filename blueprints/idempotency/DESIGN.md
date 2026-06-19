@@ -275,4 +275,5 @@ planned features are genuine differentiators, not catch-up.
 
 ---
 
-(This note is local only — not committed, not pushed.)
+(Companion: the consumer-side partition feature in
+`blueprints/partition-keys/SPEC.md`.)
