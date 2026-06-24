@@ -76,7 +76,7 @@
     <h1>Partition Keys<span class="sub">Ordered, parallel consumption — the log-native way</span></h1>
     <div class="badges">
       <span class="badge">slug <b>partition-keys</b></span>
-      <span class="badge">version <b>v0.4 (draft)</b></span>
+      <span class="badge">version <b>v0.5 (draft)</b></span>
       <span class="badge badge--amber">Phase 1 <b>converged</b></span>
       <span class="badge">engine <b>untouched</b></span>
     </div>
@@ -193,7 +193,7 @@
 
   <h2><span class="n">05</span>Key decisions</h2>
   <table>
-    <thead><tr><th>ID</th><th>Decision</th><th>Choice (v0.2)</th></tr></thead>
+    <thead><tr><th>ID</th><th>Decision</th><th>Choice (v0.5)</th></tr></thead>
     <tbody>
       <tr><td class="id">D1</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
       <tr><td class="id">D2</td><td>Failure policy</td><td class="pick"><code>skip</code> default (Phase 1); <code>pause</code> = Phase 2</td></tr>
@@ -202,6 +202,7 @@
       <tr><td class="id">D5</td><td>State budget</td><td class="pick">Happy path &amp; <code>skip</code>: none. <code>pause</code>: a compact blocked-key marker (per failing key, not per event)</td></tr>
       <tr><td class="id">D6</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
       <tr><td class="id">D7</td><td>Slot &amp; single-owner</td><td class="pick">slot = consumer <code>"&lt;c&gt;#k/N"</code>; receive lock</td></tr>
+      <tr><td class="id">D8</td><td>Worker→slot assignment</td><td class="pick">client-side <strong>claim</strong> via <code>pg_try_advisory_lock</code>; no leader/assignor. G2 receive lock = correctness; advisory lock = distribution</td></tr>
     </tbody>
   </table>
   <p class="note">Three review rounds against the real engine. Round 2 verified G1's <code>ev_id</code> ordering and the G2 single-owner lock are real. Round 3 declared <strong>Phase 1 (skip) converged / implementation-ready</strong> and split <code>pause</code> out as a follow-up: withholding a blocked key's later event has an unsolved mechanic — a server-side drop would lose the event, and <code>event_retry</code> would wrongly count it toward DLQ — so strict <code>pause</code> needs a defer-without-retry-increment primitive that doesn't exist yet. It also corrected the security model: the filter hook is admin-only, so the consumer wrappers reach it by <em>co-ownership</em> with the installer, not by a role grant.</p>
@@ -218,6 +219,47 @@
     is gated on two open items: a defer-without-retry-increment primitive (O1) and
     bounding the hot-blocked-key cost (O2). Phase 1 alone covers the per-tenant
     ordered, parallel consumption the motivating workload needs.
+  </p>
+
+  <h2><span class="n">07</span>Worker → slot assignment</h2>
+  <p>
+    Slots are <strong>claimed, not assigned</strong>. There is no consumer-group
+    leader, no <code>PartitionAssignor</code>, and no stop-the-world rebalance —
+    Kafka needs all three because a partition is exclusive <em>by protocol</em>.
+    Here the <strong>database is the coordinator</strong>, so assignment is
+    pull-based and self-balancing: a worker doesn't get <em>told</em> which slot to
+    take, it <em>claims</em> a free one.
+  </p>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Claim loop · client-side</p>
+      <ul class="tight yes">
+        <li>Worker tries non-blocking <code>pg_try_advisory_lock</code> per slot <code>0..N-1</code></li>
+        <li>First lock wins → owns that slot, calls <code>receive_partitioned</code></li>
+        <li>Sticky-until-idle; releases on drain or crash</li>
+        <li>16 slots / 16 workers → one disjoint slot each · 16 / 8 → ≈2 each</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Scale 8 → 10 workers</p>
+      <ul class="tight">
+        <li>New workers run the same loop, grab released/free slots</li>
+        <li>No revocation, no leader recompute</li>
+        <li>Converges to ≈N/M within one claim cycle</li>
+        <li>Crash → Postgres frees the lock → slot reclaimable instantly</li>
+      </ul>
+    </div>
+  </div>
+  <div class="guarantee">
+    <div class="g"><span class="tag">lock&nbsp;1</span><p><strong>Correctness — G2 receive lock</strong> (blocking <code>for update</code>): two workers targeting slot <code>k</code> → exactly one gets the batch; the other blocks. Ordering can never break.</p></div>
+    <div class="g"><span class="tag">lock&nbsp;2</span><p><strong>Distribution — advisory slot lock</strong> (non-blocking try): steers workers onto distinct slots. Pure liveness — skipping it loses even spread, never G1/G2.</p></div>
+  </div>
+  <p class="note">
+    N is fixed (D3) <em>and</em> is the read-amplification multiplier (§6 — every
+    slot scans the full stream), so N is chosen to match the parallelism you need,
+    not inflated to dodge a future resize. Even spread under <em>key skew</em> (a
+    hot slot stays hot) and online resize of N (which reshuffles keys across slots,
+    breaking per-key order mid-flight) are deferred — R3, R4.
   </p>
 
   <footer>

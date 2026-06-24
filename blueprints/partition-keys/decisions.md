@@ -138,6 +138,27 @@ B-R2-1 security: posture closed, ownership prose corrected (B1). B-R2-2 durable
 marker: direction correct; hygiene (FK/index/grants) + the withhold mechanic (O1)
 now specified/flagged. All round-1 + round-2 *Phase-1* items closed.
 
+## Follow-up Q&A (v0.5) — worker→slot assignment
+
+Two design questions surfaced after round 3 (fixed-N rebalancing; how partitions
+map to workers). Resolved into the spec without reopening a formal review round:
+
+- **D8 — assignment is a *claim*, not an *assignment*.** No consumer-group leader,
+  no `PartitionAssignor`, no rebalance protocol (Kafka needs them because a
+  partition is exclusive by protocol). Each worker claims a slot via a
+  non-blocking `pg_try_advisory_lock`; scale-up/down is just lock acquire/release,
+  with crash recovery via session-death lock release (no `session.timeout.ms`).
+  (§15, D8)
+- **Two-lock separation.** G2's blocking receive lock stays the *correctness*
+  backstop; the advisory slot lock is a pure *distribution* layer, so a client that
+  skips it loses even spread but can never break G1/G2. (§15)
+- **Fixed N is the right call, and over-provisioning is not free.** N is also the
+  read-amp multiplier (§6), so inflating N to dodge a resize linearly raises read
+  cost; online resize breaks G1 mid-flight (`hash % N` reshuffles keys). Resize
+  stays future (R4); choose N to match needed parallelism. (R4)
+- **Added** `T-claim` (assignment liveness: disjoint advisory locks, freed-slot
+  reclaim). (§9)
+
 ## Still open (Phase 2 `pause`, before it can be built)
 - **O1** — choose the defer-without-retry-increment mechanism (new primitive vs
   hold-cursor-without-wedging-rotation).

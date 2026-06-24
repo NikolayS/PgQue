@@ -1,10 +1,10 @@
 # PgQue Partition Keys — Spec
 
-- **Version:** v0.4 (draft)
+- **Version:** v0.5 (draft)
 - **Status:** review rounds 1–3 applied. **Phase 1 (`skip`-default partition
   consumption) is converged / implementation-ready.** Phase 2 (`pause` strict
   ordering) is specified but has open design items (§11) and is a deliberate
-  follow-up. See §15 changelog and `decisions.md`.
+  follow-up. See §16 changelog and `decisions.md`.
 - **Slug:** partition-keys
 - **Scope:** consumer-side ordered, parallel consumption by partition key.
   Producer-side idempotency/dedup is a separate spec (deferred — §12).
@@ -58,6 +58,8 @@ that **must be ordered per tenant** but need **no ordering across tenants**.
 - G1 + G2. **`skip` failure policy** (stateless, sound).
 - Persisted/enforced `N` (D3); slot identity + single-owner (D7); SECURITY
   DEFINER ownership model (§6).
+- **Client-side claim assignment** (§15): workers self-distribute over the fixed
+  `N` slots via a per-slot advisory try-lock — no leader, no assignor.
 
 **Phase 2 — specified, follow-up (NOT converged):**
 - **`pause` failure policy** (G3 strict). Needs a *defer-without-retry-increment*
@@ -143,6 +145,7 @@ optimization is future (R6).
 | D5 | State budget | **Phase 1 / happy / `skip`: no state, no per-event writes.** **Phase 2 `pause`:** durable `pgque.partition_block(sub_id, partition_key, head_ev_id)` marker (FK `sub_id → subscription on delete cascade`; index `(sub_id, partition_key)`). Blocked keys additionally incur defer churn (§11 O1) — so "no per-event churn" is a Phase-1/non-blocked-key claim only. | Round 3 corrected the churn framing. |
 | D6 | Producer signature | `send(queue, type, payload, partition_key => text)` | Avoids `send(queue,type,payload)` collision. |
 | D7 | Slot & single-owner | slot = consumer `"<consumer>#k/N"`; G2 via per-subscription receive lock; functions SECURITY DEFINER co-owned with `get_batch_cursor` (§6) | Reader-callable, owner-reachable. |
+| D8 | Worker→slot assignment | Client-side **claim** (§15): each worker takes a slot via non-blocking `pg_try_advisory_lock`; **no leader, no `PartitionAssignor`, no rebalance protocol.** G2's blocking receive lock is the correctness backstop; the advisory lock only distributes | Kafka needs an assignor because partitions are exclusive *by protocol*; here the DB arbitrates. |
 
 ## 8. Implementation details
 
@@ -199,6 +202,10 @@ optimization is future (R6).
   `get_batch_cursor` directly (`42501`, mirror `test_security_get_batch_cursor.sql`);
   non-integer/out-of-range `n`,`k` rejected.
 - **T-N-invariant:** `subscribe_slot(…,k,n)` idempotent; `(…,k,n2≠n)` raises.
+- **T-claim (assignment):** two sessions take per-slot `pg_try_advisory_lock` over
+  `N=2`; assert they land on **distinct** slots (disjoint locks), a third session
+  gets neither, and releasing one frees exactly that slot for the third. Liveness
+  only — correctness is already covered by T-G2-block.
 - **T-no-bloat (happy path):** all-ack of M events → zero `retry_queue`/
   `dead_letter`/`partition_block` rows (guard the `partition_block` clause with
   `to_regclass('pgque.partition_block') is not null`) and no per-event
@@ -228,7 +235,15 @@ optimization is future (R6).
 - **R2 — read amplification:** N× steady, ~2N× rotation overlap, widening for a
   stalled slot. Benchmark the stalled case.
 - **R3 — hot partitions:** documented only.
-- **R4 — changing N:** enforced invariant (D3); rebalancing is future.
+- **R4 — changing N / over-provisioning:** N is an enforced invariant (D3) **and**
+  the read-amplification multiplier (§6 — every slot scans the full stream), so
+  inflating N to dodge a future resize is **not free**: it linearly raises steady
+  read cost. Online resize is genuinely hard — `(hash % N)` reshuffles keys across
+  slots, so a key mid-flight in one slot would jump to another, breaking G1/G2
+  during the transition. A correct resize needs either drain-and-cutover (a
+  consumption pause) or a power-of-two split with per-slot draining; both are
+  future. Phase 1 guidance: choose N to match the parallelism you need, bounded by
+  the read-amp budget.
 - **R5 — `ev_extra1`:** send-sourced queues only.
 - **R6 — single-reader/dispatch** to remove read amplification; future.
 - **R7 — rotation pressure:** rotation waits for `min(sub_last_tick)` over ALL
@@ -275,8 +290,65 @@ separate spec. Rationale: `blueprints/idempotency/DESIGN.md`.
    T-slot-crash, T-hot-blocked-key.
 4. **S4 — docs + benchmark** (read-amp: steady/rotation/stalled; per-tenant order).
 
-## 15. Changelog
+## 15. Worker → slot assignment
 
+Slots are **claimed, not assigned.** There is no consumer-group leader, no
+`PartitionAssignor`, and no stop-the-world rebalance protocol — Kafka needs all
+three because a partition is exclusive *by protocol* (the broker hands it to one
+member, with no per-message arbitration). Here the **database is the
+coordinator**, so assignment is pull-based and self-balancing.
+
+**Claim loop (client-side).** Each worker iterates candidate slots `0..N-1` and
+attempts a non-blocking `pg_try_advisory_lock(slot_key(queue, consumer, k))`. The
+first slot it locks, it owns: it calls `receive_partitioned(queue, consumer, k, N,
+…)` for that slot and keeps it **sticky-until-idle** (re-poll the same slot while
+it has work; release the advisory lock on drain or shutdown). On a failed try-lock
+the worker moves to the next slot — it never blocks waiting on a busy slot.
+
+- **Symmetric (N workers, N slots).** Each worker locks one distinct slot; the
+  try-lock makes ownership disjoint with zero coordination. Sequential per-key
+  consumption follows from G1 (routing) + the single owner.
+- **Fan-in (N slots, M<N workers).** Each worker cycles its claim loop and holds
+  ≈⌈N/M⌉ slots.
+- **Scale-up (M → M′ workers).** New workers run the same loop and lock whatever
+  slots are unclaimed or get released at a batch boundary. No revocation, no
+  leader recompute — convergence to ≈N/M′ slots per worker within one claim cycle.
+- **Scale-down / crash.** The dead session's advisory lock is released by Postgres,
+  so its slots are immediately reclaimable — there is no `session.timeout.ms`
+  equivalent and no rebalance to trigger.
+
+**Two locks, different jobs.** The design separates correctness from distribution
+so a buggy client can never corrupt ordering:
+
+- **G2 receive lock** (`for update of s` on the subscription, *blocking*, §2) is
+  the **correctness** backstop: even if two workers both target slot `k`, exactly
+  one gets the batch; the other blocks. Ordering can never break.
+- **Advisory slot lock** (non-blocking `try`) is the **distribution** layer: it
+  steers workers onto distinct slots so they don't pile up blocked on the same
+  one. It is pure liveness — a client that skips it cannot violate G1/G2, it only
+  loses even spread.
+
+**What claiming does not give you.** Even spread under *key skew*: a hot slot
+stays hot no matter who owns it (R3). First-free claiming can be made fairer with
+**lag-aware claiming** (prefer the free slot with the oldest unconsumed `ev_id`) —
+a future refinement, not Phase 1.
+
+**N bounds the fan-out.** Assignment distributes a *fixed* N (D3) over a variable
+worker count: useful parallelism is capped at N (workers > N sit idle), and
+because N is also the read-amplification multiplier (§6, R4), N is chosen to match
+the parallelism you need — not inflated "to be safe." Resizing N is the
+rebalancing problem (R4), deferred.
+
+## 16. Changelog
+
+- **v0.5 (draft):** added the **worker→slot assignment** model (§15, D8):
+  client-side **claim** via a non-blocking per-slot `pg_try_advisory_lock` — no
+  leader, no `PartitionAssignor`, no rebalance protocol; G2's blocking receive
+  lock is the correctness backstop, the advisory lock only distributes; crash
+  recovery is just session-death lock release (no `session.timeout.ms`).
+  Clarified that fixed N (D3) is also the read-amp multiplier, so over-provisioning
+  N to avoid a resize is **not free** and online resize breaks G1 mid-flight (R4
+  expanded). Added T-claim (assignment liveness).
 - **v0.4 (draft):** review round 3. **Phase 1 declared converged /
   implementation-ready; `pause` split into Phase 2** with explicit open items
   (§11 O1 defer-without-retry-increment, O2 hot-blocked-key). Corrected the
