@@ -76,38 +76,120 @@
     <h1>Partition Keys<span class="sub">Ordered, parallel consumption — the log-native way</span></h1>
     <div class="badges">
       <span class="badge">slug <b>partition-keys</b></span>
-      <span class="badge">version <b>v0.5 (draft)</b></span>
-      <span class="badge badge--amber">Phase 1 <b>converged</b></span>
+      <span class="badge">version <b>v0.6 (draft)</b></span>
+      <span class="badge badge--amber">Tier A <b>build-now</b></span>
       <span class="badge">engine <b>untouched</b></span>
     </div>
   </header>
 
   <p class="lede">
-    Within one queue, events that share a <strong>partition key</strong> are consumed
-    <strong>in order by a single worker at a time</strong>; events with different keys are
-    consumed <strong>in parallel</strong>. Order <em>within</em> a key, parallelism
-    <em>across</em> keys — Kafka's partition model, achieved by routing, with
-    <strong>no per-event locks and no new mutable state</strong>.
+    Two tiers of per-key consumption, matched to two real needs.
+    <strong>Mutual exclusion</strong> (Tier A) — one worker per key at a time —
+    reuses what PgQue already ships: cooperative consumers plus a per-key advisory
+    lock, near-zero new engine code. <strong>Ordered per key</strong> (Tier B) —
+    Kafka's partition model, order <em>within</em> a key — adds hash-routed slots and
+    pays for strict order with read amplification and a fixed partition count. Pick
+    the tier the workload needs.
   </p>
 
   <h2><span class="n">01</span>The problem</h2>
   <p>
-    PgQue is an <strong>ordered, immutable log</strong>, not a job queue. The motivating
-    workload (a multi-tenant storage service evaluating PgQue to replace pg-boss) emits
-    <strong>millions</strong> of file-lifecycle events — <code>FileCreated</code>,
-    <code>FileDeleted</code>, <code>FileOverwritten</code>. They must be processed
-    <strong>in order per tenant</strong>, but <strong>order across tenants does not matter</strong>.
-    One in-order consumer can't keep up; naive multi-worker consumption breaks per-tenant order.
+    PgQue is an <strong>ordered, immutable log</strong>, not a job queue. One in-order
+    consumer can't keep up with millions of events; naive multi-worker consumption
+    breaks per-key order. The motivating workload (a multi-tenant storage service
+    evaluating PgQue to replace pg-boss) has <strong>two</strong> needs, not one — and
+    they want different guarantees:
+  </p>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Migrations · mutual exclusion</p>
+      <ul class="tight yes">
+        <li>Run <strong>one job per tenant</strong> at a time (schema migrations)</li>
+        <li>Order <strong>doesn't</strong> matter — idempotent "ensure latest" job</li>
+        <li>Concurrent requests across instances must collapse to one run</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Lifecycle events · ordered</p>
+      <ul class="tight">
+        <li><code>FileCreated</code>, <code>FileDeleted</code>, <code>FileOverwritten</code> — millions</li>
+        <li>Ordered <strong>per tenant</strong>; order across tenants irrelevant</li>
+        <li>Throughput-critical</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="n">02</span>Two tiers</h2>
+  <p>
+    Both needs are "per-key", but the guarantee differs — so the cost differs. Don't
+    pay for ordering you don't need.
+  </p>
+  <table>
+    <thead><tr><th>Tier</th><th>Guarantee</th><th>Built on</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td class="id">A</td><td class="pick">Mutual exclusion — one worker per key (G2)</td><td>cooperative consumers (exist) + per-key <code>pg_try_advisory_lock</code></td><td>≈ none · no new tables · no N</td></tr>
+      <tr><td class="id">B</td><td class="pick">Ordered per key — FIFO within a key (G1 + G2)</td><td>N hash-routed slot subscriptions via <code>extra_where</code></td><td>N&#215; read amplification · fixed N · slot assignment</td></tr>
+    </tbody>
+  </table>
+  <p class="note">
+    Cooperative consumers <em>cannot</em> provide Tier B: they split by tick window,
+    not key, so a key scatters across workers (round-1 finding A1, confirmed in
+    <code>next_coop_batch</code>). Tier A leans on exactly that throughput-spreading and
+    adds the per-key lock for serialization.
   </p>
 
-  <h2><span class="n">02</span>The guarantee</h2>
+  <h2><span class="n">03</span>Tier A · mutual exclusion</h2>
+  <p>
+    The build-now slice — almost entirely a <em>recipe</em> over existing primitives,
+    not new engine code.
+  </p>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Mechanism</p>
+      <ul class="tight yes">
+        <li><code>send(queue, type, payload, partition_key)</code> → key into <code>ev_extra1</code></li>
+        <li>Existing <strong>cooperative consumers</strong> spread batches across workers</li>
+        <li>Per event: <code>pg_try_advisory_lock(hashtextextended(key,0))</code></li>
+        <li>Lock free → process, then unlock · lock held → <strong>ack and drop</strong></li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Why ack-and-drop is safe</p>
+      <ul class="tight">
+        <li>Handlers are idempotent (given)</li>
+        <li>Lock held ⇒ that key is <em>already</em> being processed</li>
+        <li>Contended event is redundant — no retry churn, no ordering concern</li>
+        <li>No N · no slot assignment · no rebalancing — workers stateless &amp; elastic</li>
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <p class="card-title">This also answers the idempotency ask</p>
+    <p>
+      The original request — produce-side idempotency so many concurrent "migrate
+      tenant T" requests collapse to one job — needs <strong>no produce-side dedup</strong>
+      here. Let duplicates append cheaply (it's a log); at consume, the per-key lock +
+      idempotent handler collapse them to a single run. Partition key and idempotency
+      key are the <strong>same requirement</strong>, solved once.
+    </p>
+  </div>
+
+  <h2><span class="n">04</span>Tier B · ordered per key</h2>
+  <p>
+    When order <em>is</em> the point (lifecycle events). Within one queue, events
+    sharing a partition key are consumed in order by a single worker at a time;
+    different keys run in parallel — with no per-event locks and no new mutable state.
+    This is where fixed N, read amplification, and slot assignment live — the inherent
+    price of strict ordering. <strong>G2</strong> is also Tier A's guarantee; Tier B
+    adds <strong>G1</strong>.
+  </p>
   <div class="guarantee">
     <div class="g"><span class="tag">G1</span><p><strong>Per-key affinity + FIFO.</strong> Every event of key <code>K</code> maps to one slot <code>hashtextextended(K,0) % N</code>; within it, non-retried events of <code>K</code> arrive in <code>ev_id</code> order, never to another slot.</p></div>
     <div class="g"><span class="tag">G2</span><p><strong>Single processor per key.</strong> At most one worker holds an unacked event for <code>K</code> at any instant.</p></div>
     <div class="g"><span class="tag">G3</span><p><strong>Failure boundary.</strong> <code>pause</code>: no later <code>K</code> event until the failed one is acked or dead-lettered. <code>skip</code> (v0.1 default): at-least-once, order not held after a failure.</p></div>
   </div>
 
-  <h2><span class="n">03</span>Architecture</h2>
+  <h2><span class="n">05</span>Tier B · architecture</h2>
   <figure>
     <svg class="diagram" viewBox="0 0 860 520" role="img" aria-label="Each partition slot is an independent subscription with its own cursor that reads the whole stream and server-side-filters to its hash class via get_batch_cursor extra_where. The engine is unchanged.">
       <defs>
@@ -169,66 +251,69 @@
     <figcaption>Slots are independent subscriptions filtering via the existing extra_where hook. The PgQ engine is not modified.</figcaption>
   </figure>
 
-  <h2><span class="n">04</span>Scope</h2>
+  <h2><span class="n">06</span>Scope &amp; phasing</h2>
   <div class="two">
     <div class="panel">
-      <p class="card-title">Phase 1 · converged, build now</p>
+      <p class="card-title">Tier A · build now</p>
       <ul class="tight yes">
-        <li>Partition key on <code>send()</code>-sourced events</li>
-        <li>N independent slot consumers, stable affinity</li>
-        <li>Per-key order + single processor (G1, G2)</li>
-        <li><code>skip</code> failure policy (default)</li>
+        <li><code>send()</code> partition key → <code>ev_extra1</code></li>
+        <li>Per-key advisory-lock consume recipe over cooperative consumers</li>
+        <li>Mutual exclusion (G2); ack-drop on contention; idempotency collapse</li>
+        <li>No new tables, no N — stateless workers</li>
       </ul>
     </div>
     <div class="panel">
-      <p class="card-title">Phase 2 · follow-up / out</p>
+      <p class="card-title">Tier B · ordered, follow-up</p>
       <ul class="tight">
-        <li><code>pause</code> strict order — open mechanic (defer w/o retry-count)</li>
-        <li>Producer idempotency / dedup window</li>
-        <li>Trigger-sourced queues · dynamic N</li>
-        <li>Hot-partition mitigation · read-amp optimization</li>
+        <li>N hash-routed slot consumers; per-key order (G1 + G2)</li>
+        <li><code>skip</code> policy; engine untouched; persisted N</li>
+        <li>Slot claim (advisory / static); read-amp benchmark</li>
+        <li><code>pause</code> strict order — open mechanic, gated on O1/O2</li>
       </ul>
     </div>
   </div>
 
-  <h2><span class="n">05</span>Key decisions</h2>
+  <h2><span class="n">07</span>Key decisions</h2>
   <table>
-    <thead><tr><th>ID</th><th>Decision</th><th>Choice (v0.5)</th></tr></thead>
+    <thead><tr><th>ID</th><th>Tier</th><th>Decision</th><th>Choice (v0.6)</th></tr></thead>
     <tbody>
-      <tr><td class="id">D1</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
-      <tr><td class="id">D2</td><td>Failure policy</td><td class="pick"><code>skip</code> default (Phase 1); <code>pause</code> = Phase 2</td></tr>
-      <tr><td class="id">D3</td><td>Slot count N</td><td class="pick">Fixed, persisted &amp; enforced per (queue, consumer)</td></tr>
-      <tr><td class="id">D4</td><td>Assignment function</td><td class="pick"><code>(hashtextextended(key,0) % N + N) % N</code> (stable, sign-safe)</td></tr>
-      <tr><td class="id">D5</td><td>State budget</td><td class="pick">Happy path &amp; <code>skip</code>: none. <code>pause</code>: a compact blocked-key marker (per failing key, not per event)</td></tr>
-      <tr><td class="id">D6</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
-      <tr><td class="id">D7</td><td>Slot &amp; single-owner</td><td class="pick">slot = consumer <code>"&lt;c&gt;#k/N"</code>; receive lock</td></tr>
-      <tr><td class="id">D8</td><td>Worker→slot assignment</td><td class="pick">client-side <strong>claim</strong> via <code>pg_try_advisory_lock</code>; no leader/assignor. G2 receive lock = correctness; advisory lock = distribution</td></tr>
+      <tr><td class="id">D1</td><td>A·B</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
+      <tr><td class="id">D6</td><td>A·B</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
+      <tr><td class="id">D8</td><td>A</td><td>Tier A serialization</td><td class="pick">cooperative consumers + per-key <code>pg_try_advisory_lock</code>; contended + idempotent → <strong>ack-drop</strong>. No N, no assignment</td></tr>
+      <tr><td class="id">D9</td><td>A</td><td>Idempotency ask</td><td class="pick">no produce-side dedup; per-key lock at consume collapses duplicates</td></tr>
+      <tr><td class="id">D3</td><td>B</td><td>Slot count N</td><td class="pick">Fixed, persisted &amp; enforced per (queue, consumer)</td></tr>
+      <tr><td class="id">D4</td><td>B</td><td>Assignment function</td><td class="pick"><code>(hashtextextended(key,0) % N + N) % N</code> (stable, sign-safe)</td></tr>
+      <tr><td class="id">D7</td><td>B</td><td>Slot &amp; single-owner</td><td class="pick">slot = consumer <code>"&lt;c&gt;#k/N"</code>; receive lock; claim via advisory/static</td></tr>
+      <tr><td class="id">D2</td><td>B</td><td>Failure policy</td><td class="pick"><code>skip</code> default; <code>pause</code> = follow-up</td></tr>
+      <tr><td class="id">D5</td><td>B</td><td>State budget</td><td class="pick">happy &amp; <code>skip</code>: none. <code>pause</code>: compact blocked-key marker</td></tr>
     </tbody>
   </table>
-  <p class="note">Three review rounds against the real engine. Round 2 verified G1's <code>ev_id</code> ordering and the G2 single-owner lock are real. Round 3 declared <strong>Phase 1 (skip) converged / implementation-ready</strong> and split <code>pause</code> out as a follow-up: withholding a blocked key's later event has an unsolved mechanic — a server-side drop would lose the event, and <code>event_retry</code> would wrongly count it toward DLQ — so strict <code>pause</code> needs a defer-without-retry-increment primitive that doesn't exist yet. It also corrected the security model: the filter hook is admin-only, so the consumer wrappers reach it by <em>co-ownership</em> with the installer, not by a role grant.</p>
+  <p class="note">Three review rounds against the real engine (G1 ordering + G2 single-owner lock verified real), then reframed into two tiers after consumer Q&amp;A: the mutual-exclusion need (migrations) is met by Tier A with almost no engine change, so it leads. <code>pause</code> strict failure ordering stays a Tier-B follow-up — withholding a blocked key's later event needs a defer-without-retry-increment primitive that doesn't exist yet.</p>
 
-  <h2><span class="n">06</span>Sprint plan</h2>
+  <h2><span class="n">08</span>Sprint plan</h2>
   <div class="pill-row">
-    <span class="pill"><b>S1</b> &nbsp;producer + key plumbing</span>
-    <span class="pill"><b>S2</b> &nbsp;slot consumers (skip)</span>
-    <span class="pill"><b>S3</b> &nbsp;pause policy (v0.2)</span>
-    <span class="pill"><b>S4</b> &nbsp;docs + read-amp benchmark</span>
+    <span class="pill"><b>A1</b> &nbsp;send() key plumbing → ev_extra1</span>
+    <span class="pill"><b>A2</b> &nbsp;advisory-lock consume recipe (Tier A)</span>
+    <span class="pill"><b>B1</b> &nbsp;slot consumers · skip (Tier B)</span>
+    <span class="pill"><b>B2</b> &nbsp;slot claim + read-amp benchmark</span>
+    <span class="pill"><b>B3</b> &nbsp;pause policy — gated O1/O2</span>
   </div>
   <p>
-    Phase 1 (S1–S2) is the converged, build-now slice. Phase 2 (S3, <code>pause</code>)
-    is gated on two open items: a defer-without-retry-increment primitive (O1) and
-    bounding the hot-blocked-key cost (O2). Phase 1 alone covers the per-tenant
-    ordered, parallel consumption the motivating workload needs.
+    Tier A (A1–A2) is the converged, build-now slice — it unblocks the migration
+    workload and the idempotency ask with almost no engine change. Tier B (B1–B2) adds
+    strict per-key order for streams that need it; <code>pause</code> (B3) is gated on a
+    defer-without-retry-increment primitive (O1) and bounding hot-blocked-key cost (O2).
   </p>
 
-  <h2><span class="n">07</span>Worker → slot assignment</h2>
+  <h2><span class="n">09</span>Tier B · worker → slot assignment</h2>
   <p>
-    Slots are <strong>claimed, not assigned</strong>. There is no consumer-group
-    leader, no <code>PartitionAssignor</code>, and no stop-the-world rebalance —
-    Kafka needs all three because a partition is exclusive <em>by protocol</em>.
-    Here the <strong>database is the coordinator</strong>, so assignment is
-    pull-based and self-balancing: a worker doesn't get <em>told</em> which slot to
-    take, it <em>claims</em> a free one.
+    An "assignment" question exists <strong>only in Tier B</strong> (Tier A has no slots
+    — its advisory lock is per <em>key</em>, not per slot). Tier B slots are
+    <strong>claimed, not assigned</strong>: no consumer-group leader, no
+    <code>PartitionAssignor</code>, no stop-the-world rebalance. Here the
+    <strong>database is the coordinator</strong> — a worker doesn't get <em>told</em>
+    which slot to take, it <em>claims</em> a free one (or takes a static
+    <code>worker i → slots {i, i+M…}</code> share if workers have stable identity).
   </p>
   <div class="two">
     <div class="panel">
@@ -255,7 +340,7 @@
     <div class="g"><span class="tag">lock&nbsp;2</span><p><strong>Distribution — advisory slot lock</strong> (non-blocking try): steers workers onto distinct slots. Pure liveness — skipping it loses even spread, never G1/G2.</p></div>
   </div>
   <p class="note">
-    N is fixed (D3) <em>and</em> is the read-amplification multiplier (§6 — every
+    N is fixed (D3) <em>and</em> is the read-amplification multiplier (§05 — every
     slot scans the full stream), so N is chosen to match the parallelism you need,
     not inflated to dodge a future resize. Even spread under <em>key skew</em> (a
     hot slot stays hot) and online resize of N (which reshuffles keys across slots,
@@ -274,7 +359,7 @@
       PgQue — zero-bloat PostgreSQL queue · <a href="https://pgque.dev">pgque.dev</a> ·
       <a href="https://github.com/NikolayS/pgque">github.com/NikolayS/pgque</a>
     </p>
-    <p class="note">Drafted in SamoSpec format; review rounds 1–3 (ops/security + QA/testability personas) applied — Phase 1 converged. The live multi-model CLI loop was not run in this environment.</p>
+    <p class="note">Drafted in SamoSpec format; review rounds 1–3 applied, then reframed into two tiers (v0.6) after consumer Q&amp;A. Tier A is the build-now slice; Tier B carries strict ordering. The live multi-model CLI loop was not run in this environment.</p>
   </footer>
 
 </div>
