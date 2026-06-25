@@ -339,6 +339,55 @@ async function runTierB(a: Args): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Dedup hazard guardrail — the version-suppression footgun.
+//
+// TTL dedup keyed on the ENTITY alone (tenant) silently drops a *needed* job
+// when the desired effect changes inside the window: ship migration v1, then
+// v2 within the TTL, and the v2 job is suppressed as a "duplicate". The fix is
+// to key on the desired EFFECT (tenant + target version), so a new version is
+// a new key. This runs both schemes back to back and proves it.
+// ---------------------------------------------------------------------------
+async function runDedupHazard(a: Args): Promise<boolean> {
+  const queue = "migrations";
+  const ttl = a.dedupTtl > 0 ? a.dedupTtl : 300;
+  const T = a.tenants;
+
+  async function wave(c: pg.Client, mode: string, ver: number): Promise<number> {
+    let inserted = 0;
+    for (let t = 0; t < T; t++) {
+      const idem = mode === "tenant" ? `migrate:tenant-${t}` : `migrate:tenant-${t}:v${ver}`;
+      const r = await c.query(
+        "select deduped from demo.send_idem($1,$2,$3,$4,$5, make_interval(secs => $6))",
+        [queue, "migrate", `{"v":${ver}}`, `tenant-${t}`, idem, ttl],
+      );
+      if (!r.rows[0].deduped) inserted++;
+    }
+    return inserted;
+  }
+
+  const res: Record<string, { w1: number; w2: number }> = {};
+  for (const mode of ["tenant", "version"]) {
+    await withClient(async (c) => {
+      await c.query("truncate demo.idem");
+      await resetQueue(c, queue);
+      const w1 = await wave(c, mode, 1); // ship migration v1
+      const w2 = await wave(c, mode, 2); // ship v2 INSIDE the TTL window
+      res[mode] = { w1, w2 };
+    });
+  }
+
+  console.log(`  scenario: ${T} tenants, ship migration v1 then v2 within TTL=${ttl}s`);
+  console.log(`  ${"idempotency key".padEnd(20)} ${"v1 inserted".padStart(12)} ${"v2 inserted".padStart(12)}   outcome`);
+  console.log(`  ${"migrate:tenant".padEnd(20)} ${String(res.tenant.w1).padStart(12)} ${String(res.tenant.w2).padStart(12)}   <- v2 SUPPRESSED (hazard)`);
+  console.log(`  ${"migrate:tenant:vN".padEnd(20)} ${String(res.version.w1).padStart(12)} ${String(res.version.w2).padStart(12)}   <- v2 delivered (correct)`);
+  console.log("  ---- guardrail ----");
+  let ok = true;
+  ok = check("hazard is real: entity-only key DROPS the v2 migration", res.tenant.w2 === 0, `v2 inserted=${res.tenant.w2}, expected 0`) && ok;
+  ok = check("fix: effect-scoped key (tenant+version) delivers BOTH waves", res.version.w1 === T && res.version.w2 === T, `v1=${res.version.w1}, v2=${res.version.w2}, expected ${T}`) && ok;
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
 function parseArgs(): Args {
   const a: any = {
     tier: "", tenants: 1000, workers: 8, dups: 4, workMs: 3,
@@ -357,10 +406,15 @@ function parseArgs(): Args {
     if (!k) throw new Error(`unknown arg ${argv[i]}`);
     (a as any)[k] = k === "tier" ? argv[i + 1] : Number(argv[i + 1]);
   }
-  if (a.tier !== "a" && a.tier !== "b") throw new Error("--tier must be a or b");
+  if (!["a", "b", "hazard"].includes(a.tier))
+    throw new Error("--tier must be a, b, or hazard");
   return a as Args;
 }
 
 const args = parseArgs();
-const ok = await (args.tier === "a" ? runTierA(args) : runTierB(args));
+const ok = await (args.tier === "a"
+  ? runTierA(args)
+  : args.tier === "b"
+    ? runTierB(args)
+    : runDedupHazard(args));
 process.exit(ok ? 0 : 1);

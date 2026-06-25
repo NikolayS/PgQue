@@ -24,6 +24,9 @@ echo
 echo "--- 1b: producer dedup ON (TTL window) — duplicates never inserted ---"
 drive --tier a --tenants "${A_TENANTS:-1000}" --producers "${A_PRODUCERS:-4}" \
   --dups "${A_DUPS:-3}" --dedup-ttl "${A_DEDUP_TTL:-60}" --workers "${A_WORKERS:-8}" --work-ms "${A_WORK_MS:-1}"
+echo
+echo "--- 1c: dedup KEY-SCOPE guardrail — entity-only key vs effect-scoped key ---"
+drive --tier hazard --tenants "${A_TENANTS:-1000}" --dedup-ttl 300
 
 echo
 echo "############ CASE 2 — lifecycle: ordered per tenant, parallel across tenants ############"

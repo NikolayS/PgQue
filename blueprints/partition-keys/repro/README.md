@@ -12,24 +12,38 @@ is unchanged.
 
 ## The two cases (and what each one actually needs)
 
-**Case 1 — migrations** (`--tier a`). Fabrizio's ask has **two distinct
-guarantees**, and they are *complementary layers*, not the same thing:
+These are **two different features**, not two tiers of one. Case 2 is the
+partition-keys feature; Case 1 is a *plain-queue* recipe that doesn't use
+partition slots at all.
+
+**Case 1 — migrations: producer idempotency + consumer mutual exclusion**
+(`--tier a`, `--tier hazard`). On a **plain queue** (no slots, no fixed N).
+Fabrizio's ask has **two distinct guarantees**, *complementary layers*:
 
 | Layer | Guarantee | Mechanism | Prevents |
 |-------|-----------|-----------|----------|
 | **L1 producer** | idempotency | TTL dedup window (`demo.send_idem`) | duplicate **insert** (log bloat, no-op enqueues) |
 | **L2 consumer** | one job at a time per key | cooperative consumers + per-key `pg_try_advisory_xact_lock` | duplicate **work** |
 
-L1 is nik's "option 1" (the SQS/NATS model) — the only producer-side
-business-key dedup that fits a log. L2 is the partition/mutual-exclusion piece.
-You can run with L1 on or off; L2 always holds. **They are not substitutes** —
-L1 keeps the log small; L2 guarantees correctness even if a duplicate slips in
-(idempotent handler + advisory lock).
+L1 is the producer-side TTL dedup (the SQS/NATS model — its own send-layer
+feature, spec'd in `blueprints/idempotency/`). L2 is mutual exclusion on the
+consume side. **They are not substitutes** — L1 keeps the log small; L2
+guarantees correctness even if a duplicate slips in. Neither needs the
+partition-keys (slot) feature: the "key" here is a *lock key*, not a partition.
 
-**Case 2 — lifecycle events** (`--tier b`). Ordered per tenant, parallel across
-tenants: N hash-routed slot subscriptions filtering via `get_batch_cursor`
-`extra_where`. Checks G1 (per-key FIFO + single-slot affinity) + exactly-once,
-and measures read amplification.
+> **Key-scope footgun (`--tier hazard`).** A TTL dedup keyed on the *entity*
+> (`migrate:tenant`) silently drops a *needed* job when the desired effect
+> changes inside the window — ship migration v1, then v2 within the TTL, and v2
+> is suppressed as a "duplicate". The idempotency key must represent the desired
+> **effect**, not just the entity: `migrate:tenant:vN`. The guardrail test
+> reproduces both.
+
+**Case 2 — lifecycle events: ordered per key** (`--tier b`). *This* is the
+partition-keys feature. Ordered per tenant, parallel across tenants: N
+hash-routed slot subscriptions filtering via `get_batch_cursor` `extra_where`.
+Checks G1 (per-key FIFO + single-slot affinity) + exactly-once, and measures
+read amplification (~N) — the honest cost, plus rotation-pin risk (the slowest
+slot lowers the rotation floor; see SPEC R7).
 
 ## Run it on a fresh Linux VM
 
@@ -54,6 +68,9 @@ bun driver.ts --tier a --tenants 5000 --producers 8 --dups 4 --dedup-ttl 60 --wo
 
 # Case 2, 16 slots:
 bun driver.ts --tier b --tenants 1000 --events-per-tenant 30 --slots 16
+
+# Dedup key-scope guardrail (entity-only vs effect-scoped key):
+bun driver.ts --tier hazard --tenants 500 --dedup-ttl 300
 ```
 
 Knobs (env for `run.sh`, flags for `driver.ts`):

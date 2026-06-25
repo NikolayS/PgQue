@@ -76,7 +76,7 @@
     <h1>Partition Keys<span class="sub">Ordered, parallel consumption — the log-native way</span></h1>
     <div class="badges">
       <span class="badge">slug <b>partition-keys</b></span>
-      <span class="badge">version <b>v0.6 (draft)</b></span>
+      <span class="badge">version <b>v0.7 (draft)</b></span>
       <span class="badge badge--amber">Tier A <b>build-now</b></span>
       <span class="badge">engine <b>untouched</b></span>
     </div>
@@ -119,10 +119,14 @@
     </div>
   </div>
 
-  <h2><span class="n">02</span>Two tiers</h2>
+  <h2><span class="n">02</span>Two tiers — really two separate features</h2>
   <p>
-    Both needs are "per-key", but the guarantee differs — so the cost differs. Don't
-    pay for ordering you don't need.
+    Both needs are "per-key", but the guarantee differs — so the cost differs, and so
+    do the features. <strong>Tier B is the partition-keys feature</strong> (ordered
+    slots). <strong>Tier A is a plain-queue recipe</strong> (mutual exclusion + producer
+    idempotency) that uses no slots — it's the migration case, kept deliberately
+    separate so partition keys don't drift toward a mutable job queue. "Tier A/B" below
+    is just shorthand. Don't pay for ordering you don't need.
   </p>
   <table>
     <thead><tr><th>Tier</th><th>Guarantee</th><th>Built on</th><th>Cost</th></tr></thead>
@@ -140,8 +144,13 @@
 
   <h2><span class="n">03</span>Tier A · mutual exclusion</h2>
   <p>
-    The build-now slice — almost entirely a <em>recipe</em> over existing primitives,
-    not new engine code.
+    A <em>recipe</em> over existing primitives on a <strong>plain queue</strong>, not
+    new engine code — and a <strong>separate feature from partition keys</strong>. The
+    migration use case lives here: producer idempotency + consumer mutual exclusion.
+    It needs no slots, no fixed N, no ordering — the "key" is a <em>lock key</em>, not a
+    partition. Producer dedup is spec'd on its own in
+    <code>blueprints/idempotency/SPEC.md</code> (ships as Phase 1B); keeping migrations
+    out of the partition-keys feature stops it drifting toward a mutable job queue.
   </p>
   <div class="two">
     <div class="panel">
@@ -174,6 +183,14 @@
       instances race to enqueue the same key. Use the consumer layer for correctness;
       add the producer TTL window when insert volume matters. Measured side by side in
       <code>blueprints/partition-keys/repro/</code>.
+    </p>
+    <p>
+      <strong>Key-scope footgun.</strong> The TTL key must encode the desired
+      <em>effect</em>, not just the entity. Key on <code>migrate:tenant</code>, ship
+      migration v1 then v2 inside the window, and v2 is silently suppressed as a
+      "duplicate" — a correctness bug, not a caveat. Use
+      <code>migrate:tenant:version</code>. Reproduced both ways in the repro
+      (<code>--tier hazard</code>).
     </p>
   </div>
 
@@ -278,7 +295,7 @@
 
   <h2><span class="n">07</span>Key decisions</h2>
   <table>
-    <thead><tr><th>ID</th><th>Tier</th><th>Decision</th><th>Choice (v0.6)</th></tr></thead>
+    <thead><tr><th>ID</th><th>Tier</th><th>Decision</th><th>Choice (v0.7)</th></tr></thead>
     <tbody>
       <tr><td class="id">D1</td><td>A·B</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
       <tr><td class="id">D6</td><td>A·B</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
@@ -293,18 +310,21 @@
   </table>
   <p class="note">Three review rounds against the real engine (G1 ordering + G2 single-owner lock verified real), then reframed into two tiers after consumer Q&amp;A: the mutual-exclusion need (migrations) is met by Tier A with almost no engine change, so it leads. <code>pause</code> strict failure ordering stays a Tier-B follow-up — withholding a blocked key's later event needs a defer-without-retry-increment primitive that doesn't exist yet.</p>
 
-  <h2><span class="n">08</span>Sprint plan</h2>
+  <h2><span class="n">08</span>Roadmap</h2>
   <div class="pill-row">
-    <span class="pill"><b>A1</b> &nbsp;send() key plumbing → ev_extra1</span>
-    <span class="pill"><b>A2</b> &nbsp;advisory-lock consume recipe (Tier A)</span>
-    <span class="pill"><b>B1</b> &nbsp;slot consumers · skip (Tier B)</span>
-    <span class="pill"><b>B2</b> &nbsp;slot claim + read-amp benchmark</span>
-    <span class="pill"><b>B3</b> &nbsp;pause policy — gated O1/O2</span>
+    <span class="pill"><b>1A</b> &nbsp;partition_key + fixed-N slots + skip</span>
+    <span class="pill"><b>1B</b> &nbsp;producer TTL dedup (separate spec)</span>
+    <span class="pill"><b>2</b> &nbsp;read-amp optimization — if bench demands</span>
+    <span class="pill"><b>3</b> &nbsp;pause — needs defer-without-retry primitive</span>
   </div>
   <p>
-    Tier A (A1–A2) is the converged, build-now slice — it unblocks the migration
-    workload and the idempotency ask with almost no engine change. Tier B (B1–B2) adds
-    strict per-key order for streams that need it; <code>pause</code> (B3) is gated on a
+    <strong>1A</strong> is the partition-keys feature: <code>send(partition_key)</code>,
+    fixed-N hash-routed slots, <code>skip</code> policy. <strong>1B</strong> is producer
+    TTL dedup — a separate send-layer feature
+    (<code>blueprints/idempotency/SPEC.md</code>), independent of 1A; together with
+    consumer mutual exclusion it covers the migration case on a plain queue.
+    <strong>2</strong> optimizes read amplification only if benchmarks demand it.
+    <strong>3</strong> is <code>pause</code> strict ordering, gated on a
     defer-without-retry-increment primitive (O1) and bounding hot-blocked-key cost (O2).
   </p>
 
@@ -349,6 +369,14 @@
     hot slot stays hot) and online resize of N (which reshuffles keys across slots,
     breaking per-key order mid-flight) are deferred — R3, R4.
   </p>
+  <p class="note">
+    <strong>Rotation pinning (R7) — the sharpest cost of N.</strong> Rotation waits
+    for the slowest slot's cursor, so one stalled or lagging slot pins rotation for
+    the whole queue and old event tables stop dropping — <em>the bloat pgque exists
+    to avoid, back with nicer names</em>. It worsens as N grows. A per-slot lag alert
+    is mandatory for any slot deployment, and N stays minimal — read-amp and rotation
+    pressure both push the same way: keep N small.
+  </p>
 
   <footer>
     <p>
@@ -362,7 +390,7 @@
       PgQue — zero-bloat PostgreSQL queue · <a href="https://pgque.dev">pgque.dev</a> ·
       <a href="https://github.com/NikolayS/pgque">github.com/NikolayS/pgque</a>
     </p>
-    <p class="note">Drafted in SamoSpec format; review rounds 1–3 applied, then reframed into two tiers (v0.6) after consumer Q&amp;A. Tier A is the build-now slice; Tier B carries strict ordering. The live multi-model CLI loop was not run in this environment.</p>
+    <p class="note">Drafted in SamoSpec format; review rounds 1–3, then reframed into two tiers and (v0.7) scoped to ordered slots — producer idempotency split into its own feature (blueprints/idempotency/SPEC.md), rotation pinning promoted to a first-class risk. The live multi-model CLI loop was not run in this environment.</p>
   </footer>
 
 </div>

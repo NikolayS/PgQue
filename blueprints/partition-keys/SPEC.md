@@ -1,6 +1,6 @@
 # PgQue Partition Keys — Spec
 
-- **Version:** v0.5 (draft)
+- **Version:** v0.6 (draft)
 - **Status:** review rounds 1–3 applied. **Phase 1 (`skip`-default partition
   consumption) is converged / implementation-ready.** Phase 2 (`pause` strict
   ordering) is specified but has open design items (§11) and is a deliberate
@@ -246,12 +246,20 @@ optimization is future (R6).
   the read-amp budget.
 - **R5 — `ev_extra1`:** send-sourced queues only.
 - **R6 — single-reader/dispatch** to remove read amplification; future.
-- **R7 — rotation pressure:** rotation waits for `min(sub_last_tick)` over ALL
-  subscriptions (`pgque.sql:910`); N slots lower the floor to the slowest slot. A
-  `pause`-blocked slot does *not* pin rotation (deferred events go to retry, not
-  the held cursor), **but** a hot blocked key keeps that slot perpetually lagging,
-  so a per-slot staleness alert cannot distinguish "wedged" from "hot key under
-  pause" — documented, not auto-mitigated.
+- **R7 — rotation pinning (first-class risk, not a footnote):** rotation waits
+  for `min(sub_last_tick)` over ALL subscriptions (`pgque.sql:910`), so N slots
+  lower the rotation floor to the **slowest** slot. One stalled or lagging slot
+  pins rotation for the whole queue, old event tables stop being dropped, and the
+  log grows — i.e. **the bloat pgque exists to avoid comes back with nicer
+  names.** This is the sharpest operational hazard of the N-slot model and gets
+  worse as N grows (more slots → more chances one is behind). Mitigation is
+  monitoring + bounding N, not code: a per-slot staleness/lag alert is mandatory
+  for any Tier-B deployment, and N should be the minimum that meets the
+  parallelism target (see R2/R4 — N is also the read-amp multiplier, so the same
+  "keep N small" pressure applies from two directions). A `pause`-blocked slot
+  does *not* pin rotation (deferred events go to retry, not the held cursor),
+  **but** a hot blocked key keeps that slot perpetually lagging, so the alert
+  cannot by itself distinguish "wedged" from "hot key under pause".
 
 ## 11. Open design items — Phase 2 `pause` (why it's a follow-up)
 
@@ -267,10 +275,19 @@ optimization is future (R6).
   bounded by the head's time-to-DLQ). Acceptable for rare failures (the migration
   ICP); needs documentation + T-hot-blocked-key before `pause` ships.
 
-## 12. Relationship to producer idempotency (deferred sibling)
+## 12. Relationship to producer idempotency (separate feature)
 
 Producer dedup is a TTL window (SQS/NATS), append-only, GC'd by rotation — a
-separate spec. Rationale: `blueprints/idempotency/DESIGN.md`.
+**separate, orthogonal send-layer feature**, not a tier of this spec. Feature
+spec: `blueprints/idempotency/SPEC.md`; rationale: `…/DESIGN.md`. It ships as
+**Phase 1B** (independent of partition-keys 1A).
+
+**The migration use case is not a partition-keys use case.** It is a plain-queue
+recipe = producer TTL dedup (1B) + consumer mutual exclusion (per-key advisory
+lock + idempotent handler). It needs no slots, no fixed N, and no ordering — the
+"partition key" there is a *lock key*, not a partition. Keeping migrations out of
+this feature is deliberate: it stops the partition-keys design from drifting
+toward a mutable job queue (pg-boss with extra steps).
 
 ## 13. Review panel
 
@@ -341,6 +358,14 @@ rebalancing problem (R4), deferred.
 
 ## 16. Changelog
 
+- **v0.6 (draft):** review (Max / consumer Q&A). **Scoped this feature to ordered
+  per-key streams only** — producer idempotency split into its own send-layer
+  feature (`blueprints/idempotency/SPEC.md`, Phase 1B) and the migration use case
+  reframed as a plain-queue recipe (dedup + mutual exclusion), explicitly *not* a
+  partition-keys use case (§12). Promoted **rotation pinning** to a first-class
+  risk (R7) — N slots lower the rotation floor to the slowest slot, the bloat
+  pgque exists to avoid; per-slot lag alert mandatory, bound N. Roadmap reframed
+  to 1A (slots) / 1B (producer dedup) / 2 (read-amp) / 3 (pause).
 - **v0.5 (draft):** added the **worker→slot assignment** model (§15, D8):
   client-side **claim** via a non-blocking per-slot `pg_try_advisory_lock` — no
   leader, no `PartitionAssignor`, no rebalance protocol; G2's blocking receive
