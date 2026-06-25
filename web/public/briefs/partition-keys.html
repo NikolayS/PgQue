@@ -164,13 +164,16 @@
     </div>
   </div>
   <div class="panel">
-    <p class="card-title">This also answers the idempotency ask</p>
+    <p class="card-title">Idempotency: a complementary layer, not the same thing</p>
     <p>
-      The original request — produce-side idempotency so many concurrent "migrate
-      tenant T" requests collapse to one job — needs <strong>no produce-side dedup</strong>
-      here. Let duplicates append cheaply (it's a log); at consume, the per-key lock +
-      idempotent handler collapse them to a single run. Partition key and idempotency
-      key are the <strong>same requirement</strong>, solved once.
+      The idempotency ask is a <em>second</em> layer, not a restatement of partition
+      keys. <strong>Consumer-side</strong> mutual exclusion (above) prevents duplicate
+      <em>work</em>: residual duplicates ack-drop, the idempotent handler runs once.
+      <strong>Producer-side</strong> dedup — a TTL window (the SQS/NATS model) —
+      additionally prevents duplicate <em>inserts</em>, keeping the log small when many
+      instances race to enqueue the same key. Use the consumer layer for correctness;
+      add the producer TTL window when insert volume matters. Measured side by side in
+      <code>blueprints/partition-keys/repro/</code>.
     </p>
   </div>
 
@@ -280,7 +283,7 @@
       <tr><td class="id">D1</td><td>A·B</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
       <tr><td class="id">D6</td><td>A·B</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
       <tr><td class="id">D8</td><td>A</td><td>Tier A serialization</td><td class="pick">cooperative consumers + per-key <code>pg_try_advisory_lock</code>; contended + idempotent → <strong>ack-drop</strong>. No N, no assignment</td></tr>
-      <tr><td class="id">D9</td><td>A</td><td>Idempotency ask</td><td class="pick">no produce-side dedup; per-key lock at consume collapses duplicates</td></tr>
+      <tr><td class="id">D9</td><td>A</td><td>Idempotency ask</td><td class="pick">two complementary layers — consumer mutual-exclusion (dup <em>work</em>) + optional producer TTL window (dup <em>insert</em>); not a substitute for partition keys</td></tr>
       <tr><td class="id">D3</td><td>B</td><td>Slot count N</td><td class="pick">Fixed, persisted &amp; enforced per (queue, consumer)</td></tr>
       <tr><td class="id">D4</td><td>B</td><td>Assignment function</td><td class="pick"><code>(hashtextextended(key,0) % N + N) % N</code> (stable, sign-safe)</td></tr>
       <tr><td class="id">D7</td><td>B</td><td>Slot &amp; single-owner</td><td class="pick">slot = consumer <code>"&lt;c&gt;#k/N"</code>; receive lock; claim via advisory/static</td></tr>

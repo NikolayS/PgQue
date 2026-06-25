@@ -62,6 +62,49 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- PRODUCER-SIDE IDEMPOTENCY (Case 1, the literal ask): a TTL dedup window
+-- (nik's option 1; the SQS/NATS model). This is what prevents duplicate
+-- *inserts* — distinct from the consumer-side mutual exclusion below, which
+-- only prevents duplicate *work*. The two are complementary layers.
+--
+-- Multi-producer-safe: the unique key + atomic upsert serialize concurrent
+-- producers, so exactly one caller wins per idempotency key per window. The
+-- table is append-only-ish (one row per live key) and GC'd by expiry — in a
+-- real install this maps onto a window GC'd by rotation (see the idempotency
+-- design note).
+-- ---------------------------------------------------------------------------
+create table if not exists demo.idem (
+    idem_key   text primary key,
+    expires_at timestamptz not null
+);
+
+create or replace function demo.send_idem(
+    i_queue text, i_type text, i_payload text, i_key text,
+    i_idem text, i_ttl interval,
+    out event_id bigint, out deduped boolean)
+language plpgsql as $$
+declare
+  v_claimed boolean;
+begin
+  -- Claim the idempotency key for this window. Fresh key -> insert wins;
+  -- expired key -> the WHERE lets the update win; live key -> 0 rows.
+  insert into demo.idem(idem_key, expires_at)
+    values (i_idem, now() + i_ttl)
+  on conflict (idem_key) do update
+    set expires_at = excluded.expires_at
+    where demo.idem.expires_at <= now()
+  returning true into v_claimed;
+
+  if v_claimed then
+    event_id := pgque.insert_event(i_queue, i_type, i_payload, i_key, i_idem, null, null);
+    deduped := false;
+  else
+    event_id := null;        -- duplicate within the window: NOT inserted
+    deduped := true;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- TIER A — mutual exclusion via cooperative consumers + per-key advisory lock.
 --
 -- Consume one cooperative batch (the engine spreads batches across workers),
