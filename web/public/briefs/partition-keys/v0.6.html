@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>PgQue Brief · Partition Keys · v0.7</title>
+<title>PgQue Brief · Partition Keys · v0.6</title>
 <meta name="description" content="Ordered, parallel consumption by partition key in PgQue — the log-native (Kafka-partition) model: order within a key, parallelism across keys." />
 <style>
   :root {
@@ -73,14 +73,14 @@
 
   <nav style="font-family:var(--mono,ui-monospace,monospace);font-size:0.72rem;letter-spacing:0.03em;display:flex;gap:0.45rem;flex-wrap:wrap;align-items:center;margin-bottom:1.6rem;padding-bottom:0.9rem;border-bottom:1px solid var(--line,#2c3038);">
   <span style="color:var(--ink-3,#989488);text-transform:uppercase;letter-spacing:0.12em;">brief&nbsp;history</span>
-  <a href="partition-keys/v0.1.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.1</a>
-  <a href="partition-keys/v0.2.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.2</a>
-  <a href="partition-keys/v0.3.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.3</a>
-  <a href="partition-keys/v0.4.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.4</a>
-  <a href="partition-keys/v0.5.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.5</a>
-  <a href="partition-keys/v0.6.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.6</a>
-  <span style="color:var(--amber-high,#f6c79b);border:1px solid rgba(240,136,62,0.5);border-radius:999px;padding:0.15rem 0.55rem;background:rgba(240,136,62,0.08);">v0.7 ●</span>
-  <a href="partition-keys/" style="color:var(--ink-3,#989488);text-decoration:none;margin-left:auto;">all&nbsp;versions&nbsp;↗</a>
+  <a href="v0.1.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.1</a>
+  <a href="v0.2.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.2</a>
+  <a href="v0.3.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.3</a>
+  <a href="v0.4.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.4</a>
+  <a href="v0.5.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.5</a>
+  <span style="color:var(--amber-high,#f6c79b);border:1px solid rgba(240,136,62,0.5);border-radius:999px;padding:0.15rem 0.55rem;background:rgba(240,136,62,0.08);">v0.6</span>
+  <a href="v0.7.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.7 ●</a>
+  <a href="index.html" style="color:var(--ink-3,#989488);text-decoration:none;margin-left:auto;">all&nbsp;versions&nbsp;↗</a>
   </nav>
 
   <header class="brief">
@@ -88,7 +88,7 @@
     <h1>Partition Keys<span class="sub">Ordered, parallel consumption — the log-native way</span></h1>
     <div class="badges">
       <span class="badge">slug <b>partition-keys</b></span>
-      <span class="badge">version <b>v0.7 (draft)</b></span>
+      <span class="badge">version <b>v0.6 (draft)</b></span>
       <span class="badge badge--amber">Tier A <b>build-now</b></span>
       <span class="badge">engine <b>untouched</b></span>
     </div>
@@ -131,14 +131,10 @@
     </div>
   </div>
 
-  <h2><span class="n">02</span>Two tiers — really two separate features</h2>
+  <h2><span class="n">02</span>Two tiers</h2>
   <p>
-    Both needs are "per-key", but the guarantee differs — so the cost differs, and so
-    do the features. <strong>Tier B is the partition-keys feature</strong> (ordered
-    slots). <strong>Tier A is a plain-queue recipe</strong> (mutual exclusion + producer
-    idempotency) that uses no slots — it's the migration case, kept deliberately
-    separate so partition keys don't drift toward a mutable job queue. "Tier A/B" below
-    is just shorthand. Don't pay for ordering you don't need.
+    Both needs are "per-key", but the guarantee differs — so the cost differs. Don't
+    pay for ordering you don't need.
   </p>
   <table>
     <thead><tr><th>Tier</th><th>Guarantee</th><th>Built on</th><th>Cost</th></tr></thead>
@@ -156,13 +152,8 @@
 
   <h2><span class="n">03</span>Tier A · mutual exclusion</h2>
   <p>
-    A <em>recipe</em> over existing primitives on a <strong>plain queue</strong>, not
-    new engine code — and a <strong>separate feature from partition keys</strong>. The
-    migration use case lives here: producer idempotency + consumer mutual exclusion.
-    It needs no slots, no fixed N, no ordering — the "key" is a <em>lock key</em>, not a
-    partition. Producer dedup is spec'd on its own in
-    <code>blueprints/idempotency/SPEC.md</code> (ships as Phase 1B); keeping migrations
-    out of the partition-keys feature stops it drifting toward a mutable job queue.
+    The build-now slice — almost entirely a <em>recipe</em> over existing primitives,
+    not new engine code.
   </p>
   <div class="two">
     <div class="panel">
@@ -195,14 +186,6 @@
       instances race to enqueue the same key. Use the consumer layer for correctness;
       add the producer TTL window when insert volume matters. Measured side by side in
       <code>blueprints/partition-keys/repro/</code>.
-    </p>
-    <p>
-      <strong>Key-scope footgun.</strong> The TTL key must encode the desired
-      <em>effect</em>, not just the entity. Key on <code>migrate:tenant</code>, ship
-      migration v1 then v2 inside the window, and v2 is silently suppressed as a
-      "duplicate" — a correctness bug, not a caveat. Use
-      <code>migrate:tenant:version</code>. Reproduced both ways in the repro
-      (<code>--tier hazard</code>).
     </p>
   </div>
 
@@ -307,7 +290,7 @@
 
   <h2><span class="n">07</span>Key decisions</h2>
   <table>
-    <thead><tr><th>ID</th><th>Tier</th><th>Decision</th><th>Choice (v0.7)</th></tr></thead>
+    <thead><tr><th>ID</th><th>Tier</th><th>Decision</th><th>Choice (v0.6)</th></tr></thead>
     <tbody>
       <tr><td class="id">D1</td><td>A·B</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
       <tr><td class="id">D6</td><td>A·B</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
@@ -322,21 +305,18 @@
   </table>
   <p class="note">Three review rounds against the real engine (G1 ordering + G2 single-owner lock verified real), then reframed into two tiers after consumer Q&amp;A: the mutual-exclusion need (migrations) is met by Tier A with almost no engine change, so it leads. <code>pause</code> strict failure ordering stays a Tier-B follow-up — withholding a blocked key's later event needs a defer-without-retry-increment primitive that doesn't exist yet.</p>
 
-  <h2><span class="n">08</span>Roadmap</h2>
+  <h2><span class="n">08</span>Sprint plan</h2>
   <div class="pill-row">
-    <span class="pill"><b>1A</b> &nbsp;partition_key + fixed-N slots + skip</span>
-    <span class="pill"><b>1B</b> &nbsp;producer TTL dedup (separate spec)</span>
-    <span class="pill"><b>2</b> &nbsp;read-amp optimization — if bench demands</span>
-    <span class="pill"><b>3</b> &nbsp;pause — needs defer-without-retry primitive</span>
+    <span class="pill"><b>A1</b> &nbsp;send() key plumbing → ev_extra1</span>
+    <span class="pill"><b>A2</b> &nbsp;advisory-lock consume recipe (Tier A)</span>
+    <span class="pill"><b>B1</b> &nbsp;slot consumers · skip (Tier B)</span>
+    <span class="pill"><b>B2</b> &nbsp;slot claim + read-amp benchmark</span>
+    <span class="pill"><b>B3</b> &nbsp;pause policy — gated O1/O2</span>
   </div>
   <p>
-    <strong>1A</strong> is the partition-keys feature: <code>send(partition_key)</code>,
-    fixed-N hash-routed slots, <code>skip</code> policy. <strong>1B</strong> is producer
-    TTL dedup — a separate send-layer feature
-    (<code>blueprints/idempotency/SPEC.md</code>), independent of 1A; together with
-    consumer mutual exclusion it covers the migration case on a plain queue.
-    <strong>2</strong> optimizes read amplification only if benchmarks demand it.
-    <strong>3</strong> is <code>pause</code> strict ordering, gated on a
+    Tier A (A1–A2) is the converged, build-now slice — it unblocks the migration
+    workload and the idempotency ask with almost no engine change. Tier B (B1–B2) adds
+    strict per-key order for streams that need it; <code>pause</code> (B3) is gated on a
     defer-without-retry-increment primitive (O1) and bounding hot-blocked-key cost (O2).
   </p>
 
@@ -381,38 +361,6 @@
     hot slot stays hot) and online resize of N (which reshuffles keys across slots,
     breaking per-key order mid-flight) are deferred — R3, R4.
   </p>
-  <p class="note">
-    <strong>Rotation pinning (R7) — the sharpest cost of N.</strong> Rotation waits
-    for the slowest slot's cursor, so one stalled or lagging slot pins rotation for
-    the whole queue and old event tables stop dropping — <em>the bloat pgque exists
-    to avoid, back with nicer names</em>. It worsens as N grows. A per-slot lag alert
-    is mandatory for any slot deployment, and N stays minimal — read-amp and rotation
-    pressure both push the same way: keep N small.
-  </p>
-
-  <div class="two">
-    <div class="panel">
-      <p class="card-title">Coordination: mechanism vs policy</p>
-      <ul class="tight yes">
-        <li><strong>Core SQL</strong>: receive lock (G2), hash filter, enforced N, a shared <code>slot_lock_key</code> namespace, a read-only <code>partition_slot_status</code> view, and the resize guard</li>
-        <li><strong>Client/user</strong>: the claim loop, poll cadence, when to resize — a buggy loop loses spread, never order</li>
-        <li><strong>No member/heartbeat/lease table</strong> — redundant: session-death frees the lock (no TTL to tune), G2 is exclusivity; a lease only re-adds churn</li>
-      </ul>
-    </div>
-    <div class="panel">
-      <p class="card-title">Two caveats worth stating</p>
-      <ul class="tight">
-        <li><strong>Pooling</strong>: session advisory locks don't survive transaction-mode pooling (Supavisor/PgBouncer) → workers need a session/direct connection</li>
-        <li><strong>Grow N</strong> breaks per-key order for in-flight keys → drain the old epoch first. Sanctioned path: an epoch-gated <code>begin_resize</code> → drain → <code>complete_resize</code> state machine in core (Phase 3); immutable N in Phase 1</li>
-        <li><strong>Every slot must be polled</strong> — an unclaimed slot stalls → pins rotation (R7). M ≥ N or cycle idle slots</li>
-      </ul>
-    </div>
-  </div>
-  <p class="note">
-    Reframe for the Kafka mind: pgque routing is <em>consume-time</em> (the log carries
-    only the key; <code>hash%N</code> is applied at receive), so a resize moves no data
-    and never blocks producers — no "events stamped under the old N" problem.
-  </p>
 
   <footer>
     <p>
@@ -426,7 +374,7 @@
       PgQue — zero-bloat PostgreSQL queue · <a href="https://pgque.dev">pgque.dev</a> ·
       <a href="https://github.com/NikolayS/pgque">github.com/NikolayS/pgque</a>
     </p>
-    <p class="note">Drafted in SamoSpec format; review rounds 1–3, then reframed into two tiers and (v0.7) scoped to ordered slots — producer idempotency split into its own feature (blueprints/idempotency/SPEC.md), rotation pinning promoted to a first-class risk. The live multi-model CLI loop was not run in this environment.</p>
+    <p class="note">Drafted in SamoSpec format; review rounds 1–3 applied, then reframed into two tiers (v0.6) after consumer Q&amp;A. Tier A is the build-now slice; Tier B carries strict ordering. The live multi-model CLI loop was not run in this environment.</p>
   </footer>
 
 </div>

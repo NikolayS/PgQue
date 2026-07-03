@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PgQue Brief · Partition Keys · v0.2</title>
+<meta name="description" content="Ordered, parallel consumption by partition key in PgQue — the log-native (Kafka-partition) model: order within a key, parallelism across keys." />
+<style>
+  :root {
+    --blue: #336791; --blue-light: #6ea3c9; --amber: #f0883e; --amber-high: #f6c79b; --sand: #c9a86a;
+    --bg: #0c0d10; --panel: #15171c; --panel-2: #1b1e24; --line: #2c3038;
+    --ink: #f0ede5; --ink-2: #c2bdb1; --ink-3: #989488;
+    --display: 'Saira Semi Condensed', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+    --body: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(51,103,145,0.18), transparent 60%),
+      radial-gradient(900px 500px at 0% 10%, rgba(240,136,62,0.08), transparent 55%),
+      var(--bg);
+    color: var(--ink); font-family: var(--body); line-height: 1.6; font-size: 16px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 2.4rem 1.25rem 4rem; }
+  header.brief { border-bottom: 1px solid var(--line); padding-bottom: 1.4rem; margin-bottom: 2rem; }
+  .eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--amber); margin: 0 0 0.6rem; }
+  h1 { font-family: var(--display); font-weight: 600; letter-spacing: 0.01em; font-size: clamp(2rem, 6vw, 3.1rem); line-height: 1.05; margin: 0 0 0.7rem; }
+  h1 .sub { display: block; color: var(--blue-light); font-size: 0.42em; letter-spacing: 0.02em; margin-top: 0.5rem; }
+  .badges { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+  .badge { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.03em; padding: 0.28rem 0.6rem; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-2); background: var(--panel); }
+  .badge b { color: var(--ink); font-weight: 600; }
+  .badge--amber { border-color: rgba(240,136,62,0.5); color: var(--amber-high); }
+  h2 { font-family: var(--display); font-weight: 600; letter-spacing: 0.01em; font-size: 1.5rem; margin: 2.6rem 0 0.9rem; color: var(--ink); }
+  h2 .n { color: var(--amber); font-size: 0.85em; margin-right: 0.5rem; }
+  p { color: var(--ink-2); margin: 0.8rem 0; }
+  strong { color: var(--ink); }
+  code { font-family: var(--mono); font-size: 0.86em; color: var(--amber-high); background: rgba(240,136,62,0.08); border: 1px solid rgba(240,136,62,0.18); padding: 0.08em 0.36em; border-radius: 5px; }
+  .lede { font-size: 1.12rem; color: var(--ink); border-left: 3px solid var(--amber); padding: 0.2rem 0 0.2rem 1rem; margin: 1.4rem 0 0; }
+  .panel { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
+  .card-title { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 0.5rem; }
+  ul.tight { margin: 0.4rem 0; padding-left: 1.1rem; }
+  ul.tight li { color: var(--ink-2); margin: 0.32rem 0; }
+  ul.tight li::marker { color: var(--blue-light); }
+  .yes li::marker { color: var(--amber); }
+  .guarantee { display: grid; gap: 0.7rem; margin: 1rem 0; }
+  .g { display: grid; grid-template-columns: auto 1fr; gap: 0.8rem; align-items: start; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0.8rem 1rem; }
+  .g .tag { font-family: var(--mono); font-weight: 600; color: var(--amber); }
+  .g p { margin: 0; font-size: 0.95rem; }
+  table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  td.id { font-family: var(--mono); color: var(--amber); white-space: nowrap; }
+  td.pick { color: var(--ink); font-weight: 600; }
+  figure { margin: 1.4rem 0; }
+  .diagram { width: 100%; height: auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  figcaption { font-size: 0.82rem; color: var(--ink-3); margin-top: 0.5rem; font-family: var(--mono); }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.9rem 0; }
+  .pill { font-family: var(--mono); font-size: 0.78rem; padding: 0.3rem 0.7rem; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--ink-2); }
+  .pill b { color: var(--blue-light); }
+  footer { margin-top: 3rem; padding-top: 1.4rem; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 0.86rem; }
+  footer a { color: var(--blue-light); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  .note { font-size: 0.82rem; color: var(--ink-3); font-style: italic; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav style="font-family:var(--mono,ui-monospace,monospace);font-size:0.72rem;letter-spacing:0.03em;display:flex;gap:0.45rem;flex-wrap:wrap;align-items:center;margin-bottom:1.6rem;padding-bottom:0.9rem;border-bottom:1px solid var(--line,#2c3038);">
+  <span style="color:var(--ink-3,#989488);text-transform:uppercase;letter-spacing:0.12em;">brief&nbsp;history</span>
+  <a href="v0.1.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.1</a>
+  <span style="color:var(--amber-high,#f6c79b);border:1px solid rgba(240,136,62,0.5);border-radius:999px;padding:0.15rem 0.55rem;background:rgba(240,136,62,0.08);">v0.2</span>
+  <a href="v0.3.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.3</a>
+  <a href="v0.4.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.4</a>
+  <a href="v0.5.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.5</a>
+  <a href="v0.6.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.6</a>
+  <a href="v0.7.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.7 ●</a>
+  <a href="index.html" style="color:var(--ink-3,#989488);text-decoration:none;margin-left:auto;">all&nbsp;versions&nbsp;↗</a>
+  </nav>
+
+  <header class="brief">
+    <p class="eyebrow">PgQue · Design Brief</p>
+    <h1>Partition Keys<span class="sub">Ordered, parallel consumption — the log-native way</span></h1>
+    <div class="badges">
+      <span class="badge">slug <b>partition-keys</b></span>
+      <span class="badge">version <b>v0.2 (draft)</b></span>
+      <span class="badge badge--amber">review <b>round 1 applied</b></span>
+      <span class="badge">engine <b>untouched</b></span>
+    </div>
+  </header>
+
+  <p class="lede">
+    Within one queue, events that share a <strong>partition key</strong> are consumed
+    <strong>in order by a single worker at a time</strong>; events with different keys are
+    consumed <strong>in parallel</strong>. Order <em>within</em> a key, parallelism
+    <em>across</em> keys — Kafka's partition model, achieved by routing, with
+    <strong>no per-event locks and no new mutable state</strong>.
+  </p>
+
+  <h2><span class="n">01</span>The problem</h2>
+  <p>
+    PgQue is an <strong>ordered, immutable log</strong>, not a job queue. The motivating
+    workload (a multi-tenant storage service evaluating PgQue to replace pg-boss) emits
+    <strong>millions</strong> of file-lifecycle events — <code>FileCreated</code>,
+    <code>FileDeleted</code>, <code>FileOverwritten</code>. They must be processed
+    <strong>in order per tenant</strong>, but <strong>order across tenants does not matter</strong>.
+    One in-order consumer can't keep up; naive multi-worker consumption breaks per-tenant order.
+  </p>
+
+  <h2><span class="n">02</span>The guarantee</h2>
+  <div class="guarantee">
+    <div class="g"><span class="tag">G1</span><p><strong>Per-key affinity + FIFO.</strong> Every event of key <code>K</code> maps to one slot <code>hashtextextended(K,0) % N</code>; within it, non-retried events of <code>K</code> arrive in <code>ev_id</code> order, never to another slot.</p></div>
+    <div class="g"><span class="tag">G2</span><p><strong>Single processor per key.</strong> At most one worker holds an unacked event for <code>K</code> at any instant.</p></div>
+    <div class="g"><span class="tag">G3</span><p><strong>Failure boundary.</strong> <code>pause</code>: no later <code>K</code> event until the failed one is acked or dead-lettered. <code>skip</code> (v0.1 default): at-least-once, order not held after a failure.</p></div>
+  </div>
+
+  <h2><span class="n">03</span>Architecture</h2>
+  <figure>
+    <svg class="diagram" viewBox="0 0 860 520" role="img" aria-label="Each partition slot is an independent subscription with its own cursor that reads the whole stream and server-side-filters to its hash class via get_batch_cursor extra_where. The engine is unchanged.">
+      <defs>
+        <marker id="arr" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6ea3c9"></path></marker>
+        <style>
+          .lbl { font-family:'JetBrains Mono Variable', ui-monospace, monospace; fill:#c2bdb1; font-size:13px; }
+          .lbl-s { font-family:'JetBrains Mono Variable', ui-monospace, monospace; fill:#989488; font-size:11px; }
+          .ttl { font-family:'Saira Semi Condensed', system-ui, sans-serif; font-weight:600; font-size:17px; }
+          .flow { stroke:#6ea3c9; stroke-width:2; fill:none; marker-end:url(#arr); }
+        </style>
+      </defs>
+
+      <rect x="60" y="24" width="740" height="58" rx="12" fill="#15171c" stroke="#2c3038"/>
+      <text x="430" y="50" text-anchor="middle" class="ttl" fill="#f0ede5">producers</text>
+      <text x="430" y="70" text-anchor="middle" class="lbl">send(queue, type, payload, partition_key =&gt; K) &#8594; ev_extra1</text>
+      <path class="flow" d="M430,82 L430,116"/>
+
+      <rect x="60" y="120" width="740" height="80" rx="12" fill="#141a20" stroke="#336791"/>
+      <text x="84" y="148" class="ttl" fill="#6ea3c9">engine · sacred — UNCHANGED</text>
+      <text x="84" y="170" class="lbl">append-only tables · global ev_id / ev_txid order</text>
+      <text x="84" y="189" class="lbl-s">next_batch · get_batch_cursor(extra_where) · rotation — no edits to batch_event_sql</text>
+
+      <path class="flow" d="M200,200 L160,250"/>
+      <path class="flow" d="M430,200 L430,250"/>
+      <path class="flow" d="M660,200 L700,250"/>
+      <text x="250" y="232" class="lbl-s">full stream</text>
+      <text x="455" y="232" class="lbl-s">full stream</text>
+      <text x="665" y="232" class="lbl-s">full stream</text>
+
+      <g>
+        <rect x="70" y="254" width="220" height="150" rx="12" fill="#1d160e" stroke="#f0883e"/>
+        <text x="180" y="282" text-anchor="middle" class="ttl" fill="#f0883e">slot 0 · sub#0/N</text>
+        <text x="180" y="306" text-anchor="middle" class="lbl">own cursor</text>
+        <text x="180" y="328" text-anchor="middle" class="lbl-s">extra_where: h%N==0</text>
+        <text x="180" y="352" text-anchor="middle" class="lbl-s">keys in ev_id order</text>
+        <text x="180" y="378" text-anchor="middle" class="lbl-s">one worker</text>
+      </g>
+      <g>
+        <rect x="320" y="254" width="220" height="150" rx="12" fill="#1d160e" stroke="#f0883e"/>
+        <text x="430" y="282" text-anchor="middle" class="ttl" fill="#f0883e">slot 1 · sub#1/N</text>
+        <text x="430" y="306" text-anchor="middle" class="lbl">own cursor</text>
+        <text x="430" y="328" text-anchor="middle" class="lbl-s">extra_where: h%N==1</text>
+        <text x="430" y="352" text-anchor="middle" class="lbl-s">keys in ev_id order</text>
+        <text x="430" y="378" text-anchor="middle" class="lbl-s">one worker</text>
+      </g>
+      <g>
+        <rect x="570" y="254" width="220" height="150" rx="12" fill="#1d160e" stroke="#f0883e"/>
+        <text x="680" y="282" text-anchor="middle" class="ttl" fill="#f0883e">slot N-1 · sub#k/N</text>
+        <text x="680" y="306" text-anchor="middle" class="lbl">own cursor</text>
+        <text x="680" y="328" text-anchor="middle" class="lbl-s">extra_where: h%N==N-1</text>
+        <text x="680" y="352" text-anchor="middle" class="lbl-s">keys in ev_id order</text>
+        <text x="680" y="378" text-anchor="middle" class="lbl-s">one worker</text>
+      </g>
+
+      <text x="430" y="438" text-anchor="middle" class="lbl">each slot = independent subscription · own cursor &#8594; no data loss</text>
+      <text x="430" y="460" text-anchor="middle" class="lbl-s">one key &#8594; one slot &#8594; per-key order · distinct keys &#8594; parallel</text>
+      <text x="430" y="492" text-anchor="middle" class="lbl-s">cost: N&#215; read amplification (each slot scans the full stream, server-side hash-filtered)</text>
+    </svg>
+    <figcaption>Slots are independent subscriptions filtering via the existing extra_where hook. The PgQ engine is not modified.</figcaption>
+  </figure>
+
+  <h2><span class="n">04</span>Scope</h2>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">In · v0.1</p>
+      <ul class="tight yes">
+        <li>Partition key on <code>send()</code>-sourced events</li>
+        <li>Stable <code>hashtextextended(key,0) % N</code> affinity</li>
+        <li>Per-key order + single processor (G1, G2)</li>
+        <li><code>skip</code> failure policy (default)</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Deferred / out</p>
+      <ul class="tight">
+        <li><code>pause</code> policy — specified, ships v0.2</li>
+        <li>Producer idempotency / dedup window</li>
+        <li>Trigger-sourced queues · dynamic N</li>
+        <li>Hot-partition mitigation · read-amp optimization</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="n">05</span>Key decisions</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Decision</th><th>Choice (v0.2)</th></tr></thead>
+    <tbody>
+      <tr><td class="id">D1</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
+      <tr><td class="id">D2</td><td>Failure policy</td><td class="pick"><code>skip</code> default; <code>pause</code> ships v0.2</td></tr>
+      <tr><td class="id">D3</td><td>Slot count N</td><td class="pick">Fixed, persisted &amp; enforced per (queue, consumer)</td></tr>
+      <tr><td class="id">D4</td><td>Assignment function</td><td class="pick"><code>hashtextextended(key,0) % N</code> (version-stable)</td></tr>
+      <tr><td class="id">D5</td><td>State budget</td><td class="pick">No new table; <code>pause</code> derives from existing <code>retry_queue</code></td></tr>
+      <tr><td class="id">D6</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
+      <tr><td class="id">D7</td><td>Slot &amp; single-owner</td><td class="pick">slot = consumer <code>"&lt;c&gt;#k/N"</code>; receive lock</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Review round 1 re-grounded the mechanism: cooperative consumers hand out disjoint tick windows (not a hash-filtered shared batch), so slots are independent subscriptions, not a coop overlay. The retry path preserves ev_id and changes ev_txid — so order breaks across a retry, which is exactly what the pause boundary (G3) handles.</p>
+
+  <h2><span class="n">06</span>Sprint plan</h2>
+  <div class="pill-row">
+    <span class="pill"><b>S1</b> &nbsp;producer + key plumbing</span>
+    <span class="pill"><b>S2</b> &nbsp;slot consumers (skip)</span>
+    <span class="pill"><b>S3</b> &nbsp;pause policy (v0.2)</span>
+    <span class="pill"><b>S4</b> &nbsp;docs + read-amp benchmark</span>
+  </div>
+  <p>
+    Open for round 2: the exact <code>retry_queue</code> predicate that rebuilds a slot's
+    blocked-key set after a crash (the crux of crash-safe <code>pause</code>), and whether
+    N&#215; read amplification at target throughput justifies a single-reader/dispatch
+    optimization in v0.1.
+  </p>
+
+  <footer>
+    <p>
+      Companion to the producer-side decision note
+      (<em>idempotency = TTL window, not free-once-processed</em>) and the full spec
+      (<code>blueprints/partition-keys/SPEC.md</code>). In a log, “processed” is a
+      per-consumer fact the producer can't see — so ordering and serialization live here,
+      on the consumer.
+    </p>
+    <p>
+      PgQue — zero-bloat PostgreSQL queue · <a href="https://pgque.dev">pgque.dev</a> ·
+      <a href="https://github.com/NikolayS/pgque">github.com/NikolayS/pgque</a>
+    </p>
+    <p class="note">Drafted in SamoSpec format; review round 1 (ops/security + QA/testability personas) applied. The live multi-model CLI loop was not run in this environment.</p>
+  </footer>
+
+</div>
+</body>
+</html>
