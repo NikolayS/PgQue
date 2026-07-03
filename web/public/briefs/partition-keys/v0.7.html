@@ -311,8 +311,9 @@
     <tbody>
       <tr><td class="id">D1</td><td>A·B</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
       <tr><td class="id">D6</td><td>A·B</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
-      <tr><td class="id">D8</td><td>A</td><td>Tier A serialization</td><td class="pick">cooperative consumers + per-key <code>pg_try_advisory_lock</code>; contended + idempotent → <strong>ack-drop</strong>. No N, no assignment</td></tr>
-      <tr><td class="id">D9</td><td>A</td><td>Idempotency ask</td><td class="pick">two complementary layers — consumer mutual-exclusion (dup <em>work</em>) + optional producer TTL window (dup <em>insert</em>); not a substitute for partition keys</td></tr>
+      <tr><td class="id">A1</td><td>A</td><td>Tier A serialization</td><td class="pick">cooperative consumers + per-key <code>pg_try_advisory_lock</code>; contended + idempotent → <strong>ack-drop</strong>. No N, no assignment</td></tr>
+      <tr><td class="id">A2</td><td>A</td><td>Idempotency ask</td><td class="pick">two complementary layers — consumer mutual-exclusion (dup <em>work</em>) + optional producer TTL window (dup <em>insert</em>); not a substitute for partition keys</td></tr>
+      <tr><td class="id">D8–D10</td><td>B</td><td>Assignment, resize, no member table</td><td class="pick">claim not assign; core <code>slot_lock_key</code> + <code>partition_slot_status</code> view; epoch-gated online resize; <strong>no</strong> heartbeat/lease table (see §09 + SPEC)</td></tr>
       <tr><td class="id">D3</td><td>B</td><td>Slot count N</td><td class="pick">Fixed, persisted &amp; enforced per (queue, consumer)</td></tr>
       <tr><td class="id">D4</td><td>B</td><td>Assignment function</td><td class="pick"><code>(hashtextextended(key,0) % N + N) % N</code> (stable, sign-safe)</td></tr>
       <tr><td class="id">D7</td><td>B</td><td>Slot &amp; single-owner</td><td class="pick">slot = consumer <code>"&lt;c&gt;#k/N"</code>; receive lock; claim via advisory/static</td></tr>
@@ -371,15 +372,17 @@
     </div>
   </div>
   <div class="guarantee">
-    <div class="g"><span class="tag">lock&nbsp;1</span><p><strong>Correctness — G2 receive lock</strong> (blocking <code>for update</code>): two workers targeting slot <code>k</code> → exactly one gets the batch; the other blocks. Ordering can never break.</p></div>
-    <div class="g"><span class="tag">lock&nbsp;2</span><p><strong>Distribution — advisory slot lock</strong> (non-blocking try): steers workers onto distinct slots. Pure liveness — skipping it loses even spread, never G1/G2.</p></div>
+    <div class="g"><span class="tag">lock&nbsp;1</span><p><strong>Log &amp; cursor — G2 receive lock</strong> (blocking <code>for update</code>): one active batch per slot; a second worker blocks, then is handed the <em>same</em> batch idempotently — never a divergent batch, never loss or delivery reorder.</p></div>
+    <div class="g"><span class="tag">lock&nbsp;2</span><p><strong>Processing exclusivity — session claim</strong> (non-blocking try, held across process→ack): closes the process→ack gap the receive lock doesn't span (single in-flight processor) <em>and</em> steers workers onto distinct slots. Skipping it risks duplicate/interleaved processing of one batch — <strong>not</strong> pure liveness.</p></div>
   </div>
   <p class="note">
     N is fixed (D3) <em>and</em> is the read-amplification multiplier (§05 — every
     slot scans the full stream), so N is chosen to match the parallelism you need,
     not inflated to dodge a future resize. Even spread under <em>key skew</em> (a
     hot slot stays hot) and online resize of N (which reshuffles keys across slots,
-    breaking per-key order mid-flight) are deferred — R3, R4.
+    breaking per-key order mid-flight) — the latter now has a sanctioned future
+    path (the epoch-gated <code>begin_resize</code>→drain→<code>complete_resize</code>
+    state machine in core, Phase 3), immutable N in Phase 1. R3, R4, D9.
   </p>
   <p class="note">
     <strong>Rotation pinning (R7) — the sharpest cost of N.</strong> Rotation waits

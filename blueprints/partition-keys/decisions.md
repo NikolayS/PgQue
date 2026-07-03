@@ -193,6 +193,14 @@ converged on the same calls; recorded here with provenance.
 - **`slot_lock_key`/`claim_slot`/`release_slot` promoted to core** (D7) so all
   language clients share one advisory-lock namespace.
 
+- **v0.7 refinement (Fable review).** The receive-lock correction (§12) made the
+  session claim **load-bearing for G2** (not pure liveness) — propagated to G2/§15/
+  brief; claim releases only at a batch boundary. Online resize reworked to
+  **tick-window gating** (fixes abort-path data loss + `ev_seal` conflation).
+  D10/pooling sharpened (session lock *leaks* onto the pooled backend; only the
+  claim connection needs session mode; `tcp_keepalives_*` for silent partitions).
+  `epoch` → fencing token. Resize marked draft-pending-review.
+
 ## Still open (Phase 2 `pause`, before it can be built)
 - **O1** — choose the defer-without-retry-increment mechanism (new primitive vs
   hold-cursor-without-wedging-rotation).
