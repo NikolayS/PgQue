@@ -378,6 +378,30 @@
     pressure both push the same way: keep N small.
   </p>
 
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Coordination: mechanism vs policy</p>
+      <ul class="tight yes">
+        <li><strong>Core SQL</strong>: receive lock (G2), hash filter, enforced N, a shared <code>slot_lock_key</code> namespace, a read-only <code>partition_slot_status</code> view, and the resize guard</li>
+        <li><strong>Client/user</strong>: the claim loop, poll cadence, when to resize — a buggy loop loses spread, never order</li>
+        <li><strong>No member/heartbeat/lease table</strong> — redundant: session-death frees the lock (no TTL to tune), G2 is exclusivity; a lease only re-adds churn</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Two caveats worth stating</p>
+      <ul class="tight">
+        <li><strong>Pooling</strong>: session advisory locks don't survive transaction-mode pooling (Supavisor/PgBouncer) → workers need a session/direct connection</li>
+        <li><strong>Grow N</strong> breaks per-key order for in-flight keys → drain the old epoch first. Sanctioned path: an epoch-gated <code>begin_resize</code> → drain → <code>complete_resize</code> state machine in core (Phase 3); immutable N in Phase 1</li>
+        <li><strong>Every slot must be polled</strong> — an unclaimed slot stalls → pins rotation (R7). M ≥ N or cycle idle slots</li>
+      </ul>
+    </div>
+  </div>
+  <p class="note">
+    Reframe for the Kafka mind: pgque routing is <em>consume-time</em> (the log carries
+    only the key; <code>hash%N</code> is applied at receive), so a resize moves no data
+    and never blocks producers — no "events stamped under the old N" problem.
+  </p>
+
   <footer>
     <p>
       Companion to the producer-side decision note

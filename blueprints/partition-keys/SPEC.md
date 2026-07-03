@@ -1,6 +1,6 @@
 # PgQue Partition Keys — Spec
 
-- **Version:** v0.6 (draft)
+- **Version:** v0.7 (draft)
 - **Status:** review rounds 1–3 applied. **Phase 1 (`skip`-default partition
   consumption) is converged / implementation-ready.** Phase 2 (`pause` strict
   ordering) is specified but has open design items (§11) and is a deliberate
@@ -144,8 +144,10 @@ optimization is future (R6).
 | D4 | Assignment | `(hashtextextended(key,0) % N + N) % N` | Stable, sign-safe. |
 | D5 | State budget | **Phase 1 / happy / `skip`: no state, no per-event writes.** **Phase 2 `pause`:** durable `pgque.partition_block(sub_id, partition_key, head_ev_id)` marker (FK `sub_id → subscription on delete cascade`; index `(sub_id, partition_key)`). Blocked keys additionally incur defer churn (§11 O1) — so "no per-event churn" is a Phase-1/non-blocked-key claim only. | Round 3 corrected the churn framing. |
 | D6 | Producer signature | `send(queue, type, payload, partition_key => text)` | Avoids `send(queue,type,payload)` collision. |
-| D7 | Slot & single-owner | slot = consumer `"<consumer>#k/N"`; G2 via per-subscription receive lock; functions SECURITY DEFINER co-owned with `get_batch_cursor` (§6) | Reader-callable, owner-reachable. |
-| D8 | Worker→slot assignment | Client-side **claim** (§15): each worker takes a slot via non-blocking `pg_try_advisory_lock`; **no leader, no `PartitionAssignor`, no rebalance protocol.** G2's blocking receive lock is the correctness backstop; the advisory lock only distributes | Kafka needs an assignor because partitions are exclusive *by protocol*; here the DB arbitrates. |
+| D7 | Slot, single-owner, key namespace | slot = consumer `"<consumer>#k/N"`; G2 via per-subscription receive lock; **`pgque.slot_lock_key(queue,consumer,k)` + `claim_slot`/`release_slot` are core** (one shared advisory-lock namespace so all clients agree); `partition_slot_status` view for owner+lag | Reader-callable; clients cannot diverge on the lock key. |
+| D8 | Worker→slot assignment | Client-side **claim** (§15): non-blocking `pg_try_advisory_lock`; **no leader, no `PartitionAssignor`, no rebalance protocol.** Boundary follows the **mechanism/policy seam**: corruption-capable transitions → core SQL, guarded policy loops → client. | Kafka needs an assignor because partitions are exclusive *by protocol*; here the DB arbitrates per batch. |
+| D9 | Online resize (grow N) | Epoch-gated **drain-then-cutover** state machine in **core SQL** (`begin_resize`/`resize_ready`/`complete_resize`/`abort_resize`); client drives the drain loop, core re-validates on cutover. Immutable N in Phase 1 (§15 → *Online resize*). | Grow-N reshuffles `hash%N` and breaks G1/G2 for in-flight keys (Fabrizio); the log-native analog of Kinesis parent-shard drain. |
+| D10 | No member/heartbeat/lease table | **Rejected**, not just deferred: crash detection is free (session-death advisory-lock release — no `session.timeout.ms` to tune) and exclusivity is already G2. Observability via the read-only `pgque.partition_slot_status` view. | A lease table buys neither correctness nor recovery and re-adds heartbeat `UPDATE` churn. |
 
 ## 8. Implementation details
 
@@ -238,12 +240,11 @@ optimization is future (R6).
 - **R4 — changing N / over-provisioning:** N is an enforced invariant (D3) **and**
   the read-amplification multiplier (§6 — every slot scans the full stream), so
   inflating N to dodge a future resize is **not free**: it linearly raises steady
-  read cost. Online resize is genuinely hard — `(hash % N)` reshuffles keys across
-  slots, so a key mid-flight in one slot would jump to another, breaking G1/G2
-  during the transition. A correct resize needs either drain-and-cutover (a
-  consumption pause) or a power-of-two split with per-slot draining; both are
-  future. Phase 1 guidance: choose N to match the parallelism you need, bounded by
-  the read-amp budget.
+  read cost. Online resize breaks order for in-flight keys — `(hash % N)` reshuffles
+  keys across slots (Fabrizio's point) — so you must **drain the old epoch first**;
+  the sanctioned protocol is the epoch-gated drain-then-cutover in §15 (*Online
+  resize*, D9), not a hand-wave. Phase 1 guidance: **immutable N**, chosen to match
+  the parallelism you need, bounded by the read-amp budget.
 - **R5 — `ev_extra1`:** send-sourced queues only.
 - **R6 — single-reader/dispatch** to remove read amplification; future.
 - **R7 — rotation pinning (first-class risk, not a footnote):** rotation waits
@@ -289,6 +290,18 @@ lock + idempotent handler). It needs no slots, no fixed N, and no ordering — t
 this feature is deliberate: it stops the partition-keys design from drifting
 toward a mutable job queue (pg-boss with extra steps).
 
+**Why two plain workers on one consumer is unsafe (the caller's responsibility).**
+The receive lock (`for update of s`) is released at the `next_batch` transaction
+commit — **not** held across the process→ack gap. So the engine *does* coordinate
+(a second `receive()` blocks, then idempotently returns the *same* active batch —
+`two_session_receive_lock.sh`; there is no distinct-batch double-delivery), but if
+worker A opens a batch in autocommit and goes off to process, worker B's
+`receive()` can pick up that same still-open batch and reprocess the same events.
+That is redundant reprocessing of **one** batch under PgQ's one-active-batch-per-
+`(queue,consumer)` model — fixed not by an external coordinator but by giving each
+parallel worker its own cursor (cooperative subconsumers, or a partition slot), or
+the per-key advisory-lock recipe above.
+
 ## 13. Review panel
 
 - **Lead:** drafts/revises.
@@ -316,7 +329,9 @@ member, with no per-message arbitration). Here the **database is the
 coordinator**, so assignment is pull-based and self-balancing.
 
 **Claim loop (client-side).** Each worker iterates candidate slots `0..N-1` and
-attempts a non-blocking `pg_try_advisory_lock(slot_key(queue, consumer, k))`. The
+attempts a non-blocking `pg_try_advisory_lock(pgque.slot_lock_key(queue, consumer,
+k))` — `slot_lock_key` is a **core** stateless function (D7) so Go/Python/TS/CLI
+share one advisory-lock namespace and cannot silently collide on a slot. The
 first slot it locks, it owns: it calls `receive_partitioned(queue, consumer, k, N,
 …)` for that slot and keeps it **sticky-until-idle** (re-poll the same slot while
 it has work; release the advisory lock on drain or shutdown). On a failed try-lock
@@ -353,11 +368,98 @@ a future refinement, not Phase 1.
 **N bounds the fan-out.** Assignment distributes a *fixed* N (D3) over a variable
 worker count: useful parallelism is capped at N (workers > N sit idle), and
 because N is also the read-amplification multiplier (§6, R4), N is chosen to match
-the parallelism you need — not inflated "to be safe." Resizing N is the
-rebalancing problem (R4), deferred.
+the parallelism you need — not inflated "to be safe." Growing N online is the
+*Online resize* protocol below.
+
+**Every slot must be polled (hard requirement, not fairness polish).** With M<N
+workers, sticky first-free claiming can leave a slot **unclaimed and unpolled**;
+its cursor stalls, and by R7 a stalled slot pins rotation for the *whole queue* →
+the append-only log grows unbounded (clean, but growth). So a Tier-B deployment
+MUST guarantee every slot is polled within a bounded interval — either M ≥ N, or a
+claim policy that cycles idle slots, or lag-aware claiming (below). This is a
+correctness-adjacent operational invariant, monitored via `partition_slot_status`
++ the mandatory R7 lag alert.
+
+### Where coordination lives — mechanism vs policy (Fabrizio review)
+
+Cut the core/client boundary along the **mechanism/policy seam**, not the feature.
+Everything a *wrong client could use to corrupt shared state* lives in **core SQL**,
+written once and guarded; everything *idempotent-safe* (which slot to grab, poll
+cadence, when to resize) lives in the **client** or **user space**, where a bug can
+only degrade one worker's spread or stall — never break global order. Same
+two-lock discipline as above: correctness rides a blocking lock the DB always
+enforces; distribution rides a non-blocking try-lock that is pure liveness.
+
+- **Core SQL (mechanism):** the receive lock (G2), the hash-routing filter, the
+  enforced N (D3), the shared `slot_lock_key`/`claim_slot`/`release_slot`, the
+  read-only `partition_slot_status` view, and the resize state machine (below).
+- **Client library (policy):** the claim loop, the receive→ack loop, the resize
+  drain-driver. A buggy loop loses spread or stalls; it cannot corrupt order.
+- **User space (policy):** choosing N, static-pin-vs-claim, the plain-queue
+  mutual-exclusion recipe (§12), when/whether to resize, and the R7 lag alert.
+
+**No member/heartbeat/lease table in core (D10) — rejected as redundant.** A
+lease/heartbeat table (Kafka group coordinator, Kinesis KCL DynamoDB lease table)
+does two jobs pgque already does better: (1) **crash detection** — a Postgres
+session-scoped advisory lock releases the instant the connection dies, so there is
+no `leaseDuration`/`session.timeout.ms`/ZOMBIE window to tune (the machinery KCL
+and Kafka spend most of their ops complexity on); (2) **exclusive ownership** —
+already the receive lock (G2). It buys neither, and adds heartbeat `UPDATE` churn
+(the per-row bloat pgque exists to avoid) plus TTL/clock tuning. Its one genuine
+benefit — *who owns what, how far behind* — is delivered writeless by
+**`pgque.partition_slot_status`**, a read-only view over `pg_locks` (owner pid) +
+subscription cursors (per-slot lag) + resize state. An externalized lease record
+stays a **user-space opt-in**, never a correctness or recovery dependency.
+
+**Connection-pooler caveat (matters for the Supabase ICP).** The claim uses a
+*session-scoped* advisory lock held sticky across batches. Under **transaction-mode
+pooling** (PgBouncer/Supavisor transaction mode — Supabase's default path) session
+locks don't survive between statements, so partition **workers require a
+session-mode or direct connection** (a pg-boss-style worker holds one anyway).
+Document this as a Phase-1 constraint; if an ICP genuinely can't, an opt-in
+user-space lease is the fallback — not core schema.
+
+### Online resize — grow N without breaking order (D9, Phase 3)
+
+The leverage: pgque partitions are a *read-side filter over one append-only log*.
+A resize moves **no data** and **never blocks producers** (the log has no N) — only
+*which cursor reads which hash class* is re-derived. So grow-N is a clean
+drain-then-cutover watermark (the log-native analog of Kinesis parent-shard drain).
+State on `partition_consumer(…, epoch, resize_state, n_next, ev_seal)`,
+`resize_state ∈ {stable, draining}`; all writes SECURITY DEFINER, table revoked
+from app roles.
+
+| Step | What happens | Lives in |
+|------|--------------|----------|
+| `begin_resize(q,c,N′)` | assert `stable`; force a tick, record `ev_seal`=that tick; `n_next=N′`, `resize_state=draining`. Register the N′ new slots **at the seal tick** (`register_consumer_at`, `pgque.sql:1782`) so they read strictly forward. Events ≤ `ev_seal` = old epoch (N); events > `ev_seal` = new epoch (N′). | core; invoked by operator/CLI |
+| drain | `receive_partitioned` is epoch-aware: old slots filter `… and ev_id ≤ ev_seal` and drain only the old epoch **at full parallelism**; new slots return **empty** (server-side gate) until cutover, so no new-epoch event jumps ahead of an undrained same-key predecessor. | core filter; client drives tick+poll |
+| `resize_ready(q,c)→bool` | true iff every old-N slot has `sub_last_tick > ev_seal`, no open batch, **and no `retry_queue` rows** (nor `partition_block` under pause) for `ev_id ≤ ev_seal`. (Retry-flush is mandatory: `unregister_consumer` deletes retry rows, so a naive flip would silently drop nacked-pending events.) | core guard |
+| `complete_resize(q,c)` | atomic, **re-checks `resize_ready` and refuses if false** (this is what makes the client loop unable to corrupt); set `n=N′`, `epoch+1`, `stable`, clear `ev_seal`; unsubscribe old slots — **preserving their `dead_letter` rows** (re-own to the new consumer; a bare `unregister_consumer` cascades DLQ history away). `abort_resize` reverts on drain timeout. | core |
+
+The operator/CLI calls `begin_resize`; a **client drain-driver** loops
+`tick()`+`resize_ready()` until true-or-timeout, then `complete_resize`/`abort`.
+Because cutover re-validates atomically, a buggy driver can only **stall** (state
+stays `draining`, old epoch keeps working) — never cut over early. R7 during
+resize: both slot sets pin rotation while draining (bounded, released at cutover);
+a wedged old slot keeps `resize_ready` false — it stalls the resize and trips the
+lag alert, never corrupts. **Shrink N** is the machine run backward, deferred.
+Cannot resize under `pause` until O1 (a blocked key never drains). Keep online
+resize **out of Phase 1**: ship immutable N + this as the sanctioned path.
 
 ## 16. Changelog
 
+- **v0.7 (draft):** Fabrizio review (he tested the repro) + advisor + workflow.
+  Corrected the receive-lock claim (core *does* coordinate; the real hazard is the
+  process→ack gap, §12) — verified in `pgque.sql:5761/5798/5866/5905` +
+  `two_session_receive_lock.sh`. Stated the **mechanism/policy seam** (D8) and made
+  the **member/heartbeat table an explicit rejection** (D10) — redundant with
+  session-death lock release + G2 — replaced by core `slot_lock_key` (D7) +
+  read-only `partition_slot_status` view. Added the **connection-pooler caveat**
+  (session advisory locks need session-mode/direct connections — the Supabase
+  ICP). Upgraded R4 from hand-wave to the sanctioned **epoch-gated drain-then-
+  cutover online-resize** protocol (D9, §15) with retry-flush + DLQ-preservation
+  guards, modeled on Kinesis parent-shard drain. Promoted "every slot must be
+  polled" to a hard R7-adjacent requirement.
 - **v0.6 (draft):** review (Max / consumer Q&A). **Scoped this feature to ordered
   per-key streams only** — producer idempotency split into its own send-layer
   feature (`blueprints/idempotency/SPEC.md`, Phase 1B) and the migration use case

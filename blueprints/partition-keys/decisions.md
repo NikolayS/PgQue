@@ -159,6 +159,40 @@ map to workers). Resolved into the spec without reopening a formal review round:
 - **Added** `T-claim` (assignment liveness: disjoint advisory locks, freed-slot
   reclaim). (§9)
 
+## Follow-up (v0.7) — Fabrizio review (tested the repro) + advisor + workflow
+
+Two independent stronger-model passes (a Fable advisor and a 4-agent workflow)
+converged on the same calls; recorded here with provenance.
+
+- **Receive-lock correction.** Fabrizio: "core does no coordination — two workers
+  double-process." Verified false on mechanism: `next_batch` holds `for update of
+  s` and returns the *same* active batch idempotently (`pgque.sql:5761/5798`;
+  `two_session_receive_lock.sh` asserts equal batch_ids + a blocked wait). The real
+  hazard is narrower — the lock releases at the `next_batch` txn commit, not across
+  process→ack, so a second worker can reprocess the *same* open batch. His caution
+  is valid; the fix is per-worker cursors (coop/slots), not a coordinator. (§12)
+- **Mechanism/policy seam (D8).** Core SQL owns only corruption-capable transitions;
+  clients/users own guarded policy loops. Fabrizio's "keep coordination out of the
+  library" is right about the *protocol* (there is none) but overshoots on the
+  *substrate* (shared key namespace + resize guard must be core or clients diverge).
+- **D10 — no member/heartbeat/lease table.** Rejected, not deferred: session-death
+  advisory-lock release already does crash detection (no TTL to tune) and G2 does
+  exclusivity; a lease buys neither and re-adds heartbeat `UPDATE` churn. Its only
+  real benefit (owner+lag) → the writeless `partition_slot_status` view. Note: this
+  reaffirms round-1's lease-table rejection against a prospect arguing the opposite.
+- **Connection-pooler caveat.** Session advisory locks don't survive transaction-
+  mode pooling (Supavisor/PgBouncer) → partition workers need session-mode/direct
+  connections. Material for the Supabase ICP; documented Phase-1 constraint.
+- **D9 — online resize.** Epoch-gated drain-then-cutover state machine in core
+  (`begin/resize_ready/complete/abort`), client drives the drain loop, core
+  re-validates on cutover. Handles the advisor's 3 holes: common seal tick
+  (`register_consumer_at`), retry_queue flush before cutover, DLQ-row preservation
+  on unsubscribe. Modeled on Kinesis parent-shard drain. Phase 3; immutable N in P1.
+- **Every slot must be polled** (R7-adjacent hard requirement): an unclaimed slot
+  stalls → pins rotation → unbounded (clean) growth. M≥N or cycle idle slots.
+- **`slot_lock_key`/`claim_slot`/`release_slot` promoted to core** (D7) so all
+  language clients share one advisory-lock namespace.
+
 ## Still open (Phase 2 `pause`, before it can be built)
 - **O1** — choose the defer-without-retry-increment mechanism (new primitive vs
   hold-cursor-without-wedging-rotation).
