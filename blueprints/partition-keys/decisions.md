@@ -201,6 +201,40 @@ converged on the same calls; recorded here with provenance.
   claim connection needs session mode; `tcp_keepalives_*` for silent partitions).
   `epoch` → fencing token. Resize marked draft-pending-review.
 
+## Follow-up (v0.8) — Fabrizio review: session lock → batch-granularity lease
+
+The session-scoped advisory claim (v0.5–v0.7 D8/D10) was replaced by a
+batch-granularity lease in core SQL. Provenance: Fabrizio review.
+
+- **D11 — slot ownership is a lease, not a session advisory lock.** Session
+  advisory locks are incompatible with transaction-mode poolers (PgBouncer/
+  Supavisor — the Supabase ICP): the lock **leaks onto the pooled backend** (wedge,
+  not miss) and forces one session-mode connection per live worker, exhausting
+  connections at high worker counts. The lease is plain short-transaction DML over
+  `pgque.partition_slot(queue_id, co_name, slot, lease_owner, lease_until,
+  lease_ttl, epoch)` → runs on one transaction-mode pool, no session state.
+- **D10 reframed, not reversed.** The v0.7 rejection was of a *per-interval*
+  heartbeat `UPDATE` — still rejected. Batch-boundary lease renewal is new
+  information: `receive_partitioned`/`ack_partitioned` renew the lease on writes
+  that already happen per batch, so there is no per-interval churn to add.
+- **G2 is now server-enforced.** `receive_partitioned`/`ack_partitioned` gained a
+  `worker` arg and require the live lease; a client can no longer skip the claim.
+  Fencing is automatic — takeover of a free/expired lease bumps `epoch`, so a
+  zombie's next `receive`/`ack` raises (owner mismatch). Grace rule: an expired
+  lease no successor has taken may be renewed by its own worker.
+- **`slot_lock_key` removed** (no advisory-lock namespace to share).
+  `partition_slot_status` reads lease columns instead of `pg_locks`, so it works
+  through poolers (a backend pid behind PgBouncer was meaningless).
+- **Honest trade.** Crash-takeover latency = lease TTL remainder (a
+  `session.timeout.ms`-equivalent knob returns) instead of instant session-death
+  release; `clock_timestamp()`-based; worker ids must be unique per live worker.
+- **Worker→slot redistribution kept.** Static pinning alone was insufficient, so
+  the lease must arbitrate live claims (claim/renew/steer/release), not just pin —
+  distinct from the out-of-scope dynamic-N rebalancing.
+- Tests: T-claim → **T-lease**; added **T-fencing** (zombie ack raises after
+  takeover; heir re-issued the same open batch); T-retry-affinity is implemented in
+  `tests/test_partition_keys.sql`.
+
 ## Still open (Phase 2 `pause`, before it can be built)
 - **O1** — choose the defer-without-retry-increment mechanism (new primitive vs
   hold-cursor-without-wedging-rotation).

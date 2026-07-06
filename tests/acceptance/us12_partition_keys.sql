@@ -7,10 +7,14 @@
 -- log-native (Kafka-partition) model: order within a key, parallelism across keys.
 --
 -- Covers US-12.1, 12.2, 12.3, 12.4 (single-session facet), 12.5, 12.6, 12.7.
--- US-12.4 (cross-session receive-lock blocking + advisory-claim steering) and
--- US-12.5 (cross-session claim exclusivity + connection-death crash recovery)
--- are two-session properties: the single-session facets are proven here and the
--- concurrent facets are covered by tests/two_session_slot_claim.sh.
+--
+-- Slot ownership is a batch-granularity LEASE (worker id + TTL + epoch fencing
+-- token) stored in a table -- plain transactional DML, so it works under
+-- transaction-mode pooling and needs no session state. Crash recovery is lease
+-- EXPIRY, not session death: a dead worker never releases, and its lease is
+-- taken over the instant the TTL lapses (with an epoch bump for fencing).
+-- Because leases are keyed by worker id, exclusivity between workers is provable
+-- in a single session; the cross-backend variant is tests/two_session_slot_claim.sh.
 --
 -- blueprints/partition-keys/SPEC.md section 17 (User stories)
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
@@ -102,25 +106,30 @@ do $$ begin
   perform pgque.ticker();
 end $$;
 
--- Collect both slots, preserving delivery order (recv_ord)
+-- Collect both slots, preserving delivery order (recv_ord). receive/ack are
+-- lease-fenced, so each slot is claimed before its receive and released after ack.
 do $$
 declare
   v_msg pgque.message;
   v_ord int := 0;
 begin
-  for v_msg in select * from pgque.receive_partitioned('us12_order', 'cw', 0, 2, 100)
+  perform pgque.claim_slot('us12_order', 'cw', 0, 'acc-w');
+  for v_msg in select * from pgque.receive_partitioned('us12_order', 'cw', 0, 2, 'acc-w', 100)
   loop
     v_ord := v_ord + 1;
     insert into _us12_order_recv values (0, v_ord, v_msg.msg_id, v_msg.extra1);
   end loop;
-  perform pgque.ack_partitioned('us12_order', 'cw', 0, 2);
+  perform pgque.ack_partitioned('us12_order', 'cw', 0, 2, 'acc-w');
+  perform pgque.release_slot('us12_order', 'cw', 0, 'acc-w');
 
-  for v_msg in select * from pgque.receive_partitioned('us12_order', 'cw', 1, 2, 100)
+  perform pgque.claim_slot('us12_order', 'cw', 1, 'acc-w');
+  for v_msg in select * from pgque.receive_partitioned('us12_order', 'cw', 1, 2, 'acc-w', 100)
   loop
     v_ord := v_ord + 1;
     insert into _us12_order_recv values (1, v_ord, v_msg.msg_id, v_msg.extra1);
   end loop;
-  perform pgque.ack_partitioned('us12_order', 'cw', 1, 2);
+  perform pgque.ack_partitioned('us12_order', 'cw', 1, 2, 'acc-w');
+  perform pgque.release_slot('us12_order', 'cw', 1, 'acc-w');
 end $$;
 
 -- Assert: tenant-A lands on its hash slot only, delivered in ev_id order
@@ -206,18 +215,20 @@ do $$ begin
   perform pgque.ticker();
 end $$;
 
--- Collect all three slots
+-- Collect all three slots; each slot is claimed before receive and released after ack
 do $$
 declare
   v_msg  pgque.message;
   v_slot int;
 begin
   for v_slot in 0..2 loop
-    for v_msg in select * from pgque.receive_partitioned('us12_parallel', 'cw', v_slot, 3, 100)
+    perform pgque.claim_slot('us12_parallel', 'cw', v_slot, 'acc-w');
+    for v_msg in select * from pgque.receive_partitioned('us12_parallel', 'cw', v_slot, 3, 'acc-w', 100)
     loop
       insert into _us12_par_recv values (v_slot, v_msg.msg_id, v_msg.extra1);
     end loop;
-    perform pgque.ack_partitioned('us12_parallel', 'cw', v_slot, 3);
+    perform pgque.ack_partitioned('us12_parallel', 'cw', v_slot, 3, 'acc-w');
+    perform pgque.release_slot('us12_parallel', 'cw', v_slot, 'acc-w');
   end loop;
 end $$;
 
@@ -266,10 +277,9 @@ drop table if exists _us12_par_recv;
 --
 /* Single-session facet proven here: re-calling receive_partitioned on the same
    slot before ack returns the SAME batch (same ev_id set), never a second
-   independent batch. The cross-session facets -- a concurrent worker BLOCKING on
-   the receive lock, and the advisory slot claim STEERING a second worker onto a
-   different slot entirely -- require two live sessions and timing, and are
-   covered by tests/two_session_slot_claim.sh (mirrors two_session_receive_lock.sh). */
+   independent batch. The cross-session facets -- a concurrent worker being
+   steered off a leased slot, and a takeover re-issuing the still-open batch --
+   are covered by tests/two_session_slot_claim.sh (mirrors two_session_receive_lock.sh). */
 -- ===========================================================================
 
 do $$ begin
@@ -292,17 +302,20 @@ declare
   v_first  bigint[];
   v_second bigint[];
 begin
+  perform pgque.claim_slot('us12_batch', 'cw', 0, 'acc-w');
+
   select array_agg(m.msg_id order by m.msg_id) into v_first
-  from pgque.receive_partitioned('us12_batch', 'cw', 0, 1, 100) m;
+  from pgque.receive_partitioned('us12_batch', 'cw', 0, 1, 'acc-w', 100) m;
 
   select array_agg(m.msg_id order by m.msg_id) into v_second
-  from pgque.receive_partitioned('us12_batch', 'cw', 0, 1, 100) m;
+  from pgque.receive_partitioned('us12_batch', 'cw', 0, 1, 'acc-w', 100) m;
 
   assert v_first is not null and cardinality(v_first) = 2,
     format('US-12.4: first receive should open a 2-event batch, got %s', coalesce(cardinality(v_first), 0));
   assert v_first = v_second,
     'US-12.4: second receive on the same slot must return the SAME batch idempotently, not a divergent one';
-  perform pgque.ack_partitioned('us12_batch', 'cw', 0, 1);
+  perform pgque.ack_partitioned('us12_batch', 'cw', 0, 1, 'acc-w');
+  perform pgque.release_slot('us12_batch', 'cw', 0, 'acc-w');
   raise notice 'PASS: US-12.4 (single-session facet) same batch returned idempotently';
 end $$;
 
@@ -312,16 +325,17 @@ do $$ begin
 end $$;
 
 -- ===========================================================================
--- US-12.5 -- Claim/release + crash recovery: claim a free slot via
--- pgque.claim_slot and release at a batch boundary via pgque.release_slot; a dead
--- claiming session frees its slot immediately.
+-- US-12.5 -- Lease claim/release + crash recovery: claim a free slot via
+-- pgque.claim_slot and release at a batch boundary via pgque.release_slot; a
+-- crashed worker's slot is recovered by lease EXPIRY, with an epoch bump so the
+-- stale worker can be fenced.
 --
-/* Single-session facet proven here: slot_lock_key is the pinned stateless key,
-   claim_slot takes it on a free slot, release_slot frees it, and the slot is
-   re-claimable afterwards. The crash-recovery facet -- a SECOND session's claim
-   failing while the first holds it, then succeeding the instant the first
-   session's connection dies (Postgres releases the session advisory lock) --
-   needs two sessions and is covered by tests/two_session_slot_claim.sh. */
+/* Single-session facet proven here: leases are keyed by worker id, so a second
+   worker id in the same session exercises exclusivity and takeover exactly as a
+   second backend would. claim_slot on a free slot returns an epoch, a competing
+   worker is refused, the owner's re-claim renews the SAME epoch, only the owner
+   releases, and an expired lease is taken over with a LARGER epoch (fencing).
+   The cross-backend variant is tests/two_session_slot_claim.sh. */
 -- ===========================================================================
 
 do $$ begin
@@ -331,37 +345,74 @@ do $$ begin
 end $$;
 
 do $$
-declare v_ok boolean;
+declare
+  v_e1 bigint;
+  v_e2 bigint;
 begin
-  -- slot_lock_key is the pinned stateless namespace all clients share (D7)
-  assert pgque.slot_lock_key('us12_claim', 'cw', 0)
-       = hashtextextended('pgque.slot:' || 'us12_claim' || '/' || 'cw' || '/' || 0::text, 0),
-    'US-12.5: slot_lock_key must match the pinned formula';
+  -- Claim a free slot: returns the lease epoch (fencing token).
+  v_e1 := pgque.claim_slot('us12_claim', 'cw', 0, 'acc-a');
+  assert v_e1 is not null, 'US-12.5: claim_slot on a free slot must return an epoch';
 
-  v_ok := pgque.claim_slot('us12_claim', 'cw', 0);
-  assert v_ok, 'US-12.5: claim_slot on a free slot must return true';
+  -- A competing worker cannot claim a live lease.
+  assert pgque.claim_slot('us12_claim', 'cw', 0, 'acc-b') is null,
+    'US-12.5: claim by a second worker on a live lease must return null';
 
-  v_ok := pgque.release_slot('us12_claim', 'cw', 0);
-  assert v_ok, 'US-12.5: release_slot on a held slot must return true';
+  -- The owner re-claiming renews the lease and returns the SAME epoch.
+  v_e2 := pgque.claim_slot('us12_claim', 'cw', 0, 'acc-a');
+  assert v_e2 = v_e1,
+    format('US-12.5: owner re-claim must renew with the same epoch, got %s -> %s', v_e1, v_e2);
 
-  v_ok := pgque.claim_slot('us12_claim', 'cw', 0);
-  assert v_ok, 'US-12.5: slot must be re-claimable after release';
+  -- Only the owner can release.
+  assert not pgque.release_slot('us12_claim', 'cw', 0, 'acc-b'),
+    'US-12.5: release by a non-owner must return false';
+  assert pgque.release_slot('us12_claim', 'cw', 0, 'acc-a'),
+    'US-12.5: release by the owner must return true';
 
-  perform pgque.release_slot('us12_claim', 'cw', 0);
-  raise notice 'PASS: US-12.5 claim/release + stateless slot_lock_key';
+  -- Freed slot is re-claimable.
+  assert pgque.claim_slot('us12_claim', 'cw', 0, 'acc-a') is not null,
+    'US-12.5: slot must be re-claimable after release';
+  perform pgque.release_slot('us12_claim', 'cw', 0, 'acc-a');
+  raise notice 'PASS: US-12.5 lease claim/release + owner-only release';
+end $$;
+
+-- Crash recovery: a dead worker never releases; its lease expires and is taken
+-- over by another worker with a LARGER epoch (fencing token bump).
+do $$
+declare
+  v_dead bigint;
+  v_new  bigint;
+begin
+  v_dead := pgque.claim_slot('us12_claim', 'cw', 0, 'acc-dead', '1 second');
+  assert v_dead is not null, 'US-12.5: short-TTL claim must succeed';
+
+  -- Lease still live: takeover refused.
+  assert pgque.claim_slot('us12_claim', 'cw', 0, 'acc-heir') is null,
+    'US-12.5: a live lease must not be taken over';
+
+  perform pg_sleep(1.2);
+
+  v_new := pgque.claim_slot('us12_claim', 'cw', 0, 'acc-heir');
+  assert v_new is not null,
+    'US-12.5: an expired lease must be claimable by another worker';
+  assert v_new > v_dead,
+    format('US-12.5: takeover must bump the epoch (fencing), got %s -> %s', v_dead, v_new);
+
+  perform pgque.release_slot('us12_claim', 'cw', 0, 'acc-heir');
+  raise notice 'PASS: US-12.5 expired lease taken over with epoch bump';
 end $$;
 
 -- ===========================================================================
 -- US-12.6 -- Observability: pgque.partition_slot_status shows each slot, its
--- owner pid (null if unclaimed), and cursor lag, so a stalled slot can be alerted
--- on (rotation-pinning risk R7). (reuses queue us12_claim from US-12.5)
+-- lease owner (null if unleased or expired), lease_until, epoch, and cursor lag,
+-- so a stalled slot can be alerted on (rotation-pinning risk R7). (reuses queue
+-- us12_claim from US-12.5)
 -- ===========================================================================
 
--- Unclaimed: two rows, correct n, owner_pid null
+-- Unleased: two rows, correct n, lease_owner null
 do $$
 declare
-  v_rows  int;
-  v_owned int;
+  v_rows   int;
+  v_leased int;
 begin
   select count(*) into v_rows
   from pgque.partition_slot_status
@@ -372,13 +423,13 @@ begin
   assert v_rows = 2,
     format('US-12.6: expected 2 slot rows for (us12_claim, cw), got %s', v_rows);
 
-  select count(*) into v_owned
+  select count(*) into v_leased
   from pgque.partition_slot_status
   where queue_name = 'us12_claim'
     and consumer = 'cw'
-    and owner_pid is not null;
-  assert v_owned = 0,
-    format('US-12.6: unclaimed slots must report owner_pid null, got %s owned', v_owned);
+    and lease_owner is not null;
+  assert v_leased = 0,
+    format('US-12.6: unleased slots must report lease_owner null, got %s leased', v_leased);
 
   -- pending_events (cursor lag) must be a sane non-negative number
   assert not exists (
@@ -388,45 +439,45 @@ begin
       and consumer = 'cw'
       and pending_events < 0
   ), 'US-12.6: pending_events (lag) must be non-negative';
-  raise notice 'PASS: US-12.6 partition_slot_status unclaimed view';
+  raise notice 'PASS: US-12.6 partition_slot_status unleased view';
 end $$;
 
--- Claimed by THIS session: owner_pid == pg_backend_pid() for slot 0 only
-select pgque.claim_slot('us12_claim', 'cw', 0) as claimed \gset
+-- Leased by worker acc-a: lease_owner == 'acc-a' for slot 0 only
+select pgque.claim_slot('us12_claim', 'cw', 0, 'acc-a') as epoch \gset
 
 do $$
-declare v_pid int;
+declare v_owner text;
 begin
-  select owner_pid into v_pid
+  select lease_owner into v_owner
   from pgque.partition_slot_status
   where queue_name = 'us12_claim'
     and consumer = 'cw'
     and slot = 0;
-  assert v_pid = pg_backend_pid(),
-    format('US-12.6: claimed slot 0 must report this backend pid %s, got %s', pg_backend_pid(), coalesce(v_pid::text, 'NULL'));
+  assert v_owner = 'acc-a',
+    format('US-12.6: leased slot 0 must report lease_owner acc-a, got %s', coalesce(v_owner, 'NULL'));
 
   assert (
-    select owner_pid
+    select lease_owner
     from pgque.partition_slot_status
     where queue_name = 'us12_claim'
       and consumer = 'cw'
       and slot = 1
-  ) is null, 'US-12.6: unclaimed slot 1 must still report owner_pid null';
-  raise notice 'PASS: US-12.6 partition_slot_status reflects the live claim owner';
+  ) is null, 'US-12.6: unleased slot 1 must still report lease_owner null';
+  raise notice 'PASS: US-12.6 partition_slot_status reflects the live lease owner';
 end $$;
 
--- Release and confirm owner_pid clears
-select pgque.release_slot('us12_claim', 'cw', 0) as released \gset
+-- Release and confirm lease_owner clears
+select pgque.release_slot('us12_claim', 'cw', 0, 'acc-a') as released \gset
 
 do $$ begin
   assert (
-    select owner_pid
+    select lease_owner
     from pgque.partition_slot_status
     where queue_name = 'us12_claim'
       and consumer = 'cw'
       and slot = 0
-  ) is null, 'US-12.6: owner_pid must clear after release_slot';
-  raise notice 'PASS: US-12.6 owner_pid clears on release';
+  ) is null, 'US-12.6: lease_owner must clear after release_slot';
+  raise notice 'PASS: US-12.6 lease_owner clears on release';
 end $$;
 
 -- Cleanup us12_claim (shared by US-12.5 and US-12.6)
@@ -460,6 +511,26 @@ begin
   end;
   assert v_raised,
     'US-12.7: subscribe_slot with a changed n must raise, but n=3 was accepted';
+
+  -- receive with the wrong n must raise BEFORE any lease check fires.
+  v_raised := false;
+  begin
+    perform * from pgque.receive_partitioned('us12_nvalidate', 'cw', 0, 3, 'acc-w', 10);
+  exception when others then
+    v_raised := true;
+  end;
+  assert v_raised,
+    'US-12.7: receive_partitioned with wrong n must raise';
+
+  -- ack with the wrong n must likewise raise.
+  v_raised := false;
+  begin
+    perform pgque.ack_partitioned('us12_nvalidate', 'cw', 0, 3, 'acc-w');
+  exception when others then
+    v_raised := true;
+  end;
+  assert v_raised,
+    'US-12.7: ack_partitioned with wrong n must raise';
   raise notice 'PASS: US-12.7 enforced N (mismatched n rejected)';
 end $$;
 

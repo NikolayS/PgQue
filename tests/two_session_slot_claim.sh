@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate partition slot claim/release across two real sessions
+# Validate lease-based partition slot ownership across real backends
 # (US-12.4 single processor per slot, US-12.5 claim/release + crash recovery).
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 # Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
@@ -10,13 +10,27 @@ set -Eeuo pipefail
 #     tests/two_session_slot_claim.sh
 #
 # The target database must already have sql/pgque.sql and
-# sql/pgque-api/partition_keys.sql installed. The harness registers a
-# 2-slot partitioned consumer, has session 1 claim slot 0 and hold it, then
-# proves from session 2 that:
-#   - claim_slot(slot 0) fails while session 1 holds it (US-12.4)
-#   - claim_slot(slot 1) succeeds (free slot; the claim loop lands there)
-#   - partition_slot_status shows session 1's pid as slot 0 owner (US-12.6)
-#   - after session 1 exits, slot 0 becomes claimable again (US-12.5)
+# sql/pgque-api/partition_keys.sql installed.
+#
+# Slot ownership is a batch-granularity LEASE (worker id + TTL + epoch) held
+# in pgque.partition_slot as plain transactional DML -- no session state, no
+# advisory locks. This is deliberately different from a backend-scoped lock:
+# a lease OUTLIVES the backend that took it. A crashed worker does not free
+# its slot immediately; the slot recovers only when the TTL expires, and the
+# takeover bumps the epoch (a monotonic fencing token) so the zombie can be
+# fenced off. That TTL window is the trade we accept for pooler-friendly,
+# stateless ownership.
+#
+# The harness registers a 2-slot partitioned consumer, then across separate
+# psql backends proves:
+#   - session 1 claims slot 0 as 'w1' under a short TTL, then EXITS without
+#     releasing (a simulated crash)
+#   - session 2 sees claim_slot(slot 0) IS NULL -- the lease outlives the
+#     dead backend (US-12.4 exclusivity, and the TTL trade vs advisory locks)
+#   - session 2 claims the free slot 1 as 'w2'; the status view attributes
+#     slot 0 to 'w1' and slot 1 to 'w2' (US-12.6)
+#   - session 3 recovers slot 0 as 'w3' once the TTL expires, and the epoch
+#     it gets back is STRICTLY GREATER than session 1's (US-12.5 fencing)
 
 if [[ -z "${PGQUE_TEST_DSN:-}" ]]; then
   echo "PGQUE_TEST_DSN is required" >&2
@@ -25,8 +39,7 @@ fi
 
 psql_base=(psql --no-psqlrc -v ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
 queue_name="two_session_slot_claim_${$}_$(date +%s)"
-session1_app="pgque_slot_claim_s1_${$}_$(date +%s)"
-hold_seconds=4
+s1_ttl="3 seconds"
 workdir="$(mktemp -d)"
 cleanup() {
   "${psql_base[@]}" -qAtc "
@@ -38,128 +51,120 @@ cleanup() {
 }
 trap cleanup EXIT
 
+print_debug() {
+  for f in setup.out session1.out session1.err session2.out session2.err \
+           session3.out session3.err; do
+    echo "--- ${f} ---" >&2
+    cat "${workdir}/${f}" >&2 2>/dev/null || true
+  done
+}
+
+# --- setup: 2-slot partitioned consumer -----------------------------------
 cat >"${workdir}/setup.sql" <<SQL
 select pgque.create_queue('${queue_name}');
 select pgque.subscribe_slot('${queue_name}', 'w', 0, 2);
 select pgque.subscribe_slot('${queue_name}', 'w', 1, 2);
 SQL
 
-# Session 1: claim slot 0, hold it for a while, exit without releasing --
-# session death must free the slot (US-12.5 crash recovery).
-cat >"${workdir}/session1.sql" <<SQL
-do \$\$
-begin
-  assert pgque.claim_slot('${queue_name}', 'w', 0),
-    'session1: claim of free slot 0 must succeed';
-end \$\$;
-select 's1_claimed=1';
-select pg_sleep(${hold_seconds});
-SQL
+"${psql_base[@]}" -f "${workdir}/setup.sql" \
+  >"${workdir}/setup.out" 2>&1 || {
+  echo "FAIL: setup failed" >&2
+  print_debug
+  exit 1
+}
 
-# Session 2: while session 1 holds slot 0.
+# --- session 1: claim slot 0 as 'w1' under a short TTL, then exit ----------
+# No release_slot call: the backend dies with the lease still held. The lease
+# is committed transactional state, so it survives the backend's exit.
+s1_epoch="$(
+  "${psql_base[@]}" -qAtc \
+    "select pgque.claim_slot('${queue_name}', 'w', 0, 'w1', interval '${s1_ttl}')"
+)"
+if [[ -z "${s1_epoch}" || ! "${s1_epoch}" =~ ^[0-9]+$ ]]; then
+  echo "FAIL: session 1 claim of free slot 0 must return an epoch, got: '${s1_epoch}'" >&2
+  print_debug
+  exit 1
+fi
+echo "session 1: claimed slot 0 as 'w1', epoch=${s1_epoch} (now exiting without release)"
+
+# --- session 2: fresh backend, immediately after session 1's death ---------
 cat >"${workdir}/session2.sql" <<SQL
 do \$\$
 declare
-  v_pid int;
+  v_owner text;
 begin
-  assert not pgque.claim_slot('${queue_name}', 'w', 0),
-    'session2: claim of held slot 0 must fail (US-12.4)';
-  assert pgque.claim_slot('${queue_name}', 'w', 1),
-    'session2: claim of free slot 1 must succeed';
+  -- The lease outlives session 1's dead backend: still exclusive (US-12.4).
+  assert pgque.claim_slot('${queue_name}', 'w', 0, 'w2') is null,
+    'session2: slot 0 lease must outlive the dead backend (US-12.4)';
 
-  select owner_pid into v_pid
+  -- Free slot 1 is claimable.
+  assert pgque.claim_slot('${queue_name}', 'w', 1, 'w2') is not null,
+    'session2: claim of free slot 1 must return an epoch';
+
+  select lease_owner into v_owner
   from pgque.partition_slot_status
   where queue_name = '${queue_name}' and consumer = 'w' and slot = 0;
-  assert v_pid is not null and v_pid <> pg_backend_pid(),
-    'session2: slot 0 owner_pid must be session 1 (US-12.6)';
+  assert v_owner = 'w1',
+    format('session2: slot 0 lease_owner must be w1, got %s (US-12.6)', v_owner);
 
-  select owner_pid into v_pid
+  select lease_owner into v_owner
   from pgque.partition_slot_status
   where queue_name = '${queue_name}' and consumer = 'w' and slot = 1;
-  assert v_pid = pg_backend_pid(),
-    'session2: slot 1 owner_pid must be this session (US-12.6)';
+  assert v_owner = 'w2',
+    format('session2: slot 1 lease_owner must be w2, got %s (US-12.6)', v_owner);
 
-  assert pgque.release_slot('${queue_name}', 'w', 1),
+  -- Release slot 1 at the batch boundary so only slot 0 is left leased.
+  assert pgque.release_slot('${queue_name}', 'w', 1, 'w2'),
     'session2: release of held slot 1 must return true (US-12.5)';
 end \$\$;
 select 's2_checks=ok';
 SQL
 
-# After session 1 exits: slot 0 claimable again.
+set +e
+"${psql_base[@]}" -f "${workdir}/session2.sql" \
+  >"${workdir}/session2.out" 2>"${workdir}/session2.err"
+session2_status=$?
+set -e
+if (( session2_status != 0 )); then
+  echo "FAIL: session 2 checks failed (status=${session2_status})" >&2
+  print_debug
+  exit 1
+fi
+
+# --- session 3: recover slot 0 once w1's lease expires ---------------------
+# w1 never released; slot 0 becomes claimable only after the TTL lapses. Poll
+# until takeover succeeds, then prove the epoch advanced past session 1's.
 cat >"${workdir}/session3.sql" <<SQL
 do \$\$
+declare
+  v_epoch bigint;
 begin
-  assert pgque.claim_slot('${queue_name}', 'w', 0),
-    'slot 0 must be claimable after the holding session died (US-12.5)';
-  perform pgque.release_slot('${queue_name}', 'w', 0);
+  for i in 1..30 loop
+    v_epoch := pgque.claim_slot('${queue_name}', 'w', 0, 'w3');
+    exit when v_epoch is not null;
+    perform pg_sleep(0.3);
+  end loop;
+
+  assert v_epoch is not null,
+    'session3: slot 0 must become claimable after w1''s lease expires (US-12.5)';
+  assert v_epoch > ${s1_epoch},
+    format('session3: takeover epoch must exceed session 1''s %s, got %s (US-12.5 fencing)',
+      ${s1_epoch}, v_epoch);
+
+  perform pgque.release_slot('${queue_name}', 'w', 0, 'w3');
 end \$\$;
 select 's3_reclaim=ok';
 SQL
 
-"${psql_base[@]}" -f "${workdir}/setup.sql" >/dev/null
-
-PGAPPNAME="${session1_app}" "${psql_base[@]}" -f "${workdir}/session1.sql" \
-  >"${workdir}/session1.out" 2>"${workdir}/session1.err" &
-session1_pid=$!
-
-print_debug() {
-  for f in session1.out session1.err session2.out session2.err session3.out session3.err; do
-    echo "--- ${f} ---" >&2
-    cat "${workdir}/${f}" >&2 2>/dev/null || true
-  done
-}
-
-# Wait until session 1 visibly holds the claim (owner_pid set in the view).
-session1_ready=0
-for _ in $(seq 1 50); do
-  if "${psql_base[@]}" -tAc "
-    select 1
-    from pgque.partition_slot_status
-    where queue_name = '${queue_name}'
-      and consumer = 'w'
-      and slot = 0
-      and owner_pid is not null
-    limit 1
-  " | grep -q 1; then
-    session1_ready=1
-    break
-  fi
-  sleep 0.2
-done
-if (( session1_ready != 1 )); then
-  echo "FAIL: session1 never showed up as slot 0 owner in partition_slot_status" >&2
-  print_debug
-  exit 1
-fi
-
 set +e
-"${psql_base[@]}" -f "${workdir}/session2.sql" >"${workdir}/session2.out" 2>"${workdir}/session2.err"
-session2_status=$?
-wait "${session1_pid}"
-session1_status=$?
+"${psql_base[@]}" -f "${workdir}/session3.sql" \
+  >"${workdir}/session3.out" 2>"${workdir}/session3.err"
+session3_status=$?
 set -e
-
-if (( session1_status != 0 || session2_status != 0 )); then
-  echo "FAIL: claim harness failed (session1=${session1_status}, session2=${session2_status})" >&2
+if (( session3_status != 0 )); then
+  echo "FAIL: session 3 could not recover slot 0 after TTL expiry" >&2
   print_debug
   exit 1
 fi
 
-# Session 1 exited; its advisory claim releases with the backend. Retry a
-# few times to absorb backend-exit latency.
-session3_ok=0
-for _ in $(seq 1 50); do
-  if "${psql_base[@]}" -f "${workdir}/session3.sql" \
-      >"${workdir}/session3.out" 2>"${workdir}/session3.err"; then
-    session3_ok=1
-    break
-  fi
-  sleep 0.2
-done
-if (( session3_ok != 1 )); then
-  echo "FAIL: slot 0 did not become claimable after session1 exit" >&2
-  print_debug
-  exit 1
-fi
-
-echo "PASS: slot claim exclusive across sessions; owner visible in partition_slot_status; dead session's slot reclaimable"
+echo "PASS: lease is exclusive across backends (outlives a dead one for its TTL); dead worker's slot recovered after TTL expiry; epoch bumped on takeover (fencing)"

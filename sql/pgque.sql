@@ -7051,9 +7051,10 @@ revoke execute on all functions in schema pgque from public;
 --   pgque.send(queue, type, payload, partition_key)  -- jsonb + text overloads
 --   pgque.subscribe_slot(queue, consumer, slot, n)
 --   pgque.unsubscribe_slot(queue, consumer, slot)
---   pgque.receive_partitioned(queue, consumer, slot, n, max)
---   pgque.ack_partitioned(queue, consumer, slot, n)
---   pgque.slot_lock_key / claim_slot / release_slot
+--   pgque.claim_slot(queue, consumer, slot, worker, ttl)
+--   pgque.release_slot(queue, consumer, slot, worker)
+--   pgque.receive_partitioned(queue, consumer, slot, n, worker, max)
+--   pgque.ack_partitioned(queue, consumer, slot, n, worker)
 --   view pgque.partition_slot_status
 --
 -- Producer idempotency (Phase 1B) is the separate, orthogonal
@@ -7082,10 +7083,15 @@ revoke execute on all functions in schema pgque from public;
 --   overloads) route to slot 0, so no event is ever silently dropped by the
 --   hash filter.
 --
--- * The slot claim (claim_slot/release_slot) is a session-scoped advisory
---   lock held across the receive -> process -> ack loop; release only at a
---   batch boundary. Under transaction-mode pooling (PgBouncer/Supavisor) the
---   claim connection must be session-mode/direct (SPEC section 15).
+-- * Slot ownership is a batch-granularity LEASE (worker id + TTL + epoch
+--   fencing token) stored in pgque.partition_slot. It is plain transactional
+--   DML -- no session state -- so it works under transaction-mode pooling
+--   (PgBouncer/Supavisor): any pooled connection can hold or renew a lease.
+--   receive_partitioned and ack_partitioned renew the lease and fence any
+--   worker that does not hold it (US-12.4). Crash recovery is lease expiry:
+--   a dead worker never releases, so after the TTL remainder another worker
+--   takes over. Takeover bumps the epoch, fencing the zombie -- its next
+--   receive/ack raises rather than double-acking (SPEC section 15).
 
 -- ---------------------------------------------------------------------------
 -- Tables
@@ -7102,6 +7108,38 @@ create table if not exists pgque.partition_consumer (
     n           int4    not null check (n >= 1),
     primary key (queue_id, co_name)
 );
+
+/*
+ * Per-slot lease -- SPEC D7/D8/section 15. A slot is owned by a worker id
+ * for a TTL window; epoch is the monotonic fencing token, bumped on every
+ * takeover of an expired lease. Written only inside SECURITY DEFINER
+ * functions (same pattern as partition_consumer); revoked from app roles.
+ * One row per subscribed slot, created by subscribe_slot.
+ */
+create table if not exists pgque.partition_slot (
+    queue_id    int4 not null,
+    co_name     text not null,
+    slot        int4 not null,
+    lease_owner text,
+    lease_until timestamptz,
+    lease_ttl   interval,
+    epoch       bigint not null default 0,
+    primary key (queue_id, co_name, slot),
+    foreign key (queue_id, co_name) references pgque.partition_consumer (queue_id, co_name) on delete cascade
+);
+
+-- ---------------------------------------------------------------------------
+-- Cleanup of an older draft install (advisory-lock slot model). These drops
+-- must precede the new objects: the view's column set changes (create or
+-- replace view cannot alter it) and the advisory claim/release functions are
+-- removed entirely in favour of the lease model.
+-- ---------------------------------------------------------------------------
+drop view if exists pgque.partition_slot_status;
+drop function if exists pgque.slot_lock_key(text, text, int);
+drop function if exists pgque.claim_slot(text, text, int);
+drop function if exists pgque.release_slot(text, text, int);
+drop function if exists pgque.receive_partitioned(text, text, int, int, int);
+drop function if exists pgque.ack_partitioned(text, text, int, int);
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers
@@ -7149,6 +7187,51 @@ begin
     end if;
 
     return v_n;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+/*
+ * Renew and fence the slot lease inside the receive/ack path (G2). The
+ * caller must already hold the lease as i_worker; a worker that does not is
+ * fenced with a clear error. GRACE RULE: an expired lease still owned by the
+ * SAME worker (no successor took over) is renewed, not rejected -- it is safe
+ * because no zombie exists. Uses clock_timestamp() so lease math is correct
+ * inside a long transaction. queue_id is supplied by the caller (which has
+ * already resolved it), keyed by the partition_slot primary key.
+ */
+create or replace function pgque._touch_lease(
+    i_queue_id int4, i_queue text, i_consumer text, i_slot int, i_worker text)
+returns void as $$
+declare
+    v_owner text;
+    v_ttl interval;
+begin
+    select lease_owner, lease_ttl into v_owner, v_ttl
+    from pgque.partition_slot
+    where queue_id = i_queue_id
+      and co_name = i_consumer
+      and slot = i_slot
+    for update;
+    if not found then
+        raise exception 'slot % of consumer % on queue % is not subscribed; call pgque.subscribe_slot()',
+            i_slot, i_consumer, i_queue;
+    end if;
+
+    if v_owner is null then
+        raise exception 'slot % of consumer % on queue % is not leased; call pgque.claim_slot() first',
+            i_slot, i_consumer, i_queue;
+    end if;
+    if v_owner <> i_worker then
+        raise exception 'lease on slot % of consumer % on queue % is held by worker %, not %; fenced',
+            i_slot, i_consumer, i_queue, v_owner, i_worker;
+    end if;
+
+    -- Owner (possibly with an expired-but-un-taken-over lease): renew.
+    update pgque.partition_slot
+    set lease_until = clock_timestamp() + v_ttl
+    where queue_id = i_queue_id
+      and co_name = i_consumer
+      and slot = i_slot;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -7230,6 +7313,11 @@ begin
 
     -- register_consumer is idempotent for an existing subscription.
     perform pgque.register_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, i_n));
+
+    -- Materialize the slot's lease row (unleased). Idempotent re-subscribe.
+    insert into pgque.partition_slot (queue_id, co_name, slot)
+    values (v_queue_id, i_consumer, i_slot)
+    on conflict (queue_id, co_name, slot) do nothing;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 revoke execute on function pgque.subscribe_slot(text, text, int, int) from public;
@@ -7237,8 +7325,9 @@ revoke execute on function pgque.subscribe_slot(text, text, int, int) from publi
 /*
  * Drop one slot subscription. NOTE: unregister_consumer cascades the slot's
  * retry rows and its dead_letter audit (SPEC section 8, teardown). When the
- * last slot of (queue, consumer) is dropped, the pinned-N row is removed so
- * a fresh subscribe_slot may choose a new N.
+ * last slot of (queue, consumer) is dropped, the pinned-N row is removed --
+ * which cascades any remaining partition_slot rows via the FK -- so a fresh
+ * subscribe_slot may choose a new N.
  */
 create or replace function pgque.unsubscribe_slot(
     i_queue text, i_consumer text, i_slot int)
@@ -7264,6 +7353,11 @@ begin
 
     perform pgque.unregister_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, v_n));
 
+    delete from pgque.partition_slot
+    where queue_id = v_queue_id
+      and co_name = i_consumer
+      and slot = i_slot;
+
     perform 1
     from pgque.subscription as s
     join pgque.consumer as c on c.co_id = s.sub_consumer
@@ -7281,6 +7375,135 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
 
 -- ---------------------------------------------------------------------------
+-- Slot lease (US-12.4, US-12.5) -- SPEC D7/D8/section 15
+-- ---------------------------------------------------------------------------
+
+/*
+ * Claim (or renew) the lease on a slot for a worker id. Returns the epoch
+ * fencing token, or null if the slot is currently leased by another live
+ * worker (the caller's claim loop then moves to the next slot). The lease
+ * lives in pgque.partition_slot -- plain transactional DML, no session state
+ * -- so it survives transaction-mode pooling. Uses clock_timestamp() so a
+ * pg_sleep inside a transaction correctly ages a short TTL.
+ *
+ *   owner re-claim  -- renew the window, epoch UNCHANGED.
+ *   free / expired  -- takeover: epoch += 1, return the NEW (fencing) epoch.
+ *   live, other own -- return null.
+ */
+create or replace function pgque.claim_slot(
+    i_queue text, i_consumer text, i_slot int, i_worker text,
+    i_ttl interval default '30 seconds')
+returns bigint as $$
+declare
+    v_queue_id int4;
+    v_n int4;
+    v_owner text;
+    v_until timestamptz;
+    v_epoch bigint;
+begin
+    if i_worker is null or i_worker = '' then
+        raise exception 'worker id must not be empty';
+    end if;
+    if i_ttl is null or i_ttl < interval '1 second' then
+        raise exception 'lease ttl must be >= 1 second, got %', i_ttl;
+    end if;
+
+    select pc.queue_id, pc.n into v_queue_id, v_n
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where q.queue_name = i_queue
+      and pc.co_name = i_consumer;
+    if not found then
+        raise exception 'consumer % on queue % is not a partitioned consumer; call pgque.subscribe_slot() first',
+            i_consumer, i_queue;
+    end if;
+    if i_slot is null or i_slot < 0 or i_slot >= v_n then
+        raise exception 'slot % out of range for consumer % on queue % (valid: 0..%)',
+            i_slot, i_consumer, i_queue, v_n - 1;
+    end if;
+
+    select lease_owner, lease_until, epoch into v_owner, v_until, v_epoch
+    from pgque.partition_slot
+    where queue_id = v_queue_id
+      and co_name = i_consumer
+      and slot = i_slot
+    for update;
+    if not found then
+        raise exception 'slot % of consumer % on queue % is not subscribed; call pgque.subscribe_slot()',
+            i_slot, i_consumer, i_queue;
+    end if;
+
+    if v_owner = i_worker then
+        -- Renew: same epoch, no takeover.
+        update pgque.partition_slot
+        set lease_until = clock_timestamp() + i_ttl,
+            lease_ttl = i_ttl
+        where queue_id = v_queue_id
+          and co_name = i_consumer
+          and slot = i_slot;
+        return v_epoch;
+    elsif v_owner is null or v_until <= clock_timestamp() then
+        -- Takeover of a free or expired lease: bump the fencing epoch.
+        v_epoch := v_epoch + 1;
+        update pgque.partition_slot
+        set lease_owner = i_worker,
+            lease_until = clock_timestamp() + i_ttl,
+            lease_ttl = i_ttl,
+            epoch = v_epoch
+        where queue_id = v_queue_id
+          and co_name = i_consumer
+          and slot = i_slot;
+        return v_epoch;
+    end if;
+
+    -- Leased by another live worker.
+    return null;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.claim_slot(text, text, int, text, interval) from public;
+
+/*
+ * Release a lease at a batch boundary. Only the owning worker may release
+ * (a non-owner call returns false, never raises). The epoch is KEPT so a
+ * later takeover still advances the fencing token monotonically. Returns
+ * true if this worker held the lease and it was cleared.
+ */
+create or replace function pgque.release_slot(
+    i_queue text, i_consumer text, i_slot int, i_worker text)
+returns boolean as $$
+declare
+    v_queue_id int4;
+    v_owner text;
+begin
+    select ps.queue_id, ps.lease_owner into v_queue_id, v_owner
+    from pgque.partition_slot as ps
+    join pgque.queue as q on q.queue_id = ps.queue_id
+    where q.queue_name = i_queue
+      and ps.co_name = i_consumer
+      and ps.slot = i_slot
+    for update of ps;
+    if not found then
+        raise exception 'slot % of consumer % on queue % is not subscribed; call pgque.subscribe_slot()',
+            i_slot, i_consumer, i_queue;
+    end if;
+
+    if v_owner is null or v_owner <> i_worker then
+        return false;
+    end if;
+
+    update pgque.partition_slot
+    set lease_owner = null,
+        lease_until = null,
+        lease_ttl = null
+    where queue_id = v_queue_id
+      and co_name = i_consumer
+      and slot = i_slot;
+    return true;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.release_slot(text, text, int, text) from public;
+
+-- ---------------------------------------------------------------------------
 -- Slot consume path (US-12.2, US-12.3, US-12.4)
 -- ---------------------------------------------------------------------------
 
@@ -7296,17 +7519,21 @@ revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
  * (see the OWNERSHIP INVARIANT in the file header) -- this is NOT the
  * receive()/nack() pattern of calling reader-granted internals.
  *
- * Contract mirrors pgque.receive(): returns up to i_max messages of the
- * slot's current batch; ack_partitioned finishes the WHOLE batch even after
- * a partial receive; a batch left unacked is re-issued idempotently (the
- * engine receive lock -- US-12.4). A batch whose filtered slice is empty is
- * finished immediately so the slot cursor keeps advancing.
+ * The lease is checked and renewed FIRST (after the N validation): a worker
+ * that does not hold the slot lease is fenced (G2). Contract mirrors
+ * pgque.receive(): returns up to i_max messages of the slot's current batch;
+ * ack_partitioned finishes the WHOLE batch even after a partial receive; a
+ * batch left unacked is re-issued idempotently (the engine receive lock --
+ * US-12.4). A batch whose filtered slice is empty is finished immediately so
+ * the slot cursor keeps advancing.
  */
 create or replace function pgque.receive_partitioned(
-    i_queue text, i_consumer text, i_slot int, i_n int, i_max int default 100)
+    i_queue text, i_consumer text, i_slot int, i_n int, i_worker text,
+    i_max int default 100)
 returns setof pgque.message as $$
 declare
     v_n int4;
+    v_queue_id int4;
     v_batch_id bigint;
     v_cname text;
     ev record;
@@ -7316,7 +7543,15 @@ begin
         raise exception 'pgque.receive_partitioned: max must be >= 1, got %', i_max;
     end if;
 
+    -- Wrong-N is rejected before any lease error (US-12.7).
     v_n := pgque._partition_n(i_queue, i_consumer, i_slot, i_n);
+
+    select queue_id into v_queue_id
+    from pgque.queue
+    where queue_name = i_queue;
+
+    -- Fence: caller must hold the lease; renew it for this batch.
+    perform pgque._touch_lease(v_queue_id, i_queue, i_consumer, i_slot, i_worker);
 
     v_batch_id := pgque.next_batch(i_queue, pgque._slot_name(i_consumer, i_slot, v_n));
     if v_batch_id is null then
@@ -7351,19 +7586,29 @@ begin
     return;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
-revoke execute on function pgque.receive_partitioned(text, text, int, int, int) from public;
+revoke execute on function pgque.receive_partitioned(text, text, int, int, text, int) from public;
 
 -- pgque.ack_partitioned() -- finish the slot's active batch (same ack path
--- as pgque.ack(): finish_batch advances the slot cursor). Returns 1 if a
--- batch was finished, 0 if the slot had no active batch.
+-- as pgque.ack(): finish_batch advances the slot cursor). Fences a worker
+-- that does not hold the lease (G2). Returns 1 if a batch was finished, 0 if
+-- the slot had no active batch.
 create or replace function pgque.ack_partitioned(
-    i_queue text, i_consumer text, i_slot int, i_n int)
+    i_queue text, i_consumer text, i_slot int, i_n int, i_worker text)
 returns int as $$
 declare
     v_n int4;
+    v_queue_id int4;
     v_batch_id bigint;
 begin
+    -- Wrong-N is rejected before any lease error (US-12.7).
     v_n := pgque._partition_n(i_queue, i_consumer, i_slot, i_n);
+
+    select queue_id into v_queue_id
+    from pgque.queue
+    where queue_name = i_queue;
+
+    -- Fence: caller must hold the lease; renew it.
+    perform pgque._touch_lease(v_queue_id, i_queue, i_consumer, i_slot, i_worker);
 
     select s.sub_batch into v_batch_id
     from pgque.subscription as s
@@ -7382,49 +7627,7 @@ begin
     return pgque.finish_batch(v_batch_id);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
-revoke execute on function pgque.ack_partitioned(text, text, int, int) from public;
-
--- ---------------------------------------------------------------------------
--- Slot claim (US-12.4, US-12.5) -- SPEC D7/D8/section 15
--- ---------------------------------------------------------------------------
-
-/*
- * Stateless, shared advisory-lock namespace so all clients (SQL, Go, Python,
- * TS, CLI) agree on the per-slot lock key and cannot silently collide.
- * Deliberately independent of the pinned n: the claim addresses a slot
- * identity, not a slot-count epoch.
- */
-create or replace function pgque.slot_lock_key(
-    i_queue text, i_consumer text, i_slot int)
-returns bigint as $$
-select pg_catalog.hashtextextended(
-    'pgque.slot:' || i_queue || '/' || i_consumer || '/' || i_slot::text, 0);
-$$ language sql immutable parallel safe;
-revoke execute on function pgque.slot_lock_key(text, text, int) from public;
-
-/*
- * Non-blocking, session-scoped slot claim. Hold it across the whole
- * receive -> process -> ack loop; release only at a batch boundary
- * (release_slot). If the claiming session dies, PostgreSQL releases the
- * lock and the slot is immediately claimable (US-12.5). The claim is
- * load-bearing for G2: it closes the process -> ack gap the engine receive
- * lock does not span (SPEC section 2).
- */
-create or replace function pgque.claim_slot(
-    i_queue text, i_consumer text, i_slot int)
-returns boolean as $$
-select pg_catalog.pg_try_advisory_lock(pgque.slot_lock_key(i_queue, i_consumer, i_slot));
-$$ language sql;
-revoke execute on function pgque.claim_slot(text, text, int) from public;
-
--- Release a claimed slot at a batch boundary. Returns false (with a
--- PostgreSQL warning) when this session does not hold the claim.
-create or replace function pgque.release_slot(
-    i_queue text, i_consumer text, i_slot int)
-returns boolean as $$
-select pg_catalog.pg_advisory_unlock(pgque.slot_lock_key(i_queue, i_consumer, i_slot));
-$$ language sql;
-revoke execute on function pgque.release_slot(text, text, int) from public;
+revoke execute on function pgque.ack_partitioned(text, text, int, int, text) from public;
 
 -- ---------------------------------------------------------------------------
 -- Observability (US-12.6) -- SPEC D10: writeless owner + lag view
@@ -7432,11 +7635,13 @@ revoke execute on function pgque.release_slot(text, text, int) from public;
 
 /*
  * One row per slot 0..n-1 of every partitioned consumer (including slots
- * not yet registered/claimed -- an unpolled slot is exactly what the R7
- * rotation-pinning alert must catch).
+ * not yet leased -- an unpolled slot is exactly what the R7 rotation-pinning
+ * alert must catch).
  *
- *   owner_pid      -- backend holding the slot claim (pg_locks advisory
- *                     match on slot_lock_key); null if unclaimed.
+ *   lease_owner    -- worker holding a LIVE lease on the slot; null when
+ *                     unleased OR the lease has expired (lease_until in the
+ *                     past). A stale owner is never shown as current.
+ *   lease_until    -- lease expiry; epoch -- current fencing token.
  *   last_tick      -- the slot subscription's cursor (sub_last_tick).
  *   pending_events -- approximate lag: events in the queue between the
  *                     slot's cursor tick and the latest tick, BEFORE hash
@@ -7450,15 +7655,21 @@ select
     pc.co_name as consumer,
     gs.slot,
     pc.n,
-    lk.pid as owner_pid,
+    case when ps.lease_owner is not null and ps.lease_until > clock_timestamp()
+         then ps.lease_owner
+         else null
+    end as lease_owner,
+    ps.lease_until,
+    coalesce(ps.epoch, 0) as epoch,
     s.sub_last_tick as last_tick,
     greatest(coalesce(latest.tick_event_seq - cur.tick_event_seq, 0), 0) as pending_events
 from pgque.partition_consumer as pc
 join pgque.queue as q on q.queue_id = pc.queue_id
 cross join lateral generate_series(0, pc.n - 1) as gs(slot)
-cross join lateral (
-    select pgque.slot_lock_key(q.queue_name, pc.co_name, gs.slot) as key
-) as k
+left join pgque.partition_slot as ps
+    on ps.queue_id = pc.queue_id
+    and ps.co_name = pc.co_name
+    and ps.slot = gs.slot
 left join pgque.consumer as c
     on c.co_name = pgque._slot_name(pc.co_name, gs.slot, pc.n)
 left join pgque.subscription as s
@@ -7473,26 +7684,12 @@ left join lateral (
     where t.tick_queue = pc.queue_id
     order by t.tick_id desc
     limit 1
-) as latest on true
-left join lateral (
-    select l.pid
-    from pg_catalog.pg_locks as l
-    where l.locktype = 'advisory'
-      and l.granted
-      and l.objsubid = 1
-      and l.database = (
-          select d.oid
-          from pg_catalog.pg_database as d
-          where d.datname = pg_catalog.current_database())
-      and l.classid::bigint = ((k.key >> 32) & 4294967295)
-      and l.objid::bigint = (k.key & 4294967295)
-    limit 1
-) as lk on true;
+) as latest on true;
 
 -- ---------------------------------------------------------------------------
 -- Grants (SPEC section 8)
 -- ---------------------------------------------------------------------------
--- Producer surfaces -> pgque_writer; slot/claim/observability surfaces ->
+-- Producer surfaces -> pgque_writer; slot/lease/observability surfaces ->
 -- pgque_reader (consumer-side). Internal tables stay off app roles entirely
 -- (written only inside SECURITY DEFINER functions); pgque_admin keeps
 -- read-only visibility for ops. get_batch_cursor stays admin-only -- the
@@ -7501,16 +7698,18 @@ left join lateral (
 revoke all on pgque.partition_consumer from public, pgque_reader, pgque_writer;
 grant select on pgque.partition_consumer to pgque_admin;
 
+revoke all on pgque.partition_slot from public, pgque_reader, pgque_writer;
+grant select on pgque.partition_slot to pgque_admin;
+
 grant execute on function pgque.send(text, text, jsonb, text)  to pgque_writer;
 grant execute on function pgque.send(text, text, text, text)   to pgque_writer;
 
 grant execute on function pgque.subscribe_slot(text, text, int, int)   to pgque_reader;
 grant execute on function pgque.unsubscribe_slot(text, text, int)      to pgque_reader;
-grant execute on function pgque.receive_partitioned(text, text, int, int, int) to pgque_reader;
-grant execute on function pgque.ack_partitioned(text, text, int, int)  to pgque_reader;
-grant execute on function pgque.slot_lock_key(text, text, int)         to pgque_reader;
-grant execute on function pgque.claim_slot(text, text, int)            to pgque_reader;
-grant execute on function pgque.release_slot(text, text, int)          to pgque_reader;
+grant execute on function pgque.claim_slot(text, text, int, text, interval)    to pgque_reader;
+grant execute on function pgque.release_slot(text, text, int, text)            to pgque_reader;
+grant execute on function pgque.receive_partitioned(text, text, int, int, text, int) to pgque_reader;
+grant execute on function pgque.ack_partitioned(text, text, int, int, text)    to pgque_reader;
 
 grant select on pgque.partition_slot_status to pgque_reader;
 grant select on pgque.partition_slot_status to pgque_admin;
@@ -7518,6 +7717,7 @@ grant select on pgque.partition_slot_status to pgque_admin;
 -- Internal helpers: SECURITY DEFINER callees only.
 revoke execute on function pgque._slot_name(text, int, int) from public, pgque_reader, pgque_writer;
 revoke execute on function pgque._partition_n(text, text, int, int) from public, pgque_reader, pgque_writer;
+revoke execute on function pgque._touch_lease(int4, text, text, int, text) from public, pgque_reader, pgque_writer;
 
 -- Re-apply deny-by-default: functions created in this file would otherwise
 -- keep PostgreSQL's default PUBLIC EXECUTE (see sql/pgque-api/send.sql).

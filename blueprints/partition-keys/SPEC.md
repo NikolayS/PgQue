@@ -1,6 +1,6 @@
 # PgQue Partition Keys — Spec
 
-- **Version:** v0.7 (draft)
+- **Version:** v0.8 (draft)
 - **Status:** review rounds 1–3 applied. **Phase 1 (`skip`-default partition
   consumption) is converged / implementation-ready.** Phase 2 (`pause` strict
   ordering) is specified but has open design items (§11) and is a deliberate
@@ -34,13 +34,20 @@ parallelism *across* keys.
   for update of s`, `pgque.sql:5761`, the #97/#125 guard) serializes batch
   **issuance** — one active batch per slot; concurrent `receive()` returns that
   same batch idempotently, never a second independent batch; (2) the
-  session-scoped slot **claim** (§15), held across the receive→process→ack loop,
-  keeps a second session from polling the slot during the process→ack gap the
-  receive lock does *not* span (§12). So the claim is **load-bearing for G2**, not
-  distribution polish. If a claimant's connection dies mid-batch, the claim frees
-  while the batch stays open and the next claimant is re-issued the same batch —
-  at-least-once, with possible transient overlap with a zombie worker; handlers
-  must tolerate redelivery.
+  **batch-granularity lease** (§15) on the slot — a `pgque.partition_slot` row
+  carrying `(lease_owner, lease_until, epoch)` — held *logically* across the
+  receive→process→ack loop and **renewed on every `receive_partitioned` /
+  `ack_partitioned` call**, so the heartbeat rides the writes that already happen
+  per batch (zero extra round-trips). The lease is **server-enforced**:
+  `receive_partitioned` and `ack_partitioned` refuse to act unless the caller's
+  worker id holds the live lease, so a client can no longer skip the claim and put
+  two workers on the same open batch. So the lease is **load-bearing for G2**, not
+  distribution polish. If a leaseholder's worker dies mid-batch, the lease expires
+  after its TTL; the successor takes over (epoch bump) and is re-issued the same
+  still-open batch — at-least-once, with possible transient overlap with a zombie
+  for at most the remaining TTL; the zombie's next `receive`/`ack` raises on the
+  epoch/owner mismatch instead of silently double-acking (fenced). Handlers must
+  tolerate redelivery.
 - **G3 — failure boundary (Phase 2 / `pause`).** Under `pause`, no later event of
   `K` is delivered until `K`'s failed head event is acked or dead-lettered, and
   after it resolves the deferred events deliver in `ev_id` order, exactly once.
@@ -66,10 +73,11 @@ that **must be ordered per tenant** but need **no ordering across tenants**.
 - N independent **slot consumers**, each filtering the stream to its hash class
   via `get_batch_cursor` `extra_where` (§6). Stable affinity (D4).
 - G1 + G2. **`skip` failure policy** (stateless, sound).
-- Persisted/enforced `N` (D3); slot identity + single-owner (D7); SECURITY
-  DEFINER ownership model (§6).
+- Persisted/enforced `N` (D3); slot identity + single-owner via the
+  batch-granularity lease (D7); SECURITY DEFINER ownership model (§6).
 - **Client-side claim assignment** (§15): workers self-distribute over the fixed
-  `N` slots via a per-slot advisory try-lock — no leader, no assignor.
+  `N` slots via a per-slot **lease** (`claim_slot`/`release_slot`, arbitrated by
+  core SQL rows) — no leader, no assignor.
 
 **Phase 2 — specified, follow-up (NOT converged):**
 - **`pause` failure policy** (G3 strict). Needs a *defer-without-retry-increment*
@@ -154,10 +162,11 @@ optimization is future (R6).
 | D4 | Assignment | `(hashtextextended(key,0) % N + N) % N` | Stable, sign-safe. |
 | D5 | State budget | **Phase 1 / happy / `skip`: no state, no per-event writes.** **Phase 2 `pause`:** durable `pgque.partition_block(sub_id, partition_key, head_ev_id)` marker (FK `sub_id → subscription on delete cascade`; index `(sub_id, partition_key)`). Blocked keys additionally incur defer churn (§11 O1) — so "no per-event churn" is a Phase-1/non-blocked-key claim only. | Round 3 corrected the churn framing. |
 | D6 | Producer signature | `send(queue, type, payload, partition_key => text)` | Avoids `send(queue,type,payload)` collision. |
-| D7 | Slot, single-owner, key namespace | slot = consumer `"<consumer>#k/N"`; **G2 = receive lock (batch issuance) + session claim held across process→ack (§15)**; **`pgque.slot_lock_key(queue,consumer,k)` + `claim_slot`/`release_slot` are core** (one shared advisory-lock namespace so all clients agree); `partition_slot_status` view for owner+lag | Reader-callable; clients cannot diverge on the lock key. |
-| D8 | Worker→slot assignment | Client-side **claim** (§15): non-blocking `pg_try_advisory_lock`; **no leader, no `PartitionAssignor`, no rebalance protocol.** Boundary follows the **mechanism/policy seam**: corruption-capable transitions → core SQL, guarded policy loops → client. | Kafka needs an assignor because partitions are exclusive *by protocol*; here the DB arbitrates per batch. |
+| D7 | Slot, single-owner, key namespace | slot = consumer `"<consumer>#k/N"`; **G2 = receive lock (batch issuance) + batch-granularity lease held logically across process→ack (§15)**; **slot identity + lease helpers `claim_slot`/`release_slot` are core**, arbitrated by the `pgque.partition_slot` table (all clients agree via shared rows, not a shared lock namespace); `partition_slot_status` view for owner+lag. **`slot_lock_key` removed** (v0.8 — no advisory-lock namespace). | Reader-callable; clients cannot diverge because arbitration is a server-side row. |
+| D8 | Worker→slot assignment | Client-side **claim loop** (§15) is still client *policy* (which slot to grab, poll cadence), but the arbitration is now **server-side rows**: `claim_slot` returns an epoch or NULL by inspecting/updating `pgque.partition_slot`; **no leader, no `PartitionAssignor`, no rebalance protocol.** Boundary follows the **mechanism/policy seam**: corruption-capable transitions → core SQL, guarded policy loops → client. | Kafka needs an assignor because partitions are exclusive *by protocol*; here the DB arbitrates per batch and per lease. |
 | D9 | Online resize (grow N) | Epoch-gated **drain-then-cutover** state machine in **core SQL** (`begin_resize`/`resize_ready`/`complete_resize`/`abort_resize`); client drives the drain loop, core re-validates on cutover. Immutable N in Phase 1 (§15 → *Online resize*). | Grow-N reshuffles `hash%N` and breaks G1/G2 for in-flight keys (Fabrizio); the log-native analog of Kinesis parent-shard drain. |
-| D10 | No member/heartbeat/lease table | **Rejected**, not just deferred: crash detection is free (session-death advisory-lock release — no `session.timeout.ms` to tune) and exclusivity is already G2. Observability via the read-only `pgque.partition_slot_status` view. | A lease table buys neither correctness nor recovery and re-adds heartbeat `UPDATE` churn. |
+| D10 | No per-interval heartbeat `UPDATE` churn | **Upheld for that specific cost, superseded as an argument against a lease table.** The v0.7 rejection targeted a *per-interval* heartbeat `UPDATE` — that churn is real and still rejected. **Batch-boundary lease renewal (D11) is new information:** the lease is renewed on the `receive`/`ack` writes that already happen per batch, so there is no per-interval churn to add. Observability still via the read-only `pgque.partition_slot_status` view (now reading lease columns, not `pg_locks`). | A *polling* heartbeat buys nothing; a lease renewed at batch boundaries costs no extra round-trips. |
+| D11 | Slot ownership = batch-granularity lease | **Session-scoped advisory locks rejected; lease adopted.** Session advisory locks are incompatible with transaction-mode poolers (PgBouncer/Supavisor — the Supabase ICP): the lock leaks onto the pooled backend and forces one session-mode connection per live worker, exhausting connections at high worker counts. The lease is plain short-transaction DML over `pgque.partition_slot` → works on one transaction-mode pool, no session state. Trade: crash-takeover latency = lease TTL remainder (a `session.timeout.ms`-equivalent knob returns), `clock_timestamp()`-based; worker ids must be unique per live worker. Fencing is automatic — takeover bumps `epoch`, a zombie's next `receive`/`ack` raises. | Fabrizio review: pooler incompatibility + connection floor. Worker→slot redistribution as workers come and go must be kept (static pinning alone was insufficient), so the lease must arbitrate live claims, not just pin — distinct from the out-of-scope dynamic-N rebalancing (§4). |
 
 ## 8. Implementation details
 
@@ -165,20 +174,46 @@ optimization is future (R6).
   `insert_event(…, ev_extra1 => partition_key, …)`. SECURITY DEFINER, pinned
   search_path; revoke public, grant `pgque_writer`.
 - **Tables (created in Phase 1, `if not exists`):** `partition_consumer`
-  (N persistence) and `partition_block` (Phase-2 marker, empty in Phase 1 so
-  test assertions are well-formed). Both revoked from app roles (the
-  `dead_letter` pattern, `dlq.sql:236`); written only inside SECURITY DEFINER
-  functions.
+  (N persistence), `partition_slot` (lease rows, below), and `partition_block`
+  (Phase-2 marker, empty in Phase 1 so test assertions are well-formed). All
+  revoked from app roles (the `dead_letter` pattern, `dlq.sql:236`); written only
+  inside SECURITY DEFINER functions.
+- **`partition_slot(queue_id, co_name, slot, lease_owner text, lease_until
+  timestamptz, lease_ttl interval, epoch bigint)`:** one row per registered slot,
+  created by `subscribe_slot`. Primary key `(queue_id, co_name, slot)`; FK
+  `(queue_id, co_name) → partition_consumer on delete cascade` (a dropped consumer
+  drops its lease rows). `lease_owner` null when unleased; `epoch` starts at some
+  base and increments on every takeover of a free/expired lease (the fencing
+  token). Revoked from app roles.
 - **`subscribe_slot(queue, consumer, k int, n int)`:** validate `n>=1 and
   0<=k<n`; upsert persisted `n`, reject a changed `n` (D3); register
-  `"<consumer>#k/n"`. Idempotent for the same `(k,n)`.
-- **`receive_partitioned(queue, consumer, k int, n int, …)`:** after casting
-  `k,n` to int, `next_batch` + `get_batch_cursor(…, i_extra_where =>
+  `"<consumer>#k/n"`; create the `partition_slot` row for `k` (unleased).
+  Idempotent for the same `(k,n)`.
+- **`claim_slot(queue, consumer, k int, worker text, ttl interval default
+  '30 seconds')` → bigint (epoch):** validate `ttl >= '1 second'`. Under a row
+  lock on the `partition_slot` row: if the lease is live and owned by another
+  worker → return NULL (steered away); if owned by `worker` → renew
+  (`lease_until = clock_timestamp() + ttl`), return the **same** epoch; if free or
+  **expired** (`lease_until <= clock_timestamp()` or `lease_owner is null`) → take
+  over: set `lease_owner = worker`, `lease_until = clock_timestamp() + ttl`, **bump
+  `epoch`**, return the new epoch. Grace rule: an expired lease that no successor
+  has taken may be renewed by its own worker (still its epoch — no heir existed, so
+  it is safe).
+- **`release_slot(queue, consumer, k int, worker text)` → boolean:** owner-only.
+  If `worker` holds the lease, clear it (`lease_owner = null`) and return true;
+  otherwise return false. Callable only at a batch boundary (§15).
+- **`receive_partitioned(queue, consumer, k int, n int, worker text, …)`:** after
+  casting `k,n` to int, **require `worker` to hold the live lease on slot `k`**
+  (raise otherwise — server-enforced G2); **renew the lease** (batch-boundary
+  heartbeat); then `next_batch` + `get_batch_cursor(…, i_extra_where =>
   format('and (hashtextextended(ev_extra1,0) %% %s + %s) %% %s = %s', n,n,n,k))`.
-  SECURITY DEFINER (§6); granted `pgque_reader`. **Returns the current
-  `partition_consumer.epoch`** so a handler can stamp it into side effects as a
-  user-space **fencing token** (a zombie worker on an old epoch is then detectable
-  downstream) — this is the consumer for the `epoch` column (D9, §15).
+  SECURITY DEFINER (§6); granted `pgque_reader`. **Returns the current lease
+  `epoch`** so a handler can stamp it into side effects as a user-space **fencing
+  token** (a zombie worker on an old epoch is then detectable downstream) — this is
+  the consumer for the `epoch` column (D9, D11, §15).
+- **`ack_partitioned(queue, consumer, k int, n int, worker text)`:** same lease
+  precondition and renewal as `receive_partitioned` — a non-owner (e.g. a zombie
+  after takeover) raises instead of acking, which is the fencing behavior.
 - **`pause` (Phase 2):** on nack of `K#i`, upsert `partition_block(sub_id, K,
   head_ev_id => ev_id)`. A later event of a blocked key (open marker with
   `head_ev_id < ev_id`) is **deferred** (see §11 O1 for the missing primitive),
@@ -190,14 +225,14 @@ optimization is future (R6).
   dead_letter.dl_consumer_id`) — `sub_id` and `co_id` are different ID spaces
   (`dlq.sql:24,75-85`, `pgque.sql:170-183`); do not compare them directly.
 - **Teardown:** `unsubscribe_slot` removes the slot subscription (the
-  `partition_block` FK cascades). Note `unregister_consumer` cascades
-  `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
+  `partition_slot` and `partition_block` FKs cascade). Note `unregister_consumer`
+  cascades `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
   documented.
 - **Grants:** producer → `pgque_writer`; `subscribe_slot`/`unsubscribe_slot`/
-  `receive_partitioned`/`slot_lock_key`/`claim_slot`/`release_slot` and `select` on
-  `partition_slot_status` → `pgque_reader`; `partition_consumer`/`partition_block`
-  revoked from all app roles; `get_batch_cursor` stays admin-only. Deny-by-default
-  re-applied.
+  `receive_partitioned`/`ack_partitioned`/`claim_slot`/`release_slot` and `select`
+  on `partition_slot_status` → `pgque_reader`;
+  `partition_consumer`/`partition_slot`/`partition_block` revoked from all app
+  roles; `get_batch_cursor` stays admin-only. Deny-by-default re-applied.
 
 ## 9. Tests plan (red/green TDD), CI PG 14–18
 
@@ -208,6 +243,7 @@ optimization is future (R6).
   key on two slots. (No existing test guards intra-batch `ev_id` order.)
 - **T-retry-affinity:** nack a keyed event; `maint_retry_events()` +
   `force_next_tick` + `ticker()`; assert redelivery to the **same** slot only.
+  Implemented in `tests/test_partition_keys.sql`.
 - **T-G2-block / T-G2-parallel:** same slot → second worker blocks (mirror
   `two_session_receive_lock.sh`); different slots → neither blocks.
 - **T-no-drop:** keys across all slots in one window; all N slots; union = all
@@ -218,10 +254,20 @@ optimization is future (R6).
   `get_batch_cursor` directly (`42501`, mirror `test_security_get_batch_cursor.sql`);
   non-integer/out-of-range `n`,`k` rejected.
 - **T-N-invariant:** `subscribe_slot(…,k,n)` idempotent; `(…,k,n2≠n)` raises.
-- **T-claim (assignment):** two sessions take per-slot `pg_try_advisory_lock` over
-  `N=2`; assert they land on **distinct** slots (disjoint locks), a third session
-  gets neither, and releasing one frees exactly that slot for the third. Liveness
-  only — correctness is already covered by T-G2-block.
+- **T-lease (claim/renew/steer/release):** over `N=2`, worker `wk-a` claims slot 0
+  (epoch returned); a second worker `wk-b` claiming slot 0 gets NULL (steered
+  away); the owner re-claiming slot 0 renews with the **same** epoch; `wk-b` claims
+  the free slot 1; `release_slot` by a non-owner returns false, by the owner
+  returns true and frees the slot; a short-TTL lease, once expired, is taken over
+  by another worker with an **epoch bump** (`clock_timestamp()`-based crash
+  recovery). Correctness of single-in-flight is already covered by T-G2-block.
+- **T-fencing:** a zombie opens a batch under a short lease and stalls past the
+  TTL; the heir takes over (epoch bump) and is re-issued the **same** still-open
+  batch idempotently (engine receive lock); the zombie's `ack_partitioned` then
+  **raises** (owner/epoch mismatch) instead of silently double-acking; the heir
+  acks normally. Also asserts `receive_partitioned`/`ack_partitioned` by a worker
+  holding no lease raise (server-enforced G2). Implemented in
+  `tests/test_partition_keys.sql`.
 - **T-no-bloat (happy path):** all-ack of M events → zero `retry_queue`/
   `dead_letter`/`partition_block` rows (guard the `partition_block` clause with
   `to_regclass('pgque.partition_block') is not null`) and no per-event
@@ -343,44 +389,52 @@ member, with no per-message arbitration). Here the **database is the
 coordinator**, so assignment is pull-based and self-balancing.
 
 **Claim loop (client-side).** Each worker iterates candidate slots `0..N-1` and
-attempts a non-blocking `pg_try_advisory_lock(pgque.slot_lock_key(queue, consumer,
-k))` — `slot_lock_key` is a **core** stateless function (D7) so Go/Python/TS/CLI
-share one advisory-lock namespace and cannot silently collide on a slot. The
-first slot it locks, it owns: it calls `receive_partitioned(queue, consumer, k, N,
-…)` for that slot and keeps it **sticky-until-idle** (re-poll the same slot while
-it has work; release the advisory lock **only at a batch boundary** — after
-ack/finish — on drain or shutdown, since releasing mid-batch hands the successor
-the same still-open batch (§12); on shutdown, finish or explicitly abandon the
-open batch first). On a failed try-lock
-the worker moves to the next slot — it never blocks waiting on a busy slot.
+calls `pgque.claim_slot(queue, consumer, k, worker, ttl)` — a **core** function
+(D7, D11) that arbitrates over the shared `partition_slot` rows, so Go/Python/TS/CLI
+cannot silently collide on a slot. A non-NULL return (the lease epoch) means the
+worker owns the slot; NULL means another worker holds a live lease and the worker
+moves to the next slot — it never blocks waiting on a busy slot. The first slot it
+claims, it owns: it calls `receive_partitioned(queue, consumer, k, N, worker, …)`
+for that slot and keeps it **sticky-until-idle** (re-poll the same slot while it
+has work; each `receive`/`ack` renews the lease, so a working slot never expires).
+It calls `release_slot` **only at a batch boundary** — after ack/finish — on drain
+or shutdown, since releasing mid-batch hands the successor the same still-open
+batch (§12); on shutdown, finish or explicitly abandon the open batch first. A
+worker that simply dies never calls `release_slot`; the lease expires after its
+TTL and the slot becomes claimable (see *Scale-down / crash* below).
 
-- **Symmetric (N workers, N slots).** Each worker locks one distinct slot; the
-  try-lock makes ownership disjoint with zero coordination. Sequential per-key
+- **Symmetric (N workers, N slots).** Each worker claims one distinct slot; the
+  lease makes ownership disjoint with zero coordination. Sequential per-key
   consumption follows from G1 (routing) + the single owner.
 - **Fan-in (N slots, M<N workers).** Each worker cycles its claim loop and holds
-  ≈⌈N/M⌉ slots.
-- **Scale-up (M → M′ workers).** New workers run the same loop and lock whatever
-  slots are unclaimed or get released at a batch boundary. No revocation, no
+  ≈⌈N/M⌉ slots, renewing each held lease as it polls.
+- **Scale-up (M → M′ workers).** New workers run the same loop and claim whatever
+  slots are unleased or get released at a batch boundary. No revocation, no
   leader recompute — convergence to ≈N/M′ slots per worker within one claim cycle.
-- **Scale-down / crash.** The dead session's advisory lock is released by Postgres,
-  so its slots are immediately reclaimable — there is no `session.timeout.ms`
-  equivalent and no rebalance to trigger.
+- **Scale-down / crash.** A dead worker never releases; its leases **expire after
+  the TTL** (`clock_timestamp()`-based) and the slots then become claimable, with
+  an `epoch` bump fencing the zombie. Unlike session-death advisory-lock release,
+  takeover is not instant — the recovery latency is the remaining TTL, the
+  `session.timeout.ms`-equivalent knob (D11). Still no rebalance to trigger.
 
-**Two locks, different jobs.**
+**Two mechanisms, different jobs.**
 
 - **G2 receive lock** (`for update of s` on the subscription, *blocking*, §2)
   protects the **log and cursor**: one active batch per slot; concurrent
   `receive()` returns the *same* batch idempotently (§12); the cursor advances
   only on ack. No client behavior can obtain two divergent batches, lose events,
   or reorder *delivery*.
-- **Advisory slot claim** (session-scoped, non-blocking `try`, held across
-  receive→process→ack) protects **processing exclusivity** — it closes the
-  process→ack gap the receive lock does not span, and is therefore *load-bearing
-  for G2's "single in-flight processor," not pure liveness.* A client that skips
-  it can put two workers concurrently on the same open batch: redundant
-  reprocessing plus interleaved same-key side effects (an effect-level order
-  violation) — though never event loss, never cursor corruption, never cross-slot
-  damage; at-least-once always holds. Even spread is the same lock's second job.
+- **Batch-granularity slot lease** (a `partition_slot` row, held logically across
+  receive→process→ack, renewed on every `receive`/`ack`) protects **processing
+  exclusivity** — it closes the process→ack gap the receive lock does not span, and
+  is therefore *load-bearing for G2's "single in-flight processor," not pure
+  liveness.* Unlike the v0.7 advisory claim, the lease is **server-enforced**:
+  `receive_partitioned`/`ack_partitioned` refuse to act for a worker that does not
+  hold the live lease, so a client **cannot** skip it to put two workers on the
+  same open batch — the second worker's calls raise. A zombie that stalls past its
+  TTL is taken over (epoch bump) and fenced: its next `receive`/`ack` raises rather
+  than double-acking. The residual overlap window is the TTL remainder, not
+  unbounded. Even spread is the same lease's second job.
 
 **What claiming does not give you.** Even spread under *key skew*: a hot slot
 stays hot no matter who owns it (R3). First-free claiming can be made fairer with
@@ -412,48 +466,54 @@ can degrade one worker's spread, stall, or cause duplicate/interleaved processin
 on the *one slot it targets* — but can never corrupt the log, the cursor, or
 another slot (which is exactly why the *claim helpers* are core, D7). Same
 two-lock discipline as above: the log/cursor ride a blocking lock the DB always
-enforces; per-slot processing exclusivity + distribution ride the session claim.
+enforces; per-slot processing exclusivity + distribution ride the lease.
 
 - **Core SQL (mechanism):** the receive lock (G2), the hash-routing filter, the
-  enforced N (D3), the shared `slot_lock_key`/`claim_slot`/`release_slot`, the
+  enforced N (D3), the shared `claim_slot`/`release_slot` lease arbitration and its
+  server-enforced check inside `receive_partitioned`/`ack_partitioned`, the
   read-only `partition_slot_status` view, and the resize state machine (below).
 - **Client library (policy):** the claim loop, the receive→ack loop, the resize
   drain-driver. A buggy loop loses spread or stalls; it cannot corrupt order.
 - **User space (policy):** choosing N, static-pin-vs-claim, the plain-queue
   mutual-exclusion recipe (§12), when/whether to resize, and the R7 lag alert.
 
-**No member/heartbeat/lease table in core (D10) — rejected as redundant.** A
-lease/heartbeat table (Kafka group coordinator, Kinesis KCL DynamoDB lease table)
-does two jobs pgque already does better: (1) **crash detection** — a Postgres
-session-scoped advisory lock releases when the connection dies — with no
-app-layer `leaseDuration`/`session.timeout.ms` to tune. (Two honest caveats: a
-*silent* partition holds the lock + open batch until TCP keepalive fires — so
-worker connections should set `tcp_keepalives_idle/interval/count` or
-`tcp_user_timeout`, the one real knob; and lock-release ≠ process-death, so a
-partitioned worker can still emit side effects while the successor is re-issued
-the same open batch — the same zombie class as a lease, just a narrower window and
-without the churn. Fencing token: `receive_partitioned` returns the `epoch` so
-handlers can stamp it, §8.) (2) **exclusive ownership** — the receive lock +
-sticky session claim across process→ack (G2, §2), not the receive lock alone. It buys neither, and adds heartbeat `UPDATE` churn
-(the per-row bloat pgque exists to avoid) plus TTL/clock tuning. Its one genuine
-benefit — *who owns what, how far behind* — is delivered writeless by
-**`pgque.partition_slot_status`**, a read-only view over `pg_locks` (owner pid) +
-subscription cursors (per-slot lag) + resize state. An externalized lease record
-stays a **user-space opt-in**, never a correctness or recovery dependency.
+**Batch-granularity lease, not a per-interval heartbeat table (D10, D11).** The
+rejected design (v0.7 D10) was a *polling* lease/heartbeat table (Kafka group
+coordinator, Kinesis KCL DynamoDB lease table) whose worker threads issue a
+periodic `UPDATE` to prove liveness — that per-interval churn is the per-row bloat
+pgque exists to avoid, and it stays rejected. The v0.8 `partition_slot` lease
+carries the *same* ownership metadata but pays none of that cost: it is renewed
+**only on the `receive`/`ack` writes that already happen at each batch boundary**
+(D11), so a working slot's heartbeat rides existing round-trips — zero extra
+traffic, no polling thread. It does the two jobs a coordinator table does:
+(1) **crash detection** — an unrenewed lease expires after its TTL
+(`clock_timestamp()`-based); the recovery latency is the TTL remainder, the one
+knob (the `session.timeout.ms`-equivalent, back by design because session-death
+release is unavailable under pooling — D11); (2) **exclusive ownership** —
+server-enforced on `receive`/`ack`, with `epoch` fencing the zombie. Its
+ownership+lag benefit — *who owns what, how far behind* — is delivered by
+**`pgque.partition_slot_status`**, a read-only view over the `partition_slot`
+lease columns (`lease_owner`/`lease_until`/`epoch`) + subscription cursors
+(per-slot lag) + resize state. Reading lease columns rather than `pg_locks` means
+the view **works through poolers** (a backend pid behind PgBouncer was meaningless
+anyway). Zombie caveat: lease-expiry ≠ process-death, so a partitioned worker can
+still emit side effects until the TTL lapses while the successor is re-issued the
+same open batch — bounded by the TTL and fenced by `epoch` (`receive_partitioned`
+returns it so handlers can stamp it, §8).
 
-**Connection-pooler caveat (matters for the Supabase ICP).** The claim is a
-*session-scoped* advisory lock held sticky across batches (a `txn`-scoped lock
-can't — it must span receive→process→ack). Under **transaction-mode pooling**
-(PgBouncer/Supavisor transaction mode — Supabase's default) it doesn't merely fail
-to persist: it **leaks onto the pooled backend**, which keeps holding it while
-serving other clients → the slot looks permanently owned and every other worker's
-try-lock fails until that backend recycles (a wedge, not just a miss). Cheaper
-shape than "all-session-mode": only the **claim-holding** connection must be
-session-mode/direct; `receive_partitioned`/ack traffic can stay on the transaction
-pooler — materially easier where direct connections are scarce (same zombie
-semantics if the claim connection alone dies). Document as a Phase-1 constraint;
-if an ICP genuinely can't hold one session connection per worker, an opt-in
-user-space lease is the fallback — not core schema.
+**Works through a transaction-mode pooler (matters for the Supabase ICP).** Every
+lease operation — `claim_slot`, `release_slot`, and the renewals inside
+`receive_partitioned`/`ack_partitioned` — is plain short-transaction DML over
+`partition_slot`. It holds **no session state**, so it runs correctly over **one**
+PgBouncer/Supavisor transaction-mode pool (Supabase's default): no session-mode
+connection, no second pool, no connection-per-worker floor, no per-backend lock
+leak. This is the reason the lease replaced the v0.7 session advisory claim (D11):
+that claim leaked onto the pooled backend under transaction pooling and forced one
+session-mode connection per live worker, exhausting connections at high worker
+counts. The honest trade is crash-takeover latency: the lease TTL remainder rather
+than instant session-death release, and worker ids must be unique per live worker
+(document). No `tcp_keepalives_*` tuning is needed — a silent partition is handled
+by ordinary TTL expiry, not by connection-death detection.
 
 ### Online resize — grow N without breaking order (D9, Phase 3)
 
@@ -498,6 +558,28 @@ key never drains).
 
 ## 16. Changelog
 
+- **v0.8 (draft):** **Slot ownership moved from a session-scoped advisory lock to a
+  batch-granularity lease in core SQL** (new D11; D7/D8/D10 updated, `slot_lock_key`
+  removed). Credit: **Fabrizio review** — session advisory locks are incompatible
+  with transaction-mode poolers (the lock leaks onto the pooled backend) and force
+  one session-mode connection per live worker, exhausting connections at high
+  worker counts. New `pgque.partition_slot(queue_id, co_name, slot, lease_owner,
+  lease_until, lease_ttl, epoch)` table; `claim_slot`/`release_slot` arbitrate over
+  its rows; `receive_partitioned`/`ack_partitioned` gain a `worker` arg, **require
+  the live lease (server-enforced G2)**, and **renew it on every call** so the
+  heartbeat rides existing per-batch writes — no per-interval `UPDATE` churn (this
+  is why D10's lease-table rejection is superseded for the ownership mechanism,
+  while the per-interval-churn rejection stands). Fencing is automatic: takeover
+  bumps `epoch`, a zombie's next `receive`/`ack` raises. Everything is plain
+  short-transaction DML → one transaction-mode pool suffices; the
+  connection-pooler caveat became a positive statement. `partition_slot_status`
+  now reads lease columns (`lease_owner`/`lease_until`/`epoch`) instead of
+  `pg_locks`, so it works through poolers. Honest trade: crash-takeover latency is
+  the lease TTL remainder (a `session.timeout.ms`-equivalent knob returns);
+  `clock_timestamp()`-based; worker ids must be unique per live worker. Rebalancing
+  is kept (static pinning alone was insufficient), so the lease arbitrates live
+  claims. Tests: T-claim → **T-lease**, added **T-fencing**; T-retry-affinity's
+  "not yet implemented" note cleared (now in `tests/test_partition_keys.sql`).
 - **v0.7 (draft):** Fabrizio review (he tested the repro) + advisor + workflow.
   Corrected the receive-lock claim (core *does* coordinate; the real hazard is the
   process→ack gap, §12) — verified in `pgque.sql:5761/5798/5866/5905` +
@@ -558,10 +640,10 @@ key never drains).
 Canonical user-story layer for this feature — the shared language the spec, the
 public brief, and the acceptance suite all speak. Single-session facets are
 proven by `tests/acceptance/us12_partition_keys.sql`; the cross-session facets of
-US-12.4 and US-12.5 (a concurrent worker blocking on the receive lock, claim
-exclusivity across live sessions, and connection-death crash recovery) need two
-sessions and are covered by `tests/two_session_slot_claim.sh` (mirrors
-`tests/two_session_receive_lock.sh`).
+US-12.4 and US-12.5 (a concurrent worker blocking on the receive lock, lease
+exclusivity across live workers, and lease-expiry crash recovery with epoch
+fencing) need two sessions and are covered by `tests/two_session_slot_claim.sh`
+(mirrors `tests/two_session_receive_lock.sh`).
 
 - **US-12.1 — Keyed send.** As an event producer, I want `pgque.send(queue,
   type, payload, partition_key)` so each event carries its tenant key (stored in
@@ -584,27 +666,30 @@ sessions and are covered by `tests/two_session_slot_claim.sh` (mirrors
   - *Test:* `us12_partition_keys.sql` — US-12.3.
 - **US-12.4 — Single processor per slot.** As an operator, a second worker on the
   same slot never obtains a divergent batch (engine receive lock returns the same
-  active batch idempotently); the advisory claim steers it away entirely.
+  active batch idempotently); the lease steers it away entirely.
   - *Accept:* re-`receive_partitioned` on an open slot returns the same batch
-    (single-session facet); a concurrent second session blocks then re-fetches the
-    same batch, and the advisory claim routes it to a different slot (cross-session).
+    (single-session facet); a second worker claiming the same slot gets NULL and is
+    routed to a different slot by the lease (cross-worker).
   - *Test:* `us12_partition_keys.sql` — US-12.4 (single-session);
     `tests/two_session_slot_claim.sh` (cross-session).
 - **US-12.5 — Claim/release + crash recovery.** As a worker, I claim a free slot
-  via `pgque.claim_slot` and release at a batch boundary via `pgque.release_slot`;
-  when a claiming session dies its slot becomes claimable immediately.
-  - *Accept:* `claim_slot` takes a free slot, `release_slot` frees it, the slot is
-    re-claimable, and `slot_lock_key` matches the pinned formula (single-session);
-    a dead claimant's slot is instantly re-claimable by another session
-    (cross-session).
+  via `pgque.claim_slot` (returning the lease epoch) and release at a batch
+  boundary via `pgque.release_slot`; when a claiming worker dies its lease expires
+  after the TTL and the slot is then taken over with an epoch bump that fences the
+  zombie.
+  - *Accept:* `claim_slot` takes a free slot (epoch returned), an owner re-claim
+    renews with the same epoch, `release_slot` frees it owner-only and the slot is
+    re-claimable (single-session); an expired lease is taken over by another worker
+    with a bumped epoch (cross-session crash recovery).
   - *Test:* `us12_partition_keys.sql` — US-12.5 (single-session);
     `tests/two_session_slot_claim.sh` (crash recovery).
 - **US-12.6 — Observability.** As an operator, `pgque.partition_slot_status` shows
-  each slot, its owner pid (null if unclaimed), and cursor lag, so I can alert on a
-  stalled slot (rotation-pinning risk R7).
+  each slot, its `lease_owner` (null if unleased), and cursor lag, so I can alert on
+  a stalled slot (rotation-pinning risk R7) — and it works through a pooler because
+  it reads lease columns, not `pg_locks`.
   - *Accept:* the view has one row per registered slot with the right `n`,
-    `owner_pid` null when unclaimed and equal to the holder's backend pid when
-    claimed (clearing on release), and a non-negative `pending_events` lag.
+    `lease_owner` null when unleased and equal to the holding worker id when leased
+    (clearing on release), and a non-negative `pending_events` lag.
   - *Test:* `us12_partition_keys.sql` — US-12.6.
 - **US-12.7 — Enforced N.** As an operator, a worker calling with the wrong N is
   rejected with a clear error, never silently misrouted.

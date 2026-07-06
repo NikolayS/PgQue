@@ -5,14 +5,17 @@
 --
 -- Covers user stories US-12.1 .. US-12.7; see
 -- blueprints/partition-keys/SPEC.md. Producer idempotency (US-13.x) is
--- covered by tests/test_send_idem.sql. dblink gives the second real
--- backend for US-12.4/12.5 (extensions are allowed in tests/); the
--- two-process variant is tests/two_session_slot_claim.sh.
+-- covered by tests/test_send_idem.sql. The two-process variant of the
+-- lease stories is tests/two_session_slot_claim.sh.
+--
+-- Slot ownership is a batch-granularity LEASE (worker id + TTL + epoch)
+-- stored in pgque.partition_slot -- plain transactional DML, so it works
+-- under transaction-mode pooling and needs no session state. Ownership is
+-- per WORKER ID, not per backend: one session can exercise multi-worker
+-- scenarios, which is what the lease tests below do.
 --
 -- PgQ requires insert, ticker, and receive to be in separate transactions
 -- (snapshot visibility). Each DO block is a separate transaction.
-
-create extension if not exists dblink;
 
 -- ---------------------------------------------------------------------------
 -- US-12.1: keyed send lands in ev_extra1 (jsonb + text overloads)
@@ -86,7 +89,7 @@ begin
   perform pgque.ticker();
 end $$;
 
--- US-12.6 (pre-drain): view shows both slots, unclaimed, with lag
+-- US-12.6 (pre-drain): view shows both slots, unleased, with lag
 do $$
 declare
   v_rows int;
@@ -105,8 +108,8 @@ begin
 
   perform 1
   from pgque.partition_slot_status
-  where queue_name = 'pk_q' and consumer = 'w' and owner_pid is not null;
-  assert not found, 'US-12.6: unclaimed slots must show owner_pid is null';
+  where queue_name = 'pk_q' and consumer = 'w' and lease_owner is not null;
+  assert not found, 'US-12.6: unleased slots must show lease_owner is null';
 
   perform 1
   from pgque.partition_slot_status
@@ -122,7 +125,8 @@ begin
   raise notice 'PASS US-12.6: partition_slot_status shows slots, n, cursor lag';
 end $$;
 
--- Drain both slots into a temp capture table
+-- Drain both slots into a temp capture table. receive/ack require a live
+-- lease (G2 is server-enforced), so each slot is claimed first.
 create temp table pk_got (
   ord bigint generated always as identity,
   slot int not null,
@@ -135,28 +139,35 @@ declare
   v_slot int;
   v_msg pgque.message;
   v_cnt int;
+  v_epoch bigint;
 begin
   for v_slot in 0..1 loop
+    v_epoch := pgque.claim_slot('pk_q', 'w', v_slot, 'wk-main');
+    assert v_epoch is not null,
+      format('slot %s: claim of a free slot must return an epoch', v_slot);
+
     v_cnt := 0;
     for v_msg in
-      select * from pgque.receive_partitioned('pk_q', 'w', v_slot, 2, 100)
+      select * from pgque.receive_partitioned('pk_q', 'w', v_slot, 2, 'wk-main', 100)
     loop
       insert into pk_got (slot, msg_id, key)
       values (v_slot, v_msg.msg_id, v_msg.extra1);
       v_cnt := v_cnt + 1;
     end loop;
     assert v_cnt > 0, format('slot %s should receive at least one event', v_slot);
-    perform pgque.ack_partitioned('pk_q', 'w', v_slot, 2);
+    perform pgque.ack_partitioned('pk_q', 'w', v_slot, 2, 'wk-main');
 
     -- Same tick window is consumed: a second receive must return nothing.
     v_cnt := 0;
     for v_msg in
-      select * from pgque.receive_partitioned('pk_q', 'w', v_slot, 2, 100)
+      select * from pgque.receive_partitioned('pk_q', 'w', v_slot, 2, 'wk-main', 100)
     loop
       v_cnt := v_cnt + 1;
     end loop;
     assert v_cnt = 0,
       format('slot %s: no events expected after ack within one tick window', v_slot);
+
+    perform pgque.release_slot('pk_q', 'w', v_slot, 'wk-main');
   end loop;
 end $$;
 
@@ -226,7 +237,7 @@ begin
   -- receive with wrong n
   v_raised := false;
   begin
-    perform * from pgque.receive_partitioned('pk_q', 'w', 0, 3, 10);
+    perform * from pgque.receive_partitioned('pk_q', 'w', 0, 3, 'wk-main', 10);
   exception
     when others then
       v_raised := true;
@@ -247,7 +258,7 @@ begin
   -- slot out of range
   v_raised := false;
   begin
-    perform * from pgque.receive_partitioned('pk_q', 'w', 5, 2, 10);
+    perform * from pgque.receive_partitioned('pk_q', 'w', 5, 2, 'wk-main', 10);
   exception
     when others then v_raised := true;
   end;
@@ -264,7 +275,7 @@ begin
   -- ack with wrong n
   v_raised := false;
   begin
-    perform pgque.ack_partitioned('pk_q', 'w', 0, 3);
+    perform pgque.ack_partitioned('pk_q', 'w', 0, 3, 'wk-main');
   exception
     when others then v_raised := true;
   end;
@@ -274,79 +285,267 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- US-12.4 / US-12.5: claim/release + second session + crash recovery
--- (dblink gives a second real backend; tests/two_session_slot_claim.sh is
--- the two-process variant of the same stories.)
+-- US-12.4 / US-12.5: lease claim/release, exclusivity, expiry recovery.
+-- Leases are keyed by worker id, so exclusivity between two workers is
+-- provable in one session; tests/two_session_slot_claim.sh proves the same
+-- across two real backends.
 -- ---------------------------------------------------------------------------
 do $$
 declare
-  v_ok boolean;
-  v_pid int;
-  v_i int;
+  v_e1 bigint;
+  v_e2 bigint;
+  v_owner text;
 begin
-  perform dblink_connect('pk_s2',
-    format('host=localhost port=%s dbname=%s user=%s',
-      current_setting('port'), current_database(), current_user));
+  -- Free slot: claim returns an epoch.
+  v_e1 := pgque.claim_slot('pk_q', 'w', 0, 'wk-a');
+  assert v_e1 is not null, 'US-12.5: claim of a free slot must return an epoch';
 
-  -- This session claims slot 0.
-  assert pgque.claim_slot('pk_q', 'w', 0),
-    'US-12.5: claim of a free slot must succeed';
+  -- A second worker cannot claim a leased slot (steered away, US-12.4).
+  assert pgque.claim_slot('pk_q', 'w', 0, 'wk-b') is null,
+    'US-12.4: second worker must not claim a leased slot';
 
-  -- Second session cannot claim slot 0 (steered away, US-12.4) ...
-  select ok into v_ok
-  from dblink('pk_s2',
-    $q$select pgque.claim_slot('pk_q', 'w', 0)$q$) as t(ok boolean);
-  assert not v_ok, 'US-12.4: second session must not claim an owned slot';
+  -- Re-claim by the owner renews the lease, same epoch (no takeover).
+  v_e2 := pgque.claim_slot('pk_q', 'w', 0, 'wk-a');
+  assert v_e2 = v_e1,
+    format('US-12.5: owner re-claim must renew with the same epoch, got % -> %', v_e1, v_e2);
 
   -- ... and lands on the free slot 1 instead.
-  select ok into v_ok
-  from dblink('pk_s2',
-    $q$select pgque.claim_slot('pk_q', 'w', 1)$q$) as t(ok boolean);
-  assert v_ok, 'US-12.4: second session must claim the free slot';
+  assert pgque.claim_slot('pk_q', 'w', 1, 'wk-b') is not null,
+    'US-12.4: second worker must claim the free slot';
 
-  -- Now slot 1 is owned elsewhere: this session cannot take it.
-  assert not pgque.claim_slot('pk_q', 'w', 1),
-    'US-12.4: claim of a slot owned by another session must fail';
-
-  -- US-12.6: owner_pid reflects the claim holders.
-  select owner_pid into v_pid
+  -- US-12.6: lease_owner reflects the lease holders.
+  select lease_owner into v_owner
   from pgque.partition_slot_status
   where queue_name = 'pk_q' and consumer = 'w' and slot = 0;
-  assert v_pid = pg_backend_pid(),
-    format('US-12.6: slot 0 owner_pid must be this backend, got %s', v_pid);
+  assert v_owner = 'wk-a',
+    format('US-12.6: slot 0 lease_owner must be wk-a, got %s', v_owner);
 
-  select owner_pid into v_pid
+  select lease_owner into v_owner
   from pgque.partition_slot_status
   where queue_name = 'pk_q' and consumer = 'w' and slot = 1;
-  assert v_pid is not null and v_pid <> pg_backend_pid(),
-    'US-12.6: slot 1 owner_pid must be the second session';
+  assert v_owner = 'wk-b',
+    format('US-12.6: slot 1 lease_owner must be wk-b, got %s', v_owner);
 
-  -- US-12.5: release at a batch boundary frees the slot.
-  assert pgque.release_slot('pk_q', 'w', 0),
-    'US-12.5: release of a held slot must return true';
-  assert not pgque.release_slot('pk_q', 'w', 0),
-    'US-12.5: release of a non-held slot must return false';
+  -- US-12.5: release at a batch boundary frees the slot; only the owner can.
+  assert not pgque.release_slot('pk_q', 'w', 0, 'wk-b'),
+    'US-12.5: release by a non-owner must return false';
+  assert pgque.release_slot('pk_q', 'w', 0, 'wk-a'),
+    'US-12.5: release by the owner must return true';
+  assert not pgque.release_slot('pk_q', 'w', 0, 'wk-a'),
+    'US-12.5: release of an unleased slot must return false';
 
-  select owner_pid into v_pid
+  select lease_owner into v_owner
   from pgque.partition_slot_status
   where queue_name = 'pk_q' and consumer = 'w' and slot = 0;
-  assert v_pid is null, 'US-12.6: released slot must show owner_pid null';
+  assert v_owner is null, 'US-12.6: released slot must show lease_owner null';
 
-  -- US-12.5: session death releases the claim immediately (crash recovery).
-  perform dblink_disconnect('pk_s2');
-  v_ok := false;
-  for v_i in 1..100 loop
-    if pgque.claim_slot('pk_q', 'w', 1) then
-      v_ok := true;
-      exit;
-    end if;
-    perform pg_sleep(0.1);
+  perform pgque.release_slot('pk_q', 'w', 1, 'wk-b');
+
+  raise notice 'PASS US-12.4: second worker steered away from leased slot';
+  raise notice 'PASS US-12.5: lease claim/release + owner-only release';
+end $$;
+
+-- US-12.5 (crash recovery): an expired lease is taken over with an epoch
+-- bump. The dead worker never releases -- expiry is the recovery path.
+do $$
+declare
+  v_dead bigint;
+  v_new bigint;
+begin
+  v_dead := pgque.claim_slot('pk_q', 'w', 0, 'wk-dead', '1 second');
+  assert v_dead is not null, 'US-12.5: short-TTL claim must succeed';
+
+  -- Lease still live: takeover refused.
+  assert pgque.claim_slot('pk_q', 'w', 0, 'wk-heir') is null,
+    'US-12.5: live lease must not be taken over';
+
+  perform pg_sleep(1.2);
+
+  v_new := pgque.claim_slot('pk_q', 'w', 0, 'wk-heir');
+  assert v_new is not null,
+    'US-12.5: expired lease must be claimable by another worker';
+  assert v_new > v_dead,
+    format('US-12.5: takeover must bump the epoch (fencing), got % -> %', v_dead, v_new);
+
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-heir');
+  raise notice 'PASS US-12.5: expired lease taken over with epoch bump';
+end $$;
+
+-- G2 enforcement: receive/ack without holding the lease must raise.
+do $$
+declare
+  v_raised boolean;
+begin
+  v_raised := false;
+  begin
+    perform * from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-nobody', 10);
+  exception
+    when others then v_raised := true;
+  end;
+  assert v_raised, 'G2: receive without a lease must raise';
+
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-a');
+  v_raised := false;
+  begin
+    perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-b');
+  exception
+    when others then v_raised := true;
+  end;
+  assert v_raised, 'G2: ack by a non-owner must raise';
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-a');
+
+  raise notice 'PASS G2: receive/ack are lease-fenced';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Zombie fencing: after a takeover, the old worker's ack raises and the
+-- new owner is re-issued the same open batch (at-least-once, never lost).
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  perform pgque.send('pk_q', 'ev', '{"fence":1}'::jsonb, 'tenant-a');
+  perform pgque.send('pk_q', 'ev', '{"fence":2}'::jsonb, 'tenant-a');
+end $$;
+
+do $$
+begin
+  perform pgque.force_next_tick('pk_q');
+  perform pgque.ticker();
+end $$;
+
+do $$
+declare
+  v_zombie bigint;
+  v_heir bigint;
+  v_first bigint[];
+  v_second bigint[];
+  v_raised boolean;
+begin
+  -- Zombie opens a batch under a short lease, then stalls past the TTL.
+  v_zombie := pgque.claim_slot('pk_q', 'w', 0, 'wk-zombie', '1 second');
+  assert v_zombie is not null, 'fencing: zombie claim must succeed';
+
+  select array_agg(m.msg_id order by m.msg_id) into v_first
+  from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-zombie', 100) as m;
+  assert cardinality(v_first) = 2,
+    format('fencing: zombie must open a 2-event batch, got %s', coalesce(cardinality(v_first), 0));
+
+  perform pg_sleep(1.2);
+
+  -- Heir takes over the expired lease (epoch bump) and is re-issued the
+  -- SAME still-open batch idempotently (engine receive lock, US-12.4).
+  v_heir := pgque.claim_slot('pk_q', 'w', 0, 'wk-heir');
+  assert v_heir is not null and v_heir > v_zombie,
+    'fencing: heir must take over with an epoch bump';
+
+  select array_agg(m.msg_id order by m.msg_id) into v_second
+  from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-heir', 100) as m;
+  assert v_second = v_first,
+    'fencing: heir must be re-issued the zombie''s open batch, not a divergent one';
+
+  -- The zombie is fenced: its ack raises instead of silently double-acking.
+  v_raised := false;
+  begin
+    perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-zombie');
+  exception
+    when others then v_raised := true;
+  end;
+  assert v_raised, 'fencing: zombie ack after takeover must raise';
+
+  -- The heir acks normally.
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-heir');
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-heir');
+
+  raise notice 'PASS fencing: zombie ack raises after takeover; heir re-issued same batch';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- T-retry-affinity (SPEC section 9): a nacked keyed event is redelivered to
+-- the SAME slot only (ev_extra1 preserved through maint_retry_events).
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  perform pgque.send('pk_q', 'ev', '{"retry":1}'::jsonb, 'tenant-a');  -- slot 0
+  perform pgque.send('pk_q', 'ev', '{"retry":1}'::jsonb, 'tenant-b');  -- slot 1
+end $$;
+
+do $$
+begin
+  perform pgque.force_next_tick('pk_q');
+  perform pgque.ticker();
+end $$;
+
+create temp table pk_retry (retried_id bigint);
+
+do $$
+declare
+  v_msg pgque.message;
+  v_cnt int := 0;
+begin
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-main');
+  for v_msg in
+    select * from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-main', 100)
+  loop
+    v_cnt := v_cnt + 1;
+    assert v_msg.extra1 = 'tenant-a',
+      format('retry-affinity: slot 0 must only see tenant-a, got %s', v_msg.extra1);
+    insert into pk_retry values (v_msg.msg_id);
+    perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds', 'retry-affinity test');
   end loop;
-  assert v_ok, 'US-12.5: dead session''s slot must become claimable';
-  perform pgque.release_slot('pk_q', 'w', 1);
+  assert v_cnt = 1, format('retry-affinity: expected 1 event on slot 0, got %s', v_cnt);
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main');
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-main');
+end $$;
 
-  raise notice 'PASS US-12.4: second session steered away from owned slot';
-  raise notice 'PASS US-12.5: claim/release + crash recovery';
+-- Re-inject the retry row and open a new tick window.
+do $$
+begin
+  perform pgque.maint_retry_events();
+end $$;
+
+do $$
+begin
+  perform pgque.force_next_tick('pk_q');
+  perform pgque.ticker();
+end $$;
+
+do $$
+declare
+  v_msg pgque.message;
+  v_retried bigint;
+  v_seen boolean := false;
+begin
+  select retried_id into v_retried from pk_retry;
+
+  -- Slot 1 must NOT see the retried event (only its own pending tenant-b).
+  perform pgque.claim_slot('pk_q', 'w', 1, 'wk-main');
+  for v_msg in
+    select * from pgque.receive_partitioned('pk_q', 'w', 1, 2, 'wk-main', 100)
+  loop
+    assert v_msg.msg_id <> v_retried,
+      'retry-affinity: retried event must not leak to another slot';
+  end loop;
+  perform pgque.ack_partitioned('pk_q', 'w', 1, 2, 'wk-main');
+  perform pgque.release_slot('pk_q', 'w', 1, 'wk-main');
+
+  -- Slot 0 must see it again, same key, retry counter incremented.
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-main');
+  for v_msg in
+    select * from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-main', 100)
+  loop
+    if v_msg.msg_id = v_retried then
+      v_seen := true;
+      assert v_msg.extra1 = 'tenant-a',
+        'retry-affinity: retried event must keep its partition key';
+      assert v_msg.retry_count >= 1,
+        'retry-affinity: redelivered event must carry retry_count >= 1';
+    end if;
+  end loop;
+  assert v_seen, 'retry-affinity: retried event must be redelivered to its own slot';
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main');
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-main');
+
+  raise notice 'PASS T-retry-affinity: nacked keyed event redelivered to the same slot only';
 end $$;
 
 -- ---------------------------------------------------------------------------
@@ -363,6 +562,12 @@ begin
   where q.queue_name = 'pk_q' and pc.co_name = 'w';
   assert not found,
     'unsubscribe of the last slot must drop the partition_consumer row';
+
+  perform 1 from pgque.partition_slot as ps
+  join pgque.queue as q on q.queue_id = ps.queue_id
+  where q.queue_name = 'pk_q' and ps.co_name = 'w';
+  assert not found,
+    'unsubscribe of the last slot must drop its partition_slot lease rows';
 
   perform pgque.drop_queue('pk_q');
   perform pgque.drop_queue('pk_send');
