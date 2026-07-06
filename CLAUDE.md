@@ -39,6 +39,15 @@ These rules are the source of truth for agentic engineering in this repo. Agents
 
 ### SQL Style
 
+- Follow the Postgres.AI SQL style guide:
+  https://gitlab.com/postgres-ai/rules/-/blob/main/rules/development__db-sql-style-guide.mdc
+  The rules below restate its core plus pgque-specific additions; on any
+  conflict, this file wins.
+- Prefer C-style `/* ... */` block comments for anything spanning 2+ lines;
+  use `--` only for single-line comments.
+- Collapse single-argument keyword clauses onto one line (`select 1`,
+  `from t`, `where x = y`, `into v`); expand only multi-argument clauses,
+  one argument per line.
 - Lowercase SQL keywords: `select`, `create function`, not `SELECT`, `CREATE FUNCTION`
 - `snake_case` for all identifiers
 - Schema-qualify all internal references: `pgque.queue`, not just `queue`
