@@ -16,37 +16,39 @@
 -- sql/pgque-api/send_idem.sql; it composes with this feature via
 -- send_idem(..., partition_key) but neither requires the other.
 --
--- Design notes:
---
--- * The mechanism is N independent slot consumers. Slot k of consumer C with
---   fixed slot count N is the engine consumer "C#k/N": its own subscription,
---   its own cursor. Every slot scans the full stream and filters server-side
---   to its hash class -- read amplification is ~N x steady (SPEC R2), and a
---   stalled slot pins rotation for the whole queue (SPEC R7): monitor
---   pgque.partition_slot_status and alert on lag.
---
--- * OWNERSHIP INVARIANT (SPEC section 6): receive_partitioned reaches the
---   admin-only pgque.get_batch_cursor(4) i_extra_where hook because it is a
---   SECURITY DEFINER function owned by the SAME role that ran sql/pgque.sql
---   (a function owner may execute its own functions regardless of grants).
---   This file MUST be installed by the pgque install owner. It does not
---   depend on that owner holding pgque_admin.
---
--- * Partition keys ride ev_extra1, so this works for send()-sourced queues
---   only (triggers use ev_extra1 for the table name -- SPEC D1/R5). Events
---   with a NULL partition key (e.g. sent through the keyless send()
---   overloads) route to slot 0, so no event is ever silently dropped by the
---   hash filter.
---
--- * Slot ownership is a batch-granularity LEASE (worker id + TTL + epoch
---   fencing token) stored in pgque.partition_slot. It is plain transactional
---   DML -- no session state -- so it works under transaction-mode pooling
---   (PgBouncer/Supavisor): any pooled connection can hold or renew a lease.
---   receive_partitioned and ack_partitioned renew the lease and fence any
---   worker that does not hold it (US-12.4). Crash recovery is lease expiry:
---   a dead worker never releases, so after the TTL remainder another worker
---   takes over. Takeover bumps the epoch, fencing the zombie -- its next
---   receive/ack raises rather than double-acking (SPEC section 15).
+/*
+ * Design notes:
+ *
+ * * The mechanism is N independent slot consumers. Slot k of consumer C with
+ *   fixed slot count N is the engine consumer "C#k/N": its own subscription,
+ *   its own cursor. Every slot scans the full stream and filters server-side
+ *   to its hash class -- read amplification is ~N x steady (SPEC R2), and a
+ *   stalled slot pins rotation for the whole queue (SPEC R7): monitor
+ *   pgque.partition_slot_status and alert on lag.
+ *
+ * * OWNERSHIP INVARIANT (SPEC section 6): receive_partitioned reaches the
+ *   admin-only pgque.get_batch_cursor(4) i_extra_where hook because it is a
+ *   SECURITY DEFINER function owned by the SAME role that ran sql/pgque.sql
+ *   (a function owner may execute its own functions regardless of grants).
+ *   This file MUST be installed by the pgque install owner. It does not
+ *   depend on that owner holding pgque_admin.
+ *
+ * * Partition keys ride ev_extra1, so this works for send()-sourced queues
+ *   only (triggers use ev_extra1 for the table name -- SPEC D1/R5). Events
+ *   with a NULL partition key (e.g. sent through the keyless send()
+ *   overloads) route to slot 0, so no event is ever silently dropped by the
+ *   hash filter.
+ *
+ * * Slot ownership is a batch-granularity LEASE (worker id + TTL + epoch
+ *   fencing token) stored in pgque.partition_slot. It is plain transactional
+ *   DML -- no session state -- so it works under transaction-mode pooling
+ *   (PgBouncer/Supavisor): any pooled connection can hold or renew a lease.
+ *   receive_partitioned and ack_partitioned renew the lease and fence any
+ *   worker that does not hold it (US-12.4). Crash recovery is lease expiry:
+ *   a dead worker never releases, so after the TTL remainder another worker
+ *   takes over. Takeover bumps the epoch, fencing the zombie -- its next
+ *   receive/ack raises rather than double-acking (SPEC section 15).
+ */
 
 -- ---------------------------------------------------------------------------
 -- Tables
@@ -584,6 +586,57 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 revoke execute on function pgque.ack_partitioned(text, text, int, int, text) from public;
 
+/*
+ * pgque.nack_partitioned() -- lease-fenced per-message retry/DLQ for a slot.
+ * The plain pgque.nack() refuses slot consumers (they carry no worker id and
+ * so cannot be lease-checked); this is the partitioned equivalent. Fences a
+ * worker that does not hold the lease (G2), then routes the message through
+ * the shared retry/DLQ core (pgque._nack_batch_event -- #98/#104 preserved)
+ * against the slot's currently open batch. Raises if the slot has no open
+ * batch. Retried keyed events keep ev_extra1, so redelivery stays on the same
+ * slot (SPEC section 9).
+ */
+create or replace function pgque.nack_partitioned(
+    i_queue text, i_consumer text, i_slot int, i_n int, i_worker text,
+    i_msg pgque.message,
+    i_retry_after interval default '60 seconds',
+    i_reason text default null)
+returns integer as $$
+declare
+    v_n int4;
+    v_queue_id int4;
+    v_batch_id bigint;
+begin
+    -- Wrong-N is rejected before any lease error (US-12.7).
+    v_n := pgque._partition_n(i_queue, i_consumer, i_slot, i_n);
+
+    select queue_id into v_queue_id
+    from pgque.queue
+    where queue_name = i_queue;
+
+    -- Fence: caller must hold the lease; renew it.
+    perform pgque._touch_lease(v_queue_id, i_queue, i_consumer, i_slot, i_worker);
+
+    select s.sub_batch into v_batch_id
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where q.queue_name = i_queue
+      and c.co_name = pgque._slot_name(i_consumer, i_slot, v_n);
+    if not found then
+        raise exception 'slot % of consumer % is not subscribed to queue %',
+            i_slot, i_consumer, i_queue;
+    end if;
+    if v_batch_id is null then
+        raise exception 'slot % of consumer % on queue % has no open batch to nack',
+            i_slot, i_consumer, i_queue;
+    end if;
+
+    return pgque._nack_batch_event(v_batch_id, i_msg, i_retry_after, i_reason);
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pgque.message, interval, text) from public;
+
 -- ---------------------------------------------------------------------------
 -- Observability (US-12.6) -- SPEC D10: writeless owner + lag view
 -- ---------------------------------------------------------------------------
@@ -665,6 +718,7 @@ grant execute on function pgque.claim_slot(text, text, int, text, interval)    t
 grant execute on function pgque.release_slot(text, text, int, text)            to pgque_reader;
 grant execute on function pgque.receive_partitioned(text, text, int, int, text, int) to pgque_reader;
 grant execute on function pgque.ack_partitioned(text, text, int, int, text)    to pgque_reader;
+grant execute on function pgque.nack_partitioned(text, text, int, int, text, pgque.message, interval, text) to pgque_reader;
 
 grant select on pgque.partition_slot_status to pgque_reader;
 grant select on pgque.partition_slot_status to pgque_admin;

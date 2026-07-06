@@ -23,7 +23,9 @@ parallelism *across* keys.
 - **G1 — per-key affinity + FIFO.** For a queue whose events carry a partition
   key and a fixed slot count `N`, every event of key `K` maps to one slot
   `slot(K) = (hashtextextended(K, 0) % N + N) % N` (the `+N` normalizes the sign;
-  `hashtextextended` returns `bigint`). Within that slot, non-retried events of
+  `hashtextextended` returns `bigint`). A **null** partition key (e.g. from the
+  keyless `send()` overloads) routes to slot 0, so no event is dropped by the hash
+  filter. Within that slot, non-retried events of
   `K` are delivered in non-decreasing `ev_id` order, to **no other slot**.
   Intra-batch order is the engine's `order by 1` (`pgque.sql:440`), preserved
   through `get_batch_cursor`'s filter re-wrap (`pgque.sql:2277`); cross-batch
@@ -38,10 +40,16 @@ parallelism *across* keys.
   carrying `(lease_owner, lease_until, epoch)` — held *logically* across the
   receive→process→ack loop and **renewed on every `receive_partitioned` /
   `ack_partitioned` call**, so the heartbeat rides the writes that already happen
-  per batch (zero extra round-trips). The lease is **server-enforced**:
-  `receive_partitioned` and `ack_partitioned` refuse to act unless the caller's
-  worker id holds the live lease, so a client can no longer skip the claim and put
-  two workers on the same open batch. So the lease is **load-bearing for G2**, not
+  per batch (zero extra round-trips). The lease is **server-enforced on the
+  pgque-api surface**: `receive_partitioned` and `ack_partitioned` refuse to act
+  unless the caller's worker id holds the lease, and the plain `receive`/`ack`/
+  `nack` wrappers reject slot consumers (`#`-names) outright — so a worker using
+  the API cannot skip the claim and put two workers on the same open batch.
+  Enforcement scope, stated honestly: the raw PgQ primitives (`next_batch`,
+  `finish_batch`, …) stay reader-granted and unguarded — PgQ's inherited
+  cooperative trust model, under which any reader could always drive any consumer
+  by name; the lease narrows the *accidental*-misuse surface, not that inherited
+  trust boundary. So the lease is **load-bearing for G2**, not
   distribution polish. If a leaseholder's worker dies mid-batch, the lease expires
   after its TTL; the successor takes over (epoch bump) and is re-issued the same
   still-open batch — at-least-once, with possible transient overlap with a zombie
@@ -130,8 +138,10 @@ cross-slot data loss; retry/DLQ rows are slot-scoped (`ev_owner = sub_id`,
 
 **Filtering without touching the engine.** Each slot's receive reuses the
 admin-only `pgque.get_batch_cursor(…, i_extra_where)` hook (`pgque.sql:2229`,
-the 4-arg overload), injecting `and (hashtextextended(ev_extra1,0) % N + N) % N =
-k`, assembled only from the validated integers `N`,`k` (§8). `batch_event_sql`,
+the 4-arg overload), injecting `case when ev_extra1 is null then 0 else
+(pg_catalog.hashtextextended(ev_extra1, 0) % N + N) % N end = k` (a null key routes
+to slot 0 — G1, so no event is dropped), assembled only from the validated integers
+`N`,`k` (§8). `batch_event_sql`,
 `next_batch`, rotation are not modified; the filter re-wrap preserves G1.
 
 **SECURITY DEFINER ownership (round 3 — corrected).** `get_batch_cursor`'s
@@ -174,10 +184,12 @@ optimization is future (R6).
   `insert_event(…, ev_extra1 => partition_key, …)`. SECURITY DEFINER, pinned
   search_path; revoke public, grant `pgque_writer`.
 - **Tables (created in Phase 1, `if not exists`):** `partition_consumer`
-  (N persistence), `partition_slot` (lease rows, below), and `partition_block`
-  (Phase-2 marker, empty in Phase 1 so test assertions are well-formed). All
-  revoked from app roles (the `dead_letter` pattern, `dlq.sql:236`); written only
-  inside SECURITY DEFINER functions.
+  (N persistence) and `partition_slot` (lease rows, below). `partition_block` is
+  **not** created in Phase 1 — it is created only when Phase 2 (`pause`) ships;
+  Phase-1 test assertions that reference it therefore guard on
+  `to_regclass('pgque.partition_block') is not null`. All revoked from app roles
+  (the `dead_letter` pattern, `dlq.sql:236`); written only inside SECURITY DEFINER
+  functions.
 - **`partition_slot(queue_id, co_name, slot, lease_owner text, lease_until
   timestamptz, lease_ttl interval, epoch bigint)`:** one row per registered slot,
   created by `subscribe_slot`. Primary key `(queue_id, co_name, slot)`; FK
@@ -203,17 +215,32 @@ optimization is future (R6).
   If `worker` holds the lease, clear it (`lease_owner = null`) and return true;
   otherwise return false. Callable only at a batch boundary (§15).
 - **`receive_partitioned(queue, consumer, k int, n int, worker text, …)`:** after
-  casting `k,n` to int, **require `worker` to hold the live lease on slot `k`**
-  (raise otherwise — server-enforced G2); **renew the lease** (batch-boundary
-  heartbeat); then `next_batch` + `get_batch_cursor(…, i_extra_where =>
-  format('and (hashtextextended(ev_extra1,0) %% %s + %s) %% %s = %s', n,n,n,k))`.
-  SECURITY DEFINER (§6); granted `pgque_reader`. **Returns the current lease
-  `epoch`** so a handler can stamp it into side effects as a user-space **fencing
-  token** (a zombie worker on an old epoch is then detectable downstream) — this is
-  the consumer for the `epoch` column (D9, D11, §15).
+  casting `k,n` to int, **require `worker` to hold the lease on slot `k`** (a
+  non-owner raises — server-enforced G2); an expired lease still owned by the same
+  worker (no successor took over) is renewed under the grace rule; **renew the
+  lease** (batch-boundary heartbeat); then `next_batch` + `get_batch_cursor(…,
+  i_extra_where => format('(case when ev_extra1 is null then 0 else
+  (pg_catalog.hashtextextended(ev_extra1, 0) %% %s + %s) %% %s end) = %s',
+  n,n,n,k))`.
+  SECURITY DEFINER (§6); granted `pgque_reader`. **`claim_slot` returns the current
+  lease `epoch`** so a handler can stamp it into side effects as a user-space
+  **fencing token** (a zombie worker on an old epoch is then detectable downstream) —
+  this is the consumer for the `epoch` column (D11, §15).
 - **`ack_partitioned(queue, consumer, k int, n int, worker text)`:** same lease
   precondition and renewal as `receive_partitioned` — a non-owner (e.g. a zombie
   after takeover) raises instead of acking, which is the fencing behavior.
+- **`nack_partitioned(queue, consumer, k int, n int, worker text, msg
+  pgque.message, retry_after interval, reason text)`:** the lease-fenced
+  per-message retry/DLQ path for slots (plain `nack` rejects slot batches, which
+  otherwise would have no retry path). Validates N, fences+renews the lease, then
+  routes through the shared retry/DLQ core (`_nack_batch_event` — the #98
+  canonical-event re-query and #104 idempotent-DLQ behaviors are preserved).
+  A retried keyed event keeps `ev_extra1`, so redelivery stays on the same slot.
+- **Raw-slot guards:** plain `receive`/`ack`/`nack` reject partition slot
+  consumers — `receive` rejects `#`-carrying consumer names (`subscribe_slot`
+  reserves `#`), `ack`/`nack` resolve the batch's consumer and reject `#`-names —
+  otherwise the plain path would hand back the whole unfiltered stream with no
+  lease fence, and a fenced zombie could double-ack via `ack(batch_id)` (G2, §2).
 - **`pause` (Phase 2):** on nack of `K#i`, upsert `partition_block(sub_id, K,
   head_ev_id => ev_id)`. A later event of a blocked key (open marker with
   `head_ev_id < ev_id`) is **deferred** (see §11 O1 for the missing primitive),
@@ -229,8 +256,8 @@ optimization is future (R6).
   cascades `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
   documented.
 - **Grants:** producer → `pgque_writer`; `subscribe_slot`/`unsubscribe_slot`/
-  `receive_partitioned`/`ack_partitioned`/`claim_slot`/`release_slot` and `select`
-  on `partition_slot_status` → `pgque_reader`;
+  `receive_partitioned`/`ack_partitioned`/`nack_partitioned`/`claim_slot`/
+  `release_slot` and `select` on `partition_slot_status` → `pgque_reader`;
   `partition_consumer`/`partition_slot`/`partition_block` revoked from all app
   roles; `get_batch_cursor` stays admin-only. Deny-by-default re-applied.
 
@@ -428,10 +455,13 @@ TTL and the slot becomes claimable (see *Scale-down / crash* below).
   receive→process→ack, renewed on every `receive`/`ack`) protects **processing
   exclusivity** — it closes the process→ack gap the receive lock does not span, and
   is therefore *load-bearing for G2's "single in-flight processor," not pure
-  liveness.* Unlike the v0.7 advisory claim, the lease is **server-enforced**:
-  `receive_partitioned`/`ack_partitioned` refuse to act for a worker that does not
-  hold the live lease, so a client **cannot** skip it to put two workers on the
-  same open batch — the second worker's calls raise. A zombie that stalls past its
+  liveness.* Unlike the v0.7 advisory claim, the lease is **server-enforced on
+  the pgque-api surface**: `receive_partitioned`/`ack_partitioned` refuse to act
+  for a worker that does not hold the lease, and plain `receive`/`ack`/`nack`
+  reject slot consumers, so a worker using the API cannot skip it to put two
+  workers on the same open batch — the second worker's calls raise. (The raw PgQ
+  primitives remain reader-granted and unguarded — the inherited PgQ trust
+  boundary; see G2, §2.) A zombie that stalls past its
   TTL is taken over (epoch bump) and fenced: its next `receive`/`ack` raises rather
   than double-acking. The residual overlap window is the TTL remainder, not
   unbounded. Even spread is the same lease's second job.
@@ -498,7 +528,7 @@ lease columns (`lease_owner`/`lease_until`/`epoch`) + subscription cursors
 the view **works through poolers** (a backend pid behind PgBouncer was meaningless
 anyway). Zombie caveat: lease-expiry ≠ process-death, so a partitioned worker can
 still emit side effects until the TTL lapses while the successor is re-issued the
-same open batch — bounded by the TTL and fenced by `epoch` (`receive_partitioned`
+same open batch — bounded by the TTL and fenced by `epoch` (`claim_slot`
 returns it so handlers can stamp it, §8).
 
 **Works through a transaction-mode pooler (matters for the Supabase ICP).** Every
@@ -529,7 +559,9 @@ A resize moves **no data** and **never blocks producers** (the log has no N) —
 drain-then-cutover watermark (the log-native analog of Kinesis parent-shard drain).
 State on `partition_consumer(…, epoch, resize_state, n_next, seal_tick)`,
 `resize_state ∈ {stable, draining}`; all writes SECURITY DEFINER, table revoked
-from app roles.
+from app roles. Note: `partition_consumer.epoch` (resize generation, D9) and
+`partition_slot.epoch` (per-slot lease fencing token, D11) are **distinct
+counters** — the token handlers stamp is the lease epoch.
 
 **The boundary is a tick, not an ev_id.** Old epoch = events in tick windows ≤
 `seal_tick`; new epoch = windows > `seal_tick`. An in-flight producer txn holding
@@ -580,6 +612,16 @@ key never drains).
   is kept (static pinning alone was insufficient), so the lease arbitrates live
   claims. Tests: T-claim → **T-lease**, added **T-fencing**; T-retry-affinity's
   "not yet implemented" note cleared (now in `tests/test_partition_keys.sql`).
+  *Review pass (adversarial SQL + consistency, applied in place):* plain
+  `receive`/`ack`/`nack` now **reject slot consumers** (`#`-names) — without the
+  guard a reader could drive the raw slot subscription lease-free and unfiltered;
+  **`nack_partitioned` added** (the lease-fenced slot retry/DLQ path plain `nack`
+  no longer serves; shared `_nack_batch_event` core keeps #98/#104);
+  G2's "server-enforced" claim scoped honestly to the pgque-api surface (raw PgQ
+  primitives keep the inherited cooperative trust model); epoch documented as
+  returned by `claim_slot` (not `receive_partitioned`); `partition_block`
+  correctly stated as Phase-2-only; the two `epoch` counters (D9 resize vs D11
+  lease) disambiguated; null-key→slot-0 routing added to G1/§6/§8.
 - **v0.7 (draft):** Fabrizio review (he tested the repro) + advisor + workflow.
   Corrected the receive-lock claim (core *does* coordinate; the real hazard is the
   process→ack gap, §12) — verified in `pgque.sql:5761/5798/5866/5905` +

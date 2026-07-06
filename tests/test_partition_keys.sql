@@ -490,7 +490,7 @@ begin
     assert v_msg.extra1 = 'tenant-a',
       format('retry-affinity: slot 0 must only see tenant-a, got %s', v_msg.extra1);
     insert into pk_retry values (v_msg.msg_id);
-    perform pgque.nack(v_msg.batch_id, v_msg, '0 seconds', 'retry-affinity test');
+    perform pgque.nack_partitioned('pk_q', 'w', 0, 2, 'wk-main', v_msg, '0 seconds', 'retry-affinity test');
   end loop;
   assert v_cnt = 1, format('retry-affinity: expected 1 event on slot 0, got %s', v_cnt);
   perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main');
@@ -546,6 +546,188 @@ begin
   perform pgque.release_slot('pk_q', 'w', 0, 'wk-main');
 
   raise notice 'PASS T-retry-affinity: nacked keyed event redelivered to the same slot only';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- G2 raw-consumer guard: the plain receive/ack/nack API must refuse a
+-- partition slot consumer ("<consumer>#<slot>/<n>"). Otherwise a reader could
+-- bypass the lease AND the hash filter by driving the raw slot consumer
+-- directly (unfiltered stream on receive, zombie double-ack on ack/nack).
+-- Runs while queue 'pk_q' / consumer 'w' (n=2) are still subscribed.
+-- ---------------------------------------------------------------------------
+
+-- (a) plain pgque.receive() on a raw slot consumer must raise.
+do $$
+declare
+  v_raised boolean := false;
+begin
+  begin
+    perform * from pgque.receive('pk_q', 'w#0/2', 10);
+  exception
+    when others then
+      v_raised := true;
+      assert sqlerrm like '%receive_partitioned%',
+        'guard: plain receive error must point to receive_partitioned(), got: ' || sqlerrm;
+  end;
+  assert v_raised, 'guard: plain receive() on a slot consumer must raise';
+  raise notice 'PASS guard: plain receive() refuses a slot consumer';
+end $$;
+
+-- (b)/(c) setup: open a non-empty slot-0 batch under a live lease so the plain
+-- ack/nack guards have a real batch id to reject.
+do $$
+begin
+  perform pgque.send('pk_q', 'ev', '{"guard":1}'::jsonb, 'tenant-a');  -- slot 0
+end $$;
+
+do $$
+begin
+  perform pgque.force_next_tick('pk_q');
+  perform pgque.ticker();
+end $$;
+
+do $$
+declare
+  v_msg pgque.message;
+  v_open pgque.message;
+  v_batch bigint;
+  v_raised boolean;
+begin
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-guard');
+  for v_msg in
+    select * from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-guard', 100)
+  loop
+    v_batch := v_msg.batch_id;
+    v_open := v_msg;
+  end loop;
+  assert v_batch is not null, 'guard setup: slot 0 batch must be open';
+
+  -- (b) plain ack on a slot batch must raise.
+  v_raised := false;
+  begin
+    perform pgque.ack(v_batch);
+  exception
+    when others then
+      v_raised := true;
+      assert sqlerrm like '%ack_partitioned%',
+        'guard: plain ack error must point to ack_partitioned(), got: ' || sqlerrm;
+  end;
+  assert v_raised, 'guard: plain ack() on a slot batch must raise';
+
+  -- (c) plain nack on a slot batch must raise (batch still open after (b)).
+  v_raised := false;
+  begin
+    perform pgque.nack(v_batch, v_open, '0 seconds', 'guard test');
+  exception
+    when others then
+      v_raised := true;
+      assert sqlerrm like '%nack_partitioned%',
+        'guard: plain nack error must point to nack_partitioned(), got: ' || sqlerrm;
+  end;
+  assert v_raised, 'guard: plain nack() on a slot batch must raise';
+
+  -- Finish the batch properly through the partitioned API and release.
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-guard');
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-guard');
+  raise notice 'PASS guard: plain ack()/nack() refuse a slot batch';
+end $$;
+
+-- (d) cheap gap coverage: claim_slot input validation + epoch/lease_until view.
+do $$
+declare
+  v_raised boolean;
+begin
+  -- ttl below the 1-second floor is rejected.
+  v_raised := false;
+  begin
+    perform pgque.claim_slot('pk_q', 'w', 0, 'wk-x', '500 milliseconds');
+  exception
+    when others then v_raised := true;
+  end;
+  assert v_raised, 'guard: claim_slot with ttl < 1 second must raise';
+
+  -- Empty worker id is rejected.
+  v_raised := false;
+  begin
+    perform pgque.claim_slot('pk_q', 'w', 0, '');
+  exception
+    when others then v_raised := true;
+  end;
+  assert v_raised, 'guard: claim_slot with empty worker must raise';
+
+  -- Null worker id is rejected.
+  v_raised := false;
+  begin
+    perform pgque.claim_slot('pk_q', 'w', 0, null);
+  exception
+    when others then v_raised := true;
+  end;
+  assert v_raised, 'guard: claim_slot with null worker must raise';
+
+  -- A consumer that was never subscribed as partitioned is rejected.
+  v_raised := false;
+  begin
+    perform pgque.claim_slot('pk_q', 'never-subscribed', 0, 'wk-x');
+  exception
+    when others then
+      v_raised := true;
+      assert sqlerrm like '%not a partitioned consumer%',
+        'guard: claim_slot on an unsubscribed consumer must say so, got: ' || sqlerrm;
+  end;
+  assert v_raised, 'guard: claim_slot on a non-partitioned consumer must raise';
+
+  raise notice 'PASS guard: claim_slot input validation';
+end $$;
+
+-- Epoch is exposed by partition_slot_status and increases on expiry takeover.
+do $$
+declare
+  v_epoch_before bigint;
+  v_epoch_after bigint;
+begin
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-ep1', '1 second');
+  select epoch into v_epoch_before
+  from pgque.partition_slot_status
+  where queue_name = 'pk_q' and consumer = 'w' and slot = 0;
+  assert v_epoch_before is not null,
+    'guard: partition_slot_status must expose the epoch column';
+
+  perform pg_sleep(1.2);
+
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-ep2');  -- takeover of expired lease
+  select epoch into v_epoch_after
+  from pgque.partition_slot_status
+  where queue_name = 'pk_q' and consumer = 'w' and slot = 0;
+  assert v_epoch_after > v_epoch_before,
+    format('guard: takeover must advance the view epoch, got % -> %', v_epoch_before, v_epoch_after);
+
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-ep2');
+  raise notice 'PASS guard: partition_slot_status.epoch advances on takeover';
+end $$;
+
+-- Lease renewal: receive_partitioned moves partition_slot_status.lease_until
+-- forward (heartbeat) even when the slot has no pending events.
+do $$
+declare
+  v_until_before timestamptz;
+  v_until_after timestamptz;
+begin
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-renew', '2 seconds');
+  select lease_until into v_until_before
+  from pgque.partition_slot_status
+  where queue_name = 'pk_q' and consumer = 'w' and slot = 0;
+
+  perform pg_sleep(0.05);
+  perform * from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-renew', 10);
+
+  select lease_until into v_until_after
+  from pgque.partition_slot_status
+  where queue_name = 'pk_q' and consumer = 'w' and slot = 0;
+  assert v_until_after > v_until_before,
+    format('guard: receive_partitioned must renew lease_until, got % -> %', v_until_before, v_until_after);
+
+  perform pgque.release_slot('pk_q', 'w', 0, 'wk-renew');
+  raise notice 'PASS guard: receive_partitioned renews the lease (heartbeat)';
 end $$;
 
 -- ---------------------------------------------------------------------------
