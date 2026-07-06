@@ -552,3 +552,62 @@ key never drains).
   wiring; durable `partition_block`; modulo sign fix; R7.
 - **v0.2:** round 1 — N independent slot subscriptions; G1/G2/G3; `skip` default.
 - **v0.1:** initial SamoSpec-format draft.
+
+## 17. User stories
+
+Canonical user-story layer for this feature — the shared language the spec, the
+public brief, and the acceptance suite all speak. Single-session facets are
+proven by `tests/acceptance/us12_partition_keys.sql`; the cross-session facets of
+US-12.4 and US-12.5 (a concurrent worker blocking on the receive lock, claim
+exclusivity across live sessions, and connection-death crash recovery) need two
+sessions and are covered by `tests/two_session_slot_claim.sh` (mirrors
+`tests/two_session_receive_lock.sh`).
+
+- **US-12.1 — Keyed send.** As an event producer, I want `pgque.send(queue,
+  type, payload, partition_key)` so each event carries its tenant key (stored in
+  `ev_extra1`).
+  - *Accept:* a keyed `send` round-trips the partition key to
+    `pgque.message.extra1` on receive.
+  - *Test:* `us12_partition_keys.sql` — US-12.1.
+- **US-12.2 — Per-key order.** As a consumer, I want all events of one key
+  delivered by exactly one slot, in `ev_id` order, so per-tenant processing is
+  sequential.
+  - *Accept:* under interleaved keys, every event of one key lands on its hash
+    slot only (zero on any other slot), in non-decreasing `ev_id` order (G1).
+  - *Test:* `us12_partition_keys.sql` — US-12.2.
+- **US-12.3 — Cross-key parallelism.** As an operator, I want N slots consuming
+  disjoint key subsets concurrently (union of slots = whole stream, pairwise
+  disjoint).
+  - *Accept:* over N=3, the union of slot reads equals the whole stream, no event
+    appears on two slots, and every event sits on `(hashtextextended(key,0) % N +
+    N) % N` (D4).
+  - *Test:* `us12_partition_keys.sql` — US-12.3.
+- **US-12.4 — Single processor per slot.** As an operator, a second worker on the
+  same slot never obtains a divergent batch (engine receive lock returns the same
+  active batch idempotently); the advisory claim steers it away entirely.
+  - *Accept:* re-`receive_partitioned` on an open slot returns the same batch
+    (single-session facet); a concurrent second session blocks then re-fetches the
+    same batch, and the advisory claim routes it to a different slot (cross-session).
+  - *Test:* `us12_partition_keys.sql` — US-12.4 (single-session);
+    `tests/two_session_slot_claim.sh` (cross-session).
+- **US-12.5 — Claim/release + crash recovery.** As a worker, I claim a free slot
+  via `pgque.claim_slot` and release at a batch boundary via `pgque.release_slot`;
+  when a claiming session dies its slot becomes claimable immediately.
+  - *Accept:* `claim_slot` takes a free slot, `release_slot` frees it, the slot is
+    re-claimable, and `slot_lock_key` matches the pinned formula (single-session);
+    a dead claimant's slot is instantly re-claimable by another session
+    (cross-session).
+  - *Test:* `us12_partition_keys.sql` — US-12.5 (single-session);
+    `tests/two_session_slot_claim.sh` (crash recovery).
+- **US-12.6 — Observability.** As an operator, `pgque.partition_slot_status` shows
+  each slot, its owner pid (null if unclaimed), and cursor lag, so I can alert on a
+  stalled slot (rotation-pinning risk R7).
+  - *Accept:* the view has one row per registered slot with the right `n`,
+    `owner_pid` null when unclaimed and equal to the holder's backend pid when
+    claimed (clearing on release), and a non-negative `pending_events` lag.
+  - *Test:* `us12_partition_keys.sql` — US-12.6.
+- **US-12.7 — Enforced N.** As an operator, a worker calling with the wrong N is
+  rejected with a clear error, never silently misrouted.
+  - *Accept:* the first `subscribe_slot` persists N for `(queue, consumer)`;
+    re-calling with the same `(slot, n)` is idempotent, a changed `n` raises (D3).
+  - *Test:* `us12_partition_keys.sql` — US-12.7.

@@ -22,4 +22,10 @@
 \echo 'Running: US-11 manual mode without pg_cron'
 \i tests/acceptance/us11_without_pgcron_manual_mode.sql
 \echo ''
+\echo 'Running: US-12 Partition keys'
+\i tests/acceptance/us12_partition_keys.sql
+\echo ''
+\echo 'Running: US-13 Producer idempotency'
+\i tests/acceptance/us13_producer_idempotency.sql
+\echo ''
 \echo '=== ALL ACCEPTANCE TESTS PASSED ==='

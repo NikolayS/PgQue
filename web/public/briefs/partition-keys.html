@@ -154,6 +154,45 @@
     adds the per-key lock for serialization.
   </p>
 
+  <div class="panel">
+    <p class="card-title">User stories · the acceptance contract</p>
+    <p>
+      Both features share one user-story layer — the language the specs, this brief,
+      and the acceptance suites all speak. <strong>US-12</strong> is partition keys
+      (ordered slots); <strong>US-13</strong> is producer idempotency (TTL dedup on a
+      plain queue). Each story maps to an executable check.
+    </p>
+    <div class="two">
+      <div class="panel">
+        <p class="card-title">US-12 · partition keys</p>
+        <ul class="tight">
+          <li><b>12.1</b> Keyed <code>send(…, partition_key)</code> → <code>ev_extra1</code></li>
+          <li><b>12.2</b> Per-key order — one key, one slot, <code>ev_id</code> order</li>
+          <li><b>12.3</b> Cross-key parallelism — N slots, disjoint, complete</li>
+          <li><b>12.4</b> One processor per slot — same batch, never divergent</li>
+          <li><b>12.5</b> Claim / release + instant crash recovery</li>
+          <li><b>12.6</b> <code>partition_slot_status</code> — owner pid + lag (R7)</li>
+          <li><b>12.7</b> Enforced N — wrong N rejected, never misrouted</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p class="card-title">US-13 · producer idempotency</p>
+        <ul class="tight">
+          <li><b>13.1</b> TTL dedup — one insert, original id, <code>deduped=true</code></li>
+          <li><b>13.2</b> Effect-scoped keys — <code>:v2</code> not hidden by <code>:v1</code></li>
+          <li><b>13.3</b> Window expiry — same key inserts again after TTL</li>
+          <li><b>13.4</b> GC — <code>maint()</code> reaps expired dedup rows</li>
+          <li><b>13.5</b> Mutual-exclusion recipe — advisory lock + idempotent handler</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">
+      Executable: <code>tests/acceptance/us12_partition_keys.sql</code> and
+      <code>tests/acceptance/us13_producer_idempotency.sql</code>; the two-session
+      facets of 12.4 / 12.5 live in <code>tests/two_session_slot_claim.sh</code>.
+    </p>
+  </div>
+
   <h2><span class="n">03</span>Tier A · mutual exclusion</h2>
   <p>
     A <em>recipe</em> over existing primitives on a <strong>plain queue</strong>, not

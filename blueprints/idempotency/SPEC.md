@@ -176,3 +176,45 @@ is part of 1B's acceptance.
   after review (Max / consumer Q&A). Key-scope rule + version-suppression hazard
   made first-class; atomic claim+append; `(queue, idem_key)` scoping; rotation/
   maintenance GC; orthogonality to partition keys.
+
+## User stories
+
+Canonical user-story layer for this feature — the shared language the spec, the
+public brief, and the acceptance suite all speak. All five are proven by
+`tests/acceptance/us13_producer_idempotency.sql`.
+
+**Contract note (supersedes the §4 v0.1 sketch).** US-13.1 pins the dedup return
+as the **ORIGINAL** `event_id` with `deduped = true` — not `null`. Returning the
+first event's id requires the dedup claim row to carry that id (a small addition
+to the §5 `idem_key` table, e.g. an `event_id` column set on the accepted insert),
+which is the resolved contract the acceptance suite tests against.
+
+- **US-13.1 — TTL dedup.** As a scheduler, `pgque.send_idem(queue, type, payload,
+  idem_key, ttl)` inserts once per `(queue, idem_key)` within the window; a
+  duplicate attempt inserts nothing and returns the ORIGINAL `event_id` with
+  `deduped=true`.
+  - *Accept:* first `send_idem` returns `deduped=false` + an id; a second within
+    the TTL returns `deduped=true` + the same id; the log carries exactly one event.
+  - *Test:* `us13_producer_idempotency.sql` — US-13.1.
+- **US-13.2 — Effect-scoped keys.** dedup is exact-match on `(queue, idem_key)` —
+  key `migrate:t1:v2` is NOT suppressed by `migrate:t1:v1`.
+  - *Accept:* two distinct effect keys both insert (`deduped=false`) and yield
+    distinct `event_id`s.
+  - *Test:* `us13_producer_idempotency.sql` — US-13.2.
+- **US-13.3 — Window expiry.** after the TTL passes, the same key inserts a new
+  event again.
+  - *Accept:* a duplicate inside a live 1-second window is deduped; after the
+    window lapses the same key inserts a new, distinct event.
+  - *Test:* `us13_producer_idempotency.sql` — US-13.3.
+- **US-13.4 — GC.** expired dedup rows are purged by `pgque.maint()`, so the dedup
+  table cannot grow unbounded.
+  - *Accept:* after a row expires and `pgque.maint()` runs, no expired
+    `pgque.idem_key` rows remain for the queue.
+  - *Test:* `us13_producer_idempotency.sql` — US-13.4.
+- **US-13.5 — Consumer mutual-exclusion recipe** (docs/acceptance only, no new
+  SQL): per-key `pg_try_advisory_xact_lock` + idempotent handler = at most one
+  concurrent migration per tenant.
+  - *Accept:* the recipe derives a deterministic per-tenant lock key and its
+    idempotent handler leaves exactly one effect even when its body runs twice;
+    cross-session exclusion is a two-session property (honesty note in the test).
+  - *Test:* `us13_producer_idempotency.sql` — US-13.5.

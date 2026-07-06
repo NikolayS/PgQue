@@ -1003,6 +1003,8 @@ DEFAULT_API_FILES=(
   receive.sql
   cooperative_consumers.sql
   send.sql
+  partition_keys.sql
+  send_idem.sql
 )
 
 for api_name in "${DEFAULT_API_FILES[@]}"; do
