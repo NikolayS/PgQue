@@ -295,8 +295,10 @@ for src_file in "${SOURCE_FILES[@]}"; do
   src_path="${PGQ_DIR}/${src_file}"
 
   if [[ ! -f "${src_path}" ]]; then
-    echo "WARNING: source file not found: ${src_file}" >&2
-    continue
+    echo "ERROR: source file not found: ${src_file}" >&2
+    echo "       A submodule bump may have renamed or dropped it; update" >&2
+    echo "       SOURCE_FILES in build/transform.sh before rebuilding." >&2
+    exit 1
   fi
 
   # Determine output filename (rename pgq. prefix in filenames)
@@ -447,27 +449,65 @@ sedi() {
   fi
 }
 
+# Must-match sed -i: fail the build when the expression changes nothing.
+# sed exits 0 whether or not it matched, so an upstream PgQ rewording of an
+# anchored line would otherwise turn a critical patch into a silent no-op.
+sedi_must() {
+  local desc="$1"
+  local expr="$2"
+  local file="$3"
+  cp "${file}" "${file}.pre"
+  sedi "${expr}" "${file}"
+  if cmp -s "${file}.pre" "${file}"; then
+    rm -f "${file}.pre"
+    echo "FAIL: ${desc}" >&2
+    echo "      sed expression matched nothing in ${file}:" >&2
+    echo "      ${expr}" >&2
+    echo "      Upstream PgQ likely reworded the anchor line; update" >&2
+    echo "      build/transform.sh to match the new source." >&2
+    exit 1
+  fi
+  rm -f "${file}.pre"
+}
+
 TICKER_FILE="${OUTPUT_DIR}/functions/pgque.ticker.sql"
 
-# Patch the ticker: inject pg_notify before return statements (awk for portability)
-awk '
+# Patch the ticker: inject pg_notify before return statements (awk for portability).
+# Each anchor must fire exactly once; otherwise the awk exits non-zero so an
+# upstream rewording of the return lines cannot silently drop the injection.
+if ! awk '
 /^    return i_tick_id;$/ {
   print ""
   print "    -- pgque: notify listeners after tick"
   print "    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, i_tick_id::text);"
+  n_tick_id++
 }
 /^    return currval\(q\.queue_tick_seq\);$/ {
   print ""
   print "    -- pgque: notify listeners after tick"
   print "    perform pg_notify('"'"'pgque_'"'"' || i_queue_name, currval(q.queue_tick_seq)::text);"
+  n_currval++
 }
 { print }
-' "${TICKER_FILE}" > "${TICKER_FILE}.tmp" && mv "${TICKER_FILE}.tmp" "${TICKER_FILE}"
+END {
+  if (n_tick_id != 1 || n_currval != 1) {
+    printf "ERROR: ticker pg_notify injection anchors matched %d/%d times (expected 1/1)\n", \
+      n_tick_id, n_currval > "/dev/stderr"
+    exit 1
+  }
+}
+' "${TICKER_FILE}" > "${TICKER_FILE}.tmp"; then
+  rm -f "${TICKER_FILE}.tmp"
+  echo "FAIL: pg_notify injection into ticker did not happen; anchor lines" >&2
+  echo "      in pgq/functions/pgq.ticker.sql may have changed upstream." >&2
+  exit 1
+fi
+mv "${TICKER_FILE}.tmp" "${TICKER_FILE}"
 
-echo "PASS: pg_notify injected into ticker function"
+echo "PASS: pg_notify injected into ticker function (2 injection points verified)"
 
 CREATE_QUEUE_FILE="${OUTPUT_DIR}/functions/pgque.create_queue.sql"
-awk '
+if ! awk '
 /^    if i_queue_name is null then$/ {
   print
   in_null_check = 1
@@ -487,21 +527,39 @@ in_null_check && /^    end if;$/ {
   print "            octet_length(i_queue_name);"
   print "    end if;"
   in_null_check = 0
+  n_injected++
   next
 }
 in_null_check { print; next }
 { print }
-' "${CREATE_QUEUE_FILE}" > "${CREATE_QUEUE_FILE}.tmp" && mv "${CREATE_QUEUE_FILE}.tmp" "${CREATE_QUEUE_FILE}"
+END {
+  if (n_injected != 1) {
+    printf "ERROR: create_queue length-check anchor matched %d times (expected 1)\n", \
+      n_injected > "/dev/stderr"
+    exit 1
+  }
+}
+' "${CREATE_QUEUE_FILE}" > "${CREATE_QUEUE_FILE}.tmp"; then
+  rm -f "${CREATE_QUEUE_FILE}.tmp"
+  echo "FAIL: create_queue queue name length check was not injected; anchor" >&2
+  echo "      lines in pgq/functions/pgq.create_queue.sql may have changed." >&2
+  exit 1
+fi
+mv "${CREATE_QUEUE_FILE}.tmp" "${CREATE_QUEUE_FILE}"
 
-echo "PASS: create_queue queue name length check added"
+echo "PASS: create_queue queue name length check added (injection verified)"
 
 # Fix inherited PgQ copy-paste bug: sqltriga comment says logutriga
-sedi 's/Function: pgque.logutriga()/Function: pgque.sqltriga()/' "${OUTPUT_DIR}/lowlevel_pl/sqltriga.sql"
+sedi_must "sqltriga comment header fix did not apply" \
+  's/Function: pgque.logutriga()/Function: pgque.sqltriga()/' \
+  "${OUTPUT_DIR}/lowlevel_pl/sqltriga.sql"
 
 echo "PASS: sqltriga comment header fixed"
 
 # Remove debug comments from ticker
-sedi 's/ -- unsure about access//' "${OUTPUT_DIR}/functions/pgque.ticker.sql"
+sedi_must "ticker debug comment removal did not apply" \
+  's/ -- unsure about access//' \
+  "${OUTPUT_DIR}/functions/pgque.ticker.sql"
 
 echo "PASS: debug comments removed from ticker"
 
@@ -510,21 +568,27 @@ echo "PASS: debug comments removed from ticker"
 # is a plain integer. PostgreSQL has no xid8 >= integer operator.
 # Fix: wrap values in '...'::xid8 casts in the generated SQL.
 BATCH_SQL_FILE="${OUTPUT_DIR}/functions/pgque.batch_event_sql.sql"
-sedi "s/|| ' and ev.ev_txid >= ' || batch.tx_start::text/|| ' and ev.ev_txid >= ''' || batch.tx_start::text || '''::xid8'/" \
+sedi_must "batch_event_sql xid8 quoting (tx_start lower bound) did not apply" \
+  "s/|| ' and ev.ev_txid >= ' || batch.tx_start::text/|| ' and ev.ev_txid >= ''' || batch.tx_start::text || '''::xid8'/" \
   "${BATCH_SQL_FILE}"
-sedi "s/|| ' and ev.ev_txid <= ' || batch.tx_end::text/|| ' and ev.ev_txid <= ''' || batch.tx_end::text || '''::xid8'/" \
+sedi_must "batch_event_sql xid8 quoting (tx_end upper bound) did not apply" \
+  "s/|| ' and ev.ev_txid <= ' || batch.tx_end::text/|| ' and ev.ev_txid <= ''' || batch.tx_end::text || '''::xid8'/" \
   "${BATCH_SQL_FILE}"
 # Also fix the IN() list for older tx-es
-sedi "s/arr := rec.id1::text;/arr := '''' || rec.id1::text || '''::xid8';/" \
+sedi_must "batch_event_sql xid8 quoting (IN-list first element) did not apply" \
+  "s/arr := rec.id1::text;/arr := '''' || rec.id1::text || '''::xid8';/" \
   "${BATCH_SQL_FILE}"
-sedi "s/arr := arr || ',' || rec.id1::text;/arr := arr || ',''' || rec.id1::text || '''::xid8';/" \
+sedi_must "batch_event_sql xid8 quoting (IN-list append) did not apply" \
+  "s/arr := arr || ',' || rec.id1::text;/arr := arr || ',''' || rec.id1::text || '''::xid8';/" \
   "${BATCH_SQL_FILE}"
 
 # Fix the arithmetic compare: bigint - 100 <= xid8 has no operator in PG18.
 # rec.id1 comes from pg_snapshot_xip() (SETOF xid8); cast through text to bigint.
-sedi "s|if batch.tx_start - 100 <= rec.id1 then|if batch.tx_start - 100 <= rec.id1::text::bigint then|" \
+sedi_must "batch_event_sql dual-filter compare cast did not apply" \
+  "s|if batch.tx_start - 100 <= rec.id1 then|if batch.tx_start - 100 <= rec.id1::text::bigint then|" \
   "${BATCH_SQL_FILE}"
-sedi "s|batch.tx_start := rec.id1;|batch.tx_start := rec.id1::text::bigint;|" \
+sedi_must "batch_event_sql tx_start assignment cast did not apply" \
+  "s|batch.tx_start := rec.id1;|batch.tx_start := rec.id1::text::bigint;|" \
   "${BATCH_SQL_FILE}"
 
 echo "PASS: xid8 casts added to batch_event_sql for ev_txid comparisons"
@@ -535,35 +599,65 @@ echo "PASS: xid8 casts added to batch_event_sql for ev_txid comparisons"
 # inverted-looking). Also return the actual mutation count instead of a
 # hard-coded 0.
 UPGRADE_SCHEMA_FILE="${OUTPUT_DIR}/functions/pgque.upgrade_schema.sql"
-awk '
+if ! awk '
 /create role pgque_admin in role pgque_reader, pgque_writer;/ {
-  sub(/create role pgque_admin in role pgque_reader, pgque_writer;/, "create role pgque_admin;\n        grant pgque_reader to pgque_admin;\n        grant pgque_writer to pgque_admin;")
+  n_flattened += sub(/create role pgque_admin in role pgque_reader, pgque_writer;/, "create role pgque_admin;\n        grant pgque_reader to pgque_admin;\n        grant pgque_writer to pgque_admin;")
 }
 { print }
-' "${UPGRADE_SCHEMA_FILE}" > "${UPGRADE_SCHEMA_FILE}.tmp" && mv "${UPGRADE_SCHEMA_FILE}.tmp" "${UPGRADE_SCHEMA_FILE}"
-sedi 's|^    return 0;$|    return cnt;|' "${UPGRADE_SCHEMA_FILE}"
+END {
+  if (n_flattened != 1) {
+    printf "ERROR: upgrade_schema role-grant anchor matched %d times (expected 1)\n", \
+      n_flattened > "/dev/stderr"
+    exit 1
+  }
+}
+' "${UPGRADE_SCHEMA_FILE}" > "${UPGRADE_SCHEMA_FILE}.tmp"; then
+  rm -f "${UPGRADE_SCHEMA_FILE}.tmp"
+  echo "FAIL: upgrade_schema role grants were not flattened; anchor line in" >&2
+  echo "      pgq/functions/pgq.upgrade_schema.sql may have changed upstream." >&2
+  exit 1
+fi
+mv "${UPGRADE_SCHEMA_FILE}.tmp" "${UPGRADE_SCHEMA_FILE}"
+sedi_must "upgrade_schema return-count fix did not apply" \
+  's|^    return 0;$|    return cnt;|' \
+  "${UPGRADE_SCHEMA_FILE}"
 
 echo "PASS: upgrade_schema role grants flattened, return cnt"
 
 # Fix upstream insert_event_raw(): raise a clear "queue not found" error when
 # the queue lookup misses, instead of falling through to a NULL-deref later.
 INSERT_EVENT_FILE="${OUTPUT_DIR}/lowlevel_pl/insert_event.sql"
-awk '
+if ! awk '
 /from pgque\.queue q where q\.queue_name = _qname into qstate;/ {
   print
   print ""
   print "    if not found then"
   print "        raise exception '\''queue not found: %'\'', _qname;"
   print "    end if;"
+  n_injected++
   next
 }
 { print }
-' "${INSERT_EVENT_FILE}" > "${INSERT_EVENT_FILE}.tmp" && mv "${INSERT_EVENT_FILE}.tmp" "${INSERT_EVENT_FILE}"
+END {
+  if (n_injected != 1) {
+    printf "ERROR: insert_event_raw queue-lookup anchor matched %d times (expected 1)\n", \
+      n_injected > "/dev/stderr"
+    exit 1
+  }
+}
+' "${INSERT_EVENT_FILE}" > "${INSERT_EVENT_FILE}.tmp"; then
+  rm -f "${INSERT_EVENT_FILE}.tmp"
+  echo "FAIL: insert_event_raw queue-not-found guard was not injected; anchor" >&2
+  echo "      line in pgq/lowlevel_pl/insert_event.sql may have changed." >&2
+  exit 1
+fi
+mv "${INSERT_EVENT_FILE}.tmp" "${INSERT_EVENT_FILE}"
 
 echo "PASS: insert_event_raw raises clear error on unknown queue"
 
 BATCH_RETRY_FILE="${OUTPUT_DIR}/functions/pgque.batch_retry.sql"
-sedi 's/b\.ev_id, b\.ev_time, NULL::int8, _s\.sub_id,/b.ev_id, b.ev_time, NULL::xid8, _s.sub_id,/' \
+sedi_must "batch_retry NULL::int8 -> NULL::xid8 fix did not apply" \
+  's/b\.ev_id, b\.ev_time, NULL::int8, _s\.sub_id,/b.ev_id, b.ev_time, NULL::xid8, _s.sub_id,/' \
   "${BATCH_RETRY_FILE}"
 
 echo "PASS: batch_retry NULL::int8 -> NULL::xid8 for ev_txid (xid8) column"
@@ -641,6 +735,29 @@ SQL_DIR="${REPO_ROOT}/sql"
 INSTALL_FILE="${SQL_DIR}/pgque.sql"
 ADDITIONS_DIR="${SQL_DIR}/pgque-additions"
 
+# Extract the version string from pgque.version() in lifecycle.sql once, so
+# the install-file header and the pg_tle registration always advertise the
+# same version pgque.version() returns at runtime. Anchor to the function so
+# unrelated `return '...'` lines added later cannot shadow it; skip comment
+# lines so a stray `-- return 'old'` cannot match. Validate the extracted
+# literal so a malformed value cannot break the heredocs that embed it.
+PGQUE_VERSION=$(awk '
+  /create or replace function pgque\.version/ { in_fn=1; next }
+  in_fn && $0 !~ /^[[:space:]]*--/ && match($0, /return '\''[^'\'']+'\''/) {
+    s=substr($0, RSTART+8, RLENGTH-9); print s; exit
+  }
+' "${ADDITIONS_DIR}/lifecycle.sql")
+
+if [[ -z "${PGQUE_VERSION}" ]]; then
+  echo "FAIL: could not extract pgque version from pgque.version() in lifecycle.sql" >&2
+  exit 1
+fi
+
+if ! [[ "${PGQUE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+  echo "FAIL: pgque version '${PGQUE_VERSION}' is not a valid semver string" >&2
+  exit 1
+fi
+
 apply_idempotency_guards() {
   # Make DDL statements idempotent:
   # - CREATE TABLE -> CREATE TABLE IF NOT EXISTS
@@ -668,10 +785,10 @@ apply_idempotency_guards() {
   echo "$content"
 }
 
-# Start with header
-cat > "${INSTALL_FILE}" << 'HEADER'
+# Start with header (version derived from pgque.version() in lifecycle.sql)
+cat > "${INSTALL_FILE}" << HEADER
 -- pgque.sql -- PgQ Universal Edition
--- Version: 0.2.0
+-- Version: ${PGQUE_VERSION}
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -765,12 +882,14 @@ FUNCTION_FILES=(
 
 for func_file in "${FUNCTION_FILES[@]}"; do
   func_path="${OUTPUT_DIR}/functions/${func_file}"
-  if [[ -f "${func_path}" ]]; then
-    cat "${func_path}" >> "${INSTALL_FILE}"
-    echo "" >> "${INSTALL_FILE}"
-  else
-    echo "WARNING: function file not found: ${func_file}" >&2
+  if [[ ! -f "${func_path}" ]]; then
+    echo "ERROR: transformed function file not found: ${func_file}" >&2
+    echo "       Shipping without it would truncate the install file;" >&2
+    echo "       keep FUNCTION_FILES in sync with SOURCE_FILES." >&2
+    exit 1
   fi
+  cat "${func_path}" >> "${INSTALL_FILE}"
+  echo "" >> "${INSTALL_FILE}"
 done
 
 # Section 3: PL/pgSQL event insertion
@@ -808,6 +927,44 @@ echo "" >> "${INSTALL_FILE}"
 cat "${OUTPUT_DIR}/structure/grants.sql" >> "${INSTALL_FILE}"
 echo "" >> "${INSTALL_FILE}"
 
+# -- Inline transformation comments -------------------------------------------
+# Add "PgQue transformation:" comments to specific lines in the output.
+# These annotate each mechanical change so reviewers can trace what was
+# modified. This block MUST run while the install file contains only the
+# transformed-PgQ sections (1-5): Sections 6/7 are new pgque code (e.g. the
+# external-ticker override in hardening.sql has its own pg_notify line) and
+# must not be tagged as transformed PgQ.
+
+# Column default transformations (appear once each in tables section)
+sedi_must "queue_switch_step1 annotation did not apply" \
+  '/queue_switch_step1.*default pg_current_xact_id/s/$/ -- PgQue transformation: txid_current()→pg_current_xact_id()::text::bigint (PG14+)/' \
+  "${INSTALL_FILE}"
+
+sedi_must "ev_txid xid8 annotation did not apply" \
+  '/ev_txid.*xid8.*default pg_current_xact_id/s/$/ -- PgQue transformation: bigint→xid8 (needed for pg_visible_in_snapshot)/' \
+  "${INSTALL_FILE}"
+
+# LISTEN/NOTIFY injection (appears twice in ticker)
+sedi_must "ticker pg_notify annotation did not apply" \
+  '/perform pg_notify.*pgque_/s/$/ -- PgQue transformation: LISTEN\/NOTIFY wakeup (not in original PgQ)/' \
+  "${INSTALL_FILE}"
+
+# search_path pinning — annotate first occurrence only via awk
+if ! awk '/set search_path = pgque, pg_catalog;/ && !sp_done {
+  sp_done=1; sub(/;/, "; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)")
+} {print}
+END {
+  if (!sp_done) {
+    print "ERROR: no search_path pin found to annotate" > "/dev/stderr"
+    exit 1
+  }
+}' "${INSTALL_FILE}" > "${INSTALL_FILE}.tmp"; then
+  rm -f "${INSTALL_FILE}.tmp"
+  echo "FAIL: search_path annotation did not apply" >&2
+  exit 1
+fi
+mv "${INSTALL_FILE}.tmp" "${INSTALL_FILE}"
+
 # Section 6: pgque additions
 echo "-- ======================================================================" >> "${INSTALL_FILE}"
 echo "-- Section 6: pgque additions (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
@@ -815,6 +972,10 @@ echo "-- ======================================================================"
 echo "" >> "${INSTALL_FILE}"
 
 for addition_file in config.sql queue_max_retries.sql lifecycle.sql tick_helpers.sql roles.sql dlq.sql hardening.sql; do
+  if [[ ! -f "${ADDITIONS_DIR}/${addition_file}" ]]; then
+    echo "ERROR: additions file not found: pgque-additions/${addition_file}" >&2
+    exit 1
+  fi
   echo "-- pgque-additions/${addition_file}" >> "${INSTALL_FILE}"
   cat "${ADDITIONS_DIR}/${addition_file}" >> "${INSTALL_FILE}"
   echo "" >> "${INSTALL_FILE}"
@@ -822,45 +983,34 @@ done
 
 # Section 7: pgque-api (default v0.1 API surface)
 API_DIR="${SQL_DIR}/pgque-api"
-if [[ -d "${API_DIR}" ]]; then
-  echo "-- ======================================================================" >> "${INSTALL_FILE}"
-  echo "-- Section 7: pgque-api (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
-  echo "-- ======================================================================" >> "${INSTALL_FILE}"
-  echo "" >> "${INSTALL_FILE}"
-
-  DEFAULT_API_FILES=(
-    maint.sql
-    receive.sql
-    cooperative_consumers.sql
-    send.sql
-  )
-
-  for api_name in "${DEFAULT_API_FILES[@]}"; do
-    api_file="${API_DIR}/${api_name}"
-    if [[ -f "${api_file}" ]]; then
-      echo "-- pgque-api/$(basename "${api_file}")" >> "${INSTALL_FILE}"
-      cat "${api_file}" >> "${INSTALL_FILE}"
-      echo "" >> "${INSTALL_FILE}"
-    fi
-  done
+if [[ ! -d "${API_DIR}" ]]; then
+  echo "ERROR: pgque-api directory not found: ${API_DIR}" >&2
+  exit 1
 fi
 
-# -- Inline transformation comments -------------------------------------------
-# Add "PgQue transformation:" comments to specific lines in the output.
-# These annotate each mechanical change so reviewers can trace what was modified.
+echo "-- ======================================================================" >> "${INSTALL_FILE}"
+echo "-- Section 7: pgque-api (NEW — not derived from PgQ)" >> "${INSTALL_FILE}"
+echo "-- ======================================================================" >> "${INSTALL_FILE}"
+echo "" >> "${INSTALL_FILE}"
 
-# Column default transformations (appear once each in tables section)
-sedi '/queue_switch_step1.*default pg_current_xact_id/s/$/ -- PgQue transformation: txid_current()→pg_current_xact_id()::text::bigint (PG14+)/' "${INSTALL_FILE}"
+DEFAULT_API_FILES=(
+  maint.sql
+  receive.sql
+  cooperative_consumers.sql
+  send.sql
+)
 
-sedi '/ev_txid.*xid8.*default pg_current_xact_id/s/$/ -- PgQue transformation: bigint→xid8 (needed for pg_visible_in_snapshot)/' "${INSTALL_FILE}"
-
-# LISTEN/NOTIFY injection (appears twice in ticker)
-sedi '/perform pg_notify.*pgque_/s/$/ -- PgQue transformation: LISTEN\/NOTIFY wakeup (not in original PgQ)/' "${INSTALL_FILE}"
-
-# search_path pinning — annotate first occurrence only via awk
-awk '/set search_path = pgque, pg_catalog;/ && !sp_done {
-  sp_done=1; sub(/;/, "; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)")
-} {print}' "${INSTALL_FILE}" > "${INSTALL_FILE}.tmp" && mv "${INSTALL_FILE}.tmp" "${INSTALL_FILE}"
+for api_name in "${DEFAULT_API_FILES[@]}"; do
+  api_file="${API_DIR}/${api_name}"
+  if [[ ! -f "${api_file}" ]]; then
+    echo "ERROR: pgque-api file not found: pgque-api/${api_name}" >&2
+    echo "       Shipping without it would truncate the install file." >&2
+    exit 1
+  fi
+  echo "-- pgque-api/$(basename "${api_file}")" >> "${INSTALL_FILE}"
+  cat "${api_file}" >> "${INSTALL_FILE}"
+  echo "" >> "${INSTALL_FILE}"
+done
 
 install_lines=$(wc -l < "${INSTALL_FILE}")
 echo "Assembled ${INSTALL_FILE} (${install_lines} lines)"
@@ -929,11 +1079,43 @@ else
   asm_errors=$((asm_errors + 1))
 fi
 
-# Verify pg_notify is in the ticker section
-if grep -q 'pg_notify' "${INSTALL_FILE}"; then
-  echo "PASS: pg_notify present in install script"
+# Verify pg_notify is inside the internal ticker function bodies themselves.
+# A whole-file grep would be vacuous: Section 6 (hardening.sql) contains its
+# own pg_notify, so it would pass even if both ticker injections missed.
+# Extract every pgque.ticker definition that emits a tick (the 4-arg and
+# 1-arg overloads; the 0-arg overload only loops and delegates) and require
+# pg_notify within each body. Only single-line signatures are classified,
+# which selects exactly the transformed Section 2 tickers; the hardening.sql
+# external-ticker override declares its arguments across multiple lines and
+# carries its own pg_notify in source, so it needs no transform-time check.
+if awk '
+/^create or replace function pgque\.ticker\(/ {
+  in_ticker = 1
+  sig = $0
+  has_notify = 0
+}
+in_ticker && /perform pg_notify\(/ { has_notify = 1 }
+in_ticker && /^\$\$ language/ {
+  in_ticker = 0
+  if (sig ~ /i_tick_id bigint/) { four_total++; four_ok += has_notify }
+  else if (sig ~ /\(i_queue_name text\)/) { one_total++; one_ok += has_notify }
+}
+END {
+  if (four_total < 1 || one_total < 1) {
+    printf "ERROR: ticker overloads not found (4-arg: %d, 1-arg: %d)\n", \
+      four_total, one_total > "/dev/stderr"
+    exit 1
+  }
+  if (four_ok != four_total || one_ok != one_total) {
+    printf "ERROR: pg_notify missing from ticker bodies (4-arg: %d/%d, 1-arg: %d/%d)\n", \
+      four_ok, four_total, one_ok, one_total > "/dev/stderr"
+    exit 1
+  }
+}
+' "${INSTALL_FILE}"; then
+  echo "PASS: pg_notify present in every tick-emitting ticker function body"
 else
-  echo "FAIL: pg_notify missing from install script"
+  echo "FAIL: pg_notify missing from one or more ticker function bodies"
   asm_errors=$((asm_errors + 1))
 fi
 
@@ -1029,28 +1211,9 @@ for tag in "${PGTLE_DOLLAR_TAG}" wrapper; do
   fi
 done
 
-# Extract the version string from pgque.version() in lifecycle.sql so the
-# pg_tle install always advertises the same version pgque.version() returns at
-# runtime. Anchor to the function so unrelated `return '...'` lines added later
-# cannot shadow it; skip comment lines so a stray `-- return 'old'` cannot
-# match. Validate the extracted literal so a malformed value cannot break the
-# heredoc that embeds it into the generated SQL.
-PGTLE_VERSION=$(awk '
-  /create or replace function pgque\.version/ { in_fn=1; next }
-  in_fn && $0 !~ /^[[:space:]]*--/ && match($0, /return '\''[^'\'']+'\''/) {
-    s=substr($0, RSTART+8, RLENGTH-9); print s; exit
-  }
-' "${ADDITIONS_DIR}/lifecycle.sql")
-
-if [[ -z "${PGTLE_VERSION}" ]]; then
-  echo "FAIL: could not extract pgque version from pgque.version() in lifecycle.sql" >&2
-  exit 1
-fi
-
-if ! [[ "${PGTLE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
-  echo "FAIL: pgque version '${PGTLE_VERSION}' is not a valid semver string" >&2
-  exit 1
-fi
+# The registered version is PGQUE_VERSION, extracted once (above, before
+# assembly) from pgque.version() in lifecycle.sql and shared with the
+# sql/pgque.sql header so the two can never drift apart.
 
 cat > "${PGTLE_FILE}" << HEADER
 -- pgque-tle.sql -- Install PgQue as a pg_tle (Trusted Language Extension).
@@ -1123,8 +1286,8 @@ begin
     from pgtle.available_extensions()
     where name = 'pgque';
 
-    if existing_version = '${PGTLE_VERSION}' then
-        raise notice 'pgque ${PGTLE_VERSION} already registered with pg_tle; skipping install_extension().';
+    if existing_version = '${PGQUE_VERSION}' then
+        raise notice 'pgque ${PGQUE_VERSION} already registered with pg_tle; skipping install_extension().';
         return;
     end if;
 
@@ -1133,12 +1296,12 @@ begin
             'but this script registers version %. Run '
             'sql/pgque-tle-uninstall.sql first to remove the existing '
             'registration, then re-run this script.',
-            existing_version, '${PGTLE_VERSION}';
+            existing_version, '${PGQUE_VERSION}';
     end if;
 
     perform pgtle.install_extension(
         'pgque',
-        '${PGTLE_VERSION}',
+        '${PGQUE_VERSION}',
         'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
 \$${PGTLE_DOLLAR_TAG}\$
 HEADER
@@ -1151,12 +1314,12 @@ cat >> "${PGTLE_FILE}" << FOOTER
 end \$wrapper\$;
 
 \\echo ''
-\\echo 'PgQue ${PGTLE_VERSION} registered with pg_tle.'
+\\echo 'PgQue ${PGQUE_VERSION} registered with pg_tle.'
 \\echo 'Run create extension pgque; to materialise the schema in this database.'
 FOOTER
 
 pgtle_lines=$(wc -l < "${PGTLE_FILE}")
-echo "Wrote ${PGTLE_FILE} (${pgtle_lines} lines, version ${PGTLE_VERSION})"
+echo "Wrote ${PGTLE_FILE} (${pgtle_lines} lines, version ${PGQUE_VERSION})"
 
 # Self-check on the generated file.
 pgtle_errors=0
