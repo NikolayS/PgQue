@@ -46,12 +46,19 @@ These rules are the source of truth for agentic engineering in this repo. Agents
 - Prefer C-style `/* ... */` block comments for anything spanning 2+ lines;
   use `--` only for single-line comments.
 - Comments state what the code cannot: a constraint, a non-obvious
-  invariant, a concurrency hazard -- in a line or two. Do NOT cite
-  user-story or requirement IDs (`US-13.4`, `I2`, `G2`) or other
-  spec-process artifacts in code, and do not restate the spec or narrate
-  design rationale at length. Longer rationale lives in `blueprints/` and
-  the specs; a short pointer (`SPEC section 15`, `see blueprints/...`) is
-  fine.
+  invariant, a concurrency hazard. Per-function headers and inline
+  comments say that in 1-3 lines; do NOT write per-function essays or
+  step-by-step narration alongside the code. One consolidated
+  design-notes block per file (or per section) is encouraged for the
+  bigger picture -- keep it C-style, and it may cite the spec
+  (`SPEC section 15`).
+- Do NOT cite user-story or requirement IDs (`US-13.4`, `I2`, `G2`) or
+  other spec-process artifacts in code, and do not restate the spec at
+  length. Longer rationale lives in `blueprints/` and the specs; a short
+  pointer (`SPEC section 15`, `see blueprints/...`) is fine.
+- These style rules govern pgque-authored code only. The inherited PgQ
+  engine (batch/tick/rotation and other repackaged PgQ internals) keeps
+  its original comment style and is never restyled.
 - Collapse single-argument keyword clauses onto one line (`select 1`,
   `from t`, `where x = y`, `into v`); expand only multi-argument clauses,
   one argument per line.
