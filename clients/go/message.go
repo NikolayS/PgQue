@@ -8,6 +8,11 @@ import "time"
 // Message is a single event delivered as part of a batch. The BatchID
 // must be passed to Client.Ack once every message in the batch has
 // been processed.
+//
+// Type and Payload are nullable on the SQL side (PgQ allows NULL
+// ev_type and ev_data); a NULL value is delivered as the empty string.
+// A message with an empty Type has no registered handler, so the
+// Consumer routes it per its UnknownHandlerPolicy.
 type Message struct {
 	MsgID      int64     `json:"msg_id"`
 	BatchID    int64     `json:"batch_id"`

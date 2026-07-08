@@ -10,9 +10,40 @@ import (
 	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// scanMessage scans one pgque.message row into a Message. The SQL type
+// declares type and payload as nullable text -- PgQ legally stores NULL
+// ev_type and ev_data (direct pgque.insert_event calls, trigger-based
+// producers) -- so both are scanned through nullable temporaries and
+// NULL is mapped to "". Scanning NULL directly into string would error
+// the whole batch, leaving it unacked and redelivered forever.
+func scanMessage(rows pgx.Rows) (Message, error) {
+	var (
+		m            Message
+		typ, payload *string
+		createdAt    time.Time
+	)
+	err := rows.Scan(
+		&m.MsgID, &m.BatchID, &typ, &payload,
+		&m.RetryCount, &createdAt,
+		&m.Extra1, &m.Extra2, &m.Extra3, &m.Extra4,
+	)
+	if err != nil {
+		return Message{}, fmt.Errorf("pgque: scan message: %w", err)
+	}
+	if typ != nil {
+		m.Type = *typ
+	}
+	if payload != nil {
+		m.Payload = *payload
+	}
+	m.CreatedAt = createdAt
+	return m, nil
+}
 
 // Client is the PgQue client. It is safe for concurrent use; the
 // underlying pgx pool handles connection multiplexing.
@@ -134,17 +165,10 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 
 	var msgs []Message
 	for rows.Next() {
-		var m Message
-		var createdAt time.Time
-		err := rows.Scan(
-			&m.MsgID, &m.BatchID, &m.Type, &m.Payload,
-			&m.RetryCount, &createdAt,
-			&m.Extra1, &m.Extra2, &m.Extra3, &m.Extra4,
-		)
+		m, err := scanMessage(rows)
 		if err != nil {
-			return nil, fmt.Errorf("pgque: scan message: %w", err)
+			return nil, err
 		}
-		m.CreatedAt = createdAt
 		msgs = append(msgs, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -322,17 +346,10 @@ func (c *Client) ReceiveCoop(ctx context.Context, queue, consumer, subconsumer s
 
 	var msgs []Message
 	for rows.Next() {
-		var m Message
-		var createdAt time.Time
-		err := rows.Scan(
-			&m.MsgID, &m.BatchID, &m.Type, &m.Payload,
-			&m.RetryCount, &createdAt,
-			&m.Extra1, &m.Extra2, &m.Extra3, &m.Extra4,
-		)
+		m, err := scanMessage(rows)
 		if err != nil {
-			return nil, fmt.Errorf("pgque: scan message: %w", err)
+			return nil, err
 		}
-		m.CreatedAt = createdAt
 		msgs = append(msgs, m)
 	}
 	if err := rows.Err(); err != nil {
