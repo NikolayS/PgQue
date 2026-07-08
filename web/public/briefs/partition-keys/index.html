@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PgQue Brief · Partition Keys · versions</title>
+<meta name="description" content="Version history of the PgQue partition-keys design brief."/>
+<style>
+  :root { --blue-light:#6ea3c9; --amber:#f0883e; --amber-high:#f6c79b; --bg:#0c0d10; --panel:#15171c; --panel-2:#1b1e24; --line:#2c3038; --ink:#f0ede5; --ink-2:#c2bdb1; --ink-3:#989488;
+    --display:'Saira Semi Condensed',ui-sans-serif,system-ui,sans-serif; --body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif; --mono:'JetBrains Mono Variable',ui-monospace,SFMono-Regular,Menlo,monospace; }
+  *{box-sizing:border-box} body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,rgba(51,103,145,0.18),transparent 60%),radial-gradient(900px 500px at 0% 10%,rgba(240,136,62,0.08),transparent 55%),var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6}
+  .wrap{max-width:820px;margin:0 auto;padding:2.4rem 1.25rem 4rem}
+  .eyebrow{font-family:var(--mono);font-size:0.72rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--amber);margin:0 0 0.6rem}
+  h1{font-family:var(--display);font-weight:600;font-size:clamp(1.8rem,5vw,2.6rem);margin:0 0 0.4rem}
+  .lede{color:var(--ink-2);margin:0 0 1.8rem} .lede a{color:var(--blue-light);text-decoration:none}
+  .row{display:grid;grid-template-columns:8rem 6rem 1fr;gap:0.8rem;align-items:baseline;text-decoration:none;
+    padding:0.85rem 1rem;border:1px solid var(--line);border-radius:12px;margin-bottom:0.6rem;background:linear-gradient(180deg,var(--panel),var(--panel-2));transition:border-color .15s}
+  .row:hover{border-color:rgba(240,136,62,0.5)}
+  .ver{font-family:var(--mono);font-weight:600;color:var(--amber-high)}
+  .date{font-family:var(--mono);font-size:0.8rem;color:var(--ink-3)}
+  .sum{color:var(--ink-2);font-size:0.94rem} .sum code{font-family:var(--mono);font-size:0.85em;color:var(--amber-high)}
+  @media(max-width:620px){.row{grid-template-columns:1fr;gap:0.2rem}}
+  footer{margin-top:2.4rem;color:var(--ink-3);font-size:0.85rem} footer a{color:var(--blue-light);text-decoration:none}
+</style></head>
+<body><div class="wrap">
+  <p class="eyebrow">PgQue · Design Brief</p>
+  <h1>Partition Keys — version history</h1>
+  <p class="lede">Every draft of the brief, newest first. The live brief always tracks the latest: <a href="../partition-keys.html">/briefs/partition-keys.html</a>.</p>
+  <a class="row" href="v0.8.html">
+    <span class="ver">v0.8 &nbsp;<span style="color:var(--amber);font-size:0.75em;">latest</span></span>
+    <span class="date">2026-07-06</span>
+    <span class="sum">Slot ownership: batch lease replaces advisory locks — pooler-safe, <code>epoch</code> fencing; <code>slot_lock_key</code> removed (D11).</span>
+  </a>
+  <a class="row" href="v0.7.html">
+    <span class="ver">v0.7</span>
+    <span class="date">2026-07-02</span>
+    <span class="sum">Fabrizio review — mechanism/policy seam, member-table rejected, online-resize protocol.</span>
+  </a>
+  <a class="row" href="v0.6.html">
+    <span class="ver">v0.6</span>
+    <span class="date">2026-06-25</span>
+    <span class="sum">Reframed into two tiers; producer idempotency split into its own feature.</span>
+  </a>
+  <a class="row" href="v0.5.html">
+    <span class="ver">v0.5</span>
+    <span class="date">2026-06-24</span>
+    <span class="sum">Worker→slot assignment — claim, not assign (no leader / PartitionAssignor).</span>
+  </a>
+  <a class="row" href="v0.4.html">
+    <span class="ver">v0.4</span>
+    <span class="date">2026-06-19</span>
+    <span class="sum">Review round 3 — Phase 1 converged; strict <code>pause</code> deferred.</span>
+  </a>
+  <a class="row" href="v0.3.html">
+    <span class="ver">v0.3</span>
+    <span class="date">2026-06-19</span>
+    <span class="sum">Review round 2 — G1 ordering + G2 single-owner lock verified against the engine.</span>
+  </a>
+  <a class="row" href="v0.2.html">
+    <span class="ver">v0.2</span>
+    <span class="date">2026-06-19</span>
+    <span class="sum">Review round 1 — N independent slot subscriptions; guarantees G1/G2/G3.</span>
+  </a>
+  <a class="row" href="v0.1.html">
+    <span class="ver">v0.1</span>
+    <span class="date">2026-06-19</span>
+    <span class="sum">Initial SamoSpec draft — single-tier hash-slot design.</span>
+  </a>
+  <footer>PgQue — zero-bloat PostgreSQL queue · <a href="https://pgque.dev">pgque.dev</a> · <a href="https://github.com/NikolayS/pgque">github.com/NikolayS/pgque</a></footer>
+</div></body></html>

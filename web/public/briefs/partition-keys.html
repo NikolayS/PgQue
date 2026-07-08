@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PgQue Brief · Partition Keys · v0.8</title>
+<meta name="description" content="Ordered, parallel consumption by partition key in PgQue — the log-native (Kafka-partition) model: order within a key, parallelism across keys." />
+<style>
+  :root {
+    --blue: #336791; --blue-light: #6ea3c9; --amber: #f0883e; --amber-high: #f6c79b; --sand: #c9a86a;
+    --bg: #0c0d10; --panel: #15171c; --panel-2: #1b1e24; --line: #2c3038;
+    --ink: #f0ede5; --ink-2: #c2bdb1; --ink-3: #989488;
+    --display: 'Saira Semi Condensed', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+    --body: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(51,103,145,0.18), transparent 60%),
+      radial-gradient(900px 500px at 0% 10%, rgba(240,136,62,0.08), transparent 55%),
+      var(--bg);
+    color: var(--ink); font-family: var(--body); line-height: 1.6; font-size: 16px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 2.4rem 1.25rem 4rem; }
+  header.brief { border-bottom: 1px solid var(--line); padding-bottom: 1.4rem; margin-bottom: 2rem; }
+  .eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--amber); margin: 0 0 0.6rem; }
+  h1 { font-family: var(--display); font-weight: 600; letter-spacing: 0.01em; font-size: clamp(2rem, 6vw, 3.1rem); line-height: 1.05; margin: 0 0 0.7rem; }
+  h1 .sub { display: block; color: var(--blue-light); font-size: 0.42em; letter-spacing: 0.02em; margin-top: 0.5rem; }
+  .badges { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+  .badge { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.03em; padding: 0.28rem 0.6rem; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-2); background: var(--panel); }
+  .badge b { color: var(--ink); font-weight: 600; }
+  .badge--amber { border-color: rgba(240,136,62,0.5); color: var(--amber-high); }
+  h2 { font-family: var(--display); font-weight: 600; letter-spacing: 0.01em; font-size: 1.5rem; margin: 2.6rem 0 0.9rem; color: var(--ink); }
+  h2 .n { color: var(--amber); font-size: 0.85em; margin-right: 0.5rem; }
+  p { color: var(--ink-2); margin: 0.8rem 0; }
+  strong { color: var(--ink); }
+  code { font-family: var(--mono); font-size: 0.86em; color: var(--amber-high); background: rgba(240,136,62,0.08); border: 1px solid rgba(240,136,62,0.18); padding: 0.08em 0.36em; border-radius: 5px; }
+  .lede { font-size: 1.12rem; color: var(--ink); border-left: 3px solid var(--amber); padding: 0.2rem 0 0.2rem 1rem; margin: 1.4rem 0 0; }
+  .panel { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; margin: 1.2rem 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
+  .card-title { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 0.5rem; }
+  ul.tight { margin: 0.4rem 0; padding-left: 1.1rem; }
+  ul.tight li { color: var(--ink-2); margin: 0.32rem 0; }
+  ul.tight li::marker { color: var(--blue-light); }
+  .yes li::marker { color: var(--amber); }
+  .guarantee { display: grid; gap: 0.7rem; margin: 1rem 0; }
+  .g { display: grid; grid-template-columns: auto 1fr; gap: 0.8rem; align-items: start; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0.8rem 1rem; }
+  .g .tag { font-family: var(--mono); font-weight: 600; color: var(--amber); }
+  .g p { margin: 0; font-size: 0.95rem; }
+  table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  td.id { font-family: var(--mono); color: var(--amber); white-space: nowrap; }
+  td.pick { color: var(--ink); font-weight: 600; }
+  figure { margin: 1.4rem 0; }
+  .diagram { width: 100%; height: auto; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  figcaption { font-size: 0.82rem; color: var(--ink-3); margin-top: 0.5rem; font-family: var(--mono); }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.9rem 0; }
+  .pill { font-family: var(--mono); font-size: 0.78rem; padding: 0.3rem 0.7rem; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); color: var(--ink-2); }
+  .pill b { color: var(--blue-light); }
+  footer { margin-top: 3rem; padding-top: 1.4rem; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 0.86rem; }
+  footer a { color: var(--blue-light); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  .note { font-size: 0.82rem; color: var(--ink-3); font-style: italic; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav style="font-family:var(--mono,ui-monospace,monospace);font-size:0.72rem;letter-spacing:0.03em;display:flex;gap:0.45rem;flex-wrap:wrap;align-items:center;margin-bottom:1.6rem;padding-bottom:0.9rem;border-bottom:1px solid var(--line,#2c3038);">
+  <span style="color:var(--ink-3,#989488);text-transform:uppercase;letter-spacing:0.12em;">brief&nbsp;history</span>
+  <a href="partition-keys/v0.1.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.1</a>
+  <a href="partition-keys/v0.2.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.2</a>
+  <a href="partition-keys/v0.3.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.3</a>
+  <a href="partition-keys/v0.4.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.4</a>
+  <a href="partition-keys/v0.5.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.5</a>
+  <a href="partition-keys/v0.6.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.6</a>
+  <a href="partition-keys/v0.7.html" style="color:var(--blue-light,#6ea3c9);text-decoration:none;border:1px solid var(--line,#2c3038);border-radius:999px;padding:0.15rem 0.55rem;">v0.7</a>
+  <span style="color:var(--amber-high,#f6c79b);border:1px solid rgba(240,136,62,0.5);border-radius:999px;padding:0.15rem 0.55rem;background:rgba(240,136,62,0.08);">v0.8 ●</span>
+  <a href="partition-keys/" style="color:var(--ink-3,#989488);text-decoration:none;margin-left:auto;">all&nbsp;versions&nbsp;↗</a>
+  </nav>
+
+  <header class="brief">
+    <p class="eyebrow">PgQue · Design Brief</p>
+    <h1>Partition Keys<span class="sub">Ordered, parallel consumption — the log-native way</span></h1>
+    <div class="badges">
+      <span class="badge">slug <b>partition-keys</b></span>
+      <span class="badge">version <b>v0.8 (draft)</b></span>
+      <span class="badge badge--amber">Tier A <b>build-now</b></span>
+      <span class="badge">engine <b>untouched</b></span>
+    </div>
+  </header>
+
+  <p class="lede">
+    Two tiers of per-key consumption, matched to two real needs.
+    <strong>Mutual exclusion</strong> (Tier A) — one worker per key at a time —
+    reuses what PgQue already ships: cooperative consumers plus a per-key advisory
+    lock, near-zero new engine code. <strong>Ordered per key</strong> (Tier B) —
+    Kafka's partition model, order <em>within</em> a key — adds hash-routed slots and
+    pays for strict order with read amplification and a fixed partition count. Pick
+    the tier the workload needs.
+  </p>
+
+  <h2><span class="n">01</span>The problem</h2>
+  <p>
+    PgQue is an <strong>ordered, immutable log</strong>, not a job queue. One in-order
+    consumer can't keep up with millions of events; naive multi-worker consumption
+    breaks per-key order. The motivating workload (a multi-tenant storage service
+    evaluating PgQue to replace pg-boss) has <strong>two</strong> needs, not one — and
+    they want different guarantees:
+  </p>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Migrations · mutual exclusion</p>
+      <ul class="tight yes">
+        <li>Run <strong>one job per tenant</strong> at a time (schema migrations)</li>
+        <li>Order <strong>doesn't</strong> matter — idempotent "ensure latest" job</li>
+        <li>Concurrent requests across instances must collapse to one run</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Lifecycle events · ordered</p>
+      <ul class="tight">
+        <li><code>FileCreated</code>, <code>FileDeleted</code>, <code>FileOverwritten</code> — millions</li>
+        <li>Ordered <strong>per tenant</strong>; order across tenants irrelevant</li>
+        <li>Throughput-critical</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="n">02</span>Two tiers — really two separate features</h2>
+  <p>
+    Both needs are "per-key", but the guarantee differs — so the cost differs, and so
+    do the features. <strong>Tier B is the partition-keys feature</strong> (ordered
+    slots). <strong>Tier A is a plain-queue recipe</strong> (mutual exclusion + producer
+    idempotency) that uses no slots — it's the migration case, kept deliberately
+    separate so partition keys don't drift toward a mutable job queue. "Tier A/B" below
+    is just shorthand. Don't pay for ordering you don't need.
+  </p>
+  <table>
+    <thead><tr><th>Tier</th><th>Guarantee</th><th>Built on</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td class="id">A</td><td class="pick">Mutual exclusion — one worker per key (G2)</td><td>cooperative consumers (exist) + per-key <code>pg_try_advisory_xact_lock</code></td><td>≈ none · no new tables · no N</td></tr>
+      <tr><td class="id">B</td><td class="pick">Ordered per key — FIFO within a key (G1 + G2)</td><td>N hash-routed slot subscriptions via <code>extra_where</code></td><td>N&#215; read amplification · fixed N · slot assignment</td></tr>
+    </tbody>
+  </table>
+  <p class="note">
+    Cooperative consumers <em>cannot</em> provide Tier B: they split by tick window,
+    not key, so a key scatters across workers (round-1 finding A1, confirmed in
+    <code>next_coop_batch</code>). Tier A leans on exactly that throughput-spreading and
+    adds the per-key lock for serialization.
+  </p>
+
+  <div class="panel">
+    <p class="card-title">User stories · the acceptance contract</p>
+    <p>
+      Both features share one user-story layer — the language the specs, this brief,
+      and the acceptance suites all speak. <strong>US-12</strong> is partition keys
+      (ordered slots); <strong>US-13</strong> is producer idempotency (TTL dedup on a
+      plain queue). Each story maps to an executable check.
+    </p>
+    <div class="two">
+      <div class="panel">
+        <p class="card-title">US-12 · partition keys</p>
+        <ul class="tight">
+          <li><b>12.1</b> Keyed <code>send(…, partition_key)</code> → <code>ev_extra1</code></li>
+          <li><b>12.2</b> Per-key order — one key, one slot, <code>ev_id</code> order</li>
+          <li><b>12.3</b> Cross-key parallelism — N slots, disjoint, complete</li>
+          <li><b>12.4</b> One processor per slot — same batch, never divergent</li>
+          <li><b>12.5</b> Lease claim / release + TTL takeover, epoch-fenced</li>
+          <li><b>12.6</b> <code>partition_slot_status</code> — lease owner + lag (R7)</li>
+          <li><b>12.7</b> Enforced N — wrong N rejected, never misrouted</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <p class="card-title">US-13 · producer idempotency</p>
+        <ul class="tight">
+          <li><b>13.1</b> TTL dedup — one insert, original id, <code>deduped=true</code></li>
+          <li><b>13.2</b> Effect-scoped keys — <code>:v2</code> not hidden by <code>:v1</code></li>
+          <li><b>13.3</b> Window expiry — same key inserts again after TTL</li>
+          <li><b>13.4</b> GC — <code>maint()</code> reaps expired dedup rows</li>
+          <li><b>13.5</b> Mutual-exclusion recipe — advisory lock + idempotent handler</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">
+      Executable: <code>tests/acceptance/us12_partition_keys.sql</code> and
+      <code>tests/acceptance/us13_producer_idempotency.sql</code>; the two-session
+      facets of 12.4 / 12.5 live in <code>tests/two_session_slot_claim.sh</code>.
+    </p>
+  </div>
+
+  <h2><span class="n">03</span>Tier A · mutual exclusion</h2>
+  <p>
+    A <em>recipe</em> over existing primitives on a <strong>plain queue</strong>, not
+    new engine code — and a <strong>separate feature from partition keys</strong>. The
+    migration use case lives here: producer idempotency + consumer mutual exclusion.
+    It needs no slots, no fixed N, no ordering — the "key" is a <em>lock key</em>, not a
+    partition. Producer dedup is spec'd on its own in
+    <code>blueprints/idempotency/SPEC.md</code> (ships as Phase 1B); keeping migrations
+    out of the partition-keys feature stops it drifting toward a mutable job queue.
+  </p>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Mechanism</p>
+      <ul class="tight yes">
+        <li><code>send(queue, type, payload, partition_key)</code> → key into <code>ev_extra1</code></li>
+        <li>Existing <strong>cooperative consumers</strong> spread batches across workers</li>
+        <li>Per event: <code>pg_try_advisory_xact_lock(hashtextextended(key,0))</code></li>
+        <li>Lock free → process, then unlock · lock held → <strong>ack and drop</strong></li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Why ack-and-drop is safe</p>
+      <ul class="tight">
+        <li>Handlers are idempotent (given)</li>
+        <li>Lock held ⇒ that key is <em>already</em> being processed</li>
+        <li>Contended event is redundant — no retry churn, no ordering concern</li>
+        <li>No N · no slot assignment · no rebalancing — workers stateless &amp; elastic</li>
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <p class="card-title">Idempotency: a complementary layer, not the same thing</p>
+    <p>
+      The idempotency ask is a <em>second</em> layer, not a restatement of partition
+      keys. <strong>Consumer-side</strong> mutual exclusion (above) prevents duplicate
+      <em>work</em>: residual duplicates ack-drop, the idempotent handler runs once.
+      <strong>Producer-side</strong> dedup — a TTL window (the SQS/NATS model) —
+      additionally prevents duplicate <em>inserts</em>, keeping the log small when many
+      instances race to enqueue the same key. Use the consumer layer for correctness;
+      add the producer TTL window when insert volume matters. Measured side by side in
+      <code>blueprints/partition-keys/repro/</code>.
+    </p>
+    <p>
+      <strong>Key-scope footgun.</strong> The TTL key must encode the desired
+      <em>effect</em>, not just the entity. Key on <code>migrate:tenant</code>, ship
+      migration v1 then v2 inside the window, and v2 is silently suppressed as a
+      "duplicate" — a correctness bug, not a caveat. Use
+      <code>migrate:tenant:version</code>. Reproduced both ways in the repro
+      (<code>--tier hazard</code>).
+    </p>
+  </div>
+
+  <h2><span class="n">04</span>Tier B · ordered per key</h2>
+  <p>
+    When order <em>is</em> the point (lifecycle events). Within one queue, events
+    sharing a partition key are consumed in order by a single worker at a time;
+    different keys run in parallel — with no per-event locks and no new mutable state.
+    This is where fixed N, read amplification, and slot assignment live — the inherent
+    price of strict ordering. <strong>G2</strong> is also Tier A's guarantee; Tier B
+    adds <strong>G1</strong>.
+  </p>
+  <div class="guarantee">
+    <div class="g"><span class="tag">G1</span><p><strong>Per-key affinity + FIFO.</strong> Every event of key <code>K</code> maps to one slot <code>hashtextextended(K,0) % N</code>; within it, non-retried events of <code>K</code> arrive in <code>ev_id</code> order, never to another slot.</p></div>
+    <div class="g"><span class="tag">G2</span><p><strong>Single processor per key.</strong> At most one worker holds an unacked event for <code>K</code> at any instant.</p></div>
+    <div class="g"><span class="tag">G3</span><p><strong>Failure boundary.</strong> <code>pause</code>: no later <code>K</code> event until the failed one is acked or dead-lettered. <code>skip</code> (v0.1 default): at-least-once, order not held after a failure.</p></div>
+  </div>
+
+  <h2><span class="n">05</span>Tier B · architecture</h2>
+  <figure>
+    <svg class="diagram" viewBox="0 0 860 520" role="img" aria-label="Each partition slot is an independent subscription with its own cursor that reads the whole stream and server-side-filters to its hash class via get_batch_cursor extra_where. The engine is unchanged.">
+      <defs>
+        <marker id="arr" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6ea3c9"></path></marker>
+        <style>
+          .lbl { font-family:'JetBrains Mono Variable', ui-monospace, monospace; fill:#c2bdb1; font-size:13px; }
+          .lbl-s { font-family:'JetBrains Mono Variable', ui-monospace, monospace; fill:#989488; font-size:11px; }
+          .ttl { font-family:'Saira Semi Condensed', system-ui, sans-serif; font-weight:600; font-size:17px; }
+          .flow { stroke:#6ea3c9; stroke-width:2; fill:none; marker-end:url(#arr); }
+        </style>
+      </defs>
+
+      <rect x="60" y="24" width="740" height="58" rx="12" fill="#15171c" stroke="#2c3038"/>
+      <text x="430" y="50" text-anchor="middle" class="ttl" fill="#f0ede5">producers</text>
+      <text x="430" y="70" text-anchor="middle" class="lbl">send(queue, type, payload, partition_key =&gt; K) &#8594; ev_extra1</text>
+      <path class="flow" d="M430,82 L430,116"/>
+
+      <rect x="60" y="120" width="740" height="80" rx="12" fill="#141a20" stroke="#336791"/>
+      <text x="84" y="148" class="ttl" fill="#6ea3c9">engine · sacred — UNCHANGED</text>
+      <text x="84" y="170" class="lbl">append-only tables · global ev_id / ev_txid order</text>
+      <text x="84" y="189" class="lbl-s">next_batch · get_batch_cursor(extra_where) · rotation — no edits to batch_event_sql</text>
+
+      <path class="flow" d="M200,200 L160,250"/>
+      <path class="flow" d="M430,200 L430,250"/>
+      <path class="flow" d="M660,200 L700,250"/>
+      <text x="250" y="232" class="lbl-s">full stream</text>
+      <text x="455" y="232" class="lbl-s">full stream</text>
+      <text x="665" y="232" class="lbl-s">full stream</text>
+
+      <g>
+        <rect x="70" y="254" width="220" height="150" rx="12" fill="#1d160e" stroke="#f0883e"/>
+        <text x="180" y="282" text-anchor="middle" class="ttl" fill="#f0883e">slot 0 · sub#0/N</text>
+        <text x="180" y="306" text-anchor="middle" class="lbl">own cursor</text>
+        <text x="180" y="328" text-anchor="middle" class="lbl-s">extra_where: h%N==0</text>
+        <text x="180" y="352" text-anchor="middle" class="lbl-s">keys in ev_id order</text>
+        <text x="180" y="378" text-anchor="middle" class="lbl-s">one worker</text>
+      </g>
+      <g>
+        <rect x="320" y="254" width="220" height="150" rx="12" fill="#1d160e" stroke="#f0883e"/>
+        <text x="430" y="282" text-anchor="middle" class="ttl" fill="#f0883e">slot 1 · sub#1/N</text>
+        <text x="430" y="306" text-anchor="middle" class="lbl">own cursor</text>
+        <text x="430" y="328" text-anchor="middle" class="lbl-s">extra_where: h%N==1</text>
+        <text x="430" y="352" text-anchor="middle" class="lbl-s">keys in ev_id order</text>
+        <text x="430" y="378" text-anchor="middle" class="lbl-s">one worker</text>
+      </g>
+      <g>
+        <rect x="570" y="254" width="220" height="150" rx="12" fill="#1d160e" stroke="#f0883e"/>
+        <text x="680" y="282" text-anchor="middle" class="ttl" fill="#f0883e">slot N-1 · sub#k/N</text>
+        <text x="680" y="306" text-anchor="middle" class="lbl">own cursor</text>
+        <text x="680" y="328" text-anchor="middle" class="lbl-s">extra_where: h%N==N-1</text>
+        <text x="680" y="352" text-anchor="middle" class="lbl-s">keys in ev_id order</text>
+        <text x="680" y="378" text-anchor="middle" class="lbl-s">one worker</text>
+      </g>
+
+      <text x="430" y="438" text-anchor="middle" class="lbl">each slot = independent subscription · own cursor &#8594; no data loss</text>
+      <text x="430" y="460" text-anchor="middle" class="lbl-s">one key &#8594; one slot &#8594; per-key order · distinct keys &#8594; parallel</text>
+      <text x="430" y="492" text-anchor="middle" class="lbl-s">cost: N&#215; read amplification (each slot scans the full stream, server-side hash-filtered)</text>
+    </svg>
+    <figcaption>Slots are independent subscriptions filtering via the existing extra_where hook. The PgQ engine is not modified.</figcaption>
+  </figure>
+
+  <h2><span class="n">06</span>Scope &amp; phasing</h2>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Tier A · build now</p>
+      <ul class="tight yes">
+        <li><code>send()</code> partition key → <code>ev_extra1</code></li>
+        <li>Per-key advisory-lock consume recipe over cooperative consumers</li>
+        <li>Mutual exclusion (G2); ack-drop on contention; idempotency collapse</li>
+        <li>No new tables, no N — stateless workers</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Tier B · ordered, follow-up</p>
+      <ul class="tight">
+        <li>N hash-routed slot consumers; per-key order (G1 + G2)</li>
+        <li><code>skip</code> policy; engine untouched; persisted N</li>
+        <li>Slot claim (batch lease / static); read-amp benchmark</li>
+        <li><code>pause</code> strict order — open mechanic, gated on O1/O2</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2><span class="n">07</span>Key decisions</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Tier</th><th>Decision</th><th>Choice (v0.8)</th></tr></thead>
+    <tbody>
+      <tr><td class="id">D1</td><td>A·B</td><td>Where the key lives</td><td class="pick"><code>ev_extra1</code>, <code>send()</code>-sourced queues only</td></tr>
+      <tr><td class="id">D6</td><td>A·B</td><td>Producer signature</td><td class="pick"><code>send(queue, type, payload, partition_key =&gt;)</code></td></tr>
+      <tr><td class="id">A1</td><td>A</td><td>Tier A serialization</td><td class="pick">cooperative consumers + per-key <code>pg_try_advisory_xact_lock</code>; contended + idempotent → <strong>ack-drop</strong>. No N, no assignment</td></tr>
+      <tr><td class="id">A2</td><td>A</td><td>Idempotency ask</td><td class="pick">two complementary layers — consumer mutual-exclusion (dup <em>work</em>) + optional producer TTL window (dup <em>insert</em>); not a substitute for partition keys</td></tr>
+      <tr><td class="id">D8–D10</td><td>B</td><td>Assignment, resize, no polling heartbeat</td><td class="pick">claim not assign; core <code>claim_slot</code>/<code>release_slot</code> lease over <code>partition_slot</code> + <code>partition_slot_status</code> view; epoch-gated online resize; <strong>no per-interval heartbeat</strong> table — the lease renews on the per-batch writes that already happen (see §09 + SPEC)</td></tr>
+      <tr><td class="id">D3</td><td>B</td><td>Slot count N</td><td class="pick">Fixed, persisted &amp; enforced per (queue, consumer)</td></tr>
+      <tr><td class="id">D4</td><td>B</td><td>Assignment function</td><td class="pick"><code>(hashtextextended(key,0) % N + N) % N</code> (stable, sign-safe)</td></tr>
+      <tr><td class="id">D7</td><td>B</td><td>Slot &amp; single-owner</td><td class="pick">slot = consumer <code>"&lt;c&gt;#k/N"</code>; receive lock + batch-granularity lease; claim via <code>claim_slot</code>/<code>release_slot</code></td></tr>
+      <tr><td class="id">D11</td><td>B</td><td>Slot ownership</td><td class="pick">batch-granularity <strong>lease</strong> in core (<code>partition_slot</code> rows), not session advisory locks — pooler-safe (one transaction-mode pool), server-enforced, <code>epoch</code>-fenced takeover; <code>slot_lock_key</code> removed</td></tr>
+      <tr><td class="id">D2</td><td>B</td><td>Failure policy</td><td class="pick"><code>skip</code> default; <code>pause</code> = follow-up</td></tr>
+      <tr><td class="id">D5</td><td>B</td><td>State budget</td><td class="pick">happy &amp; <code>skip</code>: none. <code>pause</code>: compact blocked-key marker</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Three review rounds against the real engine (G1 ordering + G2 single-owner lock verified real), then reframed into two tiers after consumer Q&amp;A: the mutual-exclusion need (migrations) is met by Tier A with almost no engine change, so it leads. <code>pause</code> strict failure ordering stays a Tier-B follow-up — withholding a blocked key's later event needs a defer-without-retry-increment primitive that doesn't exist yet.</p>
+
+  <h2><span class="n">08</span>Roadmap</h2>
+  <div class="pill-row">
+    <span class="pill"><b>1A</b> &nbsp;partition_key + fixed-N slots + skip</span>
+    <span class="pill"><b>1B</b> &nbsp;producer TTL dedup (separate spec)</span>
+    <span class="pill"><b>2</b> &nbsp;read-amp optimization — if bench demands</span>
+    <span class="pill"><b>3</b> &nbsp;pause — needs defer-without-retry primitive</span>
+  </div>
+  <p>
+    <strong>1A</strong> is the partition-keys feature: <code>send(partition_key)</code>,
+    fixed-N hash-routed slots, <code>skip</code> policy. <strong>1B</strong> is producer
+    TTL dedup — a separate send-layer feature
+    (<code>blueprints/idempotency/SPEC.md</code>), independent of 1A; together with
+    consumer mutual exclusion it covers the migration case on a plain queue.
+    <strong>2</strong> optimizes read amplification only if benchmarks demand it.
+    <strong>3</strong> is <code>pause</code> strict ordering, gated on a
+    defer-without-retry-increment primitive (O1) and bounding hot-blocked-key cost (O2).
+  </p>
+
+  <h2><span class="n">09</span>Tier B · worker → slot assignment</h2>
+  <p>
+    An "assignment" question exists <strong>only in Tier B</strong> (Tier A has no slots
+    — its advisory lock is per <em>key</em>, not per slot — and <em>xact</em>-scoped, so it is pooler-safe, unlike the session locks D11 rejects). Tier B slots are
+    <strong>claimed, not assigned</strong>: no consumer-group leader, no
+    <code>PartitionAssignor</code>, no stop-the-world rebalance. Here the
+    <strong>database is the coordinator</strong> — a worker doesn't get <em>told</em>
+    which slot to take, it <em>claims</em> a free one (or takes a static
+    <code>worker i → slots {i, i+M…}</code> share if workers have stable identity).
+  </p>
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Claim loop · client-side</p>
+      <ul class="tight yes">
+        <li>Worker calls <code>claim_slot(…, worker, ttl)</code> per slot <code>0..N-1</code> — arbitrated by core rows</li>
+        <li>Non-NULL epoch wins → owns that slot, calls <code>receive_partitioned(…, worker)</code></li>
+        <li>Sticky-until-idle; each receive/ack renews the lease; releases at a batch boundary</li>
+        <li>16 slots / 16 workers → one disjoint slot each · 16 / 8 → ≈2 each</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Scale 8 → 10 workers</p>
+      <ul class="tight">
+        <li>New workers run the same loop, grab released/free slots</li>
+        <li>No revocation, no leader recompute</li>
+        <li>Converges to ≈N/M within one claim cycle</li>
+        <li>Crash → lease expires after its TTL → slot reclaimable, epoch bump fences the zombie</li>
+      </ul>
+    </div>
+  </div>
+  <div class="guarantee">
+    <div class="g"><span class="tag">lock&nbsp;1</span><p><strong>Log &amp; cursor — G2 receive lock</strong> (blocking <code>for update</code>): one active batch per slot; a second worker blocks, then is handed the <em>same</em> batch idempotently — never a divergent batch, never loss or delivery reorder.</p></div>
+    <div class="g"><span class="tag">lease</span><p><strong>Processing exclusivity — batch-granularity lease</strong> (a <code>partition_slot</code> row, renewed on every receive/ack, held logically across process→ack): closes the process→ack gap the receive lock doesn't span (single in-flight processor) <em>and</em> steers workers onto distinct slots. It is <strong>server-enforced</strong> — <code>receive_partitioned</code>/<code>ack_partitioned</code> refuse to act without the live lease, so a client can't skip it to put two workers on one open batch; a zombie past its TTL is taken over (epoch bump) and its next call raises.</p></div>
+  </div>
+  <p class="note">
+    N is fixed (D3) <em>and</em> is the read-amplification multiplier (§05 — every
+    slot scans the full stream), so N is chosen to match the parallelism you need,
+    not inflated to dodge a future resize. Even spread under <em>key skew</em> (a
+    hot slot stays hot) and online resize of N (which reshuffles keys across slots,
+    breaking per-key order mid-flight) — the latter now has a sanctioned future
+    path (the epoch-gated <code>begin_resize</code>→drain→<code>complete_resize</code>
+    state machine in core, Phase 3), immutable N in Phase 1. R3, R4, D9.
+  </p>
+  <p class="note">
+    <strong>Rotation pinning (R7) — the sharpest cost of N.</strong> Rotation waits
+    for the slowest slot's cursor, so one stalled or lagging slot pins rotation for
+    the whole queue and old event tables stop dropping — <em>the bloat pgque exists
+    to avoid, back with nicer names</em>. It worsens as N grows. A per-slot lag alert
+    is mandatory for any slot deployment, and N stays minimal — read-amp and rotation
+    pressure both push the same way: keep N small.
+  </p>
+
+  <div class="two">
+    <div class="panel">
+      <p class="card-title">Coordination: mechanism vs policy</p>
+      <ul class="tight yes">
+        <li><strong>Core SQL</strong>: receive lock (G2), hash filter, enforced N, the <code>claim_slot</code>/<code>release_slot</code> lease arbitration (server-enforced on receive/ack), a read-only <code>partition_slot_status</code> view, and the resize guard</li>
+        <li><strong>Client/user</strong>: the claim loop, poll cadence, when to resize — a buggy loop loses spread, never order</li>
+        <li><strong>No per-interval heartbeat table</strong> — a polling <code>UPDATE</code> to prove liveness is the per-row churn pgque avoids, and stays rejected. The batch-granularity lease is not that: it renews on the receive/ack writes that already happen per batch (zero extra round-trips, no polling thread)</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="card-title">Three notes worth stating</p>
+      <ul class="tight">
+        <li><strong>Pooling — a strength, not a caveat</strong>: every lease op (<code>claim_slot</code>, <code>release_slot</code>, the renewals inside receive/ack) is plain short-transaction DML over <code>partition_slot</code> with no session state, so the whole worker fleet runs on <strong>one</strong> transaction-mode pool (Supavisor/PgBouncer) — no session-mode connection, no second pool, no connection-per-worker floor, no per-backend lock leak. The honest trade: crash-takeover latency is the lease TTL remainder (a <code>session.timeout.ms</code>-like knob), not instant session-death release</li>
+        <li><strong>Grow N</strong> breaks per-key order for in-flight keys → drain the old epoch first. Sanctioned path: an epoch-gated <code>begin_resize</code> → drain → <code>complete_resize</code> state machine in core (Phase 3); immutable N in Phase 1</li>
+        <li><strong>Every slot must be polled</strong> — an unclaimed slot stalls → pins rotation (R7). M ≥ N or cycle idle slots</li>
+      </ul>
+    </div>
+  </div>
+  <p class="note">
+    Reframe for the Kafka mind: pgque routing is <em>consume-time</em> (the log carries
+    only the key; <code>hash%N</code> is applied at receive), so a resize moves no data
+    and never blocks producers — no "events stamped under the old N" problem.
+  </p>
+
+  <footer>
+    <p>
+      Companion to the producer-side decision note
+      (<em>idempotency = TTL window, not free-once-processed</em>) and the full spec
+      (<code>blueprints/partition-keys/SPEC.md</code>). In a log, “processed” is a
+      per-consumer fact the producer can't see — so ordering and serialization live here,
+      on the consumer.
+    </p>
+    <p>
+      PgQue — zero-bloat PostgreSQL queue · <a href="https://pgque.dev">pgque.dev</a> ·
+      <a href="https://github.com/NikolayS/pgque">github.com/NikolayS/pgque</a>
+    </p>
+    <p class="note">Drafted in SamoSpec format; review rounds 1–3, then reframed into two tiers and (v0.7) scoped to ordered slots — producer idempotency split into its own feature (blueprints/idempotency/SPEC.md), rotation pinning promoted to a first-class risk; (v0.8, Fabrizio review) slot ownership moved from session advisory locks to a pooler-safe, epoch-fenced batch lease in core SQL. The live multi-model CLI loop was not run in this environment.</p>
+  </footer>
+
+</div>
+</body>
+</html>

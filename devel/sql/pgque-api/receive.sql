@@ -38,6 +38,17 @@ begin
         raise exception 'pgque.receive: max_return must be >= 1, got %', i_max_return;
     end if;
 
+    /*
+     * Guard the raw slot consumer. subscribe_slot reserves '#' (it rejects '#'
+     * in base consumer names), so a '#' name can only be a partition slot
+     * consumer "<consumer>#<slot>/<n>". The plain receive path applies neither
+     * the lease fence nor the hash filter, so it would hand back the whole
+     * unfiltered stream -- force callers onto the partitioned API.
+     */
+    if position('#' in i_consumer) > 0 then
+        raise exception 'consumer % is a partition slot consumer; use pgque.receive_partitioned()', i_consumer;
+    end if;
+
     -- Get next batch (may return NULL if no tick window is ready)
     v_batch_id := pgque.next_batch(i_queue, i_consumer);
     if v_batch_id is null then
@@ -71,26 +82,45 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- pgque.ack() -- finishes the batch, advances consumer position
 create or replace function pgque.ack(i_batch_id bigint)
 returns integer as $$
+declare
+    v_cname text;
 begin
+    /*
+     * Guard the raw slot consumer (see pgque.receive). A partition slot batch
+     * must be finished through the lease-fenced ack_partitioned(); plain ack()
+     * lets a fenced zombie double-ack it. Resolve the batch's consumer and
+     * reject when its name carries the reserved '#'. An unknown batch id falls
+     * through to finish_batch(), preserving the pre-guard not-found behavior.
+     */
+    select c.co_name into v_cname
+    from pgque.subscription as s
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where s.sub_batch = i_batch_id;
+    if found and position('#' in v_cname) > 0 then
+        raise exception 'batch % belongs to partition slot consumer %; use pgque.ack_partitioned()', i_batch_id, v_cname;
+    end if;
+
     return pgque.finish_batch(i_batch_id);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
--- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
---
--- Fix #98: re-query the canonical event row from the active batch using
--- msg_id, instead of trusting caller-supplied pgque.message fields.
--- A caller with an active batch could otherwise forge DLQ rows by
--- supplying arbitrary ev_id / ev_type / ev_data in the composite.
---
--- Fix #104: DLQ insert is idempotent via ON CONFLICT in event_dead().
--- Repeated nack() calls for the same terminal message produce exactly one
--- dead_letter row.
-create or replace function pgque.nack(
+/*
+ * pgque._nack_batch_event() -- shared retry/DLQ core for a single event of an
+ * open batch. Called by pgque.nack() (after the raw-slot guard) and by
+ * pgque.nack_partitioned() (after the lease fence). Internal only; the caller
+ * owns whatever consumer-name / lease authorization applies.
+ *
+ * Re-queries the canonical event row from the active batch by msg_id rather
+ * than trusting caller-supplied pgque.message fields -- otherwise a caller
+ * with an active batch could forge DLQ rows with arbitrary ev_id/type/data.
+ * The DLQ insert is idempotent (ON CONFLICT in event_dead()), so repeated
+ * calls for one terminal message produce exactly one dead_letter row.
+ */
+create or replace function pgque._nack_batch_event(
     i_batch_id bigint,
     i_msg pgque.message,
-    i_retry_after interval default '60 seconds',
-    i_reason text default null)
+    i_retry_after interval,
+    i_reason text)
 returns integer as $$
 declare
     v_max_retries int4;
@@ -106,9 +136,8 @@ begin
         raise exception 'batch not found: %', i_batch_id;
     end if;
 
-    -- Re-query the canonical event from the active batch (#98).
-    -- This ignores caller-supplied payload/type/extras and uses the real
-    -- values stored in the queue data tables.
+    /* Re-query the canonical event from the active batch, ignoring
+       caller-supplied payload/type/extras. */
     select ev_id, ev_time, ev_txid, ev_retry, ev_type, ev_data,
            ev_extra1, ev_extra2, ev_extra3, ev_extra4
     into v_ev
@@ -120,10 +149,10 @@ begin
     end if;
 
     if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
-        -- Move to dead letter queue using canonical event data (#98).
-        -- event_dead() uses ON CONFLICT DO NOTHING for idempotency (#104).
-        -- ev_txid is bigint in get_batch_events (legacy PgQ signature); text
-        -- round-trip is the codebase convention to widen to xid8 without loss.
+        /* Move to DLQ with canonical event data; event_dead() is idempotent
+           via ON CONFLICT DO NOTHING. ev_txid is bigint in get_batch_events
+           (legacy PgQ signature) -- the text round-trip widens it to xid8
+           without loss, per codebase convention. */
         perform pgque.event_dead(i_batch_id, v_ev.ev_id,
             coalesce(i_reason, 'max retries exceeded'),
             v_ev.ev_time, v_ev.ev_txid::text::xid8, v_ev.ev_retry,
@@ -135,6 +164,34 @@ begin
             extract(epoch from i_retry_after)::integer);
     end if;
     return 1;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+-- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
+create or replace function pgque.nack(
+    i_batch_id bigint,
+    i_msg pgque.message,
+    i_retry_after interval default '60 seconds',
+    i_reason text default null)
+returns integer as $$
+declare
+    v_cname text;
+begin
+    /*
+     * Guard the raw slot consumer (see pgque.receive). Slot batches are acked
+     * and retried through the lease-fenced partitioned API (ack_partitioned /
+     * nack_partitioned), not plain nack(). An unknown batch id falls through to
+     * the shared core, which raises the same 'batch not found' as before.
+     */
+    select c.co_name into v_cname
+    from pgque.subscription as s
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where s.sub_batch = i_batch_id;
+    if found and position('#' in v_cname) > 0 then
+        raise exception 'batch % belongs to partition slot consumer %; retry slot batches via pgque.nack_partitioned()', i_batch_id, v_cname;
+    end if;
+
+    return pgque._nack_batch_event(i_batch_id, i_msg, i_retry_after, i_reason);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -157,3 +214,6 @@ revoke execute on function pgque.nack(bigint, pgque.message, interval, text) fro
 grant execute on function pgque.receive(text, text, int)                      to pgque_reader;
 grant execute on function pgque.ack(bigint)                                   to pgque_reader;
 grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_reader;
+
+-- Shared retry/DLQ core: SECURITY DEFINER callee only (nack / nack_partitioned).
+revoke execute on function pgque._nack_batch_event(bigint, pgque.message, interval, text) from public, pgque_reader, pgque_writer;

@@ -1,23 +1,19 @@
 -- pgque-tle-uninstall.sql -- Remove PgQue from pg_tle.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
---
--- Stops scheduler jobs, drops the pgque extension from this database (if
--- installed), and unregisters pgque from pg_tle's catalog. Roles are NOT
--- dropped because they may still be referenced by other databases on the
--- cluster.
---
--- Idempotent: safe to re-run.
---
--- Usage:
---   psql -d mydb -f sql/pgque-tle-uninstall.sql
+
+/*
+ * Stops scheduler jobs, drops the pgque extension from this database (if
+ * installed), and unregisters pgque from pg_tle. Roles are NOT dropped -- they
+ * may still be referenced by other databases on the cluster. Idempotent.
+ *
+ * Usage: psql -d mydb -f sql/pgque-tle-uninstall.sql
+ */
 
 \set ON_ERROR_STOP on
 
--- Stop scheduler jobs (pg_cron / pg_timetable) before dropping the
--- extension: scheduler jobs are catalog rows, not dependent objects, so
--- drop extension alone would leave them behind, failing forever afterwards.
--- A real stop() failure therefore aborts the uninstall; only "pgque is not
--- installed" errors are tolerated, keeping the script idempotent.
+/* Stop scheduler jobs before dropping the extension: they are catalog rows,
+   not dependent objects, so drop extension alone would orphan them. A real
+   stop() failure aborts; only "not installed" is tolerated. */
 do $$
 begin
     begin

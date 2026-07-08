@@ -421,9 +421,9 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.uninstall()
 returns void as $$
 begin
-    -- Extension installs (pg_tle) must go through the extension machinery:
-    -- dropping the schema out from under the extension would fail with a
-    -- confusing dependency error ("extension pgque requires it").
+    /* Extension installs (pg_tle) must go through the extension machinery:
+       dropping the schema under the extension errors with a confusing
+       dependency message. */
     if exists (select 1 from pg_catalog.pg_extension where extname = 'pgque') then
         raise exception 'pgque is installed as an extension; run: '
             'drop extension pgque cascade; (for pg_tle installs, use '

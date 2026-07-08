@@ -9,24 +9,20 @@
 --   pgque.send_batch(queue, type, payloads[]) -- text[] + jsonb[] overloads
 --   pgque.subscribe(queue, consumer)
 --   pgque.unsubscribe(queue, consumer)
---
--- Overload resolution note: PostgreSQL resolves untyped string literals
--- (type `unknown`) to the `text` overload because `unknown -> text` needs
--- no implicit cast, while `unknown -> jsonb` does. Consequently:
---
---   select pgque.send('orders', '{"k":1}');           -- picks send(text, text)
---   select pgque.send('orders', '{"k":1}'::jsonb);    -- picks send(text, jsonb)
---
--- The `text` overloads are the default for untyped literals: bytes flow
--- through verbatim (no parse, no canonicalization, key order preserved)
--- for *textual* payloads -- JSON, XML, CSV, or binary that has already
--- been base64/hex-encoded. PostgreSQL `text` cannot store NUL (\x00),
--- so true binary payloads (raw protobuf, msgpack, Avro, bytea dumps)
--- must be caller-encoded before `send()` -- otherwise PG rejects the
--- insert with `invalid byte sequence`.
--- The `jsonb` overloads are opt-in via explicit `::jsonb` cast: PG
--- validates JSON at parse time and stores the canonical form.
--- Storage (ev_data TEXT) is identical in both paths.
+
+/*
+ * Overload resolution: an untyped string literal resolves to the text
+ * overload (unknown -> text needs no cast, unknown -> jsonb does), so the
+ * text path is the default; opt into jsonb with an explicit ::jsonb cast.
+ *
+ *   select pgque.send('orders', '{"k":1}');        -- send(text, text)
+ *   select pgque.send('orders', '{"k":1}'::jsonb); -- send(text, jsonb)
+ *
+ * text stores bytes verbatim (no parse/canonicalization) but cannot hold NUL,
+ * so true binary (protobuf, msgpack, bytea dumps) must be caller-encoded.
+ * jsonb validates and canonicalizes at parse time. Storage (ev_data text) is
+ * identical either way.
+ */
 
 -- pgque.message type (idempotent creation)
 do $$
@@ -47,15 +43,12 @@ begin
     end if;
 end $$;
 
--- v0.1.0 shipped these public wrappers with i_* argument names.
--- PostgreSQL rejects CREATE OR REPLACE FUNCTION when input argument names
--- change, even when the signature is otherwise identical. Drop only those
--- old wrappers before recreating them with the stable v0.2 API names so the
--- documented "re-run sql/pgque.sql to upgrade" path works from v0.1.0.
--- Do not unconditionally drop current wrappers: users may have dependent
--- views/functions, and normal idempotent reinstall must preserve those OIDs.
--- Also preserve the old function owner when the upgrade is run by a superuser:
--- dropped SECURITY DEFINER wrappers must not silently become superuser-owned.
+/*
+ * Recreating a wrapper whose argument names changed (v0.1.0 i_* -> v0.2 names)
+ * needs drop-then-create -- create or replace rejects a name change. Drop only
+ * the renamed wrappers (a blanket drop would break dependents and churn OIDs)
+ * and capture each owner so a superuser-run upgrade keeps the original owner.
+ */
 create temporary table if not exists pgque_v01_wrapper_owners (
     sig text primary key,
     owner_name name not null
@@ -110,12 +103,7 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 revoke execute on function pgque.send(text, jsonb) from public;
 
--- pgque.send(queue, payload text) -- fast path, opaque textual payload
--- Skips the jsonb parse + canonical reserialize round-trip. Use this when
--- the payload is text (JSON, XML, CSV, base64/hex-encoded binary) or when
--- the caller has already validated the payload. Raw binary with NUL bytes
--- (protobuf, msgpack, Avro wire format) is not accepted by PG `text` --
--- encode first.
+-- pgque.send(queue, payload text) -- fast path, opaque textual payload.
 create or replace function pgque.send(queue_name text, payload text)
 returns bigint as $$
 begin
@@ -143,10 +131,8 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 revoke execute on function pgque.send(text, text, text) from public;
 
 -- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
--- Deliberately does not call insert_event_raw(): batch send needs one table
--- lookup, one disable-insert check, and one insert ... select for the whole
--- array. Keep the queue lookup / queue_disable_insert replica-bypass logic in
--- sync with insert_event_raw() when either path changes.
+/* One-pass bulk insert (not insert_event_raw per row); keep its queue lookup
+   and queue_disable_insert replica-bypass in sync with insert_event_raw(). */
 create or replace function pgque.insert_event_bulk(
     queue_name text, ev_type text, ev_data_list text[])
 returns bigint[] as $$
@@ -171,11 +157,8 @@ begin
     end if;
 
     if qstate.queue_disable_insert then
-        -- Keep upstream PgQ semantics: disabled queues still accept inserts
-        -- when session_replication_role = 'replica'. This is likely for
-        -- replication/load paths such as Londiste; send_batch() must match
-        -- insert_event_raw()/insert_event() behavior instead of inventing a
-        -- stricter batch-only rule.
+        /* Match insert_event_raw(): a disabled queue still accepts inserts
+           under session_replication_role = 'replica' (replication paths). */
         if current_setting('session_replication_role') <> 'replica' then
             raise exception 'Insert into queue disallowed';
         end if;
@@ -203,8 +186,8 @@ begin
                 ev_id, $3, null, null,
                 $4, ev_data, null, null, null, null
             from numbered
-            -- Return order is handled below by array_agg(... order by ord);
-            -- this keeps physical insertion broadly aligned with input order.
+            /* Return order comes from array_agg(order by ord) below; this
+               just keeps physical insertion roughly aligned with input. */
             order by ord
             returning ev_id
         )
@@ -275,6 +258,17 @@ revoke execute on function pgque.send_batch(text, text, text[]) from public;
 create or replace function pgque.subscribe(queue text, consumer text)
 returns integer as $$
 begin
+    /*
+     * Reserve '#' for partition slot consumers ("<consumer>#<slot>/<n>", see
+     * pgque.subscribe_slot). The plain receive/ack/nack guards treat any '#'
+     * name as a slot consumer and refuse it, so registering a plain consumer
+     * whose name contains '#' would permanently lock it out of those calls.
+     * Reject the reserved character here instead of at first use.
+     */
+    if position('#' in consumer) > 0 then
+        raise exception 'consumer name must not contain the reserved character #: %', consumer;
+    end if;
+
     return pgque.register_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
@@ -305,12 +299,9 @@ begin
         if proc is not null then
             execute format('alter function %s owner to %I', proc, rec.owner_name);
 
-            -- Restored v0.1.0 send_batch wrappers are SECURITY DEFINER and
-            -- call the new v0.2.0 internal bulk primitive. Preserve runtime
-            -- behavior for non-superuser owners by granting just that owner
-            -- execute on the primitive their wrapper now needs. The grant is
-            -- intentionally persistent: the restored wrapper keeps calling
-            -- this locked-down primitive on later idempotent reinstalls.
+            /* A restored non-superuser wrapper still calls the locked-down
+               bulk primitive, so grant its owner execute -- deliberately
+               persistent across idempotent reinstalls. */
             if rec.sig in (
                 'pgque.send_batch(text,text,jsonb[])',
                 'pgque.send_batch(text,text,text[])'
@@ -326,11 +317,8 @@ end $$;
 
 drop table if exists pg_temp.pgque_v01_wrapper_owners;
 
--- Grants for the send* + subscribe/unsubscribe family.
--- send* are producer-side (insert events) -> pgque_writer.
--- subscribe/unsubscribe are consumer-side (manage subscription cursor) ->
--- pgque_reader. See sql/pgque-additions/roles.sql for the producer/consumer
--- split rationale.
+/* send* -> pgque_writer (producer); subscribe/unsubscribe -> pgque_reader
+   (consumer). See sql/pgque-additions/roles.sql for the split rationale. */
 grant execute on function pgque.send(text, jsonb)               to pgque_writer;
 grant execute on function pgque.send(text, text)                to pgque_writer;
 grant execute on function pgque.send(text, text, jsonb)         to pgque_writer;
@@ -339,25 +327,22 @@ grant execute on function pgque.send_batch(text, jsonb[])       to pgque_writer;
 grant execute on function pgque.send_batch(text, text[])        to pgque_writer;
 grant execute on function pgque.send_batch(text, text, jsonb[]) to pgque_writer;
 grant execute on function pgque.send_batch(text, text, text[])  to pgque_writer;
--- Upgrade path: pre-#163 installs granted subscribe/unsubscribe to
--- pgque_writer. Revoke explicitly before re-granting on pgque_reader so
--- in-place upgrades clear the old grants (create or replace function
--- preserves function-level grants).
+/* Revoke before re-granting on pgque_reader: create or replace preserves
+   function-level grants, so an in-place upgrade must clear the old writer
+   grant explicitly. */
 revoke execute on function pgque.subscribe(text, text)         from pgque_writer;
 revoke execute on function pgque.unsubscribe(text, text)       from pgque_writer;
 grant execute on function pgque.subscribe(text, text)           to pgque_reader;
 grant execute on function pgque.unsubscribe(text, text)         to pgque_reader;
 
--- Internal primitive used by SECURITY DEFINER send_batch wrappers only.
--- Direct pgque_admin access is intentionally not granted: pgque_admin inherits
--- pgque_writer, and writers should enter through the audited public send_batch()
--- wrappers rather than this low-level primitive.
+/* Internal primitive for the SECURITY DEFINER send_batch wrappers only. Not
+   granted to pgque_admin (it inherits pgque_writer): writers enter through the
+   audited send_batch() wrappers, not this low-level primitive. */
 revoke execute on function pgque.insert_event_bulk(text, text, text[])
     from public, pgque_reader, pgque_writer, pgque_admin;
 
--- Re-apply deny-by-default after all API functions are defined.
--- roles.sql's blanket revoke runs before pgque-api/ files are loaded, so
--- functions created here would otherwise inherit PostgreSQL's default
--- PUBLIC EXECUTE. This second pass covers everything.
+/* Re-apply deny-by-default: roles.sql's blanket revoke runs before the
+   pgque-api/ files, so functions created here would otherwise keep
+   PostgreSQL's default PUBLIC EXECUTE. */
 revoke execute on all functions in schema pgque from public;
 

@@ -139,5 +139,11 @@
 \echo 'Running: test_uninstall_guard'
 \i tests/test_uninstall_guard.sql
 
+\echo 'Running: test_partition_keys'
+\i tests/test_partition_keys.sql
+
+\echo 'Running: test_send_idem'
+\i tests/test_send_idem.sql
+
 \echo ''
 \echo '=== ALL TESTS PASSED ==='

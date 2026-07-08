@@ -1,11 +1,12 @@
 -- pgque_uninstall.sql -- Remove pgque from database
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
---
--- Stops scheduler jobs (pg_cron / pg_timetable) before dropping the schema:
--- scheduler jobs are catalog rows, not dependent objects, so dropping the
--- schema alone would leave them behind, failing forever afterwards. A real
--- stop() failure therefore aborts the uninstall; only "pgque is not
--- installed" errors are tolerated, keeping the script idempotent.
+
+/*
+ * Stops scheduler jobs (pg_cron / pg_timetable) before dropping the schema:
+ * they are catalog rows, not dependent objects, so a schema drop alone would
+ * orphan them. A real stop() failure aborts; only "not installed" is
+ * tolerated, keeping the script idempotent.
+ */
 
 do $$
 begin
