@@ -2656,7 +2656,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 create or replace function pgque.get_queue_info(
     in i_queue_name                 text,
@@ -2737,7 +2737,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 
 create or replace function pgque.get_consumer_info(

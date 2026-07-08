@@ -118,6 +118,9 @@
 \echo 'Running: test_e2e_role_split'
 \i tests/test_e2e_role_split.sql
 
+\echo 'Running: test_get_queue_info_reader'
+\i tests/test_get_queue_info_reader.sql
+
 \echo 'Running: test_cooperative_consumers'
 \i tests/test_cooperative_consumers.sql
 

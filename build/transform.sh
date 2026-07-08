@@ -607,6 +607,31 @@ END {
 
 echo "PASS: get_batch_cursor SECURITY header injected (extra_where is trusted SQL)"
 
+# Promote get_queue_info() / get_queue_info(text) to SECURITY DEFINER.
+# Upstream PgQ ships these as SECURITY INVOKER, but get_queue_info(text)
+# internally calls pgque.seq_getval(text), whose ACL is admin-only. Both
+# overloads are granted to pgque_reader and documented as reader-usable
+# monitoring functions, so a reader session would hit
+#   ERROR: permission denied for function seq_getval
+# at runtime. The sibling get_consumer_info / get_batch_info are already
+# SECURITY DEFINER for exactly this reason; mirror that pattern here.
+# SECURITY DEFINER MUST pin search_path (CLAUDE.md), so attach
+# "set search_path = pgque, pg_catalog" in the same step. This grants no
+# privilege beyond reading queue metadata + the queue event sequence.
+GET_QUEUE_INFO_FILE="${OUTPUT_DIR}/functions/pgque.get_queue_info.sql"
+sedi -E \
+  's/^(\$\$ language plpgsql);$/\1 security definer set search_path = pgque, pg_catalog;/' \
+  "${GET_QUEUE_INFO_FILE}"
+
+defcount=$(grep -c 'language plpgsql security definer set search_path = pgque, pg_catalog;' \
+  "${GET_QUEUE_INFO_FILE}")
+if [[ "${defcount}" -ne 2 ]]; then
+  echo "ERROR: expected 2 SECURITY DEFINER get_queue_info overloads, got ${defcount}" >&2
+  exit 1
+fi
+
+echo "PASS: get_queue_info promoted to SECURITY DEFINER (reader-safe seq_getval)"
+
 # -- Assembly: build sql/pgque.sql ------------------------------------
 
 echo ""
