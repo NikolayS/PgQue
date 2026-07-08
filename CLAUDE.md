@@ -45,6 +45,13 @@ These rules are the source of truth for agentic engineering in this repo. Agents
   conflict, this file wins.
 - Prefer C-style `/* ... */` block comments for anything spanning 2+ lines;
   use `--` only for single-line comments.
+- Comments state what the code cannot: a constraint, a non-obvious
+  invariant, a concurrency hazard -- in a line or two. Do NOT cite
+  user-story or requirement IDs (`US-13.4`, `I2`, `G2`) or other
+  spec-process artifacts in code, and do not restate the spec or narrate
+  design rationale at length. Longer rationale lives in `blueprints/` and
+  the specs; a short pointer (`SPEC section 15`, `see blueprints/...`) is
+  fine.
 - Collapse single-argument keyword clauses onto one line (`select 1`,
   `from t`, `where x = y`, `into v`); expand only multi-argument clauses,
   one argument per line.
