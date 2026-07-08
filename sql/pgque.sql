@@ -2568,7 +2568,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql;
 
 create or replace function pgque.get_queue_info(
     in i_queue_name                 text,
@@ -2649,7 +2649,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql;
 
 
 create or replace function pgque.get_consumer_info(
@@ -4553,14 +4553,6 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.uninstall()
 returns void as $$
 begin
-    -- Extension installs (pg_tle) must go through the extension machinery:
-    -- dropping the schema out from under the extension would fail with a
-    -- confusing dependency error ("extension pgque requires it").
-    if exists (select 1 from pg_catalog.pg_extension where extname = 'pgque') then
-        raise exception 'pgque is installed as an extension; run: '
-            'drop extension pgque cascade; (for pg_tle installs, use '
-            'sql/pgque-tle-uninstall.sql to also unregister from pg_tle)';
-    end if;
     -- Stop pg_cron jobs before dropping the schema.
     if exists (select 1 from pg_extension where extname = 'pg_cron') then
         perform pgque.stop();
@@ -4987,12 +4979,6 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
 -- pgque.dlq_replay() -- replay a single dead letter event back into the queue
---
--- The initial select locks the dead_letter row (`for update of dl`) so that
--- two concurrent dlq_replay() calls for the same dl_id cannot both pass the
--- existence check and re-enqueue the event twice. The second caller blocks on
--- the row lock; after the first commits its delete, the second's select
--- re-evaluates, finds no row, and raises 'dead letter entry not found'.
 create or replace function pgque.dlq_replay(i_dead_letter_id bigint)
 returns bigint as $$
 declare
@@ -5003,8 +4989,7 @@ begin
     select dl.*, q.queue_name into v_dl
     from pgque.dead_letter dl
     join pgque.queue q on q.queue_id = dl.dl_queue_id
-    where dl.dl_id = i_dead_letter_id
-    for update of dl;
+    where dl.dl_id = i_dead_letter_id;
 
     if not found then
         raise exception 'dead letter entry not found: %', i_dead_letter_id;
@@ -5028,13 +5013,6 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 -- warning (visible at the default log_min_messages = warning, unlike notice
 -- which is hidden under many production configs). Callers can check
 -- failed > 0 to detect partial success programmatically.
---
--- The loop's select locks each dead_letter row (`for update of dl skip
--- locked`) before replaying it. `skip locked` (rather than blocking) fits the
--- replay-everything semantics: a row locked by a concurrent dlq_replay() or
--- dlq_replay_all() is already being handled by that session, so this call
--- skips it instead of waiting only to replay it twice (the pre-lock race) or
--- to count a guaranteed failure.
 --
 -- Return-type change from v0.1's bare integer count to a record is a breaking
 -- API change accepted at the v0.2 cut. Callers previously doing
@@ -5062,7 +5040,6 @@ begin
         from pgque.dead_letter dl
         join pgque.queue q on q.queue_id = dl.dl_queue_id
         where q.queue_name = i_queue_name
-        for update of dl skip locked
     loop
         begin
             perform pgque.insert_event(v_dl.queue_name, v_dl.ev_type, v_dl.ev_data,
@@ -5210,7 +5187,7 @@ begin
        from pgque.queue
       where queue_id = v_queue_id;
 
-    perform pg_notify('pgque_' || i_queue_name, i_tick_id::text);
+    perform pg_notify('pgque_' || i_queue_name, i_tick_id::text); -- PgQue transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
     return i_tick_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;

@@ -136,6 +136,9 @@ Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autova
 
 **Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 ticks/sec)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
+> Want to try an upcoming release early? The in-development install lives in
+> [`devel/sql/`](devel/sql/README.md). The steps below install the stable version.
+
 Get the source — `\i sql/pgque.sql` resolves relative to the cwd, so run psql from the repo root:
 
 ```bash
@@ -281,7 +284,7 @@ DDL-class operations (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `m
 
 PgQue is **early-stage** as a product and API layer. PgQ itself has run at Skype scale for over a decade. What's new here is the packaging, modernization, managed-Postgres compatibility, and the higher-level PgQue API around that core.
 
-The default install stays small; additional APIs live under [`sql/experimental/`](https://github.com/NikolayS/pgque/tree/main/sql/experimental) until they are worth promoting. See [blueprints/PHASES.md](blueprints/PHASES.md).
+The default install stays small; additional APIs live under [`devel/sql/experimental/`](https://github.com/NikolayS/pgque/tree/main/devel/sql/experimental) until they are worth promoting. See [blueprints/PHASES.md](blueprints/PHASES.md).
 
 ## Docs
 
