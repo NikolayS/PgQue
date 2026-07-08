@@ -10,9 +10,6 @@ clients/ruby/pkg/
 clients/ruby/.bundle/
 clients/ruby/*.gem
 
-# Benchmark harness deps (bun.lock is committed; deps are not)
-benchmark/partition-keys/node_modules/
-
 # Claude Code agent worktrees (ephemeral isolation per agent run)
 .claude/worktrees/
 
