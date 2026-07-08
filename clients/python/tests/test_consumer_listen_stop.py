@@ -79,7 +79,7 @@ def test_notify_wakes_consumer_before_poll_interval(dsn, conn, setup_queue):
         # is intentional and deterministic:
         #   1. send commits the event row only -- NO NOTIFY fires
         #      (pgque has no insert trigger; the only pg_notify call
-        #      lives inside pgque.ticker(queue), see sql/pgque.sql).
+        #      lives inside pgque.ticker(queue), see devel/sql/pgque.sql).
         #   2. force_next_tick + ticker commits the tick row + pg_notify
         #      atomically. This commit both establishes batch
         #      visibility (PgQ requires the tick to be in a separate

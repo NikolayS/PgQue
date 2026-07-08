@@ -1,7 +1,7 @@
 -- test_install_idempotency.sql -- Verify pgque install works correctly
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- Run after: \i sql/pgque.sql
+-- Run after: \i devel/sql/pgque.sql
 
 -- Test 1: pgque schema exists
 do $$

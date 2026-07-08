@@ -12,7 +12,7 @@
 -- After the fix: the first receive() must finish the empty batch internally
 -- so the second receive() can see the new event.
 --
--- See also: Issue #103 minimal repro in sql/pgque-api/receive.sql header.
+-- See also: Issue #103 minimal repro in devel/sql/pgque-api/receive.sql header.
 
 -- Setup
 do $$

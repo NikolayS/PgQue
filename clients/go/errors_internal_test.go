@@ -14,7 +14,7 @@ import (
 )
 
 // TestClassifyPgMessage_AllFragments ensures every message fragment we
-// match against sql/pgque.sql maps to the expected sentinel. Locks the
+// match against devel/sql/pgque.sql maps to the expected sentinel. Locks the
 // classifier against silent drift if a typo is introduced.
 func TestClassifyPgMessage_AllFragments(t *testing.T) {
 	cases := []struct {

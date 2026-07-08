@@ -3,7 +3,7 @@
 -- test_upgrade_v0_1_assertions.sql -- Verify v0.1.0 state after HEAD reinstall
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- Run after tests/test_upgrade_v0_1_fixture.sql and a HEAD sql/pgque.sql reinstall.
+-- Run after tests/test_upgrade_v0_1_fixture.sql and a HEAD devel/sql/pgque.sql reinstall.
 
 do $$
 declare

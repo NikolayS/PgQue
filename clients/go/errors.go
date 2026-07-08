@@ -128,7 +128,7 @@ func wrapConnectError(err error) error {
 //
 // PgQue raises these conditions via plpgsql `raise exception '...'` which
 // produces SQLSTATE P0001 — the message text is the only signal, so the
-// match is by recognizable substrings drawn from sql/pgque.sql. Matching
+// match is by recognizable substrings drawn from devel/sql/pgque.sql. Matching
 // is case-insensitive.
 func classifyPgMessage(msg string) error {
 	low := strings.ToLower(msg)

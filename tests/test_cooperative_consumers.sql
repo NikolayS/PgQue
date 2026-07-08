@@ -775,7 +775,7 @@ end $$;
  *   Stage 2: unregister_consumer the (now normal) main, which deletes the
  *            consumer row. The dl_consumer_id ON DELETE CASCADE then wipes
  *            the DLQ row -- documented behavior, see
- *            sql/pgque-additions/dlq.sql near the dl_consumer_id FK.
+ *            devel/sql/pgque-additions/dlq.sql near the dl_consumer_id FK.
  *
  * Asserting both stages locks in the contract: cooperative DLQ rows
  * survive the cooperative-teardown path (member unregister), then follow

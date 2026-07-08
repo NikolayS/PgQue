@@ -8,13 +8,13 @@
 --
 -- Steps exercised:
 --   1. create extension pg_tle
---   2. \i sql/pgque-tle.sql              -- registers pgque with pg_tle
---   3. \i sql/pgque-tle.sql              -- second run is a no-op (idempotent)
+--   2. \i devel/sql/pgque-tle.sql              -- registers pgque with pg_tle
+--   3. \i devel/sql/pgque-tle.sql              -- second run is a no-op (idempotent)
 --   4. create extension pgque                -- materialises the schema
 --   5. assert pg_extension membership and that pg_tle's catalog version
 --      matches pgque.version()
 --   6. drop extension pgque cascade          -- clean uninstall
---   7. \i sql/pgque-tle-uninstall.sql     -- unregister from pg_tle (twice
+--   7. \i devel/sql/pgque-tle-uninstall.sql     -- unregister from pg_tle (twice
 --      to confirm the uninstall script is also idempotent)
 --
 -- Run from the repo root:
@@ -45,12 +45,12 @@ end $$;
 
 create extension if not exists pg_tle;
 
-\i sql/pgque-tle.sql
+\i devel/sql/pgque-tle.sql
 
 -- Re-running the wrapper must be a no-op so users can rerun a deployment
 -- script without hitting "extension version already installed" from
 -- pgtle.install_extension().
-\i sql/pgque-tle.sql
+\i devel/sql/pgque-tle.sql
 
 -- pgque must show up in the pg_tle catalog before we materialise the schema,
 -- and at exactly one version (no duplicate registration from the second run).
@@ -138,7 +138,7 @@ begin
 end $$;
 
 -- Uninstall script unregisters the version from pg_tle.
-\i sql/pgque-tle-uninstall.sql
+\i devel/sql/pgque-tle-uninstall.sql
 
 do $$
 begin
@@ -149,7 +149,7 @@ begin
 end $$;
 
 -- Re-running the uninstall script must be a no-op (idempotent).
-\i sql/pgque-tle-uninstall.sql
+\i devel/sql/pgque-tle-uninstall.sql
 
 do $$
 begin

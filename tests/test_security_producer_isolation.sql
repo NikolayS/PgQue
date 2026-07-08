@@ -5,7 +5,7 @@
 --
 -- This locks in PgQ's original producer/consumer split: pgque_reader and
 -- pgque_writer are siblings, not parent/child. Apps that produce and consume
--- must be granted both roles explicitly. See sql/pgque-additions/roles.sql.
+-- must be granted both roles explicitly. See devel/sql/pgque-additions/roles.sql.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 -- Idempotent preamble: clean up any leftovers from a prior aborted run so

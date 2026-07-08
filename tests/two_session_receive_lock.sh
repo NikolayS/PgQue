@@ -8,7 +8,7 @@ set -Eeuo pipefail
 #   PGQUE_TEST_DSN=postgresql://postgres:***@localhost/pgque_test \
 #     tests/two_session_receive_lock.sh
 #
-# The target database must already have sql/pgque.sql installed. The harness
+# The target database must already have devel/sql/pgque.sql installed. The harness
 # creates one temporary queue name, inserts one event, then proves that a second
 # concurrent pgque.receive(queue, consumer) call blocks behind the first session
 # and does not receive a different batch while the first batch remains active.

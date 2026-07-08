@@ -11,7 +11,7 @@ set -Eeuo pipefail
 #   PGQUE_TEST_DSN=postgresql://postgres:***@localhost/pgque_test \
 #     tests/two_session_legacy_coop_race.sh
 #
-# The target database must already have sql/pgque.sql installed. The harness
+# The target database must already have devel/sql/pgque.sql installed. The harness
 # temporarily installs a stand-in pgque.find_tick_helper that waits on a
 # session-level advisory lock before returning the next tick. find_tick_helper
 # is called from inside next_batch_custom AFTER the function's initial SELECT
@@ -32,7 +32,7 @@ set -Eeuo pipefail
 #     behind A's row lock and is rejected after A commits a normal batch.
 #
 # The harness restores the original find_tick_helper at the end. If the harness
-# is killed mid-run, re-install sql/pgque.sql to get the original definition
+# is killed mid-run, re-install devel/sql/pgque.sql to get the original definition
 # back.
 
 if [[ -z "${PGQUE_TEST_DSN:-}" ]]; then
@@ -62,14 +62,14 @@ fi
 # Refuse to start if the captured "original" already contains the harness's
 # test sentinel. That means a prior run was killed between override install
 # and restore, and the database still has the pausing variant of
-# find_tick_helper. Re-install sql/pgque.sql before re-running this harness,
+# find_tick_helper. Re-install devel/sql/pgque.sql before re-running this harness,
 # otherwise the cleanup at the bottom would "restore" the override back into
 # place and the next run would never see the real function.
 if [[ "${original_find_tick_def}" == *"pg_advisory_lock(${advisory_lock_key})"* ]] \
     || [[ "${original_find_tick_def}" == *'$test$'* ]]; then
     echo "FAIL: pgque.find_tick_helper already contains the harness pausing override," >&2
     echo "      probably left behind by a killed previous run. Re-install pgque first:" >&2
-    echo "        psql \"\${PGQUE_TEST_DSN}\" -v ON_ERROR_STOP=1 -f sql/pgque.sql" >&2
+    echo "        psql \"\${PGQUE_TEST_DSN}\" -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql" >&2
     exit 1
 fi
 

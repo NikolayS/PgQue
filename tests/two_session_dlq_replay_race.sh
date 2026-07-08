@@ -8,7 +8,7 @@ set -Eeuo pipefail
 #   PGQUE_TEST_DSN=postgresql://postgres:***@localhost/pgque_test \
 #     tests/two_session_dlq_replay_race.sh
 #
-# The target database must already have sql/pgque.sql installed. The harness
+# The target database must already have devel/sql/pgque.sql installed. The harness
 # dead-letters one event, then has session 1 call pgque.dlq_replay(dl_id)
 # inside an open transaction (commit delayed by pg_sleep) while session 2
 # calls pgque.dlq_replay(dl_id) for the same id concurrently. With the

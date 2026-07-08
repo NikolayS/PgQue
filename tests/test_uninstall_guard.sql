@@ -17,7 +17,7 @@
 create table pg_temp.saved_stop as
 select pg_catalog.pg_get_functiondef('pgque.stop()'::pg_catalog.regprocedure) as def;
 
--- Test 1 (C6): a real pgque.stop() failure must abort sql/pgque_uninstall.sql
+-- Test 1 (C6): a real pgque.stop() failure must abort devel/sql/pgque_uninstall.sql
 -- before the schema drop (no silent "when others" swallowing).
 create or replace function pgque.stop()
 returns void as $$
@@ -27,7 +27,7 @@ end;
 $$ language plpgsql;
 
 \set ON_ERROR_STOP off
-\i sql/pgque_uninstall.sql
+\i devel/sql/pgque_uninstall.sql
 \set ON_ERROR_STOP on
 
 do $$
@@ -37,7 +37,7 @@ begin
     raise notice 'PASS: pgque_uninstall.sql aborts before drop when stop() fails';
 end $$;
 
--- Tests 2 and 3 execute sql/pgque-tle-uninstall.sql, which (correctly)
+-- Tests 2 and 3 execute devel/sql/pgque-tle-uninstall.sql, which (correctly)
 -- drops the pgque extension -- taking the whole schema with it -- and
 -- unregisters pgque from pg_tle. Against an extension install (the pg_tle
 -- CI job) that would destroy the install mid-suite, so the script must not
@@ -52,7 +52,7 @@ select exists (select 1 from pg_catalog.pg_extension where extname = 'pgque') as
 
 \else
 
--- Test 2 (C4): sql/pgque-tle-uninstall.sql must call pgque.stop() before
+-- Test 2 (C4): devel/sql/pgque-tle-uninstall.sql must call pgque.stop() before
 -- drop extension, so pg_cron / pg_timetable jobs do not outlive the schema.
 create table pg_temp.tle_stop_called (called bool);
 
@@ -63,7 +63,7 @@ begin
 end;
 $$ language plpgsql;
 
-\i sql/pgque-tle-uninstall.sql
+\i devel/sql/pgque-tle-uninstall.sql
 
 do $$
 begin
@@ -84,7 +84,7 @@ end;
 $$ language plpgsql;
 
 \set ON_ERROR_STOP off
-\i sql/pgque-tle-uninstall.sql
+\i devel/sql/pgque-tle-uninstall.sql
 \set ON_ERROR_STOP on
 
 do $$

@@ -49,7 +49,7 @@ Use explicit casts (`::jsonb`, `::jsonb[]`, `::text[]`) when overload resolution
 #### `pgque.send(queue_name text, payload jsonb) → bigint`
 
 Inserts `payload` into `queue` with event type `'default'`. Returns the event id.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 ```sql
 select pgque.send('orders', '{"order_id": 42}'::jsonb);
@@ -58,12 +58,12 @@ select pgque.send('orders', '{"order_id": 42}'::jsonb);
 #### `pgque.send(queue_name text, payload text) → bigint`
 
 Fast-path send: stores the payload bytes verbatim, no JSON parse. Untyped string literals (`'…'`) resolve to this overload. Returns the event id.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 #### `pgque.send(queue_name text, type_name text, payload jsonb) → bigint`
 
 Same as the 2-arg `jsonb` overload, but with an explicit event type. Returns the event id.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 ```sql
 select pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
@@ -72,17 +72,17 @@ select pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
 #### `pgque.send(queue_name text, type_name text, payload text) → bigint`
 
 Fast-path send with explicit event type. Returns the event id.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 #### `pgque.send_batch(queue_name text, payloads jsonb[]) → bigint[]`
 
 Default-type JSON batch send. Equivalent to `pgque.send_batch(queue_name, 'default', payloads)`.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 #### `pgque.send_batch(queue_name text, type_name text, payloads jsonb[]) → bigint[]`
 
 Set-based batch send for JSON payloads: validates each element as `jsonb`, stores its canonical text form, and returns event ids aligned to input order. Do not rely on the numeric ids being monotonically increasing inside one batch; use array position for input/result correlation. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 ```sql
 select pgque.send_batch('orders', 'order.created',
@@ -99,17 +99,17 @@ select pgque.send_batch(
 #### `pgque.send_batch(queue_name text, payloads text[]) → bigint[]`
 
 Default-type text batch send. Equivalent to `pgque.send_batch(queue_name, 'default', payloads)`.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 #### `pgque.send_batch(queue_name text, type_name text, payloads text[]) → bigint[]`
 
 Set-based fast-path batch send for opaque text payloads. Returns event ids aligned to input order. Do not rely on the numeric ids being monotonically increasing inside one batch; use array position for input/result correlation. Empty arrays return `{}` without queue lookup; `NULL` arrays raise `payloads must not be null`. Non-empty batches still validate queue state once up front: unknown queues raise `queue not found: <queue>`, and write-disabled queues raise `Insert into queue disallowed`. NULL elements inside a non-null array are stored as NULL `ev_data`.
-Grant: `pgque_writer`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 #### `pgque.insert_event_bulk(queue_name text, ev_type text, ev_data_list text[]) → bigint[]`
 
 **Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids from the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids aligned to input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on the stable `send_batch` surface. The schema owner/superuser can still call it for install/debug work.
-Grant: none (internal). Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql).
+Grant: none (internal). Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
 ## Consuming
 
@@ -122,7 +122,7 @@ All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
 Pulls the next batch for `consumer` on `queue` and streams up to `max_return` messages. `max_return` must be >= 1; passing 0 or a negative value raises an error. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
-Grant: `pgque_reader`. Source: [`sql/pgque-api/receive.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/receive.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/receive.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/receive.sql).
 
 ```sql
 select * from pgque.receive('orders', 'processor', 100);
@@ -133,7 +133,7 @@ select * from pgque.receive('orders', 'processor', 100);
 #### `pgque.ack(batch_id bigint) → integer`
 
 Closes the batch and advances the consumer position. Modern alias for `pgque.finish_batch`. Returns `1` on success, `0` if the batch was not found.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/receive.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/receive.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/receive.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/receive.sql).
 
 #### `pgque.nack(batch_id bigint, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
 
@@ -142,7 +142,7 @@ Negative-acknowledges one message. Only `msg.msg_id` (and the `batch_id` argumen
 - If the canonical `ev_retry` is below the queue's `max_retries` (effective default 5 — see `pgque.set_queue_config`), re-queues after `retry_after` (via `pgque.event_retry`).
 - If `ev_retry >= max_retries`, routes the canonical event to `pgque.dead_letter` (via `pgque.event_dead`). This is idempotent: repeated calls for the same terminal message produce exactly one DLQ row (the second call does nothing).
 - If `msg.msg_id` is not present in the active batch — including a `NULL` msg_id or a msg_id from a different batch — raises `msg_id % not found in batch %`.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/receive.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/receive.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/receive.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/receive.sql).
 
 ```sql
 perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed');
@@ -159,12 +159,12 @@ Cooperative consumers let several subconsumers share one logical consumer cursor
 #### `pgque.register_subconsumer(queue text, consumer text, subconsumer text, convert_normal boolean default false) → integer`
 
 Registers `subconsumer` under logical `consumer`. Returns `1` for a new registration and `0` when already registered. If `consumer` already exists as a normal consumer, conversion is refused unless `convert_normal = true`, and active normal consumers cannot be converted.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/cooperative_consumers.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/cooperative_consumers.sql).
 
 #### `pgque.unregister_subconsumer(queue text, consumer text, subconsumer text, batch_handling integer default 0) → integer`
 
 Unregisters one subconsumer. Active batches are rejected by default; `batch_handling = 1` routes active messages through retry/DLQ policy equivalent to `nack()` before unregistering. When the last member is removed, the main row returns to `sub_role = 'normal'`.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/cooperative_consumers.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/cooperative_consumers.sql).
 
 `pgque.subscribe_subconsumer(...)` and `pgque.unsubscribe_subconsumer(...)` are aliases for the two functions above.
 
@@ -180,56 +180,56 @@ Receives messages for one subconsumer. `max_return` must be >= 1. `dead_interval
 
 **Throughput note.** Cooperative allocation serializes on a `FOR UPDATE` of the `coop_main` subscription row, so many workers polling tiny batches contend on a single hot row. If you scale workers, also tune `ticker_max_count` and tick cadence so each batch is large enough to amortize the lock.
 
-Grant: `pgque_reader`. Source: [`sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/cooperative_consumers.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/cooperative_consumers.sql).
 
 #### `pgque.next_batch(queue text, consumer text, subconsumer text, dead_interval interval default null) → bigint`
 
 Low-level cooperative batch allocation. Prefer `receive_coop()` unless the client explicitly needs PgQ-style batch primitives.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/cooperative_consumers.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/cooperative_consumers.sql).
 
 #### `pgque.next_batch_custom(queue text, consumer text, subconsumer text, min_lag interval, min_count int4, min_interval interval, dead_interval interval default null) → record`
 
 Cooperative custom batch allocation. Out columns: `batch_id`, `prev_tick_id`, `next_tick_id`.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/cooperative_consumers.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/cooperative_consumers.sql).
 
 #### `pgque.touch_subconsumer(queue text, consumer text, subconsumer text) → integer`
 
 Updates a registered subconsumer heartbeat without creating rows. Returns the number of rows touched.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/cooperative_consumers.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/cooperative_consumers.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/cooperative_consumers.sql).
 
 **Cooperative-aware inherited functions.** `pgque.unregister_consumer()` refuses to unregister a cooperative main while subconsumers are registered; unregister subconsumers explicitly. Normal `pgque.next_batch*()` / `pgque.receive()` raise on cooperative rows in two cases: the named consumer is a `coop_main` with at least one registered member (the main row is the group cursor, not a per-worker token), or the named consumer is a `coop_member` row (member rows must go through `receive_coop()` / cooperative `next_batch()`). Both cases include a directive in the error message pointing to the cooperative form. `pgque.finish_batch()` rejects `coop_main` batches and clears member-owned cooperative batches on ack. Batch ids are bearer tokens, matching inherited PgQ behavior: a caller that learns a valid batch id can finish it, so keep batch ids inside trusted consumer code.
 
 #### `pgque.subscribe(queue text, consumer text) → integer`
 
 Registers `consumer` on `queue`. Modern alias for `pgque.register_consumer`. Returns `1` on new registration, `0` if already registered.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql) (despite the file name, the grant is `pgque_reader` — subscription management is a consumer-side operation; the file historically co-locates produce wrappers and subscription wrappers).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql) (despite the file name, the grant is `pgque_reader` — subscription management is a consumer-side operation; the file historically co-locates produce wrappers and subscription wrappers).
 
 #### `pgque.unsubscribe(queue text, consumer text) → integer`
 
 Removes the consumer (and its retry-queue entries) from `queue`. Modern alias for `pgque.unregister_consumer`.
-Grant: `pgque_reader`. Source: [`sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/send.sql) (see note above).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql) (see note above).
 
 ## Queue management
 
 #### `pgque.create_queue(queue text) → integer`
 
 Creates a queue with default settings (3 rotation tables, built-in ticker). Returns `1` if created, `0` if a queue with that name already exists. Queue names are limited to 57 bytes (UTF-8); the `pgque_<name>` LISTEN/NOTIFY channel must fit within Postgres's 63-byte identifier limit.
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.drop_queue(queue text) → integer`
 
 Drops `queue`. Fails if consumers are still attached.
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.drop_queue(queue text, force bool) → integer`
 
 Drops `queue`. When `force` is true, unregisters all attached consumers first.
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.set_queue_config(queue text, param text, value text) → integer`
 
 Sets one queue parameter. Accepted `param` values (without the `queue_` prefix): `ticker_max_count`, `ticker_max_lag`, `ticker_idle_period`, `ticker_paused`, `rotation_period`, `external_ticker`, `max_retries`.
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql) (extended in [`sql/pgque-additions/queue_max_retries.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/queue_max_retries.sql)).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql) (extended in [`devel/sql/pgque-additions/queue_max_retries.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/queue_max_retries.sql)).
 
 Observable behavior: numeric/interval settings are range-checked (`max_retries >= 0`; ticker counts/lags/idle/rotation periods must be positive). Passing SQL `NULL` resets the column to its schema default.
 
@@ -253,21 +253,21 @@ select pgque.set_queue_config('orders', 'max_retries', '10');
 
 ## Lifecycle
 
-Functions in this section are deny-by-default: the schema-wide blanket `revoke execute … from public` in [`sql/pgque-additions/roles.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/roles.sql) strips PUBLIC, and only `pgque_admin` retains `execute on all functions`. Grant explicitly to additional roles if your policy needs broader access. `uninstall()` is doubly locked down — also explicitly revoked from `pgque_admin` — so only the schema/install owner (typically a superuser) can run it.
+Functions in this section are deny-by-default: the schema-wide blanket `revoke execute … from public` in [`devel/sql/pgque-additions/roles.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/roles.sql) strips PUBLIC, and only `pgque_admin` retains `execute on all functions`. Grant explicitly to additional roles if your policy needs broader access. `uninstall()` is doubly locked down — also explicitly revoked from `pgque_admin` — so only the schema/install owner (typically a superuser) can run it.
 
 #### `pgque.start() → void`
 
 Schedules four pg_cron jobs in the current database: `pgque_ticker` (every 1 s), `pgque_retry_events` (every 30 s), `pgque_maint` (every 30 s), and `pgque_rotate_step2` (every 10 s). Requires the `pg_cron` extension — errors if missing. Idempotent: calls `stop()` first.
 
 The `pgque_ticker` job calls `CALL pgque.ticker_loop()` (not `SELECT pgque.ticker()`). `ticker_loop` is the sub-second driver: pg_cron's minimum schedule is 1 s, but the procedure internally re-ticks every `pgque.config.tick_period_ms` (default 100 ms = 10 ticks/sec) and commits between iterations. To change the rate, call `pgque.set_tick_period_ms(ms)` — no need to call `start()` again.
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/lifecycle.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/lifecycle.sql).
 
 #### `pgque.ticker_loop() → procedure`
 
 Sub-second tick driver. Runs inside one pg_cron slot (1-second cadence) and re-invokes `pgque.ticker()` every `pgque.config.tick_period_ms` ms, committing between iterations so each tick gets its own transaction. Defined as a `PROCEDURE` (not a function) because Postgres only allows mid-flight `COMMIT` inside procedures — and forbids combining `COMMIT` with a `SET` clause, which is why the body is fully schema-qualified rather than pinning `search_path`.
 
 Not normally called by hand; `pgque.start()` schedules it on pg_cron. Use `select pgque.set_tick_period_ms(ms)` to change cadence, or call `pgque.ticker()` directly to force a single tick out-of-band.
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/lifecycle.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/lifecycle.sql).
 
 #### `pgque.set_tick_period_ms(ms integer) → integer`
 
@@ -279,17 +279,17 @@ select pgque.set_tick_period_ms(1000);  -- 1 tick/sec (the pg_cron floor; pgqd-c
 ```
 
 Trade-offs at higher rates: more WAL per second, more metadata-table churn, more NOTIFY traffic. Inactive queues are cheap: if no events are coming, most ticker calls return `NULL` and PgQue backs off toward `ticker_idle_period` (default 1 minute). See [latency-and-tuning.md](latency-and-tuning.md) for the rate/latency trade-off.
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/lifecycle.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/lifecycle.sql).
 
 #### `pgque.stop() → void`
 
 Unschedules the pg_cron jobs set up by `start()` and clears the stored job IDs. Safe to call if `pg_cron` is absent.
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/lifecycle.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/lifecycle.sql).
 
 #### `pgque.status() → table(component text, status text, detail text)`
 
 Returns a diagnostic report with one row per component: Postgres version, PgQue version, ticker/maintenance job status, queue count, and consumer count.
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/lifecycle.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/lifecycle.sql).
 
 ```sql
 select * from pgque.status();
@@ -298,12 +298,12 @@ select * from pgque.status();
 #### `pgque.version() → text`
 
 Returns the installed PgQue version string. Granted to `pgque_reader` (the only lifecycle function that is) so consumers can self-report the version.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.maint() → integer`
 
 Runs one maintenance cycle: rotation step 1 plus any queue extra-maint hooks registered via `pgque.queue_extra_maint`. Rotation step 2 is intentionally skipped (it must run in its own transaction and is scheduled separately by `start()`); retry-queue processing is **not** performed here — call `pgque.maint_retry_events()` as a separate scheduled job. Returns the total number of operations performed.
-Grant: `pgque_admin`. Source: [`sql/pgque-api/maint.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-api/maint.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-api/maint.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/maint.sql).
 
 #### `pgque.maint_retry_events() → integer`
 
@@ -314,19 +314,19 @@ select pgque.maint_retry_events(); -- every 30 seconds, for nack/retry redeliver
 select pgque.maint();              -- every 30 seconds, for rotation
 ```
 
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.ticker() → bigint`
 
 Issues ticks for all unpaused, non-external queues. Returns the number of queues ticked. Each call must run in its own transaction (it records a `pg_snapshot` for batch visibility, and the snapshot must be committed before the next tick records its own).
 
 Under `pg_cron`, this is invoked from `pgque.ticker_loop()` at the configured `tick_period_ms` cadence. When driving the scheduler manually, loop this at your target rate (default in PgQue's pg_cron path: every 100 ms).
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.ticker(queue text) → bigint`
 
 Checks whether a tick is due for `queue` and inserts one if so. Returns the tick id (or `NULL` if no tick was created).
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 > Note: a 4-argument `ticker(queue, tick_id, timestamp, event_seq)` overload exists for queues configured with `external_ticker = true` (pushing ticks from an external clock source). External ticks must be monotonic: `tick_id` must increase, and `event_seq` must not move backwards.
 
@@ -339,19 +339,19 @@ select pgque.force_next_tick('orders');
 select pgque.ticker();
 ```
 
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/tick_helpers.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/tick_helpers.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/tick_helpers.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/tick_helpers.sql).
 
 #### `pgque.force_tick(queue text) → bigint`
 
 Alias for `pgque.force_next_tick`. Retained for compatibility with upstream PgQ (the historical name); identical behavior. The name is misleading — the function does not insert a tick by itself, it only bumps the event sequence so the next `pgque.ticker()` call inserts one. Raises if the queue is missing, ticker-paused, or configured for an external ticker. Prefer `force_next_tick` in new code.
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 > The `force_next_tick` → `ticker` → `receive` chain (or legacy `force_tick` alias) must run across separate transactions for the consumer to see the events you just sent. See the [snapshot rule](#snapshot-rule).
 
 #### `pgque.uninstall() → void`
 
 Calls `stop()` (if pg_cron is present) and then `drop schema pgque cascade`. Roles (`pgque_reader`, `pgque_writer`, `pgque_admin`) are not dropped and must be removed manually if desired. `execute` is revoked from both `pgque_admin` (explicit) and PUBLIC (via the schema-wide blanket revoke), so only the schema/install owner (typically a superuser) can run it.
-Grant: superuser / schema owner only (revoked from both `pgque_admin` and PUBLIC). Source: [`sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/lifecycle.sql).
+Grant: superuser / schema owner only (revoked from both `pgque_admin` and PUBLIC). Source: [`devel/sql/pgque-additions/lifecycle.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/lifecycle.sql).
 
 ## Observability
 
@@ -359,7 +359,7 @@ All observability functions here are granted to `pgque_reader`. They flow up to 
 
 #### `pgque.get_queue_info() → setof record`
 
-Returns one row per queue with ticker config and live stats. Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Returns one row per queue with ticker config and live stats. Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 | Out column                    | Type          |
 |-------------------------------|---------------|
@@ -380,11 +380,11 @@ Returns one row per queue with ticker config and live stats. Grant: `pgque_reade
 
 #### `pgque.get_queue_info(queue text) → setof record`
 
-Same columns as the 0-arg form, filtered to one queue. Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Same columns as the 0-arg form, filtered to one queue. Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.get_consumer_info() → setof record`
 
-Returns one row per consumer across all queues. Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Returns one row per consumer across all queues. Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 | Out column        | Type       |
 |-------------------|------------|
@@ -399,15 +399,15 @@ Returns one row per consumer across all queues. Grant: `pgque_reader`. Source: [
 
 #### `pgque.get_consumer_info(queue text) → setof record`
 
-Same columns, filtered to one queue. Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Same columns, filtered to one queue. Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.get_consumer_info(queue text, consumer text) → setof record`
 
-Same columns, filtered to one `(queue, consumer)` pair. Either argument may be `NULL` to widen the selection. Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Same columns, filtered to one `(queue, consumer)` pair. Either argument may be `NULL` to widen the selection. Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.get_batch_info(batch_id bigint) → record`
 
-Inspects an active batch. Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Inspects an active batch. Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 | Out column        | Type          |
 |-------------------|---------------|
@@ -447,17 +447,17 @@ Grant: `select` to `pgque_reader`, `all` to `pgque_admin`.
 #### `pgque.event_dead(batch_id bigint, event_id bigint, reason text, ev_time timestamptz, ev_txid xid8, ev_retry int4, ev_type text, ev_data text, ev_extra1 text default null, ev_extra2 text default null, ev_extra3 text default null, ev_extra4 text default null) → integer`
 
 Inserts one row into `pgque.dead_letter`. Called internally by `pgque.nack()` when retries are exhausted — direct calls are rarely needed.
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/dlq.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/dlq.sql).
 
 #### `pgque.dlq_inspect(queue text, limit_count int default 100) → setof pgque.dead_letter`
 
 Returns the most recent dead-letter rows for `queue`, newest first.
-Grant: `pgque_reader`. Source: [`sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/dlq.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/dlq.sql).
 
 #### `pgque.dlq_replay(dead_letter_id bigint) → bigint`
 
 Re-inserts one dead-letter entry into its original queue and deletes it from `pgque.dead_letter`. Returns the new event id.
-Grant: `pgque_writer` (replay is a produce action — it calls `insert_event` to put the event back on the queue). Source: [`sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/dlq.sql).
+Grant: `pgque_writer` (replay is a produce action — it calls `insert_event` to put the event back on the queue). Source: [`devel/sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/dlq.sql).
 
 #### `pgque.dlq_replay_all(queue text) → (replayed bigint, failed bigint, first_error text)`
 
@@ -469,12 +469,12 @@ Read the result with the columns by name:
 select replayed, failed, first_error from pgque.dlq_replay_all('orders');
 ```
 
-Grant: `pgque_writer` (replay is a produce action — it calls `insert_event` for each replayed entry). Source: [`sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/dlq.sql).
+Grant: `pgque_writer` (replay is a produce action — it calls `insert_event` for each replayed entry). Source: [`devel/sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/dlq.sql).
 
 #### `pgque.dlq_purge(queue text, older_than interval default '30 days') → integer`
 
 Deletes dead-letter rows older than `older_than` for `queue`. Returns the row count deleted. Destructive — audit the entries first.
-Grant: `pgque_admin`. Source: [`sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/dlq.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/dlq.sql).
 
 ## PgQ primitives (advanced)
 
@@ -483,83 +483,83 @@ Available but most users should prefer the modern API above. These are the raw P
 #### `pgque.insert_event(queue_name text, ev_type text, ev_data text) → bigint`
 
 Inserts one event with no extra columns. Returns the event id.
-Grant: `pgque_writer`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.insert_event(queue_name text, ev_type text, ev_data text, ev_extra1 text, ev_extra2 text, ev_extra3 text, ev_extra4 text) → bigint`
 
 Inserts one event with the four `ev_extra*` columns populated.
-Grant: `pgque_writer`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_writer`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.register_consumer(queue_name text, consumer_id text) → integer`
 
 Registers `consumer_id` on `queue_name`, starting from the most recent tick. Returns `1` for new, `0` if already registered.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.register_consumer_at(queue_name text, consumer_name text, tick_pos bigint) → integer`
 
 Registers a consumer at a specific historical tick id. Raises if the tick is not found.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.unregister_consumer(queue_name text, consumer_name text) → integer`
 
 Removes the subscription and retry-queue entries owned by this consumer on `queue_name`. Returns the number of subscriptions removed. Cooperative-aware: calling this on a `coop_main` with registered subconsumers raises; unregister subconsumers explicitly.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.next_batch(queue_name text, consumer_name text) → bigint`
 
 Activates the next batch for this consumer and returns its id, or `NULL` if no events are ready.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.next_batch_info(queue_name text, consumer_name text) → record`
 
 Same as `next_batch` but returns tick bounds alongside `batch_id`. Out columns: `batch_id`, `cur_tick_id`, `prev_tick_id`, `cur_tick_time`, `prev_tick_time`, `cur_tick_event_seq`, `prev_tick_event_seq`.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.next_batch_custom(queue_name text, consumer_name text, min_lag interval, min_count int4, min_interval interval) → record`
 
 Activates the next batch with custom size/age constraints. Same out columns as `next_batch_info`. Cooperative-aware: this 5-arg legacy form raises if the named consumer is a `coop_main` with at least one registered member, or if it is a `coop_member` row — in both cases the error message directs the caller to the 7-arg cooperative form. Normal consumers and `coop_main` rows with no members pass through.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.get_batch_events(batch_id bigint) → setof record`
 
 Streams the events in a batch. Out columns: `ev_id bigint`, `ev_time timestamptz`, `ev_txid bigint`, `ev_retry int4`, `ev_type text`, `ev_data text`, `ev_extra1..4 text`. Note: `ev_txid` is exposed here as `bigint` (the legacy PgQ signature), even though it is stored on the event tables as `xid8` — the value is the same transaction id, narrowed for the function result.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4) → setof record`
 
 Declares a server-side cursor over the batch and returns the first `quick_limit` events. Remaining events can be fetched with `fetch … from <cursor_name>`.
-Grant: `pgque_admin` only. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin` only. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.get_batch_cursor(batch_id bigint, cursor_name text, quick_limit int4, extra_where text) → setof record`
 
 Same as above with an additional `where` filter applied inside the cursor.
-Grant: `pgque_admin` only. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin` only. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 > **Security:** `extra_where` is a **trusted SQL fragment**, not a parameter — it is concatenated verbatim into the cursor's `select`. A caller that controls `extra_where` can inject arbitrary predicates (including `UNION ALL`) and forge rows in the returned stream. This behavior is inherited from upstream PgQ and is gated behind `pgque_admin` for that reason. **Never pass user-controlled text as `extra_where`**, even from admin code paths; if you need filtering driven by application input, fetch the batch with `pgque.get_batch_events()` and filter in the application or in a separate parameterized query.
 
 #### `pgque.finish_batch(batch_id bigint) → integer`
 
 Closes the batch and advances the subscription's `last_tick`. Returns `1` on success, `0` with a warning if the batch was not found. Cooperative-aware: `coop_member` batches clear the member cursor; `coop_main` batches are rejected.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.event_retry(batch_id bigint, event_id bigint, retry_time timestamptz) → integer`
 
 Puts one event back onto the retry queue with an absolute re-delivery time. Returns `1` on success, `0` if already queued for retry.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.event_retry(batch_id bigint, event_id bigint, retry_seconds integer) → integer`
 
 Same as above but takes a relative delay in seconds.
-Grant: `pgque_reader`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_reader`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.batch_retry(batch_id bigint, retry_seconds integer) → integer`
 
 Re-queues every event in the batch after `retry_seconds`. Returns the number of events enqueued for retry.
-Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql).
+Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 ## Trigger helpers (change-data-capture)
 
-Table triggers that enqueue a PgQue event for every INSERT / UPDATE / DELETE. All three return `trigger`; attach them via `CREATE TRIGGER … EXECUTE PROCEDURE pgque.<name>('queue_name', …)`. Grant: `pgque_admin`. Source: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql) (inherited from PgQ).
+Table triggers that enqueue a PgQue event for every INSERT / UPDATE / DELETE. All three return `trigger`; attach them via `CREATE TRIGGER … EXECUTE PROCEDURE pgque.<name>('queue_name', …)`. Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql) (inherited from PgQ).
 
 #### `pgque.jsontriga() → trigger`
 
@@ -594,7 +594,7 @@ Returned by `pgque.receive()` and consumed by `pgque.nack()`.
 
 ## Roles and grants
 
-Three roles. `pgque_reader` (consume) and `pgque_writer` (produce) are **siblings**, not parent/child — this mirrors upstream PgQ's role model and prevents a producer-only role from acking another consumer's batch. `pgque_admin` is a member of both. Source: [`sql/pgque-additions/roles.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/roles.sql) (plus colocated grants in `sql/pgque-api/*.sql` and [`sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-additions/dlq.sql)).
+Three roles. `pgque_reader` (consume) and `pgque_writer` (produce) are **siblings**, not parent/child — this mirrors upstream PgQ's role model and prevents a producer-only role from acking another consumer's batch. `pgque_admin` is a member of both. Source: [`devel/sql/pgque-additions/roles.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/roles.sql) (plus colocated grants in `devel/sql/pgque-api/*.sql` and [`devel/sql/pgque-additions/dlq.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-additions/dlq.sql)).
 
 Apps that produce **and** consume must be granted both `pgque_reader` and `pgque_writer` explicitly.
 
@@ -626,9 +626,9 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 
 ## Experimental (not in default install)
 
-These objects are not part of [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql). Load them explicitly with `\i sql/experimental/<file>.sql`. **API and stability are not guaranteed** — signatures, semantics, and grants may change before promotion into the default install.
+These objects are not part of [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql). Load them explicitly with `\i devel/sql/experimental/<file>.sql`. **API and stability are not guaranteed** — signatures, semantics, and grants may change before promotion into the default install.
 
-### [`sql/experimental/delayed.sql`](https://github.com/NikolayS/pgque/blob/main/sql/experimental/delayed.sql)
+### [`devel/sql/experimental/delayed.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/experimental/delayed.sql)
 
 #### `pgque.send_at(queue text, type text, payload jsonb, deliver_at timestamptz) → bigint`
 
@@ -638,7 +638,7 @@ Schedules delayed delivery. If `deliver_at <= now()` behaves like `insert_event`
 
 Moves due rows from `pgque.delayed_events` into their target queues. Intended to be called from `pgque.maint()` (the experimental file overrides `maint()` to chain this in).
 
-### [`sql/experimental/observability.sql`](https://github.com/NikolayS/pgque/blob/main/sql/experimental/observability.sql)
+### [`devel/sql/experimental/observability.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/experimental/observability.sql)
 
 All functions below are `security definer` with pinned `search_path` and are installed without explicit grants.
 
@@ -662,7 +662,7 @@ OTel-compatible metric export rows.
 
 #### `pgque.error_rate(queue text, period interval, bucket_size interval) → table(bucket_start timestamptz, retries bigint, dead_letters bigint)`
 
-### [`sql/experimental/config_api.sql`](https://github.com/NikolayS/pgque/blob/main/sql/experimental/config_api.sql)
+### [`devel/sql/experimental/config_api.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/experimental/config_api.sql)
 
 #### `pgque.create_queue(queue text, options jsonb) → integer`
 

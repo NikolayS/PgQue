@@ -3,7 +3,7 @@
 -- test_upgrade_v0_1_fixture.sql -- Build representative v0.1.0 state before upgrade
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- Run after installing v0.1.0 and before reinstalling HEAD's sql/pgque.sql.
+-- Run after installing v0.1.0 and before reinstalling HEAD's devel/sql/pgque.sql.
 -- The fixture is idempotent for local reruns in the same database.
 
 do $$

@@ -1,5 +1,5 @@
 -- test_upgrade_grants.sql
--- Regression test for #163 upgrade path (#165): re-running sql/pgque.sql on
+-- Regression test for #163 upgrade path (#165): re-running devel/sql/pgque.sql on
 -- a database that holds the legacy pre-#163 permission set must end with
 -- pgque_writer stripped of every consumer-side grant and stripped of the
 -- pgque_reader membership.
@@ -12,8 +12,8 @@
 -- Strategy:
 --   1. Manually re-create the legacy state: grant pgque_reader to pgque_writer
 --      and grant execute on each moved function to pgque_writer.
---   2. Re-run the explicit revoke statements from sql/pgque-additions/roles.sql,
---      sql/pgque-api/receive.sql, and sql/pgque-api/send.sql.
+--   2. Re-run the explicit revoke statements from devel/sql/pgque-additions/roles.sql,
+--      devel/sql/pgque-api/receive.sql, and devel/sql/pgque-api/send.sql.
 --   3. Assert pgque_writer has no execute on the moved functions and is
 --      no longer a member of pgque_reader; assert pgque_reader still has
 --      execute on each (i.e., the revokes were writer-targeted only).
@@ -109,8 +109,8 @@ begin
 end $$;
 
 -- 3. Replay the upgrade revokes. We replay the explicit revoke statements
---    from sql/pgque-additions/roles.sql, sql/pgque-api/receive.sql, and
---    sql/pgque-api/send.sql. Running the full sql/pgque.sql is also valid
+--    from devel/sql/pgque-additions/roles.sql, devel/sql/pgque-api/receive.sql, and
+--    devel/sql/pgque-api/send.sql. Running the full devel/sql/pgque.sql is also valid
 --    but heavier; the revokes here mirror exactly what those files emit.
 do $$ begin
     revoke pgque_reader from pgque_writer;

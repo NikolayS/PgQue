@@ -6,7 +6,7 @@
 -- able to execute any mutating pgque function.
 --
 -- Red until fix: add "revoke execute on all functions in schema pgque from public;"
--- to sql/pgque-additions/roles.sql (before the explicit role grants).
+-- to devel/sql/pgque-additions/roles.sql (before the explicit role grants).
 
 do $$
 begin

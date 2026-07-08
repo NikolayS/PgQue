@@ -87,7 +87,7 @@ end $$;
 -- ==============================
 -- Phase 2: Re-run install (idempotent)
 -- ==============================
-\i sql/pgque.sql
+\i devel/sql/pgque.sql
 
 -- ==============================
 -- Phase 3: Verify state preserved

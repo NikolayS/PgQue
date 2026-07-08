@@ -24,7 +24,7 @@ Requires:
 - Postgres 14+ with `pg_cron` available, `cron.use_background_workers = on`
   (TCP-auth-free), `cron.database_name` pointing at the bench database.
 - `python3` with `psycopg` (`pip install 'psycopg[binary]'`).
-- The schema installed via `\i sql/pgque.sql` and `pgque.start()` already
+- The schema installed via `\i devel/sql/pgque.sql` and `pgque.start()` already
   invoked.
 
 ```sh
