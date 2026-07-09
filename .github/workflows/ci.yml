@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: ['18', '17', '16', '15', '14']
+        pg_version: ['19beta1', '18', '17', '16', '15', '14']
 
     steps:
       - uses: actions/checkout@v4
@@ -101,14 +101,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 18
+      - name: Start PostgreSQL 19 beta 1
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-stable-smoke \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:18
+            postgres:19beta1
 
           for _ in $(seq 1 30); do
             docker exec pgque-stable-smoke pg_isready -U postgres && break
@@ -172,8 +172,8 @@ jobs:
       fail-fast: false
       matrix:
         # Upgrade coverage uses oldest/newest supported PG endpoints; the main
-        # regression matrix above covers every supported version (14–18).
-        pg_version: ['18', '14']
+        # regression matrix above covers every supported version (14–19).
+        pg_version: ['19beta1', '14']
 
     steps:
       - uses: actions/checkout@v4
@@ -254,6 +254,8 @@ jobs:
     name: pg_tle install path
     runs-on: ubuntu-latest
     env:
+      # pg_tle v1.5.2 does not compile against PostgreSQL 19 beta 1 yet;
+      # keep this optional extension path on the newest compatible major.
       PG_VERSION: '18'
       PGTLE_TAG: v1.5.2
     steps:
@@ -326,7 +328,8 @@ jobs:
     name: pg_cron install path
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '18'
+      PG_VERSION: '19beta1'
+      PG_MAJOR: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -340,6 +343,7 @@ jobs:
           set -Eeuo pipefail
           docker build \
             --build-arg "PG_VERSION=${PG_VERSION}" \
+            --build-arg "PG_MAJOR=${PG_MAJOR}" \
             -t pgque-pgcron:test \
             -f ci/Dockerfile.pgcron .
 
@@ -434,7 +438,7 @@ jobs:
     name: pg_timetable real worker
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '18'
+      PG_VERSION: '19beta1'
       PGTT_IMAGE: cybertecpostgresql/pg_timetable@sha256:6bed16f944ab91392fac9cd04aba82cd6690769e179d411748fd0bb538f55acd
       PGTT_NET: pgque-pgtimetable-test
       PG_CONTAINER: pgque-pgtimetable-pg
@@ -448,7 +452,7 @@ jobs:
       - name: Build pgque
         run: bash build/transform.sh
 
-      - name: Start PostgreSQL 18
+      - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
           set -Eeuo pipefail
           docker network create "${PGTT_NET}"
@@ -516,19 +520,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+      PG_VERSION: '19beta1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 18
+      - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-python-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:18
+            postgres:${PG_VERSION}
 
           for i in $(seq 1 30); do
             docker exec pgque-python-test pg_isready -U postgres && break
@@ -572,19 +577,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+      PG_VERSION: '19beta1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 18
+      - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-go-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:18
+            postgres:${PG_VERSION}
 
           for i in $(seq 1 30); do
             docker exec pgque-go-test pg_isready -U postgres && break
@@ -615,19 +621,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+      PG_VERSION: '19beta1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 18
+      - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-ts-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:18
+            postgres:${PG_VERSION}
 
           for i in $(seq 1 30); do
             docker exec pgque-ts-test pg_isready -U postgres && break
@@ -672,19 +679,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+      PG_VERSION: '19beta1'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 18
+      - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-ruby-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:18
+            postgres:${PG_VERSION}
 
           for i in $(seq 1 30); do
             docker exec pgque-ruby-test pg_isready -U postgres && break
