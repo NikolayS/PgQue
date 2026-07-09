@@ -448,7 +448,7 @@ returns text as $$
 begin
     /* In-development build: the '-devel' suffix marks this as not a stable
        release. Bump to the release version (drop '-devel') at release time. */
-    return '0.3.0-devel';
+    return '0.3.0-alpha.1';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 

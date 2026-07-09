@@ -7,6 +7,10 @@ churn and validate against a throwaway database, not production.
 The released, stable install lives in [`../../sql/`](../../sql/) — use that for
 anything real.
 
+Testing partition keys (ordered per-key processing via slot consumers)? Until
+`docs/` coverage lands, follow
+[`blueprints/partition-keys/SPEC.md`](../../blueprints/partition-keys/SPEC.md).
+
 Layout:
 
 - `pgque.sql`, `pgque-tle.sql` — generated single-file installs (built from the
@@ -40,6 +44,10 @@ To uninstall: `\i devel/sql/pgque_uninstall.sql`.
 
 PgQue does not deliver messages without a ticker: enqueueing works, but
 consumers see nothing until ticks are created.
+
+On a quiet queue, the ticker falls back to `queue_ticker_idle_period`
+(default 60s), so a newly enqueued event can take up to that long to become
+receivable. Run the ticker at your desired cadence to bound this latency.
 
 With `pg_cron` in the same database, one call sets up the ticker and
 maintenance jobs (10 ticks/sec by default):

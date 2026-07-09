@@ -70,8 +70,8 @@ begin
     from pgtle.available_extensions()
     where name = 'pgque';
 
-    if existing_version = '0.3.0-devel' then
-        raise notice 'pgque 0.3.0-devel already registered with pg_tle; skipping install_extension().';
+    if existing_version = '0.3.0-alpha.1' then
+        raise notice 'pgque 0.3.0-alpha.1 already registered with pg_tle; skipping install_extension().';
         return;
     end if;
 
@@ -80,16 +80,16 @@ begin
             'but this script registers version %. Run '
             'devel/sql/pgque-tle-uninstall.sql first to remove the existing '
             'registration, then re-run this script.',
-            existing_version, '0.3.0-devel';
+            existing_version, '0.3.0-alpha.1';
     end if;
 
     perform pgtle.install_extension(
         'pgque',
-        '0.3.0-devel',
+        '0.3.0-alpha.1',
         'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
 $pgque_extension_body$
 -- pgque.sql -- PgQ Universal Edition
--- Version: 0.3.0-devel
+-- Version: 0.3.0-alpha.1
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -4670,7 +4670,7 @@ returns text as $$
 begin
     /* In-development build: the '-devel' suffix marks this as not a stable
        release. Bump to the release version (drop '-devel') at release time. */
-    return '0.3.0-devel';
+    return '0.3.0-alpha.1';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -8121,5 +8121,5 @@ $pgque_extension_body$
 end $wrapper$;
 
 \echo ''
-\echo 'PgQue 0.3.0-devel registered with pg_tle.'
+\echo 'PgQue 0.3.0-alpha.1 registered with pg_tle.'
 \echo 'Run create extension pgque; to materialise the schema in this database.'

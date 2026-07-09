@@ -1,5 +1,5 @@
 -- pgque.sql -- PgQ Universal Edition
--- Version: 0.3.0-devel
+-- Version: 0.3.0-alpha.1
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -4580,7 +4580,7 @@ returns text as $$
 begin
     /* In-development build: the '-devel' suffix marks this as not a stable
        release. Bump to the release version (drop '-devel') at release time. */
-    return '0.3.0-devel';
+    return '0.3.0-alpha.1';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
