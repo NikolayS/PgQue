@@ -70,8 +70,8 @@ begin
     from pgtle.available_extensions()
     where name = 'pgque';
 
-    if existing_version = '0.3.0-alpha.1' then
-        raise notice 'pgque 0.3.0-alpha.1 already registered with pg_tle; skipping install_extension().';
+    if existing_version = '0.3.0-devel' then
+        raise notice 'pgque 0.3.0-devel already registered with pg_tle; skipping install_extension().';
         return;
     end if;
 
@@ -80,16 +80,16 @@ begin
             'but this script registers version %. Run '
             'devel/sql/pgque-tle-uninstall.sql first to remove the existing '
             'registration, then re-run this script.',
-            existing_version, '0.3.0-alpha.1';
+            existing_version, '0.3.0-devel';
     end if;
 
     perform pgtle.install_extension(
         'pgque',
-        '0.3.0-alpha.1',
+        '0.3.0-devel',
         'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
 $pgque_extension_body$
 -- pgque.sql -- PgQ Universal Edition
--- Version: 0.3.0-alpha.1
+-- Version: 0.3.0-devel
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -4668,9 +4668,10 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.version()
 returns text as $$
 begin
-    /* In-development build: the '-devel' suffix marks this as not a stable
-       release. Bump to the release version (drop '-devel') at release time. */
-    return '0.3.0-alpha.1';
+    /* Devel builds carry a '-devel' version; a release stamp replaces this
+       literal with the release version, then a follow-up restores '-devel'.
+       transform.sh reads this literal, so keep it a valid semver string. */
+    return '0.3.0-devel';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -8121,5 +8122,5 @@ $pgque_extension_body$
 end $wrapper$;
 
 \echo ''
-\echo 'PgQue 0.3.0-alpha.1 registered with pg_tle.'
+\echo 'PgQue 0.3.0-devel registered with pg_tle.'
 \echo 'Run create extension pgque; to materialise the schema in this database.'

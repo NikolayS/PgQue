@@ -446,9 +446,10 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.version()
 returns text as $$
 begin
-    /* In-development build: the '-devel' suffix marks this as not a stable
-       release. Bump to the release version (drop '-devel') at release time. */
-    return '0.3.0-alpha.1';
+    /* Devel builds carry a '-devel' version; a release stamp replaces this
+       literal with the release version, then a follow-up restores '-devel'.
+       transform.sh reads this literal, so keep it a valid semver string. */
+    return '0.3.0-devel';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
