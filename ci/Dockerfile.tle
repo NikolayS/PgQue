@@ -5,20 +5,22 @@
 # time stripping them.
 #
 # Build args:
-#   PG_VERSION  -- Postgres major (e.g. 18). Must match an available
-#                  postgresql-server-dev-XX package in apt.
+#   PG_VERSION  -- Postgres Docker tag (e.g. 18 or 19beta1).
+#   PG_MAJOR    -- Postgres package major (e.g. 18 or 19). Must match an
+#                  available postgresql-server-dev-XX package in apt.
 #   PGTLE_TAG   -- pg_tle git tag, e.g. v1.5.2.
 
 ARG PG_VERSION=18
 FROM postgres:${PG_VERSION}
 
 ARG PG_VERSION
+ARG PG_MAJOR=${PG_VERSION}
 ARG PGTLE_TAG=v1.5.2
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        build-essential \
-       postgresql-server-dev-${PG_VERSION} \
+       postgresql-server-dev-${PG_MAJOR} \
        ca-certificates \
        git \
        flex \
