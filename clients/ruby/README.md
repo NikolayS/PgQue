@@ -100,6 +100,19 @@ instance; the default targets `$stderr` at `FATAL`, so the consumer is
 effectively silent unless you set `PGQUE_LOG_LEVEL=warn` or pass your
 own).
 
+After finishing a non-empty batch, the consumer polls again immediately
+until the existing backlog is empty. `LISTEN`/`NOTIFY` is only a wakeup
+optimization: notifications sent before a consumer connected cannot be
+replayed, so waiting after every batch would otherwise drain an existing
+backlog at only one batch per `poll_interval`.
+
+Connection, `LISTEN`, receive, and ack errors do not terminate `start`.
+The consumer closes the failed connection, waits `poll_interval` in
+stop-aware slices, reconnects, re-subscribes to notifications, and resumes.
+Set `PGQUE_LOG_LEVEL=error` (or pass `logger:`) to make these retry events
+visible. Permanent configuration errors such as a missing queue or consumer
+also retry until `stop`, SIGTERM, or SIGINT.
+
 ### Handling unknown event types
 
 By default the consumer **nacks** any message whose type has no

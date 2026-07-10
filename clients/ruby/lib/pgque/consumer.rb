@@ -87,25 +87,22 @@ module Pgque
       end
 
       begin
-        conn = PG.connect(@dsn)
-        begin
-          channel = "pgque_#{@queue}"
-          conn.exec("LISTEN #{conn.escape_identifier(channel)}")
-          @logger.info(
-            "consumer #{@name} listening on #{@queue} (poll=#{@poll_interval}s)"
-          )
-
-          while running?
-            poll_once(conn)
+        while running?
+          begin
+            run_session
+          rescue PG::Error, Pgque::Error => e
             break unless running?
-            wait_for_notify_or_stop(conn)
-          end
 
-          if @stop_signum
-            @logger.info("received signal #{@stop_signum}, shutting down")
+            @logger.error(
+              "consumer #{@name}: database error; retrying in " \
+              "#{@poll_interval}s: #{e.class}: #{e.message}",
+            )
+            wait_before_reconnect
           end
-        ensure
-          conn.close unless conn.finished?
+        end
+
+        if @stop_signum
+          @logger.info("received signal #{@stop_signum}, shutting down")
         end
       ensure
         # Clear running? before logging so callers observing the flag
@@ -132,6 +129,7 @@ module Pgque
 
     # Public for testability; not part of the stable API.
     def poll_once(conn)
+      processed = false
       conn.transaction do
         client = Client.new(conn)
         msgs =
@@ -161,10 +159,39 @@ module Pgque
             "double ack (batch already finished or not found)",
           )
         end
+        processed = true
       end
+      processed
     end
 
     private
+
+    def run_session
+      conn = PG.connect(@dsn)
+      begin
+        channel = "pgque_#{@queue}"
+        conn.exec("LISTEN #{conn.escape_identifier(channel)}")
+        @logger.info(
+          "consumer #{@name} listening on #{@queue} (poll=#{@poll_interval}s)"
+        )
+
+        while running?
+          processed = poll_once(conn)
+          break unless running?
+
+          # NOTIFY is only a wakeup optimization. Notifications for a
+          # pre-existing backlog may have fired before this session began,
+          # so keep polling immediately after a finished batch until the
+          # queue comes back empty. An unfinished batch (for example after
+          # a failed nack) returns false and retains the normal backoff.
+          next if processed
+
+          wait_for_notify_or_stop(conn)
+        end
+      ensure
+        conn.close unless conn.finished?
+      end
+    end
 
     def dispatch_batch(client, batch_id, msgs)
       nack_failed = false
@@ -239,6 +266,16 @@ module Pgque
           end
           return
         end
+      end
+    end
+
+    def wait_before_reconnect
+      deadline = monotonic + @poll_interval
+      while running?
+        remaining = deadline - monotonic
+        return if remaining <= 0
+
+        sleep [WAIT_SLICE_SECONDS, remaining].min
       end
     end
 

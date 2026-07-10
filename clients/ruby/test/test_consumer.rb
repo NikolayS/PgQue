@@ -76,16 +76,19 @@ class TestConsumerUnit < Minitest::Test
     end
   end
 
-  def test_running_clears_after_start_failure
+  def test_running_clears_after_unexpected_start_failure
     skip_dsn_for_this_class!
-    # Point at an unreachable port so PG.connect raises immediately
-    # inside start, exiting before the poll loop ever runs.
     cons = Pgque::Consumer.new(
-      "postgresql://nobody:wrong@localhost:1/nodb",
+      "dummy",
       queue: "q", name: "c", logger: silent_logger
     )
+    cons.define_singleton_method(:run_session) do
+      raise "simulated non-database failure"
+    end
+
     refute cons.running?
-    assert_raises(PG::Error) { cons.start }
+    error = assert_raises(RuntimeError) { cons.start }
+    assert_includes error.message, "non-database failure"
     refute cons.running?,
            "consumer.running? must be false after start raised"
   end
