@@ -142,6 +142,9 @@
 \echo 'Running: test_partition_setup'
 \i tests/test_partition_setup.sql
 
+\echo 'Running: test_named_arguments_v0_3'
+\i tests/test_named_arguments_v0_3.sql
+
 \echo 'Running: test_partition_keys'
 \i tests/test_partition_keys.sql
 

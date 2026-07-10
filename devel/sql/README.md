@@ -95,7 +95,9 @@ the same starting tick:
 
 ```sql
 select pgque.create_queue('orders');
-select pgque.subscribe_partitioned('orders', 'workers', 4);
+select pgque.subscribe_partitioned(
+  queue_name => 'orders', consumer => 'workers', n => 4
+);
 ```
 
 Calling `subscribe_partitioned` again with the same slot count is idempotent and

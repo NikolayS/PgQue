@@ -39,7 +39,41 @@ revoke all on table pgque.idem from public;
 revoke all on table pgque.idem from pgque_reader, pgque_writer, pgque_admin;
 
 /*
- * pgque.send_idem(queue, type, payload text, idem_key, ttl, partition_key)
+ * Recreate only exact alpha input-name contracts. Once stable names are
+ * installed, CREATE OR REPLACE below preserves function OIDs and dependencies.
+ */
+do $$
+declare
+    v_actual_names text[];
+    v_function record;
+    v_oid oid;
+begin
+    for v_function in
+        select *
+        from (values
+            ('pgque.send_idem(text,text,jsonb,text,interval,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_idem_key',
+                    'i_ttl', 'i_partition_key']),
+            ('pgque.send_idem(text,text,text,text,interval,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_idem_key',
+                    'i_ttl', 'i_partition_key']),
+            ('pgque.maint_idem(text)', array['i_queue_name'])
+        ) as alpha(signature, old_names)
+    loop
+        v_oid := to_regprocedure(v_function.signature)::oid;
+        if v_oid is not null then
+            select p.proargnames[1:p.pronargs] into v_actual_names
+            from pg_proc as p
+            where p.oid = v_oid;
+            if v_actual_names = v_function.old_names then
+                execute 'drop function ' || v_function.signature;
+            end if;
+        end if;
+    end loop;
+end $$;
+
+/*
+ * pgque.send_idem(queue_name, type_name, payload text, idem_key, ttl, partition_key)
  * Fast path, opaque textual payload (same conventions as pgque.send(text)).
  * Returns one row: deduped = false with a new event id on first use in the
  * window, deduped = true with the original id on a duplicate.
@@ -51,10 +85,17 @@ revoke all on table pgque.idem from pgque_reader, pgque_writer, pgque_admin;
  * usable (a crash can never leave a claimed key with no event).
  */
 create or replace function pgque.send_idem(
-    i_queue text, i_type text, i_payload text, i_idem_key text,
-    i_ttl interval default '1 hour', i_partition_key text default null)
+    queue_name text, type_name text, payload text, idem_key text,
+    ttl interval default '1 hour', partition_key text default null)
 returns table (event_id int8, deduped boolean) as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_type alias for $2;
+    i_payload alias for $3;
+    i_idem_key alias for $4;
+    i_ttl alias for $5;
+    i_partition_key alias for $6;
     v_queue_id int4;
     v_extra_maint text[];
     v_claimed boolean;
@@ -138,14 +179,22 @@ revoke execute on function
     pgque.send_idem(text, text, text, text, interval, text) from public;
 
 /*
- * pgque.send_idem(queue, type, payload jsonb, idem_key, ttl, partition_key)
+ * pgque.send_idem(queue_name, type_name, payload jsonb, idem_key, ttl, partition_key)
  * JSON payload variant; opt in with an explicit ::jsonb cast (untyped
  * literals resolve to the text overload -- see send.sql).
  */
 create or replace function pgque.send_idem(
-    i_queue text, i_type text, i_payload jsonb, i_idem_key text,
-    i_ttl interval default '1 hour', i_partition_key text default null)
+    queue_name text, type_name text, payload jsonb, idem_key text,
+    ttl interval default '1 hour', partition_key text default null)
 returns table (event_id int8, deduped boolean) as $$
+#variable_conflict use_column
+declare
+    i_queue alias for $1;
+    i_type alias for $2;
+    i_payload alias for $3;
+    i_idem_key alias for $4;
+    i_ttl alias for $5;
+    i_partition_key alias for $6;
 begin
     return query
     select s.event_id, s.deduped
@@ -164,9 +213,11 @@ revoke execute on function
  * else 0. send_idem() registers it in queue_extra_maint automatically; it
  * shares the install owner with maint(), so maint()'s ownership check passes.
  */
-create or replace function pgque.maint_idem(i_queue_name text)
+create or replace function pgque.maint_idem(queue_name text)
 returns integer as $$
+#variable_conflict use_column
 declare
+    i_queue_name alias for $1;
     v_queue_id int4;
     v_deleted integer;
 begin

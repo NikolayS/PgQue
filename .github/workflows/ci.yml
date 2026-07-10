@@ -170,15 +170,31 @@ jobs:
         if: always()
         run: docker rm -f pgque-stable-smoke
 
-  upgrade-v0-1-to-head:
-    name: upgrade v0.1.0 to HEAD (PG ${{ matrix.pg_version }})
+  upgrade-to-head:
+    name: upgrade ${{ matrix.from_version }} to HEAD (PG ${{ matrix.pg_version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Upgrade coverage uses oldest/newest supported PG endpoints; the main
-        # regression matrix above covers every supported version (14–19).
-        pg_version: ['19beta1', '14']
+        include:
+          # Exercise the oldest upgrade on the PG14 support floor and the
+          # PG19 beta forward-test endpoint.
+          - pg_version: '19beta1'
+            from_version: 'v0.1.0'
+            install_sql: 'sql/pgque.sql'
+            fixture: 'tests/test_upgrade_v0_1_fixture.sql'
+            assertions: 'tests/test_upgrade_v0_1_assertions.sql'
+          - pg_version: '14'
+            from_version: 'v0.1.0'
+            install_sql: 'sql/pgque.sql'
+            fixture: 'tests/test_upgrade_v0_1_fixture.sql'
+            assertions: 'tests/test_upgrade_v0_1_assertions.sql'
+          # Exercise input-name migration from the public 0.3 alpha.
+          - pg_version: '17'
+            from_version: 'v0.3.0-alpha.1'
+            install_sql: 'devel/sql/pgque.sql'
+            fixture: 'tests/test_upgrade_v0_3_alpha_fixture.sql'
+            assertions: 'tests/test_upgrade_v0_3_alpha_assertions.sql'
 
     steps:
       - uses: actions/checkout@v4
@@ -212,18 +228,18 @@ jobs:
       - name: Build HEAD pgque
         run: bash build/transform.sh
 
-      - name: Install v0.1.0
+      - name: Install ${{ matrix.from_version }}
         run: |
           set -Eeuo pipefail
-          git show v0.1.0:sql/pgque.sql > /tmp/pgque-v0.1.0.sql
+          git show ${{ matrix.from_version }}:${{ matrix.install_sql }} > /tmp/pgque-previous.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f /tmp/pgque-v0.1.0.sql
+            -v ON_ERROR_STOP=1 -f /tmp/pgque-previous.sql
 
-      - name: Prepare v0.1.0 fixture
+      - name: Prepare ${{ matrix.from_version }} fixture
         run: |
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_fixture.sql
+            -v ON_ERROR_STOP=1 -f ${{ matrix.fixture }}
 
       - name: Upgrade to HEAD
         run: |
@@ -235,13 +251,17 @@ jobs:
         run: |
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_assertions.sql
+            -v ON_ERROR_STOP=1 -f ${{ matrix.assertions }}
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_named_arguments_v0_3.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_security_public_execute.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_upgrade_grants.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_pgque_roles.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_named_arguments_v0_3_reinstall_fixture.sql
 
       - name: Verify post-upgrade idempotency
         run: |
@@ -250,6 +270,8 @@ jobs:
             -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_named_arguments_v0_3_reinstall_assertions.sql
 
       - name: Cleanup
         if: always()
