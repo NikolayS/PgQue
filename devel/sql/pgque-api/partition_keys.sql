@@ -377,8 +377,8 @@ begin
     if i_worker is null or i_worker = '' then
         raise exception 'worker id must not be empty';
     end if;
-    if i_ttl is null or i_ttl < interval '1 second' then
-        raise exception 'lease ttl must be >= 1 second, got %', i_ttl;
+    if i_ttl is null or not isfinite(i_ttl) or i_ttl < interval '1 second' then
+        raise exception 'lease ttl must be a finite interval >= 1 second, got %', i_ttl;
     end if;
 
     select pc.queue_id, pc.n into v_queue_id, v_n
@@ -400,8 +400,19 @@ begin
     where queue_id = v_queue_id
       and co_name = i_consumer
       and slot = i_slot
-    for update;
+    for update skip locked;
     if not found then
+        /* A matching row that could not be locked is busy in another
+           transaction. Steer the caller to its next candidate slot. */
+        perform 1
+        from pgque.partition_slot
+        where queue_id = v_queue_id
+          and co_name = i_consumer
+          and slot = i_slot;
+        if found then
+            return null;
+        end if;
+
         raise exception 'slot % of consumer % on queue % is not subscribed; call pgque.subscribe_slot()',
             i_slot, i_consumer, i_queue;
     end if;
