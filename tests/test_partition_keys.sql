@@ -430,6 +430,20 @@ begin
   assert cardinality(v_first) = 2,
     format('fencing: zombie must open a 2-event batch, got %s', coalesce(cardinality(v_first), 0));
 
+  /* A cooperative handoff is legal only after ack finishes the batch.
+     Releasing here would let the successor process this same open batch
+     concurrently with the current worker. */
+  v_raised := false;
+  begin
+    perform pgque.release_slot('pk_q', 'w', 0, 'wk-zombie');
+  exception
+    when others then v_raised := true;
+  end;
+  assert v_raised,
+    'fencing: owner release with an open batch must raise';
+  assert pgque.claim_slot('pk_q', 'w', 0, 'wk-early') is null,
+    'fencing: failed mid-batch release must leave the owner lease intact';
+
   perform pg_sleep(1.2);
 
   -- Heir takes over the expired lease (epoch bump) and is re-issued the
