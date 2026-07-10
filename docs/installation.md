@@ -438,6 +438,22 @@ With `pg_tle` loaded, register and create PgQue:
 create extension pgque;
 ```
 
+To upgrade an existing pg_tle installation without dropping queue data, load
+the target wrapper first, then apply the update path it registered:
+
+```sql
+\i devel/sql/pgque-tle.sql
+alter extension pgque update;
+```
+
+Loading the wrapper only registers the target version and its tested update
+path; it does not change the active extension. The data migration runs only
+when `alter extension` succeeds. If the wrapper reports that no tested path
+exists from the installed version, leave the extension installed and consult
+the target release notes. Do **not** uninstall and reinstall to force an
+upgrade: `drop extension pgque cascade` removes the PgQue schema and queue
+data.
+
 Uninstall the TLE variant with:
 
 ```sql

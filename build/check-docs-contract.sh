@@ -67,6 +67,7 @@ case "${channel}" in
     forbid_text "Build contract." "${doc_paths[@]}"
     forbid_text "in-development default install" "${doc_paths[@]}"
     forbid_text "main branch development build" "${doc_paths[@]}"
+    forbid_text "main development build" "${doc_paths[@]}"
 
     require_text "\\i sql/pgque.sql" "README.md"
     require_text "\\i sql/pgque.sql" "docs/installation.md"
