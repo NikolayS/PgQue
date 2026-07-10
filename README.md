@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/NikolayS/pgque/actions/workflows/ci.yml"><img src="https://github.com/NikolayS/pgque/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-14--19-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 14-19"></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-14--18-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 14-18"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
   <a href="https://github.com/citusdata/pg_cron"><img src="https://img.shields.io/badge/pg__cron-optional-336791" alt="pg_cron"></a>
   <a href="https://github.com/NikolayS/pgque"><img src="https://img.shields.io/badge/anti--extension-%5Ci_and_go-orange" alt="Anti-Extension"></a>
@@ -134,7 +134,7 @@ Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autova
 
 ## Installation
 
-**Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 ticks/sec)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
+**Requirements:** Supported Postgres 14–18, and something that calls `pgque.ticker()` periodically. PostgreSQL 19 beta is also continuously tested as a forward-compatibility lane; beta coverage is not a production-support claim. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 ticks/sec)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
 > Want to try an upcoming release early? The in-development install lives in
 > [`devel/sql/`](devel/sql/README.md). The steps below install the stable version.
@@ -509,7 +509,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Feature | Done |
 |---|---|
 | PgQ core engine | ✅ |
-| Modern Postgres support (14-19) | ✅ |
+| Modern Postgres support (14-18; 19 beta tested) | ✅ |
 | Pure SQL / PL/pgSQL install | ✅ |
 | Managed Postgres support | ✅ |
 | No daemon / no C extension | ✅ |
