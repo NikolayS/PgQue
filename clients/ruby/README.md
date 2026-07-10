@@ -210,7 +210,7 @@ end  # commits here; raises rollback the whole block
 
 Don't wrap `send` and `receive` in one explicit transaction; same for
 `maint_retry_events` + `ticker`. See the
-[snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+[snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/concepts.md#the-snapshot-rule).
 The built-in `Pgque::Consumer` already wraps `receive` + dispatch +
 `ack` in a single `conn.transaction` per poll, so handler code does
 not need to manage that.
