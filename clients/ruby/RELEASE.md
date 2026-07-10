@@ -27,7 +27,7 @@ pre-release; users need `gem install pgque --pre` to receive it.
 
 RubyGems' Trusted Publishing requires the gem to **already exist** on
 the registry before a trusted publisher can be configured. The very
-first release is therefore manual:
+first release was therefore manual:
 
 ```bash
 cd clients/ruby
@@ -36,7 +36,12 @@ gem signin                   # one-time, prompts for rubygems.org credentials
 gem push pgque-0.3.0.rc.1.gem
 ```
 
-After that, every subsequent release goes through the workflow below.
+That bootstrap publish is complete: `pgque 0.3.0.rc.1` already exists on
+RubyGems. Published RubyGems versions are immutable, so the workflow must never
+be dispatched with `0.3.0.rc.1`, even if its namespaced Git tag does not exist.
+The next attempt must first bump `Pgque::VERSION` to a new version (for example,
+`0.3.0.rc.2`). Every release after the bootstrap goes through the workflow
+below.
 
 ## GitHub environment prerequisite
 
@@ -75,26 +80,31 @@ The release workflow is `.github/workflows/release-ruby.yml`.
 3. Ensure the `rubygems` GitHub environment exists and is protected.
 4. Ensure the gem already exists on RubyGems and Trusted Publishing
    is configured (bootstrap section above).
-5. Run **Release Ruby client** with `dry_run=true` first. Dry runs
-   validate the clean tree, version and namespaced tag, run the test suite,
-   build and inspect the `.gem`, smoke-install it, and confirm the tag is
-   available. They do not create a tag, publish, or require the `rubygems`
-   environment approval or OIDC permissions.
+5. Run **Release Ruby client** with `dry_run=true` first. Dry runs validate the
+   clean tree, version and namespaced tag, confirm the version is not already on
+   RubyGems, install the current development SQL into a pinned PostgreSQL 18
+   service, and run the full database-backed Ruby suite. Any skipped test fails
+   the release check. They then build and inspect the `.gem`, smoke-install it,
+   and confirm the tag is available. Dry runs do not create a tag, publish, or
+   require the `rubygems` environment approval or OIDC permissions.
 6. Run it with `dry_run=false`. Approve the `rubygems` environment
    when prompted.
 7. Verify the published artifact installs in a clean environment:
 
    ```bash
-   gem install pgque --pre        # or pin: gem install pgque -v 0.3.0.rc.1
+   VERSION=0.3.0.rc.2             # replace with the version just published
+   gem install pgque -v "$VERSION"
    ruby -rpgque -e 'puts Pgque::VERSION'
    ```
 
-The workflow builds with `gem build`, smoke-installs the resulting `.gem`
-against a temporary `GEM_HOME`, and uploads that exact artifact to the publish
-job. The publish job revalidates the artifact, obtains short-lived credentials
-through RubyGems Trusted Publishing / OIDC, creates the annotated tag
-`ruby/v${VERSION}` at the dispatch SHA, pushes the tag, and publishes with
-`gem push`. No long-lived `RUBYGEMS_API_KEY` is needed.
+The workflow checks RubyGems version availability before uploading the artifact,
+then builds with `gem build`, smoke-installs the resulting `.gem` against a
+temporary `GEM_HOME`, and uploads that exact artifact to the publish job. The
+publish job revalidates both the artifact and RubyGems availability immediately
+before tagging, obtains short-lived credentials through RubyGems Trusted
+Publishing / OIDC, creates the annotated tag `ruby/v${VERSION}` at the dispatch
+SHA, pushes the tag, and publishes with `gem push`. No long-lived
+`RUBYGEMS_API_KEY` is needed.
 
 Ruby client tags are deliberately namespaced. Never use plain `v${VERSION}` for
 a gem release: that namespace belongs to PgQue SQL/server releases, whose

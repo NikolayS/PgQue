@@ -24,9 +24,23 @@ jobs:
   build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18@sha256:22c89fe0d0f507606260237fd55e51f6137f58b2d5bcf6152242b96d9fe8f9a4
+        env:
+          POSTGRES_PASSWORD: pgque_test
+          POSTGRES_DB: pgque_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=postgres --dbname=pgque_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
     env:
       VERSION: ${{ inputs.version }}
       TAG_NAME: ruby/v${{ inputs.version }}
+      PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost:5432/pgque_test
     defaults:
       run:
         working-directory: clients/ruby
@@ -36,6 +50,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -62,10 +77,54 @@ jobs:
             fi
           fi
 
+      - name: Verify RubyGems version is available
+        run: |
+          set -Eeuo pipefail
+          response=$(mktemp)
+          trap 'rm -f "$response"' EXIT
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            -H 'Accept: application/json' \
+            https://rubygems.org/api/v1/versions/pgque.json \
+            -o "$response"
+          ruby script/check_rubygems_version.rb "$VERSION" "$response"
+
+      - name: Build and install current PgQue SQL
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -Eeuo pipefail
+          ready_checks=0
+          for _attempt in $(seq 1 30); do
+            if psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1 -c 'select 1' >/dev/null 2>&1; then
+              ready_checks=$((ready_checks + 1))
+              if [ "$ready_checks" -ge 2 ]; then
+                break
+              fi
+            else
+              ready_checks=0
+            fi
+            sleep 1
+          done
+          if [ "$ready_checks" -lt 2 ]; then
+            echo "PostgreSQL did not remain ready for two consecutive checks"
+            exit 1
+          fi
+
+          bash build/transform.sh
+          if ! git diff --exit-code -- devel/sql/pgque.sql devel/sql/pgque-tle.sql; then
+            echo "generated PgQue SQL is stale; run build/transform.sh and commit the result"
+            exit 1
+          fi
+          psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
+
       - name: Run tests and build gem
         run: |
           set -Eeuo pipefail
-          bundle exec rake test
+          test_log=$(mktemp)
+          trap 'rm -f "$test_log"' EXIT
+          bundle exec rake test 2>&1 | tee "$test_log"
+          ruby script/assert_no_test_skips.rb "$test_log"
           gem build pgque.gemspec
           ruby script/validate_release.rb "$VERSION" "$TAG_NAME" "./pgque-${VERSION}.gem"
 
@@ -150,6 +209,19 @@ jobs:
               exit "$rc"
             fi
           fi
+
+      - name: Recheck RubyGems version availability
+        run: |
+          set -Eeuo pipefail
+          response=$(mktemp)
+          trap 'rm -f "$response"' EXIT
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            -H 'Accept: application/json' \
+            https://rubygems.org/api/v1/versions/pgque.json \
+            -o "$response"
+          ruby script/check_rubygems_version.rb "$VERSION" "$response"
 
       - name: Configure RubyGems trusted-publishing credentials
         uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
