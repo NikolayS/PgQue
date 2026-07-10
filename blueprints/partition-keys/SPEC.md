@@ -147,7 +147,7 @@ to slot 0 — G1, so no event is dropped), assembled only from the validated int
 **SECURITY DEFINER ownership (round 3 — corrected).** `get_batch_cursor`'s
 `extra_where` is a trusted-SQL sink, revoked from `public/pgque_reader/
 pgque_writer`, admin-only (`pgque.sql:2221`, `:4852`). `receive_partitioned` and
-`subscribe_slot` reach it **because they are owned by the same role that owns
+`subscribe_partitioned`/`subscribe_slot` reach it **because they are owned by the same role that owns
 `get_batch_cursor` (the install owner) — a function owner may execute its own
 functions regardless of grants.** This is *not* the `receive`/`nack` pattern
 (those never call `get_batch_cursor`; they call reader-granted internals), and it
@@ -168,11 +168,11 @@ optimization is future (R6).
 |----|----------|---------------|-------|
 | D1 | Key location | `ev_extra1`, `send()`-sourced queues only | Triggers use `ev_extra1` for table name. |
 | D2 | Failure policy | `skip` default (Phase 1); `pause` is Phase 2 (§11) | `pause` has open mechanics. |
-| D3 | N | Fixed, persisted in `pgque.partition_consumer(queue, consumer, n)` (written inside SECURITY DEFINER `subscribe_slot`; table revoked from app roles); changed `n` rejected | Enforced invariant, not convention. |
+| D3 | N | Fixed, persisted in `pgque.partition_consumer(queue, consumer, n)` (written inside SECURITY DEFINER `subscribe_partitioned`, with `subscribe_slot` retained for repair; table revoked from app roles); changed `n` rejected | Enforced invariant, not convention. |
 | D4 | Assignment | `(hashtextextended(key,0) % N + N) % N` | Stable, sign-safe. |
 | D5 | State budget | **Phase 1 / happy / `skip`: no state, no per-event writes.** **Phase 2 `pause`:** durable `pgque.partition_block(sub_id, partition_key, head_ev_id)` marker (FK `sub_id → subscription on delete cascade`; index `(sub_id, partition_key)`). Blocked keys additionally incur defer churn (§11 O1) — so "no per-event churn" is a Phase-1/non-blocked-key claim only. | Round 3 corrected the churn framing. |
 | D6 | Producer signature | `send(queue, type, payload, partition_key => text)` | Avoids `send(queue,type,payload)` collision. |
-| D7 | Slot, single-owner, key namespace | slot = consumer `"<consumer>#k/N"`; **G2 = receive lock (batch issuance) + batch-granularity lease held logically across process→ack (§15)**; **slot identity + lease helpers `claim_slot`/`release_slot` are core**, arbitrated by the `pgque.partition_slot` table (all clients agree via shared rows, not a shared lock namespace); `partition_slot_status` view for owner+lag. **`slot_lock_key` removed** (v0.8 — no advisory-lock namespace). | Reader-callable; clients cannot diverge because arbitration is a server-side row. |
+| D7 | Slot, single-owner, key namespace | slot = consumer `"<consumer>#k/N"`; **G2 = receive lock (batch issuance) + batch-granularity lease held logically across process→ack (§15)**; **slot identity + lease helpers `claim_slot`/`release_slot` are core**, arbitrated by the `pgque.partition_slot` table (all clients agree via shared rows, not a shared lock namespace); `subscribe_partitioned` creates the whole slot set atomically; `partition_slot_status` exposes subscription completeness plus owner+lag. **`slot_lock_key` removed** (v0.8 — no advisory-lock namespace). | Reader-callable; clients cannot diverge because arbitration is a server-side row. |
 | D8 | Worker→slot assignment | Client-side **claim loop** (§15) is still client *policy* (which slot to grab, poll cadence), but the arbitration is now **server-side rows**: `claim_slot` returns an epoch or NULL by inspecting/updating `pgque.partition_slot`; **no leader, no `PartitionAssignor`, no rebalance protocol.** Boundary follows the **mechanism/policy seam**: corruption-capable transitions → core SQL, guarded policy loops → client. | Kafka needs an assignor because partitions are exclusive *by protocol*; here the DB arbitrates per batch and per lease. |
 | D9 | Online resize (grow N) | Epoch-gated **drain-then-cutover** state machine in **core SQL** (`begin_resize`/`resize_ready`/`complete_resize`/`abort_resize`); client drives the drain loop, core re-validates on cutover. Immutable N in Phase 1 (§15 → *Online resize*). | Grow-N reshuffles `hash%N` and breaks G1/G2 for in-flight keys (Fabrizio); the log-native analog of Kinesis parent-shard drain. |
 | D10 | No per-interval heartbeat `UPDATE` churn | **Upheld for that specific cost, superseded as an argument against a lease table.** The v0.7 rejection targeted a *per-interval* heartbeat `UPDATE` — that churn is real and still rejected. **Batch-boundary lease renewal (D11) is new information:** the lease is renewed on the `receive`/`ack` writes that already happen per batch, so there is no per-interval churn to add. Observability still via the read-only `pgque.partition_slot_status` view (now reading lease columns, not `pg_locks`). | A *polling* heartbeat buys nothing; a lease renewed at batch boundaries costs no extra round-trips. |
@@ -192,13 +192,22 @@ optimization is future (R6).
   functions.
 - **`partition_slot(queue_id, co_name, slot, lease_owner text, lease_until
   timestamptz, lease_ttl interval, epoch bigint)`:** one row per registered slot,
-  created by `subscribe_slot`. Primary key `(queue_id, co_name, slot)`; FK
+  created atomically by `subscribe_partitioned` or individually by the repair
+  API `subscribe_slot`. Primary key `(queue_id, co_name, slot)`; FK
   `(queue_id, co_name) → partition_consumer on delete cascade` (a dropped consumer
   drops its lease rows). `lease_owner` null when unleased; `epoch` starts at some
   base and increments on every takeover of a free/expired lease (the fencing
   token). Revoked from app roles.
-- **`subscribe_slot(queue, consumer, k int, n int)`:** validate `n>=1 and
-  0<=k<n`; upsert persisted `n`, reject a changed `n` (D3); register
+- **`subscribe_partitioned(queue, consumer, n int)`:** the default setup path.
+  Validate `n>=1`, persist N, read one starting tick, then register all generated
+  consumers `"<consumer>#0/N"` through `"<consumer>#(N-1)/N"` at that shared tick
+  and create all lease rows in one transaction. A failure rolls back the whole
+  consumer. Repeating a complete setup with the same N is idempotent and does
+  not reposition cursors. A pre-existing partial setup raises rather than
+  implying that late-created slots can recover history that they already missed.
+- **`subscribe_slot(queue, consumer, k int, n int)`:** alpha-compatible repair
+  API. Validate `n>=1 and 0<=k<n`; upsert persisted `n`, reject a changed `n`
+  (D3); register
   `"<consumer>#k/n"`; create the `partition_slot` row for `k` (unleased).
   Idempotent for the same `(k,n)`.
 - **`claim_slot(queue, consumer, k int, worker text, ttl interval default
@@ -237,8 +246,8 @@ optimization is future (R6).
   canonical-event re-query and #104 idempotent-DLQ behaviors are preserved).
   A retried keyed event keeps `ev_extra1`, so redelivery stays on the same slot.
 - **Raw-slot guards:** plain `receive`/`ack`/`nack` reject partition slot
-  consumers — `receive` rejects `#`-carrying consumer names (`subscribe_slot`
-  reserves `#`), `ack`/`nack` resolve the batch's consumer and reject `#`-names —
+  consumers — `receive` rejects `#`-carrying consumer names (the partitioned
+  setup APIs reserve `#`), `ack`/`nack` resolve the batch's consumer and reject `#`-names —
   otherwise the plain path would hand back the whole unfiltered stream with no
   lease fence, and a fenced zombie could double-ack via `ack(batch_id)` (G2, §2).
 - **`pause` (Phase 2):** on nack of `K#i`, upsert `partition_block(sub_id, K,
@@ -255,7 +264,7 @@ optimization is future (R6).
   `partition_slot` and `partition_block` FKs cascade). Note `unregister_consumer`
   cascades `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
   documented.
-- **Grants:** producer → `pgque_writer`; `subscribe_slot`/`unsubscribe_slot`/
+- **Grants:** producer → `pgque_writer`; `subscribe_partitioned`/`subscribe_slot`/`unsubscribe_slot`/
   `receive_partitioned`/`ack_partitioned`/`nack_partitioned`/`claim_slot`/
   `release_slot` and `select` on `partition_slot_status` → `pgque_reader`;
   `partition_consumer`/`partition_slot`/`partition_block` revoked from all app
@@ -277,10 +286,15 @@ optimization is future (R6).
   events, zero loss.
 - **T-security:** run against an install whose owner is a **non-superuser,
   non-`pgque_admin` role** — a bare `pgque_reader` can call
-  `receive_partitioned`/`subscribe_slot` end-to-end, and **cannot** call
+  `receive_partitioned`/`subscribe_partitioned` end-to-end, and **cannot** call
   `get_batch_cursor` directly (`42501`, mirror `test_security_get_batch_cursor.sql`);
   non-integer/out-of-range `n`,`k` rejected.
-- **T-N-invariant:** `subscribe_slot(…,k,n)` idempotent; `(…,k,n2≠n)` raises.
+- **T-setup-atomicity:** `subscribe_partitioned(…,n)` creates all N engine
+  subscriptions at one tick in one transaction; events produced afterward are
+  reachable across the union of all slots. Repeating setup does not reposition
+  cursors. Existing partial setup raises and remains explicitly repairable.
+- **T-N-invariant:** `subscribe_partitioned(…,n)` idempotent; a changed N raises.
+  `subscribe_slot(…,k,n)` retains the same pinned-N invariant for repair.
 - **T-lease (claim/renew/steer/release):** over `N=2`, worker `wk-a` claims slot 0
   (epoch returned); a second worker `wk-b` claiming slot 0 gets NULL (steered
   away); the owner re-claiming slot 0 renews with the **same** epoch; `wk-b` claims
@@ -526,7 +540,11 @@ server-enforced on `receive`/`ack`, with `epoch` fencing the zombie. Its
 ownership+lag benefit — *who owns what, how far behind* — is delivered by
 **`pgque.partition_slot_status`**, a read-only view over the `partition_slot`
 lease columns (`lease_owner`/`lease_until`/`epoch`) + subscription cursors
-(per-slot lag) + resize state. Reading lease columns rather than `pg_locks` means
+(per-slot lag) + resize state. It has one row for every expected slot and an
+explicit `subscribed` boolean. A missing engine subscription reports
+`subscribed=false`, `last_tick=NULL`, and `pending_events=NULL`: zero would mean
+known caught-up state, while a missing cursor makes lag unknowable. Reading lease
+columns rather than `pg_locks` means
 the view **works through poolers** (a backend pid behind PgBouncer was meaningless
 anyway). Zombie caveat: lease-expiry ≠ process-death, so a partitioned worker can
 still emit side effects until the TTL lapses while the successor is re-issued the
@@ -728,15 +746,20 @@ fencing) need two sessions and are covered by `tests/two_session_slot_claim.sh`
   - *Test:* `us12_partition_keys.sql` — US-12.5 (single-session);
     `tests/two_session_slot_claim.sh` (crash recovery).
 - **US-12.6 — Observability.** As an operator, `pgque.partition_slot_status` shows
-  each slot, its `lease_owner` (null if unleased), and cursor lag, so I can alert on
-  a stalled slot (rotation-pinning risk R7) — and it works through a pooler because
+  each expected slot, whether its engine subscription exists, its `lease_owner`
+  (null if unleased), and cursor lag, so I can alert on incomplete setup or a
+  stalled slot (rotation-pinning risk R7) — and it works through a pooler because
   it reads lease columns, not `pg_locks`.
-  - *Accept:* the view has one row per registered slot with the right `n`,
+  - *Accept:* the view has one row per expected slot with the right `n`,
+    `subscribed=true` for materialized subscriptions; missing subscriptions show
+    `subscribed=false`, `last_tick=NULL`, and `pending_events=NULL`; otherwise
     `lease_owner` null when unleased and equal to the holding worker id when leased
     (clearing on release), and a non-negative `pending_events` lag.
   - *Test:* `us12_partition_keys.sql` — US-12.6.
 - **US-12.7 — Enforced N.** As an operator, a worker calling with the wrong N is
   rejected with a clear error, never silently misrouted.
-  - *Accept:* the first `subscribe_slot` persists N for `(queue, consumer)`;
-    re-calling with the same `(slot, n)` is idempotent, a changed `n` raises (D3).
+  - *Accept:* `subscribe_partitioned` atomically persists N and all N slots for
+    `(queue, consumer)` at one start tick; re-calling with the same N is
+    idempotent without cursor movement, a changed N raises, and existing partial
+    setup is rejected as incomplete (D3).
   - *Test:* `us12_partition_keys.sql` — US-12.7.

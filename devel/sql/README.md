@@ -87,6 +87,24 @@ create user metrics with password '...';
 grant pgque_reader to metrics;
 ```
 
+## Partitioned consumer setup
+
+Create the whole partitioned consumer before publishing events. One call pins
+the slot count and creates every slot subscription and lease row atomically at
+the same starting tick:
+
+```sql
+select pgque.create_queue('orders');
+select pgque.subscribe_partitioned('orders', 'workers', 4);
+```
+
+Calling `subscribe_partitioned` again with the same slot count is idempotent and
+does not move existing cursors. `subscribe_slot` remains available for explicit
+repair of an incomplete alpha setup; it is not the normal setup path because a
+slot registered after events have been ticked cannot recover that earlier
+history. Check `pgque.partition_slot_status.subscribed`: missing subscriptions
+report `false`, with `pending_events` set to `NULL` because their lag is unknown.
+
 ## pg_tle install
 
 To register PgQue as a `pg_tle` extension instead (requires `pg_tle` in
