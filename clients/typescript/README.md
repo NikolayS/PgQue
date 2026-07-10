@@ -52,9 +52,10 @@ try {
   console.log('published', eventId, batchIds);
 
   // High-level consumer with per-event-type dispatch.
-  // msg.payload is raw JSON text — call JSON.parse() to get the object back.
+  // msg.payload is raw JSON text, or null for SQL NULL.
   const consumer = client.newConsumer('orders', 'order_worker');
   consumer.handle('order.created', async (msg) => {
+    if (msg.payload === null) throw new Error('order.created payload is NULL');
     const data = JSON.parse(msg.payload) as { id: number };
     console.log('got', msg.type, data);
   });
@@ -90,6 +91,12 @@ try {
 `Message.msgId`, `Message.batchId`, and the return values of `send()`,
 `sendBatch()`, `ticker(queue)`, and `forceNextTick(queue)` are JS `bigint` to
 match PostgreSQL `bigint` losslessly.
+
+`Message.type` and `Message.payload` are `string | null`. Low-level producers
+such as direct `pgque.insert_event` calls and triggers can store SQL `NULL`,
+which `receive` and `receiveCoop` preserve as JavaScript `null`. The high-level
+`Consumer` never dispatches a null type to a per-type handler; it applies
+`unknownHandlerPolicy` (`'nack'` by default, or `'ack'`).
 
 ## Experimental: cooperative consumers
 

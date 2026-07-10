@@ -322,7 +322,14 @@ class Consumer:
             nack_failed = False
 
             for msg in msgs:
-                handler = self._handlers.get(msg.type, self._default_handler)
+                # SQL NULL is not a named event type. It may be handled by
+                # the explicit "*" catch-all, but never by a None key that a
+                # caller inserted despite the public str annotation.
+                handler = (
+                    self._default_handler
+                    if msg.type is None
+                    else self._handlers.get(msg.type, self._default_handler)
+                )
                 if handler is None:
                     if self._unknown_handler_policy == "ack":
                         self._log.warning(
