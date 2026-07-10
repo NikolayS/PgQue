@@ -12,14 +12,14 @@ fail() {
 require_text() {
   local pattern="$1"
   local path="$2"
-  rg -q --fixed-strings -- "${pattern}" "${repo_root}/${path}" \
+  grep -Fq -- "${pattern}" "${repo_root}/${path}" \
     || fail "${path} must contain: ${pattern}"
 }
 
 forbid_text() {
   local pattern="$1"
   shift
-  if rg -n --fixed-strings -- "${pattern}" "$@"; then
+  if grep -RFn -- "${pattern}" "$@"; then
     fail "forbidden documentation text found: ${pattern}"
   fi
 }
@@ -49,9 +49,9 @@ case "${channel}" in
     forbid_text "-f sql/pgque.sql" "${doc_paths[@]}"
 
     bad_source_links="$(
-      rg -o 'https://github\.com/NikolayS/pgque/blob/[^ )]+/(devel/)?sql/[^ )]+' \
+      grep -Eo 'https://github\.com/NikolayS/pgque/blob/[^ )]+/(devel/)?sql/[^ )]+' \
         "${repo_root}/docs/reference.md" \
-        | rg -v '/blob/main/devel/sql/' \
+        | grep -Ev '/blob/main/devel/sql/' \
         || true
     )"
     [[ -z "${bad_source_links}" ]] \
@@ -75,9 +75,9 @@ case "${channel}" in
     require_text "\\\\i sql/pgque.sql" "web/src/pages/index.astro"
 
     bad_source_links="$(
-      rg -o 'https://github\.com/NikolayS/pgque/blob/[^ )]+/sql/[^ )]+' \
+      grep -Eo 'https://github\.com/NikolayS/pgque/blob/[^ )]+/sql/[^ )]+' \
         "${repo_root}/docs/reference.md" \
-        | rg -v "/blob/${release_tag}/sql/" \
+        | grep -Ev "/blob/${release_tag}/sql/" \
         || true
     )"
     [[ -z "${bad_source_links}" ]] \
