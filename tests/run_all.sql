@@ -3,6 +3,8 @@
 --
 -- Usage: psql -d pgque_test -f tests/run_all.sql
 -- Requires: pgque.sql already loaded
+-- Final release validation must also pass:
+--   -v expected_pgque_version=0.3.0
 
 -- Abort on first error
 \set ON_ERROR_STOP on

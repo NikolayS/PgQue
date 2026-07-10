@@ -19,6 +19,9 @@ Layout:
 - `pgque-additions/`, `pgque-api/`, `experimental/` — the SQL sources the build
   reads. Edit these, then re-run `bash build/transform.sh` from the repo root.
 
+For the final-version stamp, stable artifact promotion, validation, tagging,
+and post-tag devel restore, follow [`../../RELEASE.md`](../../RELEASE.md).
+
 ## Install
 
 **Requirements:** Postgres 14+, and something that calls `pgque.ticker()`

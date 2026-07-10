@@ -44,7 +44,9 @@ jobs:
       - name: Run regression tests
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+            -v ON_ERROR_STOP=1 \
+            -v "expected_pgque_version=$(bash build/read-version.sh)" \
+            -f tests/run_all.sql
 
       - name: Run experimental tests
         run: |
@@ -337,7 +339,9 @@ jobs:
             -f devel/sql/pgque-tle.sql \
             -c 'create extension pgque;'
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_regress \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+            -v ON_ERROR_STOP=1 \
+            -v "expected_pgque_version=$(bash build/read-version.sh)" \
+            -f tests/run_all.sql
 
       - name: Cleanup
         if: always()
@@ -409,7 +413,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+            -v ON_ERROR_STOP=1 \
+            -v "expected_pgque_version=$(bash build/read-version.sh)" \
+            -f tests/run_all.sql
 
       - name: Verify pgque.start() schedules ticker_loop
         run: |
@@ -756,6 +762,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Test stable release promotion
+        run: bash tests/test_release_promotion.sh
 
       - name: Build
         run: bash build/transform.sh
