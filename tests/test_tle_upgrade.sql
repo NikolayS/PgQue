@@ -1,17 +1,20 @@
 -- test_tle_upgrade.sql -- Data-preserving pg_tle upgrade from 0.2.0.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 --
--- Preconditions: a fresh database with pg_tle preloaded. This test uses the
--- checked-in stable 0.2.0 TLE package as the real source installation, then
--- registers the generated development package and exercises ALTER EXTENSION.
+-- Preconditions: pg_tle is preloaded and PgQue is installed from the
+-- v0.2.0-tagged sql/pgque-tle.sql artifact. CI deliberately reads the tag,
+-- rather than the mutable sql/ stable directory, so final promotion cannot
+-- accidentally replace the source fixture with the version under test.
+--
+-- Local setup from the repository root:
+--   psql "$PGQUE_TEST_DSN" -c 'create extension pg_tle'
+--   git show v0.2.0:sql/pgque-tle.sql | psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1
+--   psql "$PGQUE_TEST_DSN" -c 'create extension pgque'
+--   psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1 -f tests/test_tle_upgrade.sql
 
 \set ON_ERROR_STOP on
 
 \echo '=== test_tle_upgrade (0.2.0 -> current via real pg_tle) ==='
-
-create extension pg_tle;
-\i sql/pgque-tle.sql
-create extension pgque;
 
 do $$
 begin
