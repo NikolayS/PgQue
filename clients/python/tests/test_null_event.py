@@ -82,9 +82,9 @@ def test_receive_coop_preserves_null_type_and_payload(
         conn.commit()
 
 
-def test_consumer_routes_null_type_as_unknown_even_if_none_handler_registered(dsn):
+def test_consumer_routes_null_type_as_unknown_even_if_none_handler_registered():
     msg = _null_message()
-    consumer = pgque.Consumer(dsn=dsn, queue="q", name="c")
+    consumer = pgque.Consumer(dsn="postgresql:///unused", queue="q", name="c")
     handler = MagicMock()
     consumer.on(None)(handler)  # type: ignore[arg-type]
     conn = MagicMock()
@@ -99,9 +99,9 @@ def test_consumer_routes_null_type_as_unknown_even_if_none_handler_registered(ds
     ack.assert_called_once_with(msg.batch_id)
 
 
-def test_consumer_routes_null_type_to_explicit_catch_all(dsn):
+def test_consumer_routes_null_type_to_explicit_catch_all():
     msg = _null_message()
-    consumer = pgque.Consumer(dsn=dsn, queue="q", name="c")
+    consumer = pgque.Consumer(dsn="postgresql:///unused", queue="q", name="c")
     catch_all = MagicMock()
     consumer.on("*")(catch_all)
     conn = MagicMock()
