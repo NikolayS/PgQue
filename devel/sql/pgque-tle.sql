@@ -59,34 +59,12 @@ end $$;
 
 -- Step 3: register the extension body with pg_tle.
 -- Same version already registered -> no-op (so deployment scripts can rerun).
--- Different version already registered -> raise so the user goes through the
--- explicit uninstall + reinstall path; pg_tle has no managed upgrade path
--- between unrelated registrations of an extension.
+-- A tested previous version -> register the standalone target version plus a
+-- data-preserving ALTER EXTENSION update path, then make the target default.
 do $wrapper$
 declare
     existing_version text;
-begin
-    select default_version into existing_version
-    from pgtle.available_extensions()
-    where name = 'pgque';
-
-    if existing_version = '0.3.0-devel' then
-        raise notice 'pgque 0.3.0-devel already registered with pg_tle; skipping install_extension().';
-        return;
-    end if;
-
-    if existing_version is not null then
-        raise exception 'pgque is already registered with pg_tle at version % '
-            'but this script registers version %. Run '
-            'devel/sql/pgque-tle-uninstall.sql first to remove the existing '
-            'registration, then re-run this script.',
-            existing_version, '0.3.0-devel';
-    end if;
-
-    perform pgtle.install_extension(
-        'pgque',
-        '0.3.0-devel',
-        'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
+    extension_sql text :=
 $pgque_extension_body$
 -- pgque.sql -- PgQ Universal Edition
 -- Version: 0.3.0-devel
@@ -8117,10 +8095,46 @@ grant execute on function
 grant execute on function pgque.maint_idem()     to pgque_admin;
 grant execute on function pgque.maint_idem(text) to pgque_admin;
 
-$pgque_extension_body$
+$pgque_extension_body$;
+begin
+    select default_version into existing_version
+    from pgtle.available_extensions()
+    where name = 'pgque';
+
+    if existing_version = '0.3.0-devel' then
+        raise notice 'pgque 0.3.0-devel already registered with pg_tle; no registration changes needed.';
+        return;
+    end if;
+
+    if existing_version is null then
+        perform pgtle.install_extension(
+            'pgque',
+            '0.3.0-devel',
+            'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
+            extension_sql
+        );
+        return;
+    end if;
+
+    if existing_version <> '0.2.0' then
+        raise exception 'pgque has no tested pg_tle update path from version % to %. '
+            'Keep the existing extension installed and consult the PgQue release notes; '
+            'do not uninstall it because that would drop queue data.',
+            existing_version, '0.3.0-devel';
+    end if;
+
+    -- One transaction makes interrupted/repeated registration safe: either the
+    -- target version, update path, and default all appear, or none of them do.
+    perform pgtle.install_extension_version_sql(
+        'pgque', '0.3.0-devel', extension_sql
     );
+    perform pgtle.install_update_path(
+        'pgque', existing_version, '0.3.0-devel', extension_sql
+    );
+    perform pgtle.set_default_version('pgque', '0.3.0-devel');
 end $wrapper$;
 
 \echo ''
 \echo 'PgQue 0.3.0-devel registered with pg_tle.'
-\echo 'Run create extension pgque; to materialise the schema in this database.'
+\echo 'New install: run create extension pgque;'
+\echo 'Existing extension: run alter extension pgque update;'

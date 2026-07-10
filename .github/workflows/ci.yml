@@ -306,6 +306,14 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_tle_install.sql
 
+      - name: Run data-preserving pg_tle upgrade test
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c 'create database pgque_tle_upgrade'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade \
+            -v ON_ERROR_STOP=1 -f tests/test_tle_upgrade.sql
+
       - name: Run full regression suite via pg_tle install
         run: |
           set -Eeuo pipefail
