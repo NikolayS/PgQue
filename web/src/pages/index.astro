@@ -9,7 +9,7 @@ import '@fontsource/ibm-plex-sans/500.css';
 import '@fontsource/ibm-plex-sans/600.css';
 
 const installSql = `-- one file, any Postgres 14+, managed or self-hosted
-\\i sql/pgque.sql
+\\i devel/sql/pgque.sql
 select pgque.start();              -- pg_cron ticks 10x/sec
 
 select pgque.create_queue('orders');
@@ -335,8 +335,8 @@ const platformGroups = [
           </div>
           <div class="install">
             <span class="install-prompt">$</span>
-            <code>\i sql/pgque.sql</code>
-            <span class="install-note">then <code>select pgque.start();</code></span>
+            <code>\i devel/sql/pgque.sql</code>
+            <span class="install-note">main development build; then <code>select pgque.start();</code></span>
           </div>
         </div>
         <figure class="hero-visual">
