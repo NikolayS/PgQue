@@ -7868,8 +7868,8 @@ begin
     if i_idem_key is null then
         raise exception 'idem_key must not be null';
     end if;
-    if i_ttl is null or i_ttl <= interval '0' then
-        raise exception 'ttl must be a positive interval';
+    if i_ttl is null or not isfinite(i_ttl) or i_ttl <= interval '0' then
+        raise exception 'ttl must be a positive finite interval';
     end if;
 
     select q.queue_id, q.queue_extra_maint
@@ -7900,11 +7900,13 @@ begin
      * conditional do-update lets only an EXPIRED key be reclaimed.
      */
     insert into pgque.idem as k (queue_id, idem_key, event_id, expires_at)
-    values (v_queue_id, i_idem_key, null, now() + i_ttl)
+    values (v_queue_id, i_idem_key, null, clock_timestamp() + i_ttl)
     on conflict (queue_id, idem_key) do update
         set event_id = excluded.event_id,
-            expires_at = excluded.expires_at
-        where k.expires_at <= now()
+            /* Evaluated after any conflicting row-lock wait, so a takeover
+               always receives a fresh TTL window. */
+            expires_at = clock_timestamp() + i_ttl
+        where k.expires_at <= clock_timestamp()
     returning true into v_claimed;
 
     if v_claimed then
@@ -7987,7 +7989,7 @@ begin
         select d.queue_id, d.idem_key
         from pgque.idem d
         where d.queue_id = v_queue_id
-          and d.expires_at < now()
+          and d.expires_at < clock_timestamp()
         limit 10000);
     get diagnostics v_deleted = row_count;
 
@@ -8010,7 +8012,7 @@ begin
     where (k.queue_id, k.idem_key) in (
         select d.queue_id, d.idem_key
         from pgque.idem d
-        where d.expires_at < now()
+        where d.expires_at < clock_timestamp()
         limit 10000);
     get diagnostics v_deleted = row_count;
 
