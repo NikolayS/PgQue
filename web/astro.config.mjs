@@ -106,6 +106,8 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Installation and operations', slug: 'docs/installation' },
+            { label: 'Producer idempotency', slug: 'docs/producer-idempotency' },
+            { label: 'Partition keys', slug: 'docs/partition-keys' },
             { label: 'Examples', slug: 'docs/examples' },
             { label: 'Monitoring and health', slug: 'docs/monitoring' },
           ],

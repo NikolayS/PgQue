@@ -28,6 +28,7 @@ Discussion on [Hacker News](https://news.ycombinator.com/item?id=47817349).
 - [Project status](#project-status)
 - [Docs](#docs)
 - [Quick start](#quick-start)
+- [Retry-safe publishing and per-key order](#retry-safe-publishing-and-per-key-order)
 - [Client libraries](#client-libraries)
 - [Benchmarks](#benchmarks)
 - [Subconsumers / cooperative consumers](#subconsumers--cooperative-consumers)
@@ -41,6 +42,11 @@ PgQue brings back [PgQ](https://github.com/pgq/pgq) — one of the longest-runni
 PgQ was designed at Skype in 2006 to run messaging for hundreds of millions of users, and it ran on large self-managed Postgres deployments for over a decade. Standard PgQ depends on a C extension (`pgq`) and an external daemon (`pgqd`), neither of which run on most managed Postgres providers.
 
 PgQue rebuilds that battle-tested engine in pure PL/pgSQL, so the zero-bloat queue pattern works anywhere you can run SQL — without adding another distributed system to your stack.
+
+> **Development documentation:** this README and [pgque.dev](https://pgque.dev)
+> follow the `main` branch and its in-development installer in `devel/sql/`.
+> Production users should use the [latest stable release](https://github.com/NikolayS/pgque/releases/latest)
+> and follow the README at that tag, where install paths point to `sql/`.
 
 It is the same engine – PgQ – repackaged for managed Postgres, and provided with client libraries for TypeScript, Python, and Go.
 
@@ -136,10 +142,12 @@ Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autova
 
 **Requirements:** Postgres 14+, and something that calls `pgque.ticker()` periodically. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 ticks/sec)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
-> Want to try an upcoming release early? The in-development install lives in
-> [`devel/sql/`](devel/sql/README.md). The steps below install the stable version.
+These steps install the in-development build documented on `main`. For the
+stable build, use the tagged instructions linked in the development notice
+above. The [documentation index](docs/README.md) defines the promotion-time
+path switch explicitly.
 
-Get the source — `\i sql/pgque.sql` resolves relative to the cwd, so run psql from the repo root:
+Get the source — `\i devel/sql/pgque.sql` resolves relative to the cwd, so run psql from the repo root:
 
 ```bash
 git clone https://github.com/NikolayS/pgque
@@ -150,14 +158,14 @@ Inside a psql session:
 
 ```sql
 begin;
-\i sql/pgque.sql
+\i devel/sql/pgque.sql
 commit;
 ```
 
 Or from the shell, same single-transaction guarantee via `psql --single-transaction`:
 
 ```bash
-PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f sql/pgque.sql
+PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f devel/sql/pgque.sql
 ```
 
 With `pg_cron` available in the same database as PgQue, `pgque.start()` creates the default ticker and maintenance jobs. The ticker uses a one-second pg_cron slot and calls `pgque.ticker_loop()`, which ticks every 100 ms by default (10 ticks/sec) with a commit between ticks:
@@ -218,11 +226,11 @@ For sub-second ticking from an external driver, loop `pgque.ticker()` at your ta
 
 **Important:** PgQue does not deliver messages without a working ticker. Enqueueing still works, but consumers will see nothing new because no ticks are created. If you do not use `pg_cron`, run `pgque.ticker()`, `pgque.maint_retry_events()`, and `pgque.maint()` yourself. Skipping `maint_retry_events()` means nack'd events will never be redelivered.
 
-For existing installs, follow the SQL-file upgrade procedure in [docs/installation.md](docs/installation.md#upgrading). To uninstall: `\i sql/pgque_uninstall.sql`.
+For existing installs, follow the SQL-file upgrade procedure in [docs/installation.md](docs/installation.md#upgrading). To uninstall this build: `\i devel/sql/pgque_uninstall.sql`.
 
 ### Optional: install as a [`pg_tle`](https://github.com/aws/pg_tle) extension
 
-This is opt-in. The default `\i sql/pgque.sql` install stays the recommended path; use pg_tle only if you specifically want PgQue managed as a real Postgres extension.
+This is opt-in. The default `\i devel/sql/pgque.sql` install stays the recommended path; use pg_tle only if you specifically want PgQue managed as a real Postgres extension.
 
 What you get with pg_tle: `pg_extension` membership, `alter extension pgque update` for version upgrades, and `drop extension pgque cascade` for atomic uninstall. What you give up: pg_tle is itself a C extension preloaded via `shared_preload_libraries`, which is the dependency the default install avoids. Available on AWS RDS / Aurora and self-hosted Postgres; check your provider's extension list otherwise.
 
@@ -238,11 +246,11 @@ create extension pg_tle;
 Once pg_tle is loaded, register and create PgQue:
 
 ```sql
-\i sql/pgque-tle.sql
+\i devel/sql/pgque-tle.sql
 create extension pgque;
 ```
 
-To uninstall: `\i sql/pgque-tle-uninstall.sql`.
+To uninstall: `\i devel/sql/pgque-tle-uninstall.sql`.
 
 ## Roles and grants
 
@@ -252,14 +260,14 @@ PgQue mirrors upstream PgQ's split: `pgque_reader` (consume) and `pgque_writer` 
 
 | Role | Purpose | Granted access |
 |---|---|---|
-| `pgque_reader` | Consumers, dashboards, metrics, debugging | Read-only info (`get_queue_info`, `get_consumer_info`, `get_batch_info`, `version`, `select` on all tables) **and** the consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`) plus the underlying PgQ primitives (`next_batch*`, `get_batch_events`, `finish_batch`, `event_retry`, `register_consumer*`, `unregister_consumer`) and the [experimental cooperative consumer functions](docs/reference.md#cooperative-consumers--subconsumers). |
-| `pgque_writer` | Producers | The produce API (`send`, `send_batch`) and the underlying primitive (`insert_event`). Does **not** inherit `pgque_reader` — a producer-only role cannot ack/finish/inspect consumer batches. |
-| `pgque_admin`  | Operators, migrations | Member of both `pgque_reader` and `pgque_writer`, plus full schema/table/sequence access. `uninstall()` is revoked from both `pgque_admin` and PUBLIC (superuser-only — it drops the schema). |
+| `pgque_reader` | Consumers, dashboards, metrics, debugging | Read-only info (`get_queue_info`, `get_consumer_info`, `get_batch_info`, `partition_slot_status`, `version`, `select` on public tables), the consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`), the [partitioned consume API](docs/partition-keys.md), the underlying PgQ primitives, and the [experimental cooperative consumer functions](docs/reference.md#cooperative-consumers--subconsumers). |
+| `pgque_writer` | Producers | The produce API (`send`, keyed `send`, `send_idem`, `send_batch`) and the underlying primitive (`insert_event`). Does **not** inherit `pgque_reader` — a producer-only role cannot ack/finish/inspect consumer batches. |
+| `pgque_admin`  | Operators, migrations | Member of both `pgque_reader` and `pgque_writer`, plus lifecycle, DDL, DLQ, and schema administration. The internal idempotency table remains owner-only. `uninstall()` is revoked from both `pgque_admin` and PUBLIC (superuser-only — it drops the schema). |
 
 Typical app setup:
 
 ```sql
-\i sql/pgque.sql
+\i devel/sql/pgque.sql
 select pgque.start();                     -- optional pg_cron ticker + maint
 
 -- Produce + consume in the same app: grant BOTH roles.
@@ -291,8 +299,11 @@ The default install stays small; additional APIs live under [`devel/sql/experime
 - [Tutorial](docs/tutorial.md) — a hands-on walkthrough. Start here if you are new.
 - [Installation and operations](docs/installation.md) — install, ticking, role grants, upgrading, uninstall, troubleshooting.
 - [Examples](docs/examples.md) — patterns: fan-out, exactly-once, batch loading, recurring jobs.
+- [Producer idempotency](docs/producer-idempotency.md) — retry-safe sends, key scope, TTL windows, and maintenance.
+- [Partition keys](docs/partition-keys.md) — per-key order, atomic slot setup, leases, poolers, and recovery.
 - [Monitoring and health](docs/monitoring.md) — queue, consumer, and batch info views.
-- [Function reference](docs/reference.md) — every shipped function and role.
+- [Function reference](docs/reference.md) — public SQL signatures, behavior,
+  and role grants.
 - [Latency and tick tuning](docs/latency-and-tuning.md) — latency breakdown, tick-cadence trade-offs, idle tick behavior, and pg_cron logging caveats.
 - [Concepts and heritage](docs/concepts.md) — batch/tick/rotation glossary, the snapshot/diff engine, and where this engine came from.
 
@@ -335,6 +346,24 @@ select pgque.ack(:batch_id);
 ```
 
 Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, exactly-once, and recurring jobs in [examples](docs/examples.md).
+
+## Retry-safe publishing and per-key order
+
+`pgque.send_idem()` gives producers a queue-scoped idempotency key and a
+bounded TTL window. A retry with the same `(queue, idem_key)` returns the first
+event id instead of appending again; use an effect-scoped key such as
+`tenant:operation:entity:version`. See [Producer idempotency](docs/producer-idempotency.md)
+for exact semantics, maintenance, and composition with partition keys.
+
+Partition keys preserve order for a key while allowing one logical consumer
+to process independent keys across a fixed set of leased slots. Create every
+slot atomically with `subscribe_partitioned()` before producing, poll every
+slot, and monitor `partition_slot_status`: each slot scans the full stream, so
+`n` slots cost roughly `n` times the reads, and any stopped slot can pin queue
+rotation. Leases are transactional rows and work through transaction-mode
+poolers. The first-party clients do not yet provide partition claim/rebalance
+helpers, so applications use the SQL API directly. See [Partition keys](docs/partition-keys.md)
+for the worker loop, fencing, partial-unsubscribe recovery, and limits.
 
 ## Client libraries
 
@@ -484,8 +513,9 @@ call (Resend, SendGrid), one SMS request, one webhook, or one slow HTTP POST,
 then consumer-side parallelism is what decides whether the backlog melts or
 lingers.
 
-Cooperative consumers ship in the default install but are **experimental in
-0.2** (the functions carry runtime "Experimental in PgQue 0.2" markers). PgQue
+Cooperative consumers ship in the default install but are **experimental**.
+Their names and edge-case behavior may change before the feature is declared
+stable. PgQue
 does not need a second queue to show the effect. One main consumer fetches a
 batch and fans the work out to a pool of subconsumers, each pulling its own
 slice cooperatively. To make the point concrete, the demo harness preloads the
@@ -522,6 +552,8 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Modern `send`, `receive`, `ack`, `nack` API | ✅ |
 | `send_batch` API | ✅ |
 | Improved `send_batch` performance | ✅ |
+| Producer idempotency (`send_idem`) | ✅ |
+| Partition keys and leased slot consumers | ✅ |
 | Dead-letter queue after retry limit | ✅ |
 | Go library | ✅ |
 | TypeScript library | ✅ |

@@ -12,6 +12,11 @@ and troubleshoot.
 If you are brand new to PgQue, start with the [tutorial](tutorial.md) for a
 hands-on walkthrough, then come back here to set up a durable install.
 
+This page follows the `main` branch's in-development build in `devel/sql/`.
+For production, use the [latest stable release](https://github.com/NikolayS/pgque/releases/latest)
+and its tagged installation page, whose commands point to `sql/`. The
+[documentation index](README.md) defines the release-promotion switch.
+
 ## Requirements
 
 - Postgres 14 or newer. PgQue uses `xid8`, `pg_snapshot`, and
@@ -34,14 +39,14 @@ From `psql`:
 
 ```sql
 begin;
-\i sql/pgque.sql
+\i devel/sql/pgque.sql
 commit;
 ```
 
 Or as a shell one-liner from the repository root:
 
 ```bash
-PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f sql/pgque.sql
+PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f devel/sql/pgque.sql
 ```
 
 The installer creates the `pgque` schema, all functions and tables, and the
@@ -337,9 +342,9 @@ parent and child — neither inherits the other.
 
 | Role | For | Capabilities |
 | --- | --- | --- |
-| `pgque_reader` | consumers, dashboards | consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`), read-only info functions, `select` on tables. Cannot produce. |
-| `pgque_writer` | producers | produce API (`send`, `send_batch`, `insert_event`). Cannot consume. |
-| `pgque_admin` | operators, migrations | member of both reader and writer, plus lifecycle and DDL (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `set_queue_config`). `uninstall()` is owner/superuser-only — revoked from `pgque_admin`. |
+| `pgque_reader` | consumers, dashboards | consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`), partition subscription/lease/consume API, read-only info functions and `partition_slot_status`. Cannot produce. |
+| `pgque_writer` | producers | produce API (`send`, keyed `send`, `send_idem`, `send_batch`, `insert_event`). Cannot consume. |
+| `pgque_admin` | operators, migrations | member of both reader and writer, plus lifecycle and DDL (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `maint_idem`, `set_queue_config`). `uninstall()` is owner/superuser-only — revoked from `pgque_admin`. |
 
 Because the roles are siblings, an application that both produces and consumes
 must be granted **both**:
@@ -368,12 +373,12 @@ per queue; see [reference.md](reference.md) for the role-scope details.
 
 ## Upgrading
 
-Upgrades are SQL-file upgrades: re-run [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql) over the existing install,
+Upgrades of the development build are SQL-file upgrades: re-run [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql) over the existing install,
 in a single transaction, as the schema owner or a superuser. From the repository
 root:
 
 ```bash
-PAGER=cat psql --no-psqlrc --single-transaction -v ON_ERROR_STOP=1 -d mydb -f sql/pgque.sql
+PAGER=cat psql --no-psqlrc --single-transaction -v ON_ERROR_STOP=1 -d mydb -f devel/sql/pgque.sql
 ```
 
 The installer is idempotent. It preserves queues, consumers, subscriptions, retry
@@ -396,7 +401,7 @@ To remove PgQue, run the uninstall script. It best-effort stops the scheduler
 and drops the `pgque` schema with `cascade`:
 
 ```sql
-\i sql/pgque_uninstall.sql
+\i devel/sql/pgque_uninstall.sql
 ```
 
 The schema and all its data are dropped. The three roles are **not** dropped,
@@ -405,7 +410,7 @@ them yourself if you no longer need them.
 
 ## pg_tle packaging variant
 
-[`sql/pgque-tle.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque-tle.sql) installs the same function and table surface wrapped as a
+[`devel/sql/pgque-tle.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-tle.sql) installs the same function and table surface wrapped as a
 [pg_tle](https://github.com/aws/pg_tle) trusted-language extension, so PgQue
 appears in `pg_available_extensions` and is managed with `create extension` /
 `drop extension`. It trades the zero-dependency `\i` install for a `pg_tle`
@@ -429,17 +434,17 @@ create extension pg_tle;
 With `pg_tle` loaded, register and create PgQue:
 
 ```sql
-\i sql/pgque-tle.sql
+\i devel/sql/pgque-tle.sql
 create extension pgque;
 ```
 
 Uninstall the TLE variant with:
 
 ```sql
-\i sql/pgque-tle-uninstall.sql
+\i devel/sql/pgque-tle-uninstall.sql
 ```
 
-If you have no specific reason to use `pg_tle`, prefer the plain [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql)
+If you have no specific reason to use `pg_tle`, prefer the plain [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql)
 install above.
 
 ## Troubleshooting

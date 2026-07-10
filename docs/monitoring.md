@@ -8,8 +8,9 @@ explains the columns that matter operationally, the one failure mode you must
 catch early — a stuck consumer that blocks table rotation — and the queries to
 wire into your monitoring.
 
-All of the `get_*_info` functions and `pgque.version()` are granted to
-`pgque_reader`, so a read-only monitoring role can run everything here.
+All of the `get_*_info` functions, `pgque.version()`, and the
+`pgque.partition_slot_status` view are granted to `pgque_reader`, so a
+read-only monitoring role can run the operational queries here.
 `pgque.status()` is admin-only. For role setup see
 [Installation and operations](installation.md); for vocabulary see
 [Concepts](concepts.md).
@@ -99,6 +100,39 @@ select queue_name, consumer_name, lag, seq_start, seq_end
 from pgque.get_batch_info(12345);
 ```
 
+### Partitioned consumers
+
+`pgque.partition_slot_status` returns one row for every expected slot of every
+partitioned consumer, including a slot whose engine subscription is missing:
+
+```sql
+select queue_name, consumer, slot, n, subscribed, lease_owner,
+       lease_until, epoch, last_tick, pending_events
+from pgque.partition_slot_status
+order by queue_name, consumer, slot;
+```
+
+| column | meaning | watch for |
+|---|---|---|
+| `subscribed` | whether the slot's engine subscription exists | `false` means incomplete setup; `last_tick` and `pending_events` are null because lag is unknown |
+| `lease_owner` | current live owner; expired owners are shown as null | null while an always-on worker pool should own every slot |
+| `lease_until` | stored expiry, including an expired lease | repeatedly expires during normal work when TTL/renewal is too short |
+| `epoch` | fencing counter incremented on takeover | rapid growth indicates worker churn or repeated expiry |
+| `last_tick` | this slot's independent cursor | freezes while the queue's latest tick advances when polling stops |
+| `pending_events` | pre-hash-filter event-sequence lag | sustained growth means the slot is behind; zero means caught up exactly |
+
+`pending_events` counts the queue stream before the slot's hash filter, so it
+overstates the slot's own routed share by approximately `n`. Use it for trends
+and zero/nonzero state, not as an exact number of messages the worker will
+receive.
+
+Every slot must advance. Each is an independent subscription over the full
+stream, and one unpolled slot pins table rotation even when all other slots are
+caught up. The first-party clients do not yet run or monitor the claim loop;
+applications must cover all `0..n-1` slots themselves. See
+[Partition keys](partition-keys.md) for lease renewal, fencing, pooler behavior,
+and incomplete-slot recovery.
+
 ## What to alert on
 
 ### The critical one: a stuck consumer blocks rotation
@@ -137,6 +171,13 @@ select pgque.unsubscribe('orders', 'dead_consumer');
 tearing the queue down.) A dead consumer that you do not intend to restart must
 be unsubscribed, or it will hold the queue's storage forever.
 
+For a partitioned consumer, recover or replace the worker and resume polling
+the same slot. Do not use `unsubscribe_slot` as an alert response: it leaves the
+logical consumer incomplete, removes slot-owned retry/DLQ state, and a later
+repair cannot recover history ticked while the subscription was missing. Use
+controlled teardown/recreation only with the recovery rules in the
+[partition guide](partition-keys.md#incomplete-setup-and-recovery).
+
 ### Threshold table
 
 Frame these relatively — PgQue ships no SLA. Alert on trends across several
@@ -148,6 +189,8 @@ your own tick rate and traffic.
 | ticker lag | `get_queue_info.ticker_lag` | climbs and stays above `ticker_idle_period` (default 1 minute) across intervals | ticker not running → no batches → no delivery |
 | consumer lag | `get_consumer_info.lag` / `pending_events` | `lag` and `pending_events` keep growing across intervals | a consumer is falling behind real-time |
 | stuck consumer | `get_consumer_info.last_seen` + frozen `last_tick` | `last_seen` grows while `last_tick` stays put and the queue's `last_tick_id` advances | pins the lowest tick → blocks `TRUNCATE` rotation → event tables grow unbounded (the critical one) |
+| partition slot | `partition_slot_status` | `subscribed = false`, or one slot's `last_tick` freezes and `pending_events` grows | incomplete/unpolled slot misses its key class or pins queue rotation |
+| lease churn | `partition_slot_status.lease_until` / `epoch` | leases repeatedly expire or epochs climb during ordinary processing | TTL is too short, renewals are not committing, or workers are unstable |
 | DLQ depth | `dlq_inspect` row count / `pgque.dead_letter` | the dead-letter backlog grows or is non-empty when you expect zero | events are exhausting retries; a downstream is failing |
 
 ### Dead-letter depth
@@ -198,6 +241,18 @@ from pgque.get_consumer_info()
 order by last_seen desc nulls last;
 ```
 
+Partitioned slots needing attention:
+
+```sql
+select queue_name, consumer, slot, n, subscribed, lease_owner,
+       lease_until, epoch, last_tick, pending_events
+from pgque.partition_slot_status
+where not subscribed
+   or pending_events > 0
+order by subscribed, pending_events desc nulls first,
+         queue_name, consumer, slot;
+```
+
 Stuck-consumer hunt — join consumer position against the queue's latest tick so
 a frozen `last_tick` stands out against an advancing `last_tick_id`:
 
@@ -226,3 +281,7 @@ order by dlq_depth desc;
 - [Latency and tuning](latency-and-tuning.md) — how `tick_period_ms` and the ticker thresholds trade latency against overhead.
 - [Reference](reference.md) — full signatures, return columns, and role grants.
 - [Examples](examples.md) — DLQ replay, fan-out, and exactly-once patterns.
+- [Partition keys](partition-keys.md) — slot lifecycle, leases, operational
+  limits, and recovery.
+- [Producer idempotency](producer-idempotency.md) — deduplication maintenance
+  and claim-table sizing.

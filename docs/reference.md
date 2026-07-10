@@ -1,9 +1,15 @@
 ---
 title: Function reference
-description: Every function and type in the default PgQue install — signature, return type, behavior, and role grant.
+description: Public functions, views, and types in PgQue's in-development default install — signatures, behavior, and role grants.
 ---
 
-Every function shipped in the default install (`\i sql/pgque.sql`). Each entry lists the signature, return type, the role it is granted to, and the source file. A short code example appears where the signature alone leaves the call ambiguous.
+This is the public API reference for the in-development default install
+(`\i devel/sql/pgque.sql`). It follows the SQL on `main`; stable users should
+use the reference at the [latest stable release](https://github.com/NikolayS/pgque/releases/latest).
+Each entry lists the signature, return type, role grant, and development source.
+At release promotion, those source links are pinned to the release tag and
+switched from `devel/sql/` to `sql/` as defined in the
+[documentation contract](README.md).
 
 If you are new to PgQue, start with [tutorial.md](tutorial.md) — it walks the end-to-end `send` / `receive` / `ack` loop. For task-oriented patterns see [examples.md](examples.md), and for tick-rate and delivery-latency tuning see [latency-and-tuning.md](latency-and-tuning.md). Use this page as the lookup table.
 
@@ -16,7 +22,8 @@ Each entry takes this form:
 One-line description. Optional second line with a caveat.
 Grant: `role_name`. Source: `sql/<path>`.
 
-Functions shipped outside the default install are in the [Experimental](#experimental-not-in-default-install) section.
+Functions shipped outside this development install are in the
+[Experimental](#experimental-not-in-default-install) section.
 
 ## Publishing
 
@@ -32,6 +39,9 @@ Argument names are part of the SQL API because Postgres supports named calls (`a
 | `type_name` | `text` | Application event type stored in `ev_type` (`'default'` for 2-arg `send`). Free-form text such as `order.created`; this is not a Postgres type. |
 | `payload` | `text` or `jsonb` | Single event payload. `text` is opaque/verbatim; `jsonb` validates and stores canonical JSON text. |
 | `payloads` | `text[]` or `jsonb[]` | Batch payload array. Result array positions correspond to input positions. |
+| `partition_key` | `text` | Optional routing key for a partitioned consumer. Equal non-null keys route to the same slot; null routes to slot 0. |
+| `idem_key` | `text` | Queue-scoped producer idempotency key for one logical effect. |
+| `ttl` | `interval` | Positive deduplication window for `send_idem`; defaults to one hour. |
 
 Available publishing overloads:
 
@@ -39,6 +49,8 @@ Available publishing overloads:
 |----------|--------------|--------|
 | `send(queue_name, payload)` | `text` or `jsonb` | `bigint` event id |
 | `send(queue_name, type_name, payload)` | `text` or `jsonb` | `bigint` event id |
+| `send(queue_name, type_name, payload, partition_key)` | `text` or `jsonb` | `bigint` event id |
+| `send_idem(queue_name, type_name, payload, idem_key [, ttl [, partition_key]])` | `text` or `jsonb` | one `(event_id bigint, deduped boolean)` row |
 | `send_batch(queue_name, payloads)` | `text[]` or `jsonb[]` | `bigint[]` event ids, event type `'default'` |
 | `send_batch(queue_name, type_name, payloads)` | `text[]` or `jsonb[]` | `bigint[]` event ids |
 
@@ -73,6 +85,19 @@ select pgque.send('orders', 'order.created', '{"order_id": 42}'::jsonb);
 
 Fast-path send with explicit event type. Returns the event id.
 Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
+
+#### `pgque.send(queue_name text, type_name text, payload jsonb, partition_key text) → bigint`
+
+Keyed JSON send. Stores `partition_key` in `extra1`; partitioned consumers hash
+it to a slot. Equal non-null keys with the same pinned slot count route to the
+same ordered slot. Grant: `pgque_writer`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.send(queue_name text, type_name text, payload text, partition_key text) → bigint`
+
+Keyed text fast path. Payload bytes are stored verbatim; routing is identical to
+the JSON overload. Grant: `pgque_writer`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
 
 #### `pgque.send_batch(queue_name text, payloads jsonb[]) → bigint[]`
 
@@ -111,13 +136,50 @@ Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.c
 **Not directly callable by API roles.** Internal set-based primitive used by `send_batch`: resolves the queue/table once, allocates ids from the queue sequence, inserts all payloads with one `INSERT … SELECT`, and returns ids aligned to input order. It is `SECURITY DEFINER` so the public wrappers can use it, but EXECUTE is revoked from public API roles (including `pgque_admin`) to keep callers on the stable `send_batch` surface. The schema owner/superuser can still call it for install/debug work.
 Grant: none (internal). Source: [`devel/sql/pgque-api/send.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send.sql).
 
+## Producer idempotency
+
+Deduplication is an exact match on `(queue_name, idem_key)` for a bounded TTL
+window. It suppresses duplicate producer appends, not consumer redelivery. The
+first accepted send returns its new event id with `deduped = false`; another
+call with the same live key returns that original id with `deduped = true`,
+without comparing or replacing the payload. Duplicate calls do not extend the
+window. See the [producer-idempotency guide](producer-idempotency.md) for key
+design, transaction behavior, and capacity planning.
+
+#### `pgque.send_idem(queue_name text, type_name text, payload jsonb, idem_key text, ttl interval default '1 hour', partition_key text default null) → table(event_id bigint, deduped boolean)`
+
+JSON producer-idempotency send. `idem_key` must be non-null and `ttl` must be
+positive. `partition_key` composes with partition routing when supplied. Grant:
+`pgque_writer`. Source:
+[`devel/sql/pgque-api/send_idem.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send_idem.sql).
+
+#### `pgque.send_idem(queue_name text, type_name text, payload text, idem_key text, ttl interval default '1 hour', partition_key text default null) → table(event_id bigint, deduped boolean)`
+
+Text fast path with the same deduplication contract. Untyped string literals
+resolve to this overload. Grant: `pgque_writer`. Source:
+[`devel/sql/pgque-api/send_idem.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send_idem.sql).
+
+#### `pgque.maint_idem(queue_name text) → integer`
+
+Deletes up to 10,000 expired claims for one queue. Returns `1` when the batch
+was full and another pass is requested, otherwise `0`. `send_idem` registers
+this form as a queue extra-maintenance hook automatically. Grant:
+`pgque_admin`. Source:
+[`devel/sql/pgque-api/send_idem.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send_idem.sql).
+
+#### `pgque.maint_idem() → integer`
+
+Same bounded cleanup across all queues, for direct operator scheduling. Grant:
+`pgque_admin`. Source:
+[`devel/sql/pgque-api/send_idem.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send_idem.sql).
+
 ## Consuming
 
 The consume API wraps `pgque.next_batch`, `pgque.get_batch_events`, `pgque.finish_batch`, and `pgque.event_retry`. Typical loop: `receive` → process → `ack` (or `nack` on failure).
 
 All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`) are granted to `pgque_reader`, mirroring upstream PgQ's producer/consumer role split. Apps that both produce and consume must hold both `pgque_reader` and `pgque_writer` — `pgque_writer` does not inherit `pgque_reader`.
 
-<a id="snapshot-rule"></a>**Snapshot rule.** `pgque.send` → `pgque.ticker` → `pgque.receive` must each run in its own committed transaction (the ticker's snapshot must be taken after `send` commits; `receive` only sees what committed before it). Same for `pgque.maint_retry_events` → `pgque.ticker` → `pgque.receive`. Each call must be its own committed transaction; never wrap producer and consumer calls together in one transaction. See [concepts.md#snapshot-rule](concepts.md#snapshot-rule).
+<a id="snapshot-rule"></a>**Snapshot rule.** `pgque.send` → `pgque.ticker` → `pgque.receive` must each run in its own committed transaction (the ticker's snapshot must be taken after `send` commits; `receive` only sees what committed before it). Same for `pgque.maint_retry_events` → `pgque.ticker` → `pgque.receive`. Each call must be its own committed transaction; never wrap producer and consumer calls together in one transaction. See [concepts.md#the-snapshot-rule](concepts.md#the-snapshot-rule).
 
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
@@ -148,9 +210,107 @@ Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/receive.sql`](https://githu
 perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed');
 ```
 
+## Partitioned consumers
+
+Partitioned consumers preserve per-key order while different hash slots run in
+parallel. Every slot is an independent PgQ subscription and must be polled; it
+scans the full stream with a server-side hash filter, producing approximately
+`n` times read amplification. Slot leases are transactional rows, so the API
+works with transaction-mode poolers. The first-party clients do not yet wrap
+this API. Start with the [partition-keys guide](partition-keys.md) for the
+worker loop, fencing, monitoring, and recovery rules.
+
+#### `pgque.subscribe_partitioned(queue_name text, consumer text, n int) → void`
+
+Atomically pins `n` and creates all slots `0..n-1` at one shared starting tick.
+Repeating a complete setup with the same `n` is idempotent and does not move
+cursors. An existing incomplete setup or a different `n` raises. Call before
+producing any events this consumer must see. Grant: `pgque_reader`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.subscribe_slot(queue_name text, consumer text, slot int, n int) → void`
+
+Repairs or explicitly creates one slot after validating the pinned `n`. This is
+not the normal setup path: a late slot begins at the latest tick and cannot
+recover already-ticked history. Grant: `pgque_reader`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.unsubscribe_slot(queue_name text, consumer text, slot int) → void`
+
+Removes one engine subscription and lease row. This may leave the logical
+consumer incomplete and removes retry/dead-letter state owned by that slot.
+Removing the final remaining subscription also removes the pinned-`n` row.
+Grant: `pgque_reader`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.claim_slot(queue_name text, consumer text, slot int, worker text, ttl interval default '30 seconds') → bigint`
+
+Claims a free/expired slot or renews the same worker's lease. Returns the
+current fencing epoch on success and null when another live owner holds the
+slot or its row is busy. `worker` must be non-empty and unique per live worker;
+`ttl` must be finite and at least one second. A takeover increments the epoch.
+Grant: `pgque_reader`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.release_slot(queue_name text, consumer text, slot int, worker text) → boolean`
+
+Clears the lease at a batch boundary. Returns true only for the current owner,
+false for a non-owner/unleased slot, and raises if the owner still has an open
+batch. Crash recovery uses lease expiry instead. Grant: `pgque_reader`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.receive_partitioned(queue_name text, consumer text, slot int, n int, worker text, max_return int default 100) → setof pgque.message`
+
+Validates the pinned `n`, fences and renews the lease, then returns the current
+batch's events whose normalized `hashtextextended(partition_key, 0)` maps to
+`slot`; null keys map to slot 0. Empty filtered batches are finished
+automatically. As with `receive`, `max_return` limits returned rows while
+`ack_partitioned` finishes the whole underlying batch, so use
+`max_return >= ticker_max_count` unless the full batch is otherwise guaranteed.
+Grant: `pgque_reader`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.ack_partitioned(queue_name text, consumer text, slot int, n int, worker text) → integer`
+
+Fences and renews the owner, then finishes the slot's open batch. Returns `1`
+when a batch was finished and `0` when none was open. Grant: `pgque_reader`.
+Source: [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.nack_partitioned(queue_name text, consumer text, slot int, n int, worker text, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`
+
+Lease-fenced per-message retry/DLQ operation for a partitioned batch. Retried
+events retain their partition key and return to the same slot. Raises when the
+slot has no open batch. Grant: `pgque_reader`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+### `pgque.partition_slot_status` view
+
+One row for every expected slot, including missing subscriptions. Columns:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `queue_name` | `text` | Queue name. |
+| `consumer` | `text` | Logical partitioned consumer. |
+| `slot` | `integer` | Slot number in `0..n-1`. |
+| `n` | `integer` | Pinned slot count. |
+| `subscribed` | `boolean` | Whether the engine subscription exists. |
+| `lease_owner` | `text` | Current live owner; null when free or expired. |
+| `lease_until` | `timestamptz` | Stored lease expiry, including an expired lease. |
+| `epoch` | `bigint` | Monotonic fencing epoch. |
+| `last_tick` | `bigint` | Slot cursor; null when unsubscribed. |
+| `pending_events` | `bigint` | Pre-filter event-sequence lag; null when unsubscribed. |
+
+`pending_events` over-counts one slot's routed share by approximately `n`, but
+zero means caught up exactly and sustained growth identifies a stalled slot.
+Grant: `select` to `pgque_reader` and `pgque_admin`. Source:
+[`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
 ## Cooperative consumers / subconsumers
 
-> **Experimental in PgQue 0.2.** Function names, edge-case behavior, and client API shape may change before this feature is marked stable. Do not use this as the only processing path for critical workloads without idempotent handlers and stale-worker takeover tests.
+> **Experimental.** Function names, edge-case behavior, and client API shape
+> may change before this feature is marked stable. Do not use this as the only
+> processing path for critical workloads without idempotent handlers and
+> stale-worker takeover tests.
 
 For a usage walkthrough see the [cooperative-consumers recipe](examples.md#cooperative-consumers--subconsumers-experimental); for when to choose it over fan-out see [concepts](concepts.md#cooperative-consumers-vs-fan-out).
 
@@ -604,8 +764,14 @@ PgQue roles are coarse **database-level** roles. They are intended for trusted a
 
 **What this means in practice:**
 
-- `pgque_reader` gets `select` on **all** tables in the `pgque` schema — it can read events from any queue. It can also call `receive`, `ack`, and `nack` on **any** queue with **any** consumer name. A reader granted for queue A can call `pgque.ack(batch_id)` on a batch opened by a consumer on queue B.
-- `pgque_writer` can produce to **any** queue (`pgque.send`, `pgque.send_batch`, `pgque.insert_event`).
+- `pgque_reader` gets `select` on the public engine and status tables in the
+  `pgque` schema (internal idempotency and partition lease tables are revoked;
+  use `partition_slot_status`). It can call `receive`, `ack`, `nack`, and the
+  partitioned consume API on **any** queue with **any** consumer name. A reader
+  granted for queue A can call `pgque.ack(batch_id)` on a batch opened by a
+  consumer on queue B.
+- `pgque_writer` can produce to **any** queue (`pgque.send`,
+  `pgque.send_idem`, `pgque.send_batch`, `pgque.insert_event`).
 - There is **no per-queue ACL** and no per-tenant isolation built into PgQue. Queue names and consumer names are plain strings — any role with the matching grant can interact with them.
 
 This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `event_retry`) operate on IDs and do not enforce ownership; the producer/consumer split closes only the producer-vs-consumer boundary, not the consumer-vs-consumer one.
@@ -616,11 +782,11 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 - Use separate databases per tenant and connect each tenant's application to its own database.
 - Wrap the PgQue API in app-owned stored functions that enforce tenant ownership before delegating to `pgque.*`, and grant only those wrapper functions to tenant roles.
 
-| Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
-|----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`); experimental cooperative API (`register_subconsumer`, `unregister_subconsumer`, `subscribe_subconsumer`, `unsubscribe_subconsumer`, cooperative `next_batch`, cooperative `next_batch_custom`, `receive_coop`, `touch_subconsumer`)                        |
-| `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
-| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
+| Role | Functions granted directly |
+|---|---|
+| `pgque_reader` | Read-only info functions and public tables/views; normal consume API; partition setup, lease, consume API and `partition_slot_status`; consumer primitives; experimental cooperative API. Internal partition/lease tables and `pgque.idem` are not directly readable. |
+| `pgque_writer` | `insert_event` overloads, all `send` / `send_idem` / `send_batch` overloads, `dlq_replay`, and `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack, finish, or inspect consumer batches. |
+| `pgque_admin` | Member of both reader and writer, plus lifecycle, maintenance including `maint_idem`, DDL, DLQ administration, schema/table/sequence administration, and internal helpers — except `uninstall()` and `insert_event_bulk()`, which are explicitly revoked. Direct access to `pgque.idem` is also revoked. |
 
 `pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_next_tick` (and its alias `force_tick`), and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
 

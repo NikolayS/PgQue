@@ -1,17 +1,26 @@
 ---
 title: Tutorial
-description: A hands-on PgQue walkthrough — install, send, tick, receive, retry, dead-letter, and health checks, end to end.
+description: A hands-on PgQue walkthrough — install, send, receive, retry, dead-letter, idempotency, partition keys, and health checks.
 ---
 
-A guided, hands-on walkthrough. With `psql` access to a Postgres 14+ database and about ten minutes, you can follow every step end to end. You will type SQL, see what comes back, and build an intuition for how PgQue moves messages through an order-processing queue.
+A guided, hands-on walkthrough. With `psql` access to a Postgres 14+ database
+and about fifteen minutes, you can follow every step end to end. You will type
+SQL, see what comes back, and build an intuition for how PgQue moves messages
+through an order-processing queue.
 
-By the end you will have a working `orders` queue with a `processor` consumer, a happy-path delivery, a retry that reappears after a delay, a message driven all the way to the dead-letter queue, and a health check.
+By the end you will have a working `orders` queue with a `processor` consumer,
+a happy-path delivery, a retry that reappears after a delay, a message driven
+all the way to the dead-letter queue, a health check, and a retry-safe keyed
+event consumed through a leased partition slot.
 
 Prerequisites: Postgres 14 or newer, a database to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker by hand, so it works on any managed or self-managed Postgres.
 
 Each step shows the exact SQL and the expected output. Your `msg_id` / `batch_id` / `ev_new` numbers will differ from the examples — each `pgque.force_next_tick` call advances the event sequence by a large amount, so exact numeric output depends on when you call it. Treat the numbers as illustrative. Where transaction boundaries matter — and they matter, because PgQue is snapshot-based — the text calls that out.
 
-For reproducible output, run psql with `--no-psqlrc` and `PAGER=cat`. Start from the cloned repo so `\i sql/pgque.sql` resolves:
+For reproducible output, run psql with `--no-psqlrc` and `PAGER=cat`. This
+tutorial follows the `main` branch development build; start from the cloned
+repo so `\i devel/sql/pgque.sql` resolves. For the stable build, use the
+[latest release's tagged tutorial](https://github.com/NikolayS/pgque/releases/latest).
 
 ```bash
 cd /path/to/pgque
@@ -26,7 +35,7 @@ PgQue is a single SQL file. Install it inside a transaction so a failure leaves 
 
 ```sql
 begin;
-\i sql/pgque.sql
+\i devel/sql/pgque.sql
 commit;
 ```
 
@@ -37,13 +46,17 @@ select pgque.version();
 ```
 
 ```
-   version
--------------
- 0.2.0
+ version
+---------
+ <installed development version>
 (1 row)
 ```
 
-The install creates the `pgque` schema, three roles (`pgque_reader`, `pgque_writer`, `pgque_admin`), and every function you call in the rest of this tutorial. The roles are siblings, not parent and child: `pgque_writer` produces (`send`, `send_batch`); `pgque_reader` consumes (`subscribe`, `receive`, `ack`, `nack`); `pgque_admin` is a member of both.
+The install creates the `pgque` schema, three roles (`pgque_reader`,
+`pgque_writer`, `pgque_admin`), and every function you call in the rest of this
+tutorial. The roles are siblings, not parent and child: `pgque_writer` produces
+(`send`, `send_idem`, `send_batch`); `pgque_reader` owns the normal and
+partitioned consume APIs; `pgque_admin` is a member of both.
 
 Following along as the install owner needs no extra grants — skip the next snippet. In production you grant the roles to your own app roles. An app that both produces and consumes needs both roles:
 
@@ -342,7 +355,7 @@ select * from pgque.status();
  component    | status      | detail
 --------------+-------------+----------------------------------------------------------
  postgresql   | info        | PostgreSQL 17.2 on ...
- pgque        | info        | 0.2.0
+ pgque        | info        | <installed development version>
  scheduler    | manual      | ticker_job_id=NULL, maint_job_id=NULL, tick_period_ms=100 (10.00 ticks/sec)
  ticker       | stopped     | not scheduled (tick_period_ms=100)
  maintenance  | stopped     | not scheduled
@@ -354,6 +367,117 @@ select * from pgque.status();
 ```
 
 `status()` is the one-stop health check. Here it reflects manual ticking: with no scheduler, the `scheduler` row reads `manual` and the `ticker`/`maintenance` rows read `stopped`. With `pg_cron` installed and `pgque.start()` run, the `scheduler` row would show `pg_cron` with job ids and the ticker/maintenance rows would flip to `scheduled`.
+
+## Step 10: Try retry-safe keyed publishing
+
+The basic consumer above sees the whole stream. This final exercise combines
+the two SQL-first scaling features: producer idempotency prevents a retry from
+appending twice, while a partition key routes the accepted event to one leased
+slot and preserves order for that key.
+
+Create every slot before producing. The atomic setup gives all four slots the
+same starting tick:
+
+```sql
+select pgque.create_queue('keyed_orders');
+select pgque.subscribe_partitioned(
+  queue_name := 'keyed_orders',
+  consumer := 'workers',
+  n := 4
+);
+```
+
+Send the same logical effect twice with the same idempotency key:
+
+```sql
+select * from pgque.send_idem(
+  queue_name := 'keyed_orders',
+  type_name := 'order.created',
+  payload := '{"order_id": 99}'::jsonb,
+  idem_key := 'tutorial:order-99:create:v1',
+  ttl := interval '1 hour',
+  partition_key := 'customer-42'
+);
+
+select * from pgque.send_idem(
+  queue_name := 'keyed_orders',
+  type_name := 'order.created',
+  payload := '{"order_id": 99}'::jsonb,
+  idem_key := 'tutorial:order-99:create:v1',
+  ttl := interval '1 hour',
+  partition_key := 'customer-42'
+);
+```
+
+The first row has `deduped = false`; the second has `deduped = true` and the
+same `event_id`. The TTL is a deduplication window for this effect, not a rate
+limit. Different work needs a different key.
+
+Calculate the destination slot, claim it with a process-instance worker id,
+then tick and receive. These are still separate psql autocommit transactions:
+
+```sql
+select ((hashtextextended('customer-42', 0) % 4 + 4) % 4)::int as customer_slot \gset
+
+select pgque.claim_slot(
+  queue_name := 'keyed_orders',
+  consumer := 'workers',
+  slot := :customer_slot,
+  worker := 'tutorial-worker',
+  ttl := interval '2 minutes'
+);
+
+select pgque.force_next_tick('keyed_orders');
+select pgque.ticker();
+
+select msg_id, batch_id, type, payload, extra1 as partition_key
+from pgque.receive_partitioned(
+  queue_name := 'keyed_orders',
+  consumer := 'workers',
+  slot := :customer_slot,
+  n := 4,
+  worker := 'tutorial-worker',
+  max_return := 500
+);
+```
+
+One row returns, not two. Capture and ack the same batch, then release the slot
+at the batch boundary:
+
+```sql
+select batch_id
+from pgque.receive_partitioned(
+  queue_name := 'keyed_orders',
+  consumer := 'workers',
+  slot := :customer_slot,
+  n := 4,
+  worker := 'tutorial-worker',
+  max_return := 500
+)
+limit 1 \gset
+
+select pgque.ack_partitioned(
+  queue_name := 'keyed_orders',
+  consumer := 'workers',
+  slot := :customer_slot,
+  n := 4,
+  worker := 'tutorial-worker'
+);
+
+select pgque.release_slot(
+  queue_name := 'keyed_orders',
+  consumer := 'workers',
+  slot := :customer_slot,
+  worker := 'tutorial-worker'
+);
+```
+
+Production workers repeat that lifecycle across **every** slot. A stopped slot
+pins rotation, and each slot scans the full stream, so four slots mean roughly
+four times the reads. Leases use transactional rows and work through
+transaction-mode poolers, but the first-party clients do not yet implement the
+claim/rebalance loop. See [Partition keys](partition-keys.md) and
+[Producer idempotency](producer-idempotency.md) before deploying this pattern.
 
 ## Where to go from here
 
@@ -371,7 +495,12 @@ Next:
 
 - [Installation & operations](installation.md) — `pg_cron` setup, the production ticker cadence, roles, and teardown.
 - [Latency & tick tuning](latency-and-tuning.md) — how `tick_period_ms` trades latency against overhead.
-- [Reference](reference.md) — every function with signatures, return types, and role grants.
+- [Reference](reference.md) — public SQL signatures, return types, behavior,
+  and role grants.
 - [Examples](examples.md) — patterns: fan-out, exactly-once consumption, batch loading, recurring jobs.
 - [Concepts](concepts.md) — glossary of event, batch, tick, rotation, and the consumer loop.
 - [Monitoring](monitoring.md) — health metrics and what to alert on.
+- [Producer idempotency](producer-idempotency.md) — key scope, TTL behavior,
+  maintenance, and failure handling.
+- [Partition keys](partition-keys.md) — worker leases, fencing, poolers,
+  monitoring, read amplification, and recovery.
