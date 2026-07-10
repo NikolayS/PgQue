@@ -165,15 +165,27 @@ jobs:
         if: always()
         run: docker rm -f pgque-stable-smoke
 
-  upgrade-v0-1-to-head:
-    name: upgrade v0.1.0 to HEAD (PG ${{ matrix.pg_version }})
+  upgrade-to-head:
+    name: upgrade ${{ matrix.from_version }} to HEAD (PG ${{ matrix.pg_version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Upgrade coverage uses oldest/newest supported PG endpoints; the main
-        # regression matrix above covers every supported version (14–19).
-        pg_version: ['19beta1', '14']
+        include:
+          # Keep the oldest upgrade on both supported-version endpoints.
+          - pg_version: '19beta1'
+            from_version: 'v0.1.0'
+            fixture: 'tests/test_upgrade_v0_1_fixture.sql'
+            assertions: 'tests/test_upgrade_v0_1_assertions.sql'
+          - pg_version: '14'
+            from_version: 'v0.1.0'
+            fixture: 'tests/test_upgrade_v0_1_fixture.sql'
+            assertions: 'tests/test_upgrade_v0_1_assertions.sql'
+          # Exercise the immediately preceding release with its compatibility fixture.
+          - pg_version: '17'
+            from_version: 'v0.2.0'
+            fixture: 'tests/test_upgrade_v0_2_fixture.sql'
+            assertions: 'tests/test_upgrade_v0_2_assertions.sql'
 
     steps:
       - uses: actions/checkout@v4
@@ -207,18 +219,18 @@ jobs:
       - name: Build HEAD pgque
         run: bash build/transform.sh
 
-      - name: Install v0.1.0
+      - name: Install ${{ matrix.from_version }}
         run: |
           set -Eeuo pipefail
-          git show v0.1.0:sql/pgque.sql > /tmp/pgque-v0.1.0.sql
+          git show ${{ matrix.from_version }}:sql/pgque.sql > /tmp/pgque-previous.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f /tmp/pgque-v0.1.0.sql
+            -v ON_ERROR_STOP=1 -f /tmp/pgque-previous.sql
 
-      - name: Prepare v0.1.0 fixture
+      - name: Prepare ${{ matrix.from_version }} fixture
         run: |
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_fixture.sql
+            -v ON_ERROR_STOP=1 -f ${{ matrix.fixture }}
 
       - name: Upgrade to HEAD
         run: |
@@ -230,7 +242,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_assertions.sql
+            -v ON_ERROR_STOP=1 -f ${{ matrix.assertions }}
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_security_public_execute.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
