@@ -76,11 +76,11 @@ entity-only key drops the v2 wave (0 inserted); effect-scoped key delivers both.
 
 ```
 pgque.send_idem(
-    queue        text,
-    type         text,
-    payload      ...,            -- jsonb / text overloads, mirroring send()
-    idem_key     text,           -- the effect-scoped key (§3)
-    ttl          interval,
+    queue_name   text,
+    type_name    text,
+    payload      ...,                         -- jsonb / text overloads
+    idem_key     text,                        -- the effect-scoped key (§3)
+    ttl          interval default '1 hour',
     partition_key text default null   -- optional; composes with partition keys
 ) returns table(event_id bigint, deduped boolean)
 ```
