@@ -195,7 +195,7 @@ test first, then the implementation that turns it green.
 4. **No subtransactions in hot paths.** Avoid `BEGIN ... EXCEPTION WHEN ... END`
    in ticker, event insertion, and trigger functions.
 5. **Test against PG 14, 15, 16, 17, 18.** CI must cover all supported versions.
-   A development/beta PostgreSQL lane may be added for forward compatibility;
+   A development/beta Postgres lane may be added for forward compatibility;
    it does not expand the supported production matrix before the final major.
 6. **Red/green TDD for all new code.** Write the failing test first, then
    the implementation. Applies to pgque-api, observability, client libraries,
