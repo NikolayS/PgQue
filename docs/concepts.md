@@ -43,7 +43,8 @@ One consequence follows directly: a producer's insert and the tick that should p
 
 ## Cooperative consumers vs fan-out
 
-> **Experimental in PgQue 0.2.** The cooperative-consumer API ships in the default install but is marked experimental; treat it as subject to change.
+> **Experimental.** The cooperative-consumer API ships in the default install;
+> treat its names and edge-case behavior as subject to change.
 
 PgQue offers two different consumer shapes on top of the same shared log. They are easy to confuse because both involve "several workers on one queue", but they distribute events in opposite ways.
 
@@ -172,7 +173,7 @@ Lineage: PgQ (Skype, ISC, © Marko Kreen / Skype Technologies OU) → SkyTools 2
 ## Where to go next
 
 - [tutorial.md](tutorial.md) — a hands-on first queue.
-- [reference.md](reference.md) — every function in the default install.
+- [reference.md](reference.md) — public SQL signatures, behavior, and grants.
 - [examples.md](examples.md) — fan-out, exactly-once, and other patterns.
 - [monitoring.md](monitoring.md) — watching consumer lag and ticker health.
 - [latency-and-tuning.md](latency-and-tuning.md) — tick cadence and delivery latency trade-offs.

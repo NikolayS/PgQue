@@ -7,9 +7,11 @@ churn and validate against a throwaway database, not production.
 The released, stable install lives in [`../../sql/`](../../sql/) — use that for
 anything real.
 
-Testing partition keys (ordered per-key processing via slot consumers)? Until
-`docs/` coverage lands, follow
-[`blueprints/partition-keys/SPEC.md`](../../blueprints/partition-keys/SPEC.md).
+For the public APIs in this build, start with the
+[`docs/` index](../../docs/README.md). The guides cover
+[producer idempotency](../../docs/producer-idempotency.md) and
+[partition keys](../../docs/partition-keys.md), including worker leases,
+monitoring, operational limits, and recovery.
 
 Layout:
 

@@ -1,9 +1,12 @@
 ---
 title: Examples
-description: Copy-paste PgQue recipes — fan-out, exactly-once, batch send, recurring jobs, and dead-letter replay.
+description: Copy-paste PgQue recipes — idempotent sends, partition workers, fan-out, exactly-once, batch send, and dead-letter replay.
 ---
 
-Short, copy-paste patterns for common PgQue tasks. Each recipe is goal, SQL, result. For a guided first run see [the tutorial](tutorial.md); for every function signature see [the reference](reference.md). For queue and consumer health see [monitoring](monitoring.md).
+Short, copy-paste patterns for common PgQue tasks. Each recipe is goal, SQL,
+result. For a guided first run see [the tutorial](tutorial.md); for public SQL
+signatures and behavior see [the reference](reference.md). For queue and
+consumer health see [monitoring](monitoring.md).
 
 All psql snippets assume psql autocommit (one statement per transaction). Run them with the pager and startup file disabled so output is verbatim:
 
@@ -39,9 +42,105 @@ Result: all three `receive` calls return the same event, each through its own cu
 
 Late-subscriber caveat: `subscribe` (which calls `register_consumer`) starts the consumer at the most recent tick. A consumer will not see events that were sent before it subscribed. Subscribe each consumer before you start producing.
 
+## Retry a producer send without appending twice
+
+Goal: safely retry an enqueue when the producer timed out before learning
+whether Postgres committed it.
+
+Derive one key for the logical effect and reuse it for every retry of that
+effect:
+
+```sql
+select * from pgque.send_idem(
+  queue_name := 'orders',
+  type_name := 'payment.captured',
+  payload := '{"order_id": 42, "capture": 1}'::jsonb,
+  idem_key := 'tenant-7:order-42:capture:1',
+  ttl := interval '24 hours'
+);
+```
+
+Result: the first accepted call returns `(event_id, false)`. Another call with
+the same `(queue_name, idem_key)` during the window returns the original
+`event_id` with `deduped = true` and appends nothing. The duplicate payload is
+not compared and the window is not extended, so never reuse a live key for
+different work.
+
+`send_idem` is producer deduplication only. Consumers can still see a batch
+again after rollback or crash. See [Producer idempotency](producer-idempotency.md)
+for key design, TTL sizing, partition-key composition, and maintenance.
+
+## Ordered partition worker
+
+Goal: preserve order per account while several workers process different
+accounts concurrently.
+
+Subscribe the complete slot set before producing:
+
+```sql
+select pgque.subscribe_partitioned(
+  queue_name := 'orders',
+  consumer := 'account_projector',
+  n := 8
+);
+
+select pgque.send(
+  queue_name := 'orders',
+  type_name := 'order.updated',
+  payload := '{"order_id": 42}'::jsonb,
+  partition_key := 'tenant-7:account-19'
+);
+```
+
+Each worker repeatedly tries slots `0..7`. A successful claim returns an epoch;
+a live/busy slot returns null, so move to another candidate:
+
+```sql
+select pgque.claim_slot(
+  queue_name := 'orders',
+  consumer := 'account_projector',
+  slot := 3,
+  worker := 'projector-pod-7f3c',
+  ttl := interval '30 seconds'
+);
+
+select * from pgque.receive_partitioned(
+  queue_name := 'orders',
+  consumer := 'account_projector',
+  slot := 3,
+  n := 8,
+  worker := 'projector-pod-7f3c',
+  max_return := 500
+);
+
+select pgque.ack_partitioned(
+  queue_name := 'orders',
+  consumer := 'account_projector',
+  slot := 3,
+  n := 8,
+  worker := 'projector-pod-7f3c'
+);
+```
+
+Use the slot actually claimed; `3` is illustrative and is not necessarily the
+slot for the sample key. Receive and ack renew the stored TTL. Renew explicitly
+with `claim_slot` when external processing may exceed it, and call
+`release_slot` only after the batch is acked.
+
+Run a polling loop for **every** slot. Each slot scans the full stream, so eight
+slots produce about eight times read amplification; a stopped slot also pins
+rotation. Lease state is transactional and works through transaction-mode
+poolers when `worker` is an application instance id rather than a connection
+id. First-party clients do not yet provide this claim/rebalance loop. Read
+[Partition keys](partition-keys.md) for fencing, monitoring, and incomplete-slot
+recovery before using this recipe.
+
 ## Cooperative consumers / subconsumers (experimental)
 
-> **Experimental in PgQue 0.2.** The cooperative-consumer functions ship in the default install but are marked experimental: names, edge-case behavior, and the client API may change before they are stable. Use idempotent handlers and test stale-worker takeover before relying on this as the only path for critical work.
+> **Experimental.** The cooperative-consumer functions ship in the default
+> install, but names, edge-case behavior, and the client API may change before
+> they are stable. Use idempotent handlers and test stale-worker takeover
+> before relying on this as the only path for critical work.
 
 Goal: split *one* subscriber's events across a pool of competing workers, so each event is handled by exactly one worker in the pool — without giving up PgQue's shared-log model.
 
