@@ -7206,6 +7206,7 @@ drop function if exists pgque._touch_lease(int4, text, text, int, text);
 do $$
 declare
     v_actual_names text[];
+    v_dependents text;
     v_function record;
     v_oid oid;
 begin
@@ -7241,6 +7242,19 @@ begin
             from pg_proc as p
             where p.oid = v_oid;
             if v_actual_names = v_function.old_names then
+                select string_agg(
+                    distinct pg_catalog.pg_describe_object(
+                        d.classid, d.objid, d.objsubid),
+                    ', ')
+                into v_dependents
+                from pg_catalog.pg_depend as d
+                where d.refclassid = 'pg_catalog.pg_proc'::regclass
+                  and d.refobjid = v_oid
+                  and d.deptype in ('n', 'a');
+                if v_dependents is not null then
+                    raise exception 'cannot stabilize named arguments for % because dependent objects exist: %. PostgreSQL cannot rename input parameters in place; drop these dependents, run the transactional upgrade, then recreate them',
+                        v_function.signature, v_dependents;
+                end if;
                 execute 'drop function ' || v_function.signature;
             end if;
         end if;
