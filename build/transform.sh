@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2129
+# The installer is assembled incrementally from ordered source sections.
 set -Eeuo pipefail
+IFS=$'\n\t'
 
 # transform.sh -- Mechanical transformation of PgQ sources into pgque
 #
@@ -92,6 +95,8 @@ apply_schema_rename() {
   #
   # Strategy: apply targeted replacements in order of specificity.
   local content="$1"
+  local pgq_literal="'pgq'"
+  local pgque_literal="'pgque'"
 
   # 1. Role names: pgq_reader -> pgque_reader, etc.
   content=$(echo "$content" | sed \
@@ -105,7 +110,7 @@ apply_schema_rename() {
 
   # 3. String literals referencing the schema name:
   #    'pgq' -> 'pgque' (used in information_schema queries, extname, etc.)
-  content=$(echo "$content" | sed "s/'pgq'/'pgque'/g")
+  content="${content//${pgq_literal}/${pgque_literal}}"
 
   # 4. Standalone pgq as schema name in CREATE/DROP SCHEMA, GRANT ON SCHEMA, etc.
   #    "schema pgq" -> "schema pgque"
@@ -139,7 +144,7 @@ apply_txid_function_renames() {
 apply_txid_snapshot_type_rename() {
   # Replace txid_snapshot type with pg_snapshot in column defs and signatures.
   local content="$1"
-  content=$(echo "$content" | sed 's/txid_snapshot/pg_snapshot/g')
+  content="${content//txid_snapshot/pg_snapshot}"
   echo "$content"
 }
 
@@ -302,7 +307,7 @@ for src_file in "${SOURCE_FILES[@]}"; do
   fi
 
   # Determine output filename (rename pgq. prefix in filenames)
-  out_file=$(echo "${src_file}" | sed 's/pgq\./pgque./g')
+  out_file="${src_file//pgq./pgque.}"
   out_path="${OUTPUT_DIR}/${out_file}"
 
   # Read source
