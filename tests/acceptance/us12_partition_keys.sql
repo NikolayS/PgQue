@@ -451,24 +451,24 @@ begin
     where queue_name = 'us12_claim'
       and consumer = 'partial'
       and slot = 0
-  ), 'US-12.6: materialized alpha slot must report subscribed';
+  ), 'materialized alpha slot must report subscribed';
   assert (
     select not subscribed and last_tick is null and pending_events is null
     from pgque.partition_slot_status
     where queue_name = 'us12_claim'
       and consumer = 'partial'
       and slot = 1
-  ), 'US-12.6: missing alpha slot must report unknown lag';
+  ), 'missing alpha slot must report unknown lag';
 
   begin
     perform pgque.subscribe_partitioned('us12_claim', 'partial', 2);
   exception when others then
     v_raised := true;
     assert sqlerrm like '%incomplete%',
-      format('US-12.6: unexpected partial setup error: %s', sqlerrm);
+      format('unexpected partial setup error: %s', sqlerrm);
   end;
-  assert v_raised, 'US-12.6: atomic setup must reject partial existing state';
-  raise notice 'PASS: US-12.6 partition_slot_status flags incomplete setup';
+  assert v_raised, 'atomic setup must reject partial existing state';
+  raise notice 'PASS: partition_slot_status flags incomplete setup';
 end $$;
 
 -- Leased by worker acc-a: lease_owner == 'acc-a' for slot 0 only

@@ -108,7 +108,7 @@ begin
   perform 1
   from pgque.partition_slot_status
   where queue_name = 'pk_q' and consumer = 'w' and not subscribed;
-  assert not found, 'US-12.6: atomic setup must subscribe every slot';
+  assert not found, 'atomic setup must subscribe every slot';
 
   perform 1
   from pgque.partition_slot_status
