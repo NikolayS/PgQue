@@ -9,6 +9,9 @@ import pgque
 import pgque._version as version_module
 
 
+RELEASE_WORKFLOW = Path(__file__).parents[3] / ".github/workflows/release-python.yml"
+
+
 def test_distribution_metadata_is_authoritative(monkeypatch):
     monkeypatch.setattr(
         version_module.metadata,
@@ -65,3 +68,11 @@ def test_runtime_version_matches_available_package_metadata():
         )
 
     assert pgque.__version__ == expected
+
+
+def test_branch_release_dry_run_executes_validation_without_publish():
+    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "if: github.ref == 'refs/heads/main' || inputs.dry_run" in workflow
+    assert "if: ${{ !inputs.dry_run && inputs.repository == 'testpypi' }}" in workflow
+    assert "if: ${{ !inputs.dry_run && inputs.repository == 'pypi' }}" in workflow
