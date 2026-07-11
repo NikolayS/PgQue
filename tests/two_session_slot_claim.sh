@@ -4,6 +4,7 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 # Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 set -Eeuo pipefail
+IFS=$'\n\t'
 
 # Usage:
 #   PGQUE_TEST_DSN=postgresql://postgres:***@localhost/pgque_test \
@@ -44,17 +45,32 @@ psql_base=(psql --no-psqlrc --set=ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
 queue_name="two_session_slot_claim_${$}_$(date +%s)"
 s1_ttl="3 seconds"
 workdir="$(mktemp -d)"
+
+# Remove database and filesystem fixtures while preserving the script status.
+# Globals: psql_base, queue_name, workdir
+# Args: none
+# Returns: the status that triggered the EXIT trap
 cleanup() {
+  local exit_code=$?
+
   "${psql_base[@]}" --quiet --no-align --tuples-only --command="
     select pgque.unsubscribe_slot('${queue_name}', 'w', 0);
     select pgque.unsubscribe_slot('${queue_name}', 'w', 1);
     select pgque.drop_queue('${queue_name}', true);
   " >/dev/null 2>&1 || true
-  rm -rf "${workdir}"
+  rm -rf -- "${workdir}" || true
+  exit "${exit_code}"
 }
 trap cleanup EXIT
 
+# Print captured session output after a harness failure.
+# Globals: workdir
+# Args: none
+# Outputs: captured files to STDERR
+# Returns: zero
 print_debug() {
+  local f
+
   for f in setup.out lock_holder.out lock_holder.err contender.out \
            contender.err session1.out session1.err session2.out session2.err \
            session3.out session3.err; do
