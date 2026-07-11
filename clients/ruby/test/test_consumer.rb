@@ -124,6 +124,31 @@ end
 class TestConsumerIntegration < Minitest::Test
   include PgqueTest::Helpers
 
+  def test_poll_once_reports_empty_queue
+    with_queue do |queue, consumer_name, conn|
+      consumer = Pgque::Consumer.new(
+        dsn, queue: queue, name: consumer_name, logger: silent_logger
+      )
+
+      assert_equal false, consumer.poll_once(conn)
+    end
+  end
+
+  def test_poll_once_reports_processed_batch
+    with_queue do |queue, consumer_name, conn|
+      client = Pgque::Client.new(conn)
+      client.send(queue, { "i" => 1 }, type: "evt.processed")
+      force_tick(conn, queue)
+
+      consumer = Pgque::Consumer.new(
+        dsn, queue: queue, name: consumer_name, logger: silent_logger
+      )
+      consumer.on("evt.processed") { |_message| }
+
+      assert_equal true, consumer.poll_once(conn)
+    end
+  end
+
   def run_consumer_for(consumer, seconds)
     t = Thread.new { consumer.start }
     Thread.new do
