@@ -50,27 +50,3 @@ For the full specification and implementation plan, see
 [`blueprints/SPECx.md`](https://github.com/NikolayS/pgque/blob/main/blueprints/SPECx.md).
 For what ships in the default install vs experimental, see
 [`blueprints/PHASES.md`](https://github.com/NikolayS/pgque/blob/main/blueprints/PHASES.md).
-
-## Maintainer release contract
-
-The build contract is enforced by `build/check-docs-contract.sh` and
-`docs/.release-channel`. Before creating a stable tag, the release change must:
-
-1. Promote the tested `devel/sql/` artifacts into `sql/` atomically.
-2. Change `docs/.release-channel` from `development` to
-   `stable:<release-tag>`.
-3. Switch every user-facing install, upgrade, uninstall, and pg_tle command in
-   `README.md`, `docs/`, and the website landing page from `devel/sql/` to
-   `sql/`.
-4. Pin every SQL source URL in `docs/reference.md` to
-   `blob/<release-tag>/sql/`; no released reference may follow `main`.
-5. Remove the development notices from the root README, docs index,
-   installation, tutorial, and reference, and remove this development-only
-   checklist from the tagged docs. The executable contract remains in the
-   build script.
-6. Run `bash build/check-docs-contract.sh` and `cd web && bun run build`. Both
-   must pass before tagging.
-
-After the tag is cut and `main` advances to new development work, switch the
-channel back to `development`, restore the development notices and
-`devel/sql/` paths, and keep stable users pointed at the tagged release.

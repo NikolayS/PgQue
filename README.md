@@ -165,7 +165,11 @@ commit;
 Or from the shell, same single-transaction guarantee via `psql --single-transaction`:
 
 ```bash
-PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f devel/sql/pgque.sql
+PAGER=cat psql \
+  --no-psqlrc \
+  --single-transaction \
+  --dbname=mydb \
+  --file=devel/sql/pgque.sql
 ```
 
 With `pg_cron` available in the same database as PgQue, `pgque.start()` creates the default ticker and maintenance jobs. The ticker uses a one-second pg_cron slot and calls `pgque.ticker_loop()`, which ticks every 100 ms by default (10 ticks/sec) with a commit between ticks:
@@ -552,8 +556,8 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Modern `send`, `receive`, `ack`, `nack` API | ✅ |
 | `send_batch` API | ✅ |
 | Improved `send_batch` performance | ✅ |
-| Producer idempotency (`send_idem`) | ✅ |
-| Partition keys and leased slot consumers | ✅ |
+| Producer idempotency (`send_idem`) | Yes |
+| Partition keys and leased slot consumers | Yes |
 | Dead-letter queue after retry limit | ✅ |
 | Go library | ✅ |
 | TypeScript library | ✅ |

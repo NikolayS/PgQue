@@ -30,6 +30,7 @@ write_development_fixture() {
     'This is the public API reference for the in-development default install' \
     'https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql' \
     > "${root}/docs/reference.md"
+  # shellcheck disable=SC2016 # Fixture contains literal Markdown backticks.
   printf '%s\n' \
     'tutorial follows the `main` branch development build' \
     '\i devel/sql/pgque.sql' > "${root}/docs/tutorial.md"
@@ -79,6 +80,7 @@ main() {
   fi
 
   mkdir "${workdir}/bin"
+  # shellcheck disable=SC2016 # Stub receives positional parameters later.
   printf '%s\n' \
     '#!/usr/bin/env bash' \
     'if [[ "${1:-}" == -RFn ]]; then exit 2; fi' \

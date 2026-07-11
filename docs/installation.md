@@ -46,7 +46,11 @@ commit;
 Or as a shell one-liner from the repository root:
 
 ```bash
-PAGER=cat psql --no-psqlrc --single-transaction -d mydb -f devel/sql/pgque.sql
+PAGER=cat psql \
+  --no-psqlrc \
+  --single-transaction \
+  --dbname=mydb \
+  --file=devel/sql/pgque.sql
 ```
 
 The installer creates the `pgque` schema, all functions and tables, and the
@@ -378,7 +382,12 @@ in a single transaction, as the schema owner or a superuser. From the repository
 root:
 
 ```bash
-PAGER=cat psql --no-psqlrc --single-transaction -v ON_ERROR_STOP=1 -d mydb -f devel/sql/pgque.sql
+PAGER=cat psql \
+  --no-psqlrc \
+  --single-transaction \
+  --set=ON_ERROR_STOP=1 \
+  --dbname=mydb \
+  --file=devel/sql/pgque.sql
 ```
 
 The installer is idempotent. It preserves queues, consumers, subscriptions, retry
