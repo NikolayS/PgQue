@@ -509,7 +509,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Feature | Done |
 |---|---|
 | PgQ core engine | ✅ |
-| Modern Postgres support (14-18; 19 beta tested) | ✅ |
+| Modern Postgres support (14–18; 19 beta tested) | Yes |
 | Pure SQL / PL/pgSQL install | ✅ |
 | Managed Postgres support | ✅ |
 | No daemon / no C extension | ✅ |
