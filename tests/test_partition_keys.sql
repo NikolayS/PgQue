@@ -688,6 +688,23 @@ begin
   end;
   assert v_raised, 'guard: claim_slot with ttl < 1 second must raise';
 
+  -- Infinite leases cannot recover after a crashed worker (PG19+ syntax).
+  if current_setting('server_version_num')::int >= 190000 then
+    v_raised := false;
+    begin
+      execute $sql$
+        select pgque.claim_slot(
+          'pk_q', 'w', 0, 'wk-infinite', 'infinity'::interval)
+      $sql$;
+    exception
+      when others then
+        v_raised := true;
+        assert sqlerrm like '%finite interval%',
+          'guard: unexpected infinite lease error: ' || sqlerrm;
+    end;
+    assert v_raised, 'guard: claim_slot with infinite ttl must raise';
+  end if;
+
   -- Empty worker id is rejected.
   v_raised := false;
   begin

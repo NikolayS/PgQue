@@ -46,6 +46,11 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/run_all.sql
 
+      - name: Run partition lease concurrency tests
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: tests/two_session_slot_claim.sh
+
       - name: Run experimental tests
         run: |
           # devel/sql/experimental/*.sql is not part of devel/sql/pgque.sql;
