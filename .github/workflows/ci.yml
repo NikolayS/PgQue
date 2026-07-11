@@ -241,6 +241,32 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f ${{ matrix.fixture }}
 
+      - name: Verify dependent alpha objects block safely
+        if: matrix.from_version == 'v0.3.0-alpha.1'
+        run: |
+          set -Eeuo pipefail
+          if upgrade_output=$(PAGER=cat PGPASSWORD=pgque_test \
+            psql --no-psqlrc \
+              --host=localhost \
+              --username=postgres \
+              --dbname=pgque_test \
+              --single-transaction \
+              --set=ON_ERROR_STOP=1 \
+              --file=devel/sql/pgque.sql 2>&1); then
+            echo 'FAIL: alpha upgrade unexpectedly replaced a depended-on function'
+            exit 1
+          fi
+          grep --fixed-strings \
+            'PostgreSQL cannot rename input parameters in place' \
+            <<<"${upgrade_output}"
+          PAGER=cat PGPASSWORD=pgque_test \
+            psql --no-psqlrc \
+              --host=localhost \
+              --username=postgres \
+              --dbname=pgque_test \
+              --set=ON_ERROR_STOP=1 \
+              --file=tests/test_upgrade_v0_3_alpha_blocked_assertions.sql
+
       - name: Upgrade to HEAD
         run: |
           set -Eeuo pipefail

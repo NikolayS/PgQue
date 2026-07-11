@@ -3,6 +3,7 @@
 -- Build alpha state whose public functions still expose internal i_* names.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
+drop view if exists public.upgrade_v03_named_dependency;
 drop table if exists public.upgrade_v03_named_functions;
 create table public.upgrade_v03_named_functions (
   signature text primary key,
@@ -94,6 +95,16 @@ begin
     partition_event_id, idem_event_id, partition_key)
   values (v_partition_id, v_idem.event_id, v_key);
 end $$;
+
+-- Alpha callers may have schema objects that depend on these public
+-- functions. An upgrade must not silently discard or invalidate them.
+create view public.upgrade_v03_named_dependency as
+select pgque.send(
+  'upgrade_v03_named_q'::text,
+  'upgrade.dependency'::text,
+  '{}'::jsonb,
+  'dependency-key'::text
+) as event_id;
 
 do $$
 begin
