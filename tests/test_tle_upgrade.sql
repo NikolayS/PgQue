@@ -7,10 +7,10 @@
 -- accidentally replace the source fixture with the version under test.
 --
 -- Local setup from the repository root:
---   psql "$PGQUE_TEST_DSN" -c 'create extension pg_tle'
---   git show v0.2.0:sql/pgque-tle.sql | psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1
---   psql "$PGQUE_TEST_DSN" -c 'create extension pgque'
---   psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1 -f tests/test_tle_upgrade.sql
+--   PAGER=cat psql --no-psqlrc "$PGQUE_TEST_DSN" --command='create extension pg_tle'
+--   git show v0.2.0:sql/pgque-tle.sql | PAGER=cat psql --no-psqlrc "$PGQUE_TEST_DSN" --set=ON_ERROR_STOP=1
+--   PAGER=cat psql --no-psqlrc "$PGQUE_TEST_DSN" --command='create extension pgque'
+--   PAGER=cat psql --no-psqlrc "$PGQUE_TEST_DSN" --set=ON_ERROR_STOP=1 --file=tests/test_tle_upgrade.sql
 
 \set ON_ERROR_STOP on
 
@@ -88,9 +88,9 @@ begin
         select 1 from pgque.queue where queue_name = 'tle_upgrade'
     ), '0.2 queue fixture missing before upgrade';
     assert exists (
-        select 1 from pgque.subscription s
-        join pgque.queue q on q.queue_id = s.sub_queue
-        join pgque.consumer c on c.co_id = s.sub_consumer
+        select 1 from pgque.subscription as s
+        join pgque.queue as q on q.queue_id = s.sub_queue
+        join pgque.consumer as c on c.co_id = s.sub_consumer
         where q.queue_name = 'tle_upgrade' and c.co_name = 'worker'
     ), '0.2 subscription fixture missing before upgrade';
     assert exists (
@@ -156,9 +156,9 @@ begin
         select 1 from pgque.queue where queue_name = 'tle_upgrade'
     ), 'queue was lost during pg_tle update';
     assert exists (
-        select 1 from pgque.subscription s
-        join pgque.queue q on q.queue_id = s.sub_queue
-        join pgque.consumer c on c.co_id = s.sub_consumer
+        select 1 from pgque.subscription as s
+        join pgque.queue as q on q.queue_id = s.sub_queue
+        join pgque.consumer as c on c.co_id = s.sub_consumer
         where q.queue_name = 'tle_upgrade' and c.co_name = 'worker'
     ), 'subscription was lost during pg_tle update';
     assert exists (

@@ -313,17 +313,22 @@ jobs:
       - name: Run data-preserving pg_tle upgrade test
         run: |
           set -Eeuo pipefail
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
-            -v ON_ERROR_STOP=1 -c 'create database pgque_tle_upgrade'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade \
-            -v ON_ERROR_STOP=1 -c 'create extension pg_tle'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=postgres \
+            --set=ON_ERROR_STOP=1 --command='create database pgque_tle_upgrade'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+            --set=ON_ERROR_STOP=1 --command='create extension pg_tle'
           git show v0.2.0:sql/pgque-tle.sql \
-            | PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade \
-                -v ON_ERROR_STOP=1
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade \
-            -v ON_ERROR_STOP=1 -c 'create extension pgque'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade \
-            -v ON_ERROR_STOP=1 -f tests/test_tle_upgrade.sql
+            | PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+                --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+                --set=ON_ERROR_STOP=1
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+            --set=ON_ERROR_STOP=1 --command='create extension pgque'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+            --set=ON_ERROR_STOP=1 --file=tests/test_tle_upgrade.sql
 
       - name: Run full regression suite via pg_tle install
         run: |
