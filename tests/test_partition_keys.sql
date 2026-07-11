@@ -437,7 +437,11 @@ begin
   begin
     perform pgque.release_slot('pk_q', 'w', 0, 'wk-zombie');
   exception
-    when others then v_raised := true;
+    when others then
+      v_raised := true;
+      assert sqlstate = 'P0001'
+        and sqlerrm like 'cannot release slot 0 of consumer w on queue pk_q while batch % is open; ack the batch first',
+        format('fencing: unexpected release error [%s] %s', sqlstate, sqlerrm);
   end;
   assert v_raised,
     'fencing: owner release with an open batch must raise';
