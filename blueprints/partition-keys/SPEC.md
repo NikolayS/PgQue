@@ -199,14 +199,14 @@ optimization is future (R6).
   base and increments on every takeover of a free/expired lease (the fencing
   token). Revoked from app roles.
 - **`subscribe_partitioned(queue, consumer, n int)`:** the default setup path.
-  Validate `n>=1`, persist N, read one starting tick, then register all generated
+  Validate `1<=n<=256`, persist N, read one starting tick, then register all generated
   consumers `"<consumer>#0/N"` through `"<consumer>#(N-1)/N"` at that shared tick
   and create all lease rows in one transaction. A failure rolls back the whole
   consumer. Repeating a complete setup with the same N is idempotent and does
   not reposition cursors. A pre-existing partial setup raises rather than
   implying that late-created slots can recover history that they already missed.
 - **`subscribe_slot(queue, consumer, k int, n int)`:** alpha-compatible repair
-  API. Validate `n>=1 and 0<=k<n`; upsert persisted `n`, reject a changed `n`
+  API. Validate `1<=n<=256 and 0<=k<n`; upsert persisted `n`, reject a changed `n`
   (D3); register
   `"<consumer>#k/n"`; create the `partition_slot` row for `k` (unleased).
   Idempotent for the same `(k,n)`.

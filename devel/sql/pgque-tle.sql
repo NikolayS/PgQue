@@ -7250,9 +7250,16 @@ revoke execute on all functions in schema pgque from public;
 create table if not exists pgque.partition_consumer (
     queue_id    int4    not null references pgque.queue (queue_id) on delete cascade,
     co_name     text    not null,
-    n           int4    not null check (n >= 1),
+    n           int4    not null,
+    constraint partition_consumer_n_check check (n between 1 and 256),
     primary key (queue_id, co_name)
 );
+
+/* Keep the constraint definition synchronized on idempotent installs. */
+alter table pgque.partition_consumer
+    drop constraint if exists partition_consumer_n_check;
+alter table pgque.partition_consumer
+    add constraint partition_consumer_n_check check (n between 1 and 256);
 
 /*
  * Per-slot lease -- SPEC D7/D8/section 15. A slot is owned by a worker id
@@ -7455,8 +7462,8 @@ begin
     if position('#' in i_consumer) > 0 then
         raise exception 'partitioned consumer name must not contain #: %', i_consumer;
     end if;
-    if i_n is null or i_n < 1 then
-        raise exception 'slot count n must be >= 1, got %', i_n;
+    if i_n is null or i_n < 1 or i_n > 256 then
+        raise exception 'slot count n must be between 1 and 256, got %', i_n;
     end if;
 
     select queue_id into v_queue_id
@@ -7551,8 +7558,8 @@ begin
     if position('#' in i_consumer) > 0 then
         raise exception 'partitioned consumer name must not contain #: %', i_consumer;
     end if;
-    if i_n is null or i_n < 1 then
-        raise exception 'slot count n must be >= 1, got %', i_n;
+    if i_n is null or i_n < 1 or i_n > 256 then
+        raise exception 'slot count n must be between 1 and 256, got %', i_n;
     end if;
     if i_slot is null or i_slot < 0 or i_slot >= i_n then
         raise exception 'slot % out of range for n=% (valid: 0..%)', i_slot, i_n, i_n - 1;
