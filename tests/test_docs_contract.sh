@@ -53,12 +53,24 @@ write_stable_fixture() {
   printf '%s\n' '\\i sql/pgque.sql' > "${root}/web/src/pages/index.astro"
 }
 
+assert_finite_ttl_wording() {
+  local file
+
+  for file in docs/reference.md docs/producer-idempotency.md; do
+    if ! grep -Fq 'positive finite interval' "${file}"; then
+      echo "FAIL: ${file} must document a positive finite TTL interval" >&2
+      exit 1
+    fi
+  done
+}
+
 main() {
   local development_root
   local stable_root
   local output
 
   cd "${repo_root}"
+  assert_finite_ttl_wording
   workdir="$(mktemp -d)"
   trap cleanup EXIT
 
