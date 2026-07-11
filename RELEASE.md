@@ -79,7 +79,7 @@ below and normal CI are green.
 
 ## Validate the release candidate
 
-Use disposable databases. Run the supported PostgreSQL matrix for the plain
+Use disposable databases. Run the supported Postgres matrix for the plain
 stable package, including the complete regression and acceptance suites:
 
 ```bash
