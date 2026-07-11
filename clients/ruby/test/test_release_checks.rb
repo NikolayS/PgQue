@@ -3,15 +3,24 @@
 require "minitest/autorun"
 require "open3"
 require "rbconfig"
+require "yaml"
 require_relative "../script/assert_no_test_skips"
 require_relative "../script/check_rubygems_version"
 
 class TestReleaseChecks < Minitest::Test
   FIXTURE_DIR = File.expand_path("fixtures/rubygems_versions", __dir__)
   RUBYGEMS_CHECKER = File.expand_path("../script/check_rubygems_version.rb", __dir__)
+  RELEASE_WORKFLOW = File.expand_path("../../../.github/workflows/release-ruby.yml", __dir__)
 
   def fixture(name)
     File.read(File.join(FIXTURE_DIR, name))
+  end
+
+  def test_branch_dry_run_executes_validation_without_enabling_publish
+    jobs = YAML.safe_load_file(RELEASE_WORKFLOW).fetch("jobs")
+
+    assert_includes jobs.fetch("build").fetch("if"), "inputs.dry_run"
+    assert_equal "${{ !inputs.dry_run }}", jobs.fetch("publish-rubygems").fetch("if")
   end
 
   def test_accepts_an_available_exact_version
