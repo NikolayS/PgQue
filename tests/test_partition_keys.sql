@@ -53,10 +53,9 @@ end $$;
 do $$
 begin
   perform pgque.create_queue('pk_q');
-  perform pgque.subscribe_slot('pk_q', 'w', 0, 2);
-  perform pgque.subscribe_slot('pk_q', 'w', 1, 2);
-  -- Idempotent re-subscribe with the same (slot, n) must not raise.
-  perform pgque.subscribe_slot('pk_q', 'w', 0, 2);
+  perform pgque.subscribe_partitioned('pk_q', 'w', 2);
+  -- Idempotent whole-consumer setup must not reposition slot cursors.
+  perform pgque.subscribe_partitioned('pk_q', 'w', 2);
 end $$;
 
 -- Pin the hash routing (T-G1a): concrete (key, expected slot) pairs.
@@ -105,6 +104,11 @@ begin
   from pgque.partition_slot_status
   where queue_name = 'pk_q' and consumer = 'w' and n <> 2;
   assert not found, 'US-12.6: all slot rows must show n = 2';
+
+  perform 1
+  from pgque.partition_slot_status
+  where queue_name = 'pk_q' and consumer = 'w' and not subscribed;
+  assert not found, 'atomic setup must subscribe every slot';
 
   perform 1
   from pgque.partition_slot_status
