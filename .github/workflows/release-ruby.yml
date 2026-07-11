@@ -61,6 +61,7 @@ jobs:
       - name: Verify clean release candidate
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           git diff --exit-code
           git diff-index --quiet --cached HEAD
           ruby script/validate_release.rb "$VERSION" "$TAG_NAME"
@@ -80,6 +81,7 @@ jobs:
       - name: Verify RubyGems version is available
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           response=$(mktemp)
           trap 'rm -f "$response"' EXIT
           curl --fail-with-body --silent --show-error \
@@ -94,9 +96,12 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
+          export PAGER=cat
+          psql_base=(psql --no-psqlrc --set=ON_ERROR_STOP=1 "$PGQUE_TEST_DSN")
           ready_checks=0
-          for _attempt in $(seq 1 30); do
-            if psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1 -c 'select 1' >/dev/null 2>&1; then
+          for ((_attempt = 1; _attempt <= 30; _attempt++)); do
+            if "${psql_base[@]}" --command='select 1' >/dev/null 2>&1; then
               ready_checks=$((ready_checks + 1))
               if [ "$ready_checks" -ge 2 ]; then
                 break
@@ -116,11 +121,12 @@ jobs:
             echo "generated PgQue SQL is stale; run build/transform.sh and commit the result"
             exit 1
           fi
-          psql "$PGQUE_TEST_DSN" -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
+          "${psql_base[@]}" --file=devel/sql/pgque.sql
 
       - name: Run tests and build gem
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           test_log=$(mktemp)
           trap 'rm -f "$test_log"' EXIT
           bundle exec rake test 2>&1 | tee "$test_log"
@@ -131,6 +137,7 @@ jobs:
       - name: Verify built gem installs
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
           gem install --install-dir "$tmp" --no-document "./pgque-${VERSION}.gem"
@@ -156,6 +163,7 @@ jobs:
         if: inputs.dry_run
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           echo "dry run complete: validated pgque ${VERSION}"
           echo "real publish would create ${TAG_NAME} at ${GITHUB_SHA} and push the validated gem"
 
@@ -191,9 +199,13 @@ jobs:
           name: ruby-gem-${{ inputs.version }}
           path: clients/ruby
 
+      - name: Install release tooling
+        run: gem install rubygems-await --version 0.5.4 --no-document
+
       - name: Revalidate artifact and tag
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           git diff --exit-code
           git diff-index --quiet --cached HEAD
           ruby script/validate_release.rb "$VERSION" "$TAG_NAME" "./pgque-${VERSION}.gem"
@@ -213,6 +225,7 @@ jobs:
       - name: Recheck RubyGems version availability
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           response=$(mktemp)
           trap 'rm -f "$response"' EXIT
           curl --fail-with-body --silent --show-error \
@@ -229,6 +242,7 @@ jobs:
       - name: Create namespaced Ruby release tag
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG_NAME" "$GITHUB_SHA" -m "Ruby client ${VERSION}"
@@ -238,4 +252,4 @@ jobs:
         run: gem push "./pgque-${VERSION}.gem"
 
       - name: Wait for release to propagate
-        run: gem exec rubygems-await "./pgque-${VERSION}.gem"
+        run: gem exec --version 0.5.4 rubygems-await "./pgque-${VERSION}.gem"
