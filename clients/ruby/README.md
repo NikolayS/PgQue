@@ -95,7 +95,7 @@ client.send("orders", event)
 
 It accepts only `payload:` and `type:`. The receive-side `extra1` through
 `extra4` fields are not supported by this producer wrapper; unknown keywords
-such as `extra:` raise `ArgumentError` instead of being silently discarded.
+such as `extra:` raise `ArgumentError`.
 
 ### Consumer options
 
