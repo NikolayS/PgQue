@@ -222,15 +222,17 @@ jobs:
       - name: Install ${{ matrix.from_version }}
         run: |
           set -Eeuo pipefail
-          git show ${{ matrix.from_version }}:sql/pgque.sql > /tmp/pgque-previous.sql
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f /tmp/pgque-previous.sql
+          git show ${{ matrix.from_version }}:sql/pgque.sql \
+            | PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+                --host=localhost --username=postgres --dbname=pgque_test \
+                --set=ON_ERROR_STOP=1
 
       - name: Prepare ${{ matrix.from_version }} fixture
         run: |
           set -Eeuo pipefail
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f ${{ matrix.fixture }}
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 --file=${{ matrix.fixture }}
 
       - name: Upgrade to HEAD
         run: |
@@ -241,8 +243,9 @@ jobs:
       - name: Verify upgraded state
         run: |
           set -Eeuo pipefail
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f ${{ matrix.assertions }}
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 --file=${{ matrix.assertions }}
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_security_public_execute.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
