@@ -107,6 +107,11 @@ slot registered after events have been ticked cannot recover that earlier
 history. Check `pgque.partition_slot_status.subscribed`: missing subscriptions
 report `false`, with `pending_events` set to `NULL` because their lag is unknown.
 
+The safety ceiling is 256 slots per partitioned consumer. It is not a target:
+use the smallest slot count that provides the required parallelism. Every slot
+scans the queue stream and must be polled, so read amplification and the cost of
+a full polling cycle increase with the slot count.
+
 ## pg_tle install
 
 To register PgQue as a `pg_tle` extension instead (requires `pg_tle` in
