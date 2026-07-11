@@ -69,8 +69,8 @@ begin
     'test_idem', 'migrate', '{"late":1}', 'late-txn:k1',
     '1 second') s;
   select expires_at into v_expires_at
-  from pgque.idem k
-  join pgque.queue q using (queue_id)
+  from pgque.idem as k
+  join pgque.queue as q using (queue_id)
   where q.queue_name = 'test_idem'
     and k.idem_key = 'late-txn:k1';
 
