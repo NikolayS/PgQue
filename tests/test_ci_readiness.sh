@@ -82,6 +82,15 @@ main() {
   grep -Fq 'Postgres not ready after 2 seconds' <<<"${output}"
   grep -Fq 'expected container log' <<<"${output}"
 
+  for invalid_attempts in 0 not-a-number; do
+    if output=$(bash ci/wait-for-postgres.sh \
+      pgque-timeout "${invalid_attempts}" 2>&1); then
+      echo "FAIL: readiness helper accepted invalid attempts" >&2
+      exit 1
+    fi
+    grep -Fq 'ATTEMPTS must be a positive integer' <<<"${output}"
+  done
+
   echo "PASS: Postgres readiness checks fail closed"
 }
 
