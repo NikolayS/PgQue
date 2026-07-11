@@ -330,6 +330,40 @@ jobs:
             --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
             --set=ON_ERROR_STOP=1 --file=tests/test_tle_upgrade.sql
 
+      - name: Reject an untested pg_tle update without data loss
+        run: |
+          set -Eeuo pipefail
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=postgres \
+            --set=ON_ERROR_STOP=1 \
+            --command='create database pgque_tle_unsupported'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres \
+            --dbname=pgque_tle_unsupported \
+            --set=ON_ERROR_STOP=1 --command='create extension pg_tle'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres \
+            --dbname=pgque_tle_unsupported \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_tle_unsupported_upgrade_fixture.sql
+          if upgrade_output=$(PAGER=cat PGPASSWORD=pgque_test \
+            psql --no-psqlrc \
+              --host=localhost \
+              --username=postgres \
+              --dbname=pgque_tle_unsupported \
+              --set=ON_ERROR_STOP=1 \
+              --file=devel/sql/pgque-tle.sql 2>&1); then
+            echo 'FAIL: untested pg_tle update path was accepted'
+            exit 1
+          fi
+          grep --fixed-strings 'has no tested pg_tle update path' \
+            <<<"${upgrade_output}"
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres \
+            --dbname=pgque_tle_unsupported \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_tle_unsupported_upgrade_assertions.sql
+
       - name: Run full regression suite via pg_tle install
         run: |
           set -Eeuo pipefail
