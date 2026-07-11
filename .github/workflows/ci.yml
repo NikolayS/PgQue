@@ -269,6 +269,38 @@ jobs:
               --set=ON_ERROR_STOP=1 \
               --file=tests/test_upgrade_v0_3_alpha_blocked_assertions.sql
 
+      - name: Prepare oversized alpha fixture
+        if: matrix.from_version == 'v0.3.0-alpha.1'
+        run: |
+          set -Eeuo pipefail
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_upgrade_v0_3_alpha_oversized_fixture.sql
+
+      - name: Verify oversized alpha setup blocks safely
+        if: matrix.from_version == 'v0.3.0-alpha.1'
+        run: |
+          set -Eeuo pipefail
+          if upgrade_output=$(PAGER=cat PGPASSWORD=pgque_test \
+            psql --no-psqlrc \
+              --host=localhost \
+              --username=postgres \
+              --dbname=pgque_test \
+              --single-transaction \
+              --set=ON_ERROR_STOP=1 \
+              --file=devel/sql/pgque.sql 2>&1); then
+            echo 'FAIL: oversized alpha partition setup was accepted'
+            exit 1
+          fi
+          grep --fixed-strings \
+            'cannot upgrade partitioned consumer oversized-workers on queue upgrade_v03_oversized_q with n=257' \
+            <<<"${upgrade_output}"
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_upgrade_v0_3_alpha_oversized_assertions.sql
+
       - name: Upgrade to HEAD
         run: |
           set -Eeuo pipefail
