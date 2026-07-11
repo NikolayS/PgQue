@@ -7165,6 +7165,27 @@ create table if not exists pgque.partition_consumer (
     primary key (queue_id, co_name)
 );
 
+/* PostgreSQL validates the tightened constraint against existing rows. Report
+ * prerelease state that needs explicit operator cleanup before touching it. */
+do $$
+declare
+    v_consumer text;
+    v_n int4;
+    v_queue text;
+begin
+    select q.queue_name, pc.co_name, pc.n
+    into v_queue, v_consumer, v_n
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where pc.n > 256
+    order by q.queue_name, pc.co_name
+    limit 1;
+    if found then
+        raise exception 'cannot upgrade partitioned consumer % on queue % with n=%: 0.3 supports at most 256 slots; drop and recreate it with n <= 256, then retry the transactional upgrade',
+            v_consumer, v_queue, v_n;
+    end if;
+end $$;
+
 /* Keep the constraint definition synchronized on idempotent installs. */
 alter table pgque.partition_consumer
     drop constraint if exists partition_consumer_n_check;
