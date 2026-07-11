@@ -231,15 +231,17 @@ jobs:
       - name: Install ${{ matrix.from_version }}
         run: |
           set -Eeuo pipefail
-          git show ${{ matrix.from_version }}:${{ matrix.install_sql }} > /tmp/pgque-previous.sql
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f /tmp/pgque-previous.sql
+          git show ${{ matrix.from_version }}:${{ matrix.install_sql }} \
+            | PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+                --host=localhost --username=postgres --dbname=pgque_test \
+                --set=ON_ERROR_STOP=1
 
       - name: Prepare ${{ matrix.from_version }} fixture
         run: |
           set -Eeuo pipefail
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f ${{ matrix.fixture }}
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 --file=${{ matrix.fixture }}
 
       - name: Verify dependent alpha objects block safely
         if: matrix.from_version == 'v0.3.0-alpha.1'
@@ -276,18 +278,22 @@ jobs:
       - name: Verify upgraded state
         run: |
           set -Eeuo pipefail
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f ${{ matrix.assertions }}
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_named_arguments_v0_3.sql
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 --file=${{ matrix.assertions }}
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 --file=tests/test_named_arguments_v0_3.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_security_public_execute.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_upgrade_grants.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_pgque_roles.sql
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_named_arguments_v0_3_reinstall_fixture.sql
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_named_arguments_v0_3_reinstall_fixture.sql
 
       - name: Verify post-upgrade idempotency
         run: |
@@ -296,8 +302,10 @@ jobs:
             -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_named_arguments_v0_3_reinstall_assertions.sql
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_named_arguments_v0_3_reinstall_assertions.sql
 
       - name: Cleanup
         if: always()
