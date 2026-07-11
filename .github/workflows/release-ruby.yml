@@ -46,6 +46,7 @@ jobs:
       - name: Verify clean release candidate
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           git diff --exit-code
           git diff-index --quiet --cached HEAD
           ruby script/validate_release.rb "$VERSION" "$TAG_NAME"
@@ -65,6 +66,7 @@ jobs:
       - name: Run tests and build gem
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           bundle exec rake test
           gem build pgque.gemspec
           ruby script/validate_release.rb "$VERSION" "$TAG_NAME" "./pgque-${VERSION}.gem"
@@ -72,6 +74,7 @@ jobs:
       - name: Verify built gem installs
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
           gem install --install-dir "$tmp" --no-document "./pgque-${VERSION}.gem"
@@ -97,6 +100,7 @@ jobs:
         if: inputs.dry_run
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           echo "dry run complete: validated pgque ${VERSION}"
           echo "real publish would create ${TAG_NAME} at ${GITHUB_SHA} and push the validated gem"
 
@@ -132,9 +136,13 @@ jobs:
           name: ruby-gem-${{ inputs.version }}
           path: clients/ruby
 
+      - name: Install release tooling
+        run: gem install rubygems-await --version 0.5.4 --no-document
+
       - name: Revalidate artifact and tag
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           git diff --exit-code
           git diff-index --quiet --cached HEAD
           ruby script/validate_release.rb "$VERSION" "$TAG_NAME" "./pgque-${VERSION}.gem"
@@ -157,6 +165,7 @@ jobs:
       - name: Create namespaced Ruby release tag
         run: |
           set -Eeuo pipefail
+          IFS=$'\n\t'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG_NAME" "$GITHUB_SHA" -m "Ruby client ${VERSION}"
@@ -166,4 +175,4 @@ jobs:
         run: gem push "./pgque-${VERSION}.gem"
 
       - name: Wait for release to propagate
-        run: gem exec rubygems-await "./pgque-${VERSION}.gem"
+        run: gem exec --version 0.5.4 rubygems-await "./pgque-${VERSION}.gem"
