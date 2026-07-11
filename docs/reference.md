@@ -148,9 +148,9 @@ design, transaction behavior, and capacity planning.
 
 #### `pgque.send_idem(queue_name text, type_name text, payload jsonb, idem_key text, ttl interval default '1 hour', partition_key text default null) → table(event_id bigint, deduped boolean)`
 
-JSON producer-idempotency send. `idem_key` must be non-null and `ttl` must be
-positive. `partition_key` composes with partition routing when supplied. Grant:
-`pgque_writer`. Source:
+JSON producer-idempotency send. `idem_key` must be non-null. `ttl` must be a
+positive finite interval. `partition_key` composes with partition routing when
+supplied. Grant: `pgque_writer`. Source:
 [`devel/sql/pgque-api/send_idem.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/send_idem.sql).
 
 #### `pgque.send_idem(queue_name text, type_name text, payload text, idem_key text, ttl interval default '1 hour', partition_key text default null) → table(event_id bigint, deduped boolean)`

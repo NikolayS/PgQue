@@ -65,8 +65,8 @@ Deduplication is an exact match on `(queue_name, idem_key)`:
 - Choose a key for the intended effect, not only the entity. Include the tenant,
   operation, entity id, and an operation version where appropriate, for example
   `tenant-7:order-42:capture:v2`.
-- `idem_key` must be non-null. `ttl` must be a positive interval and defaults
-  to one hour.
+- `idem_key` must be non-null. `ttl` must be a positive finite interval and
+  defaults to one hour.
 - The window starts with the accepted send. Duplicate attempts do not extend
   it. After expiry, the same key can append a new event and start a new window.
 
