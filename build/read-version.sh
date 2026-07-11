@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 set -Eeuo pipefail
+IFS=$'\n\t'
+
+# Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+# Read and validate the version returned by pgque.version().
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source_file=${1:-${repo_root}/devel/sql/pgque-additions/lifecycle.sql}

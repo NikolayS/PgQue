@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 set -Eeuo pipefail
+IFS=$'\n\t'
+
+# Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+# Verify or record the complete stable PgQue artifact manifest.
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 artifacts=(
@@ -18,14 +21,14 @@ usage() {
 }
 
 is_final_semver() {
-  [[ "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+  [[ "${1}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
 }
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
+    sha256sum "${1}" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
+    shasum -a 256 "${1}" | awk '{print $1}'
   else
     echo "FAIL: sha256sum or shasum is required" >&2
     return 1
@@ -40,11 +43,13 @@ assert_directory_contents() {
     -exec basename {} \; | LC_ALL=C sort)
   expected=$(printf '%s\n' "${artifacts[@]}" | LC_ALL=C sort)
   if [[ "${include_manifest}" == 1 ]]; then
-    expected=$(printf '%s\n%s\n' "${expected}" "${manifest_name}" | LC_ALL=C sort)
+    expected=$(printf '%s\n%s\n' "${expected}" "${manifest_name}" \
+      | LC_ALL=C sort)
   fi
 
   if [[ "${actual}" != "${expected}" ]]; then
-    echo "FAIL: ${artifact_dir} must contain exactly the four stable artifacts" >&2
+    echo "FAIL: ${artifact_dir} must contain exactly the four stable" \
+      "artifacts" >&2
     if [[ "${include_manifest}" == 1 ]]; then
       echo "and ${manifest_name}" >&2
     fi
@@ -62,7 +67,8 @@ check_single_value() {
   count=$(printf '%s\n' "${values}" | awk 'NF { n++ } END { print n + 0 }')
   actual=$(printf '%s\n' "${values}" | awk 'NF { print; exit }')
   if [[ "${count}" -ne 1 || "${actual}" != "${expected}" ]]; then
-    echo "FAIL: ${label} must be exactly ${expected}; found ${values:-<missing>}" >&2
+    echo "FAIL: ${label} must be exactly ${expected};" \
+      "found ${values:-<missing>}" >&2
     return 1
   fi
 }
@@ -74,7 +80,7 @@ runtime_versions() {
       print substr($0, RSTART+8, RLENGTH-9)
       in_fn=0
     }
-  ' "$1"
+  ' "${1}"
 }
 
 call_target_versions() {
@@ -132,7 +138,8 @@ verify_manifest() {
 
   version=$(awk '$1 == "version" { print $2 }' "${manifest}")
   if ! is_final_semver "${version}"; then
-    echo "FAIL: stable manifest version must be final SemVer, got ${version}" >&2
+    echo "FAIL: stable manifest version must be final SemVer," \
+      "got ${version}" >&2
     return 1
   fi
 
@@ -154,7 +161,8 @@ verify_manifest() {
 
   header_versions=$(awk '$1 == "--" && $2 == "Version:" { print $3 }' \
     "${artifact_dir}/pgque.sql")
-  check_single_value "pgque.sql header version" "${version}" "${header_versions}"
+  check_single_value "pgque.sql header version" "${version}" \
+    "${header_versions}"
   check_single_value "pgque.sql runtime version" "${version}" \
     "$(runtime_versions "${artifact_dir}/pgque.sql")"
 
@@ -172,7 +180,12 @@ verify_manifest() {
 
   check_single_value "pgque-tle.sql install target" "${version}" \
     "$(call_target_versions install_extension "${artifact_dir}/pgque-tle.sql")"
-  for call in install_extension_version_sql install_update_path set_default_version; do
+  local -a version_calls=(
+    install_extension_version_sql
+    install_update_path
+    set_default_version
+  )
+  for call in "${version_calls[@]}"; do
     if grep -Fq "perform pgtle.${call}(" "${artifact_dir}/pgque-tle.sql"; then
       check_single_value "pgque-tle.sql ${call} target" "${version}" \
         "$(call_target_versions "${call}" "${artifact_dir}/pgque-tle.sql")"
@@ -234,17 +247,21 @@ record_manifest() {
   verify_manifest
 }
 
-if [[ "${1:-}" == --record ]]; then
-  [[ "$#" -eq 3 ]] || usage
-  version=$2
-  artifact_dir=$3
-  [[ -d "${artifact_dir}" ]] || usage
-  artifact_dir=$(cd "${artifact_dir}" && pwd)
-  record_manifest "${version}"
-else
-  [[ "$#" -le 1 ]] || usage
-  artifact_dir=${1:-${repo_root}/sql}
-  [[ -d "${artifact_dir}" ]] || usage
-  artifact_dir=$(cd "${artifact_dir}" && pwd)
-  verify_manifest
-fi
+main() {
+  if [[ "${1:-}" == --record ]]; then
+    [[ "$#" -eq 3 ]] || usage
+    version=$2
+    artifact_dir=$3
+    [[ -d "${artifact_dir}" ]] || usage
+    artifact_dir=$(cd "${artifact_dir}" && pwd)
+    record_manifest "${version}"
+  else
+    [[ "$#" -le 1 ]] || usage
+    artifact_dir=${1:-${repo_root}/sql}
+    [[ -d "${artifact_dir}" ]] || usage
+    artifact_dir=$(cd "${artifact_dir}" && pwd)
+    verify_manifest
+  fi
+}
+
+main "$@"

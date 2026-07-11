@@ -78,12 +78,14 @@ main() {
   stable_version=$(awk '$1 == "version" { print $2 }' sql/release-manifest.txt)
   if [[ "${source_version}" != 0.3.0-devel ]]; then
     if [[ "${source_version}" != "${stable_version}" ]]; then
-      echo "FAIL: final lifecycle version does not match the stable manifest"
+      echo "FAIL: final lifecycle version does not match the stable" \
+        "manifest" >&2
       exit 1
     fi
     for artifact in "${artifacts[@]}"; do
       if ! cmp -s "devel/sql/${artifact}" "sql/${artifact}"; then
-        echo "FAIL: final lifecycle stamp has a partial ${artifact} promotion"
+        echo "FAIL: final lifecycle stamp has a partial ${artifact}" \
+          "promotion" >&2
         exit 1
       fi
     done
@@ -92,21 +94,23 @@ main() {
   # Missing and stale files must both invalidate an otherwise valid release.
   cp -R sql "${workdir}/partial"
   rm "${workdir}/partial/pgque-tle-uninstall.sql"
-  if bash build/verify-release-artifacts.sh "${workdir}/partial" >/dev/null 2>&1; then
-    echo "FAIL: partial stable artifact set passed verification"
+  if bash build/verify-release-artifacts.sh \
+    "${workdir}/partial" >/dev/null 2>&1; then
+    echo "FAIL: partial stable artifact set passed verification" >&2
     exit 1
   fi
 
   cp -R sql "${workdir}/stale"
   printf '\n-- stale promotion fixture\n' >> "${workdir}/stale/pgque.sql"
-  if bash build/verify-release-artifacts.sh "${workdir}/stale" >/dev/null 2>&1; then
-    echo "FAIL: stale stable artifact passed verification"
+  if bash build/verify-release-artifacts.sh \
+    "${workdir}/stale" >/dev/null 2>&1; then
+    echo "FAIL: stale stable artifact passed verification" >&2
     exit 1
   fi
 
   # Release promotion accepts only final SemVer, never prerelease/devel values.
   if bash build/promote-release.sh 0.3.0-rc.1 >/dev/null 2>&1; then
-    echo "FAIL: promotion accepted a non-final version"
+    echo "FAIL: promotion accepted a non-final version" >&2
     exit 1
   fi
 
@@ -128,7 +132,7 @@ main() {
     grep -Fq -- '-- Version: 0.3.0' sql/pgque.sql
     grep -Fq -- '-- Version: 0.3.0' sql/pgque-tle.sql
     if grep -Fq -- '0.3.0-devel' sql/pgque.sql sql/pgque-tle.sql; then
-      echo "FAIL: promoted stable artifacts retain a devel version"
+      echo "FAIL: promoted stable artifacts retain a devel version" >&2
       exit 1
     fi
 
@@ -147,7 +151,7 @@ main() {
     # the complete stable release untouched.
     rm pgq/structure/tables.sql
     if bash build/promote-release.sh 0.3.0 >/dev/null 2>&1; then
-      echo "FAIL: promotion unexpectedly succeeded without its build source"
+      echo "FAIL: promotion unexpectedly succeeded without its build source" >&2
       exit 1
     fi
     grep -Fq "return '0.3.0-devel';" devel/sql/pgque-additions/lifecycle.sql
@@ -158,7 +162,7 @@ main() {
 
   after=$(fingerprint)
   if [[ "${after}" != "${before}" ]]; then
-    echo "FAIL: temporary release promotion mutated the checkout"
+    echo "FAIL: temporary release promotion mutated the checkout" >&2
     diff <(printf '%s\n' "${before}") <(printf '%s\n' "${after}") || true
     exit 1
   fi

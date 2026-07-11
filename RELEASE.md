@@ -84,15 +84,34 @@ stable package, including the complete regression and acceptance suites:
 
 ```bash
 createdb pgque_release_plain
-psql -X -v ON_ERROR_STOP=1 --single-transaction \
-  -d pgque_release_plain -f sql/pgque.sql
-psql -X -v ON_ERROR_STOP=1 -v expected_pgque_version=0.3.0 \
-  -d pgque_release_plain -f tests/run_all.sql
-psql -X -v ON_ERROR_STOP=1 \
-  -d pgque_release_plain -f tests/acceptance/run_acceptance.sql
-psql -X -v ON_ERROR_STOP=1 -d pgque_release_plain -f sql/pgque_uninstall.sql
-psql -X -At -d pgque_release_plain \
-  -c "select count(*) from pg_namespace where nspname = 'pgque'"
+PAGER=cat psql \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 \
+  --single-transaction \
+  --dbname=pgque_release_plain \
+  --file=sql/pgque.sql
+PAGER=cat psql \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 \
+  --set=expected_pgque_version=0.3.0 \
+  --dbname=pgque_release_plain \
+  --file=tests/run_all.sql
+PAGER=cat psql \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 \
+  --dbname=pgque_release_plain \
+  --file=tests/acceptance/run_acceptance.sql
+PAGER=cat psql \
+  --no-psqlrc \
+  --set=ON_ERROR_STOP=1 \
+  --dbname=pgque_release_plain \
+  --file=sql/pgque_uninstall.sql
+PAGER=cat psql \
+  --no-psqlrc \
+  --tuples-only \
+  --no-align \
+  --dbname=pgque_release_plain \
+  --command="select count(*) from pg_namespace where nspname = 'pgque'"
 ```
 
 The final query must return `0`. Also test an in-place plain upgrade in a fresh
