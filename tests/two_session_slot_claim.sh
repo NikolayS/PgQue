@@ -4,6 +4,7 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 # Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 set -Eeuo pipefail
+IFS=$'\n\t'
 
 # Usage:
 #   PGQUE_TEST_DSN=postgresql://postgres:***@localhost/pgque_test \
@@ -39,21 +40,37 @@ if [[ -z "${PGQUE_TEST_DSN:-}" ]]; then
   exit 2
 fi
 
-psql_base=(psql --no-psqlrc -v ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
+export PAGER=cat
+psql_base=(psql --no-psqlrc --set=ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
 queue_name="two_session_slot_claim_${$}_$(date +%s)"
 s1_ttl="3 seconds"
 workdir="$(mktemp -d)"
+
+# Remove database and filesystem fixtures while preserving the script status.
+# Globals: psql_base, queue_name, workdir
+# Args: none
+# Returns: the status that triggered the EXIT trap
 cleanup() {
-  "${psql_base[@]}" -qAtc "
+  local exit_code=$?
+
+  "${psql_base[@]}" --quiet --no-align --tuples-only --command="
     select pgque.unsubscribe_slot('${queue_name}', 'w', 0);
     select pgque.unsubscribe_slot('${queue_name}', 'w', 1);
     select pgque.drop_queue('${queue_name}', true);
   " >/dev/null 2>&1 || true
-  rm -rf "${workdir}"
+  rm -rf -- "${workdir}" || true
+  exit "${exit_code}"
 }
 trap cleanup EXIT
 
+# Print captured session output after a harness failure.
+# Globals: workdir
+# Args: none
+# Outputs: captured files to STDERR
+# Returns: zero
 print_debug() {
+  local f
+
   for f in setup.out lock_holder.out lock_holder.err contender.out \
            contender.err session1.out session1.err session2.out session2.err \
            session3.out session3.err; do
@@ -69,7 +86,7 @@ select pgque.subscribe_slot('${queue_name}', 'w', 0, 2);
 select pgque.subscribe_slot('${queue_name}', 'w', 1, 2);
 SQL
 
-"${psql_base[@]}" -f "${workdir}/setup.sql" \
+"${psql_base[@]}" --file="${workdir}/setup.sql" \
   >"${workdir}/setup.out" 2>&1 || {
   echo "FAIL: setup failed" >&2
   print_debug
@@ -85,13 +102,13 @@ select pg_sleep(10);
 rollback;
 SQL
 
-PGAPPNAME="${lock_app}" "${psql_base[@]}" -f "${workdir}/lock_holder.sql" \
+PGAPPNAME="${lock_app}" "${psql_base[@]}" --file="${workdir}/lock_holder.sql" \
   >"${workdir}/lock_holder.out" 2>"${workdir}/lock_holder.err" &
 lock_holder_pid=$!
 
 lock_ready=0
 for _ in $(seq 1 50); do
-  if "${psql_base[@]}" -qAtc "
+  if "${psql_base[@]}" --quiet --no-align --tuples-only --command="
     select 1
     from pg_stat_activity
     where application_name = '${lock_app}'
@@ -114,12 +131,13 @@ if (( lock_ready != 1 )); then
 fi
 
 set +e
-PGOPTIONS='-c statement_timeout=750ms' "${psql_base[@]}" -qAtc \
+PGOPTIONS='-c statement_timeout=750ms' "${psql_base[@]}" \
+  --quiet --no-align --tuples-only --command \
   "select coalesce(pgque.claim_slot('${queue_name}', 'w', 0, 'contender')::text, 'NULL')" \
   >"${workdir}/contender.out" 2>"${workdir}/contender.err"
 contender_status=$?
 set -e
-"${psql_base[@]}" -qAtc "
+"${psql_base[@]}" --quiet --no-align --tuples-only --command="
   select pg_terminate_backend(pid)
   from pg_stat_activity
   where application_name = '${lock_app}'
@@ -132,7 +150,7 @@ wait "${lock_holder_pid}" >/dev/null 2>&1 || true
 # crash-recovery scenario below starts from a genuinely free slot.
 holder_gone=0
 for _ in $(seq 1 50); do
-  if [[ "$("${psql_base[@]}" -qAtc "
+  if [[ "$("${psql_base[@]}" --quiet --no-align --tuples-only --command="
     select count(*)
     from pg_stat_activity
     where application_name = '${lock_app}'
@@ -164,7 +182,7 @@ echo "non-blocking claim: contender returned NULL behind an uncommitted slot row
 # No release_slot call: the backend dies with the lease still held. The lease
 # is committed transactional state, so it survives the backend's exit.
 s1_epoch="$(
-  "${psql_base[@]}" -qAtc \
+  "${psql_base[@]}" --quiet --no-align --tuples-only --command \
     "select pgque.claim_slot('${queue_name}', 'w', 0, 'w1', interval '${s1_ttl}')"
 )"
 if [[ -z "${s1_epoch}" || ! "${s1_epoch}" =~ ^[0-9]+$ ]]; then
@@ -208,7 +226,7 @@ select 's2_checks=ok';
 SQL
 
 set +e
-"${psql_base[@]}" -f "${workdir}/session2.sql" \
+"${psql_base[@]}" --file="${workdir}/session2.sql" \
   >"${workdir}/session2.out" 2>"${workdir}/session2.err"
 session2_status=$?
 set -e
@@ -244,7 +262,7 @@ select 's3_reclaim=ok';
 SQL
 
 set +e
-"${psql_base[@]}" -f "${workdir}/session3.sql" \
+"${psql_base[@]}" --file="${workdir}/session3.sql" \
   >"${workdir}/session3.out" 2>"${workdir}/session3.err"
 session3_status=$?
 set -e
