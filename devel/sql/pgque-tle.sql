@@ -7295,7 +7295,7 @@ alter table pgque.partition_consumer
  * takeover of an expired lease. Written only inside SECURITY DEFINER
  * functions (same pattern as partition_consumer); revoked from app roles.
  * One row per subscribed slot, created by subscribe_partitioned or repaired
- * individually by subscribe_slot.
+ * individually by subscribe_slot (forward-only: the missed window is lost).
  */
 create table if not exists pgque.partition_slot (
     queue_id    int4 not null,
@@ -7569,6 +7569,9 @@ revoke execute on function pgque.subscribe_partitioned(text, text, int) from pub
 /*
  * Alpha-compatible single-slot registration. Prefer subscribe_partitioned for
  * new consumers; use this only for explicit repair or controlled setup work.
+ * Repair closes the gap going forward only: the slot starts at the current
+ * tick, and events ticked while it was missing are permanently lost (recreate
+ * the consumer via unsubscribe_partitioned before producing to avoid that).
  */
 create or replace function pgque.subscribe_slot(
     i_queue text, i_consumer text, i_slot int, i_n int)
@@ -7741,15 +7744,19 @@ revoke execute on function pgque.unsubscribe_partitioned(text, text) from public
 
 /*
  * Claim (or renew) the lease on a slot for a worker id. Returns the epoch
- * fencing token, or null if the slot is currently leased by another live
- * worker (the caller's claim loop then moves to the next slot). The lease
- * lives in pgque.partition_slot -- plain transactional DML, no session state
- * -- so it survives transaction-mode pooling. Uses clock_timestamp() so a
- * pg_sleep inside a transaction correctly ages a short TTL.
+ * fencing token, or null when the slot is not claimable RIGHT NOW: leased by
+ * another live worker, or the row momentarily locked by another transaction
+ * (skip locked) -- including this worker's own in-flight receive/ack renewal.
+ * The claim loop moves to the next slot on null and must never infer loss of
+ * an existing lease from it. The lease lives in pgque.partition_slot -- plain
+ * transactional DML, no session state -- so it survives transaction-mode
+ * pooling. Uses clock_timestamp() so a pg_sleep inside a transaction
+ * correctly ages a short TTL.
  *
  *   owner re-claim  -- renew the window, epoch UNCHANGED.
  *   free / expired  -- takeover: epoch += 1, return the NEW (fencing) epoch.
  *   live, other own -- return null.
+ *   row busy        -- return null (never blocks, never waits).
  */
 create or replace function pgque.claim_slot(
     i_queue text, i_consumer text, i_slot int, i_worker text,
@@ -8042,6 +8049,10 @@ revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pg
  *                     filtering (tick_event_seq delta). It over-counts a
  *                     single slot's own share by ~n x, but 0 means "caught
  *                     up" exactly, and growth means the slot is stalling.
+ *
+ * Canonical alert: pending_events > X or not subscribed. A threshold-only
+ * alert (where pending_events > X) skips the NULL-lag rows of unsubscribed
+ * slots, so it never sees incomplete setup.
  */
 create or replace view pgque.partition_slot_status as
 select

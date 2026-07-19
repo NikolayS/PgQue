@@ -100,10 +100,16 @@ select pgque.subscribe_partitioned('orders', 'workers', 4);
 
 Calling `subscribe_partitioned` again with the same slot count is idempotent and
 does not move existing cursors. `subscribe_slot` remains available for explicit
-repair of an incomplete alpha setup; it is not the normal setup path because a
-slot registered after events have been ticked cannot recover that earlier
-history. Check `pgque.partition_slot_status.subscribed`: missing subscriptions
-report `false`, with `pending_events` set to `NULL` because their lag is unknown.
+repair of an incomplete setup, but repair closes the gap going forward only: the
+repaired slot starts at the current tick, and events ticked while it was missing
+are permanently lost. To start over instead, tear the whole consumer down with
+`pgque.unsubscribe_partitioned(queue, consumer)` (atomic, safe on partial
+setups, a no-op when the consumer is absent) and recreate it before producing.
+
+Monitor `pgque.partition_slot_status`: missing subscriptions report
+`subscribed = false` with `pending_events = NULL` because their lag is unknown.
+Alert on `pending_events > X or not subscribed` — a threshold-only alert skips
+the `NULL` rows and never notices incomplete setup.
 
 The safety ceiling is 256 slots per partitioned consumer. It is not a target:
 use the smallest slot count that provides the required parallelism. Every slot

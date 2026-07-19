@@ -168,7 +168,7 @@ optimization is future (R6).
 |----|----------|---------------|-------|
 | D1 | Key location | `ev_extra1`, `send()`-sourced queues only | Triggers use `ev_extra1` for table name. |
 | D2 | Failure policy | `skip` default (Phase 1); `pause` is Phase 2 (§11) | `pause` has open mechanics. |
-| D3 | N | Fixed, persisted in `pgque.partition_consumer(queue, consumer, n)` (written inside SECURITY DEFINER `subscribe_partitioned`, with `subscribe_slot` retained for repair; table revoked from app roles); changed `n` rejected | Enforced invariant, not convention. |
+| D3 | N | Fixed, persisted in `pgque.partition_consumer(queue, consumer, n)` (written inside SECURITY DEFINER `subscribe_partitioned`, with `subscribe_slot` retained for forward-only repair — the missed window is lost; table revoked from app roles); changed `n` rejected | Enforced invariant, not convention. |
 | D4 | Assignment | `(hashtextextended(key,0) % N + N) % N` | Stable, sign-safe. |
 | D5 | State budget | **Phase 1 / happy / `skip`: no state, no per-event writes.** **Phase 2 `pause`:** durable `pgque.partition_block(sub_id, partition_key, head_ev_id)` marker (FK `sub_id → subscription on delete cascade`; index `(sub_id, partition_key)`). Blocked keys additionally incur defer churn (§11 O1) — so "no per-event churn" is a Phase-1/non-blocked-key claim only. | Round 3 corrected the churn framing. |
 | D6 | Producer signature | `send(queue, type, payload, partition_key => text)` | Avoids `send(queue,type,payload)` collision. |
@@ -209,20 +209,29 @@ optimization is future (R6).
   API. Validate `1<=n<=256 and 0<=k<n`; upsert persisted `n`, reject a changed `n`
   (D3); register
   `"<consumer>#k/n"`; create the `partition_slot` row for `k` (unleased).
-  Idempotent for the same `(k,n)`.
+  Idempotent for the same `(k,n)`. Repair ≠ recovery: it closes the gap going
+  forward only — the repaired slot starts at the current tick, and events
+  ticked while the slot was missing are **permanently lost** (recreate the
+  consumer via `unsubscribe_partitioned` before producing to avoid the gap).
 - **`claim_slot(queue, consumer, k int, worker text, ttl interval default
-  '30 seconds')` → bigint (epoch):** validate `ttl >= '1 second'`. Under a row
-  lock on the `partition_slot` row: if the lease is live and owned by another
-  worker → return NULL (steered away); if owned by `worker` → renew
+  '30 seconds')` → bigint (epoch):** validate `ttl` is finite and `>= '1 second'`
+  (`'infinity'` rejected). Under a `for update skip locked` row lock on the
+  `partition_slot` row: if the lease is live and owned by another worker → return
+  NULL (steered away); if the row is momentarily locked by another transaction —
+  including the SAME worker's own in-flight `receive`/`ack` lease renewal —
+  → return NULL without blocking; if owned by `worker` → renew
   (`lease_until = clock_timestamp() + ttl`), return the **same** epoch; if free or
   **expired** (`lease_until <= clock_timestamp()` or `lease_owner is null`) → take
   over: set `lease_owner = worker`, `lease_until = clock_timestamp() + ttl`, **bump
-  `epoch`**, return the new epoch. Grace rule: an expired lease that no successor
+  `epoch`**, return the new epoch. NULL therefore means "not claimable right
+  now" (busy or foreign-owned); do NOT infer loss of an existing lease from
+  NULL. Grace rule: an expired lease that no successor
   has taken may be renewed by its own worker (still its epoch — no heir existed, so
   it is safe).
 - **`release_slot(queue, consumer, k int, worker text)` → boolean:** owner-only.
-  If `worker` holds the lease, clear it (`lease_owner = null`) and return true;
-  otherwise return false. Callable only at a batch boundary (§15).
+  If `worker` holds the lease and the slot has no open engine batch, clear it
+  (`lease_owner = null`) and return true; raises if the owner's slot batch is
+  still open — ack first (§15); a non-owner returns false, never raises.
 - **`receive_partitioned(queue, consumer, k int, n int, worker text, …)`:** after
   casting `k,n` to int, **require `worker` to hold the lease on slot `k`** (a
   non-owner raises — server-enforced G2); an expired lease still owned by the same
@@ -362,7 +371,10 @@ optimization is future (R6).
   names.** This is the sharpest operational hazard of the N-slot model and gets
   worse as N grows (more slots → more chances one is behind). Mitigation is
   monitoring + bounding N, not code: a per-slot staleness/lag alert is mandatory
-  for any Tier-B deployment, and N should be the minimum that meets the
+  for any Tier-B deployment — canonical form `pending_events > X or not
+  subscribed` on `partition_slot_status`, because a threshold-only alert skips
+  the NULL-lag rows of unsubscribed slots and misses incomplete setup — and N
+  should be the minimum that meets the
   parallelism target (see R2/R4 — N is also the read-amp multiplier, so the same
   "keep N small" pressure applies from two directions). A `pause`-blocked slot
   does *not* pin rotation (deferred events go to retry, not the held cursor),
@@ -441,8 +453,11 @@ coordinator**, so assignment is pull-based and self-balancing.
 calls `pgque.claim_slot(queue, consumer, k, worker, ttl)` — a **core** function
 (D7, D11) that arbitrates over the shared `partition_slot` rows, so Go/Python/TS/CLI
 cannot silently collide on a slot. A non-NULL return (the lease epoch) means the
-worker owns the slot; NULL means another worker holds a live lease and the worker
-moves to the next slot — it never blocks waiting on a busy slot. The first slot it
+worker owns the slot; NULL means the slot is not claimable right now — another
+worker holds a live lease, or the row is momentarily locked by another
+transaction (possibly this worker's own in-flight `receive`/`ack` renewal) —
+and the worker moves to the next slot; it never blocks waiting on a busy slot,
+and it must not infer loss of an existing lease from NULL. The first slot it
 claims, it owns: it calls `receive_partitioned(queue, consumer, k, N, worker, …)`
 for that slot and keeps it **sticky-until-idle** (re-poll the same slot while it
 has work; each `receive`/`ack` renews the lease, so a working slot never expires).
@@ -549,7 +564,10 @@ lease columns (`lease_owner`/`lease_until`/`epoch`) + subscription cursors
 (per-slot lag) + resize state. It has one row for every expected slot and an
 explicit `subscribed` boolean. A missing engine subscription reports
 `subscribed=false`, `last_tick=NULL`, and `pending_events=NULL`: zero would mean
-known caught-up state, while a missing cursor makes lag unknowable. Reading lease
+known caught-up state, while a missing cursor makes lag unknowable. The
+canonical alert is therefore `pending_events > X or not subscribed` — a
+threshold-only `pending_events > X` alert silently skips the NULL rows, so
+incomplete setup would never fire it. Reading lease
 columns rather than `pg_locks` means
 the view **works through poolers** (a backend pid behind PgBouncer was meaningless
 anyway). Zombie caveat: lease-expiry ≠ process-death, so a partitioned worker can
@@ -754,7 +772,9 @@ fencing) need two sessions and are covered by `tests/two_session_slot_claim.sh`
 - **US-12.6 — Observability.** As an operator, `pgque.partition_slot_status` shows
   each expected slot, whether its engine subscription exists, its `lease_owner`
   (null if unleased), and cursor lag, so I can alert on incomplete setup or a
-  stalled slot (rotation-pinning risk R7) — and it works through a pooler because
+  stalled slot (rotation-pinning risk R7) — canonical alert `pending_events > X
+  or not subscribed`, since a threshold-only alert skips the NULL-lag rows of
+  missing subscriptions — and it works through a pooler because
   it reads lease columns, not `pg_locks`.
   - *Accept:* the view has one row per expected slot with the right `n`,
     `subscribed=true` for materialized subscriptions; missing subscriptions show
