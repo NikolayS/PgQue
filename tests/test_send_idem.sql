@@ -183,6 +183,32 @@ exception when others then
     'unexpected null idem_key error: ' || sqlerrm;
 end $$;
 
+-- send_idem rejects a non-finite dedup ttl. interval 'infinity' (PG 17+)
+-- passes a plain "> 0" check but would create a dedup key that never expires
+-- and is never reaped by maint_idem -- unbounded pgque.idem growth. The docs
+-- promise "a positive finite interval"; enforce it. Gated: infinite intervals
+-- exist only on PG 17+ (older servers reject the literal at parse time).
+do $$
+declare
+  v_pg int := current_setting('server_version_num')::int;
+begin
+  if v_pg < 170000 then
+    raise notice 'SKIP: infinite intervals require PG 17+ (server %)', v_pg;
+    return;
+  end if;
+  begin
+    perform 1
+    from pgque.send_idem(
+      'test_idem', 'migrate', '{}', 'inf:k1', 'infinity'::interval);
+    raise exception 'send_idem(infinity ttl) should fail';
+  exception when others then
+    assert sqlerrm like '%positive finite interval%',
+      'infinite dedup ttl must be rejected naming the requirement, got: '
+      || sqlerrm;
+  end;
+  raise notice 'PASS: send_idem rejects a non-finite dedup ttl';
+end $$;
+
 -- Roles: send_idem is a producer surface (pgque_writer); the pgque.idem
 -- claim table is internal -- no app role may touch it directly
 do $$

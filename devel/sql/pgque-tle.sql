@@ -7958,8 +7958,10 @@ begin
     if i_idem_key is null then
         raise exception 'idem_key must not be null';
     end if;
-    if i_ttl is null or i_ttl <= interval '0' then
-        raise exception 'ttl must be a positive interval';
+    /* isfinite() guards interval 'infinity' (PG 17+): a non-finite ttl would
+       create a dedup key that never expires and is never reaped by maint_idem. */
+    if i_ttl is null or i_ttl <= interval '0' or not isfinite(i_ttl) then
+        raise exception 'dedup ttl must be a positive finite interval, got %', i_ttl;
     end if;
 
     select q.queue_id, q.queue_extra_maint
