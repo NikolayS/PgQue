@@ -331,7 +331,7 @@ begin
         for update;
 
         if v_n <> i_n then
-            raise exception 'consumer % on queue % is pinned to n=%; got n=% (unsubscribe all slots to change the slot count)',
+            raise exception 'consumer % on queue % is pinned to n=%; got n=% (tear down with pgque.unsubscribe_partitioned() to change the slot count)',
                 i_consumer, i_queue, v_n, i_n;
         end if;
 
@@ -368,7 +368,7 @@ begin
         v_registered := pgque.register_consumer_at(
             i_queue, v_slot_name, v_start_tick);
         if v_registered <> 1 then
-            raise exception 'consumer name % is already registered on queue %; cannot reuse it for partition slot %/%',
+            raise exception 'consumer name % is already registered on queue %; cannot reuse it for partition slot %/% (a legacy non-partitioned consumer with that name must be removed first with pgque.unsubscribe())',
                 v_slot_name, i_queue, v_slot, i_n;
         end if;
 
@@ -426,7 +426,7 @@ begin
     on conflict (queue_id, co_name) do update set n = pc.n
     returning pc.n into v_n;
     if v_n <> i_n then
-        raise exception 'consumer % on queue % is pinned to n=%; got n=% (unsubscribe all slots to change the slot count)',
+        raise exception 'consumer % on queue % is pinned to n=%; got n=% (tear down with pgque.unsubscribe_partitioned() to change the slot count)',
             i_consumer, i_queue, v_n, i_n;
     end if;
 
@@ -471,16 +471,22 @@ begin
             i_slot, i_consumer, i_queue, v_n - 1;
     end if;
 
-    /* Dropping one slot of a complete consumer is the documented repair /
-       controlled path, but it creates the incomplete-setup state that
-       subscribe_partitioned rejects -- never do it silently. */
+    /*
+     * Dropping one slot of a complete consumer is the documented repair /
+     * controlled path, but it creates the incomplete-setup state that
+     * subscribe_partitioned rejects -- never do it silently. Genuine slots
+     * are counted catalog-driven (partition_slot row AND subscription): a
+     * legacy consumer that merely shares the name shape does not count.
+     */
     select count(*) into v_subscribed
-    from pgque.subscription as s
-    join pgque.consumer as c on c.co_id = s.sub_consumer
-    where s.sub_queue = v_queue_id
-      and c.co_name in (
-          select pgque._slot_name(i_consumer, g, v_n)
-          from generate_series(0, v_n - 1) as g);
+    from pgque.partition_slot as ps
+    join pgque.consumer as c
+        on c.co_name = pgque._slot_name(i_consumer, ps.slot, v_n)
+    join pgque.subscription as s
+        on s.sub_queue = v_queue_id
+        and s.sub_consumer = c.co_id
+    where ps.queue_id = v_queue_id
+      and ps.co_name = i_consumer;
     if v_n > 1 and v_subscribed = v_n then
         raise warning 'dropping slot % leaves partitioned consumer % on queue % with incomplete setup; repair forward-only with pgque.subscribe_slot() or tear down with pgque.unsubscribe_partitioned()',
             i_slot, i_consumer, i_queue;
@@ -493,13 +499,17 @@ begin
       and co_name = i_consumer
       and slot = i_slot;
 
+    /* Same catalog-driven rule for last-slot cleanup: only genuine slots
+       keep the pinned-N row alive, never a name-shaped legacy consumer. */
     perform 1
-    from pgque.subscription as s
-    join pgque.consumer as c on c.co_id = s.sub_consumer
-    where s.sub_queue = v_queue_id
-      and c.co_name in (
-          select pgque._slot_name(i_consumer, g, v_n)
-          from generate_series(0, v_n - 1) as g);
+    from pgque.partition_slot as ps
+    join pgque.consumer as c
+        on c.co_name = pgque._slot_name(i_consumer, ps.slot, v_n)
+    join pgque.subscription as s
+        on s.sub_queue = v_queue_id
+        and s.sub_consumer = c.co_id
+    where ps.queue_id = v_queue_id
+      and ps.co_name = i_consumer;
     if not found then
         delete from pgque.partition_consumer
         where queue_id = v_queue_id
@@ -514,8 +524,11 @@ revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
  * every slot subscription and the pinned-N row in one transaction. Partial
  * setups (some slots already gone) tear down cleanly -- this is the recreate
  * path the incomplete-setup error points to -- and an absent consumer is a
- * no-op with a notice. NOTE: unregister_consumer cascades each slot's retry
- * rows and dead_letter audit (SPEC section 8, teardown).
+ * no-op with a notice. Only catalog-registered slots (partition_slot rows)
+ * are dropped: a legacy consumer that merely shares the name shape is left
+ * untouched (remove it with plain pgque.unsubscribe()). NOTE:
+ * unregister_consumer cascades each slot's retry rows and dead_letter audit
+ * (SPEC section 8, teardown).
  */
 create or replace function pgque.unsubscribe_partitioned(
     i_queue text, i_consumer text)
@@ -537,8 +550,14 @@ begin
         return;
     end if;
 
-    -- unregister_consumer returns 0 for an already-missing slot.
-    for v_slot in 0..v_n - 1 loop
+    -- unregister_consumer returns 0 for a slot whose subscription is gone.
+    for v_slot in
+        select ps.slot
+        from pgque.partition_slot as ps
+        where ps.queue_id = v_queue_id
+          and ps.co_name = i_consumer
+        order by ps.slot
+    loop
         perform pgque.unregister_consumer(
             i_queue, pgque._slot_name(i_consumer, v_slot, v_n));
     end loop;
@@ -866,6 +885,11 @@ revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pg
  * Canonical alert: pending_events > X or not subscribed. A threshold-only
  * alert (where pending_events > X) skips the NULL-lag rows of unsubscribed
  * slots, so it never sees incomplete setup.
+ *
+ * Classification is catalog-driven, like the consume API: a slot counts as
+ * subscribed only when its partition_slot row AND its engine subscription
+ * both exist. A legacy ordinary consumer that merely shares the name shape
+ * ("C#k/N") is never attributed to the slot.
  */
 create or replace view pgque.partition_slot_status as
 select
@@ -893,7 +917,8 @@ left join pgque.partition_slot as ps
     and ps.co_name = pc.co_name
     and ps.slot = gs.slot
 left join pgque.consumer as c
-    on c.co_name = pgque._slot_name(pc.co_name, gs.slot, pc.n)
+    on ps.slot is not null
+    and c.co_name = pgque._slot_name(pc.co_name, gs.slot, pc.n)
 left join pgque.subscription as s
     on s.sub_queue = pc.queue_id
     and s.sub_consumer = c.co_id

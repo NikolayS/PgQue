@@ -273,10 +273,15 @@ optimization is future (R6).
   inverse of `subscribe_partitioned`: one transaction drops every slot
   subscription and the pinned-N row (lease rows cascade via FK). It succeeds on
   partial setups — it is the recreate path the incomplete-setup error names —
-  and an absent consumer is a notice-level no-op. `unsubscribe_slot` removes one
+  and an absent consumer is a notice-level no-op. It drops only
+  catalog-registered slots (`partition_slot` rows): a legacy ordinary consumer
+  that merely shares the name shape survives, with its cursor history, and is
+  removed with plain `unsubscribe`. `unsubscribe_slot` removes one
   slot (the `partition_slot` and `partition_block` FKs cascade); on a complete
   consumer it emits a WARNING, because it creates exactly the incomplete-setup
-  state `subscribe_partitioned` rejects. Note `unregister_consumer` cascades
+  state `subscribe_partitioned` rejects; its completeness/last-slot accounting
+  is likewise catalog-driven, so a legacy name-shaped subscription never keeps
+  the pinned-N row alive. Note `unregister_consumer` cascades
   `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
   documented.
 - **Grants:** producer → `pgque_writer`; `subscribe_partitioned`/`subscribe_slot`/`unsubscribe_slot`/`unsubscribe_partitioned`/
@@ -567,7 +572,11 @@ explicit `subscribed` boolean. A missing engine subscription reports
 known caught-up state, while a missing cursor makes lag unknowable. The
 canonical alert is therefore `pending_events > X or not subscribed` — a
 threshold-only `pending_events > X` alert silently skips the NULL rows, so
-incomplete setup would never fire it. Reading lease
+incomplete setup would never fire it. Classification is catalog-driven, the
+same way the consume API classifies: a slot counts as `subscribed` only when
+its `partition_slot` row AND its engine subscription both exist — a legacy
+ordinary consumer that merely shares the name shape (`"C#k/N"`, creatable on
+older installs) is never attributed to the slot. Reading lease
 columns rather than `pg_locks` means
 the view **works through poolers** (a backend pid behind PgBouncer was meaningless
 anyway). Zombie caveat: lease-expiry ≠ process-death, so a partitioned worker can

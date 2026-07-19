@@ -348,3 +348,106 @@ begin
   perform pgque.drop_queue('partition_teardown');
   raise notice 'PASS: whole-consumer teardown is atomic, partial-safe, idempotent';
 end $$;
+
+/*
+ * Legacy name-shaped consumers: an ordinary engine consumer literally named
+ * 'workers#0/2' (creatable on older installs) must never be classified as a
+ * partition slot. Classification is catalog-driven -- partition_consumer AND
+ * the exact partition_slot row -- the same way the consume API classifies,
+ * never by name shape alone.
+ */
+do $$
+begin
+  perform pgque.create_queue('partition_legacy');
+  -- The legacy ordinary consumer, name-shaped like slot 0 of workers/2.
+  perform pgque.register_consumer('partition_legacy', 'workers#0/2');
+  -- A genuine repair-path slot pins n=2 alongside it.
+  perform pgque.subscribe_slot('partition_legacy', 'workers', 1, 2);
+end $$;
+
+do $$
+declare
+  v_raised boolean := false;
+begin
+  assert (
+    select not subscribed and last_tick is null and pending_events is null
+    from pgque.partition_slot_status
+    where queue_name = 'partition_legacy'
+      and consumer = 'workers'
+      and slot = 0
+  ), 'a legacy name-shaped consumer must not report as a subscribed slot';
+  assert (
+    select subscribed
+    from pgque.partition_slot_status
+    where queue_name = 'partition_legacy'
+      and consumer = 'workers'
+      and slot = 1
+  ), 'the genuine slot must stay subscribed';
+
+  -- The view and the API must give the same answer: incomplete (1 of 2).
+  begin
+    perform pgque.subscribe_partitioned('partition_legacy', 'workers', 2);
+  exception when others then
+    v_raised := true;
+    assert sqlerrm like '%incomplete%'
+      and sqlerrm like '%1 of 2%',
+      format('legacy state must read as incomplete, got: %s', sqlerrm);
+  end;
+  assert v_raised, 'the view and the API must agree the setup is incomplete';
+end $$;
+
+/*
+ * Teardown must drop only catalog-registered slots: the legacy consumer (and
+ * its cursor history) survives and is removed with plain pgque.unsubscribe().
+ */
+do $$
+begin
+  perform pgque.unsubscribe_partitioned('partition_legacy', 'workers');
+  assert not exists (
+    select 1
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where q.queue_name = 'partition_legacy'
+      and pc.co_name = 'workers'
+  ), 'teardown must remove the pinned-N row despite the legacy consumer';
+  assert exists (
+    select 1
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where q.queue_name = 'partition_legacy'
+      and c.co_name = 'workers#0/2'
+  ), 'teardown must not destroy a legacy consumer that shares the name shape';
+end $$;
+
+/*
+ * Same catalog-driven rule for last-slot cleanup in unsubscribe_slot: after
+ * the only genuine slot is dropped, a legacy name-shaped subscription must
+ * not keep the pinned-N row alive (that state gave only circular advice).
+ */
+do $$
+begin
+  perform pgque.subscribe_slot('partition_legacy', 'workers', 1, 2);
+  perform pgque.unsubscribe_slot('partition_legacy', 'workers', 1);
+  assert not exists (
+    select 1
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where q.queue_name = 'partition_legacy'
+      and pc.co_name = 'workers'
+  ), 'a legacy name-shaped subscription must not keep the pinned-N row alive';
+
+  -- Removing the legacy consumer clears the way for atomic setup.
+  perform pgque.unsubscribe('partition_legacy', 'workers#0/2');
+  perform pgque.subscribe_partitioned('partition_legacy', 'workers', 2);
+  assert (
+    select count(*) = 2 and bool_and(subscribed)
+    from pgque.partition_slot_status
+    where queue_name = 'partition_legacy'
+      and consumer = 'workers'
+  ), 'plain unsubscribe of the legacy consumer must unblock atomic setup';
+
+  perform pgque.unsubscribe_partitioned('partition_legacy', 'workers');
+  perform pgque.drop_queue('partition_legacy');
+  raise notice 'PASS: legacy name-shaped consumers are never classified as slots';
+end $$;
