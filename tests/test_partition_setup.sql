@@ -184,8 +184,8 @@ begin
       where slot <> v_slot
         and (pg_catalog.hashtextextended(partition_key, 0) % 3 + 3) % 3 = v_slot
     ), format('slot %s events must not be delivered by another slot', v_slot);
-    perform pgque.unsubscribe_slot('partition_setup_atomic', 'workers', v_slot);
   end loop;
+  perform pgque.unsubscribe_partitioned('partition_setup_atomic', 'workers');
   perform pgque.drop_queue('partition_setup_atomic');
   raise notice 'PASS: atomic setup preserves all post-setup slot histories';
 end $$;
@@ -264,4 +264,87 @@ begin
     'partition_setup_rollback', 'workers#1/3');
   perform pgque.drop_queue('partition_setup_rollback');
   raise notice 'PASS: failed atomic setup rolls back all partial state';
+end $$;
+
+/*
+ * Whole-consumer teardown: unsubscribe_partitioned is the inverse of
+ * subscribe_partitioned. A complete consumer tears down atomically, and a
+ * fresh setup with a different slot count works afterward.
+ */
+do $$
+begin
+  perform pgque.create_queue('partition_teardown');
+  perform pgque.subscribe_partitioned('partition_teardown', 'workers', 3);
+end $$;
+
+set role pgque_reader;
+select pgque.unsubscribe_partitioned('partition_teardown', 'workers');
+reset role;
+
+do $$
+begin
+  assert not exists (
+    select 1
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where q.queue_name = 'partition_teardown'
+      and pc.co_name = 'workers'
+  ), 'teardown must remove the pinned-N row';
+  assert not exists (
+    select 1
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where q.queue_name = 'partition_teardown'
+      and c.co_name like 'workers#%/3'
+  ), 'teardown must remove every slot subscription';
+  assert not exists (
+    select 1
+    from pgque.partition_slot as ps
+    join pgque.queue as q on q.queue_id = ps.queue_id
+    where q.queue_name = 'partition_teardown'
+      and ps.co_name = 'workers'
+  ), 'teardown must remove every lease row';
+
+  perform pgque.subscribe_partitioned('partition_teardown', 'workers', 2);
+  assert (
+    select count(*) = 2 and bool_and(subscribed)
+    from pgque.partition_slot_status
+    where queue_name = 'partition_teardown'
+      and consumer = 'workers'
+  ), 'teardown must allow a fresh setup with a new slot count';
+end $$;
+
+/*
+ * Partial state (a slot already missing) must still tear down cleanly:
+ * teardown is the escape hatch the incomplete-setup error points to. An
+ * absent consumer is a no-op, never an error.
+ */
+do $$
+begin
+  -- Warns: this leaves the complete consumer with incomplete setup.
+  perform pgque.unsubscribe_slot('partition_teardown', 'workers', 1);
+  perform pgque.unsubscribe_partitioned('partition_teardown', 'workers');
+  assert not exists (
+    select 1
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where q.queue_name = 'partition_teardown'
+      and pc.co_name = 'workers'
+  ), 'partial teardown must remove the pinned-N row';
+  assert not exists (
+    select 1
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where q.queue_name = 'partition_teardown'
+      and c.co_name like 'workers#%/2'
+  ), 'partial teardown must remove the surviving slot subscriptions';
+
+  -- Absent consumer (just torn down, and one that never existed): no-op.
+  perform pgque.unsubscribe_partitioned('partition_teardown', 'workers');
+  perform pgque.unsubscribe_partitioned('partition_teardown', 'no_such');
+
+  perform pgque.drop_queue('partition_teardown');
+  raise notice 'PASS: whole-consumer teardown is atomic, partial-safe, idempotent';
 end $$;

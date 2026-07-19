@@ -7104,6 +7104,7 @@ revoke execute on all functions in schema pgque from public;
 --   pgque.subscribe_partitioned(queue, consumer, n)
 --   pgque.subscribe_slot(queue, consumer, slot, n)
 --   pgque.unsubscribe_slot(queue, consumer, slot)
+--   pgque.unsubscribe_partitioned(queue, consumer)
 --   pgque.claim_slot(queue, consumer, slot, worker, ttl)
 --   pgque.release_slot(queue, consumer, slot, worker)
 --   pgque.receive_partitioned(queue, consumer, slot, n, worker, max)
@@ -7443,7 +7444,7 @@ begin
             on s.sub_queue = v_queue_id
             and s.sub_consumer = c.co_id;
         if v_complete_slots <> i_n then
-            raise exception 'partitioned consumer % on queue % has incomplete setup (% of % slots subscribed); repair with pgque.subscribe_slot() or recreate it before producing',
+            raise exception 'partitioned consumer % on queue % has incomplete setup (% of % slots subscribed); repair with pgque.subscribe_slot() (forward-only: events ticked while a slot was missing stay lost) or recreate it via pgque.unsubscribe_partitioned() before producing',
                 i_consumer, i_queue, v_complete_slots, i_n;
         end if;
 
@@ -7547,6 +7548,7 @@ returns void as $$
 declare
     v_queue_id int4;
     v_n int4;
+    v_subscribed int4;
 begin
     select pc.n, q.queue_id into v_n, v_queue_id
     from pgque.partition_consumer as pc
@@ -7561,6 +7563,21 @@ begin
     if i_slot is null or i_slot < 0 or i_slot >= v_n then
         raise exception 'slot % out of range for consumer % on queue % (valid: 0..%)',
             i_slot, i_consumer, i_queue, v_n - 1;
+    end if;
+
+    /* Dropping one slot of a complete consumer is the documented repair /
+       controlled path, but it creates the incomplete-setup state that
+       subscribe_partitioned rejects -- never do it silently. */
+    select count(*) into v_subscribed
+    from pgque.subscription as s
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where s.sub_queue = v_queue_id
+      and c.co_name in (
+          select pgque._slot_name(i_consumer, g, v_n)
+          from generate_series(0, v_n - 1) as g);
+    if v_n > 1 and v_subscribed = v_n then
+        raise warning 'dropping slot % leaves partitioned consumer % on queue % with incomplete setup; repair forward-only with pgque.subscribe_slot() or tear down with pgque.unsubscribe_partitioned()',
+            i_slot, i_consumer, i_queue;
     end if;
 
     perform pgque.unregister_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, v_n));
@@ -7585,6 +7602,48 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
+
+/*
+ * Whole-consumer teardown -- the inverse of subscribe_partitioned. Drops
+ * every slot subscription and the pinned-N row in one transaction. Partial
+ * setups (some slots already gone) tear down cleanly -- this is the recreate
+ * path the incomplete-setup error points to -- and an absent consumer is a
+ * no-op with a notice. NOTE: unregister_consumer cascades each slot's retry
+ * rows and dead_letter audit (SPEC section 8, teardown).
+ */
+create or replace function pgque.unsubscribe_partitioned(
+    i_queue text, i_consumer text)
+returns void as $$
+declare
+    v_queue_id int4;
+    v_n int4;
+    v_slot int4;
+begin
+    select pc.n, q.queue_id into v_n, v_queue_id
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where q.queue_name = i_queue
+      and pc.co_name = i_consumer
+    for update of pc;
+    if not found then
+        raise notice 'partitioned consumer % on queue % does not exist; nothing to tear down',
+            i_consumer, i_queue;
+        return;
+    end if;
+
+    -- unregister_consumer returns 0 for an already-missing slot.
+    for v_slot in 0..v_n - 1 loop
+        perform pgque.unregister_consumer(
+            i_queue, pgque._slot_name(i_consumer, v_slot, v_n));
+    end loop;
+
+    -- Cascades the remaining partition_slot lease rows.
+    delete from pgque.partition_consumer
+    where queue_id = v_queue_id
+      and co_name = i_consumer;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.unsubscribe_partitioned(text, text) from public;
 
 -- ---------------------------------------------------------------------------
 -- Slot lease -- SPEC D7/D8/section 15
@@ -7958,6 +8017,7 @@ grant execute on function pgque.send(text, text, text, text)   to pgque_writer;
 grant execute on function pgque.subscribe_partitioned(text, text, int) to pgque_reader;
 grant execute on function pgque.subscribe_slot(text, text, int, int)   to pgque_reader;
 grant execute on function pgque.unsubscribe_slot(text, text, int)      to pgque_reader;
+grant execute on function pgque.unsubscribe_partitioned(text, text)    to pgque_reader;
 grant execute on function pgque.claim_slot(text, text, int, text, interval)    to pgque_reader;
 grant execute on function pgque.release_slot(text, text, int, text)            to pgque_reader;
 grant execute on function pgque.receive_partitioned(text, text, int, int, text, int) to pgque_reader;

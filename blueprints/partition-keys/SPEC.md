@@ -260,11 +260,17 @@ optimization is future (R6).
   `subscription` (`partition_block.sub_id → subscription.sub_consumer =
   dead_letter.dl_consumer_id`) — `sub_id` and `co_id` are different ID spaces
   (`dlq.sql:24,75-85`, `pgque.sql:170-183`); do not compare them directly.
-- **Teardown:** `unsubscribe_slot` removes the slot subscription (the
-  `partition_slot` and `partition_block` FKs cascade). Note `unregister_consumer`
-  cascades `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
+- **Teardown:** `unsubscribe_partitioned(queue, consumer)` is the whole-consumer
+  inverse of `subscribe_partitioned`: one transaction drops every slot
+  subscription and the pinned-N row (lease rows cascade via FK). It succeeds on
+  partial setups — it is the recreate path the incomplete-setup error names —
+  and an absent consumer is a notice-level no-op. `unsubscribe_slot` removes one
+  slot (the `partition_slot` and `partition_block` FKs cascade); on a complete
+  consumer it emits a WARNING, because it creates exactly the incomplete-setup
+  state `subscribe_partitioned` rejects. Note `unregister_consumer` cascades
+  `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
   documented.
-- **Grants:** producer → `pgque_writer`; `subscribe_partitioned`/`subscribe_slot`/`unsubscribe_slot`/
+- **Grants:** producer → `pgque_writer`; `subscribe_partitioned`/`subscribe_slot`/`unsubscribe_slot`/`unsubscribe_partitioned`/
   `receive_partitioned`/`ack_partitioned`/`nack_partitioned`/`claim_slot`/
   `release_slot` and `select` on `partition_slot_status` → `pgque_reader`;
   `partition_consumer`/`partition_slot`/`partition_block` revoked from all app

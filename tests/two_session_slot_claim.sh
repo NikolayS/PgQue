@@ -54,8 +54,7 @@ cleanup() {
   local exit_code=$?
 
   "${psql_base[@]}" --quiet --no-align --tuples-only --command="
-    select pgque.unsubscribe_slot('${queue_name}', 'w', 0);
-    select pgque.unsubscribe_slot('${queue_name}', 'w', 1);
+    select pgque.unsubscribe_partitioned('${queue_name}', 'w');
     select pgque.drop_queue('${queue_name}', true);
   " >/dev/null 2>&1 || true
   rm -rf -- "${workdir}" || true
@@ -272,4 +271,32 @@ if (( session3_status != 0 )); then
   exit 1
 fi
 
-echo "PASS: lease is exclusive across backends (outlives a dead one for its TTL); dead worker's slot recovered after TTL expiry; epoch bumped on takeover (fencing)"
+# --- partial unsubscribe must be non-silent --------------------------------
+# Dropping one slot of a COMPLETE consumer creates exactly the incomplete
+# setup subscribe_partitioned rejects; it must succeed but WARN.
+set +e
+unsub_warn=$("${psql_base[@]}" --quiet --no-align --tuples-only \
+  --command="select pgque.unsubscribe_slot('${queue_name}', 'w', 0)" \
+  2>&1 >/dev/null)
+unsub_status=$?
+set -e
+if (( unsub_status != 0 )); then
+  echo "FAIL: unsubscribe_slot on a complete consumer must succeed" >&2
+  echo "${unsub_warn}" >&2
+  exit 1
+fi
+if ! grep -q "WARNING.*incomplete" <<<"${unsub_warn}"; then
+  echo "FAIL: partial unsubscribe of a complete consumer must warn about incomplete setup" >&2
+  echo "captured stderr: ${unsub_warn}" >&2
+  exit 1
+fi
+
+# Whole-consumer teardown succeeds on the now-partial consumer.
+"${psql_base[@]}" --quiet --no-align --tuples-only \
+  --command="select pgque.unsubscribe_partitioned('${queue_name}', 'w')" \
+  >/dev/null || {
+  echo "FAIL: unsubscribe_partitioned must tear down a partial consumer" >&2
+  exit 1
+}
+
+echo "PASS: lease is exclusive across backends (outlives a dead one for its TTL); dead worker's slot recovered after TTL expiry; epoch bumped on takeover (fencing); partial unsubscribe warns; whole-consumer teardown works on partial state"
