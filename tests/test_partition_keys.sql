@@ -688,8 +688,9 @@ begin
   end;
   assert v_raised, 'guard: claim_slot with ttl < 1 second must raise';
 
-  -- Infinite leases cannot recover after a crashed worker (PG19+ syntax).
-  if current_setting('server_version_num')::int >= 190000 then
+  -- Infinite leases cannot recover after a crashed worker
+  -- ('infinity'::interval requires PG 17+).
+  if current_setting('server_version_num')::int >= 170000 then
     v_raised := false;
     begin
       execute $sql$
