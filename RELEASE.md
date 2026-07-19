@@ -140,8 +140,11 @@ alone does not validate that their manifest entries are current.
 
 The release-prep PR must include a reviewed `release-notes-0.3.0.md` covering
 breaking or behavior changes, upgrade instructions, the pg_tle update path,
-and any known limitations. Do not rely on automatically generated notes for a
-release with migration-sensitive changes.
+and any known limitations. The notes must also cover the devel-channel pg_tle
+case: a database registered at an `X.Y.Z-devel` version has no tested update
+path to the stable release and the installer refuses it safely, so spell out
+the manual migration path for those operators. Do not rely on automatically
+generated notes for a release with migration-sensitive changes.
 
 After the release-prep PR is merged and its `main` checks pass, tag that exact
 commit and create the GitHub release from the reviewed notes:
@@ -202,3 +205,36 @@ Merge that PR normally; never regenerate or overwrite the stable directory
 during the restore step. The existing release tag remains immutable and must
 continue to expose the stable channel, stable paths, and tag-pinned source
 links; do not move the tag or apply the development reset to its contents.
+
+## Open the next development cycle
+
+`--restore-devel` intentionally re-stamps the living tree to `0.3.0-devel`,
+which SemVer-orders *before* the released `0.3.0`; left there, a post-release
+`main` build is indistinguishable from a pre-release one. So immediately after
+the tag is published, advance the devel baseline to the next minor `-devel`
+version (after releasing `0.3.0`, use `0.4.0-devel`). Do this in the
+return-to-development PR, or in an immediate follow-up, and change these
+places together so the tree stays self-consistent:
+
+- the `pgque.version()` literal in
+  `devel/sql/pgque-additions/lifecycle.sql` (the `return '0.3.0-devel';` line,
+  currently line 452);
+- the two regenerated devel artifacts `devel/sql/pgque.sql` and
+  `devel/sql/pgque-tle.sql` — rerun the generator (`bash build/transform.sh`)
+  after stamping the literal; never hand-edit their `-- Version:` headers;
+- the hardcoded version literals in `tests/test_release_promotion.sh` (its
+  `0.3.0` and `0.3.0-devel` fixtures: the self-consistency checks around lines
+  71, 74, and 79, and the promote/restore assertions around lines 112-160);
+- the `test_pgque_config` fallback default in `tests/test_pgque_config.sql`
+  (the `\set expected_pgque_version 0.3.0-devel` line, currently line 6).
+
+In the same cycle, move the tested pg_tle update baseline forward so the next
+package advertises a data-safe update path from the version you just released:
+
+- bump `PGTLE_UPGRADE_FROM_VERSION` in `build/transform.sh` (currently line
+  1212, set to `0.2.0`) to the just-released version (after releasing `0.3.0`,
+  set it to `0.3.0`); the update guard rejects any other source version, so
+  leaving it stale would ship an update path from the retired version only and
+  refuse legitimate upgraders;
+- extend or adjust `tests/test_tle_upgrade.sql` to exercise the data-preserving
+  update from that new baseline instead of the retired one.
