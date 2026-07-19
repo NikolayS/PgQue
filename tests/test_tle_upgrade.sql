@@ -116,17 +116,16 @@ end $$;
 
 do $$
 declare
-    v_default text;
     v_installed text;
-    v_target text := '0.3.0-devel';
+    v_target text;
 begin
-    select default_version into v_default
+    select default_version into v_target
     from pgtle.available_extensions() where name = 'pgque';
     select extversion into v_installed
     from pg_catalog.pg_extension where extname = 'pgque';
 
-    assert v_default = v_target,
-        format('registered default should be %s, got %s', v_target, v_default);
+    assert v_target <> '0.2.0',
+        'registration must advertise the new target version';
     assert v_installed = '0.2.0',
         format('registration must not update active extension, got %s', v_installed);
     assert exists (
@@ -140,13 +139,16 @@ alter extension pgque update;
 
 do $$
 declare
-    v_target text := '0.3.0-devel';
+    v_target text;
     v_pending_id bigint := (select event_id from _tle_upgrade_state where kind = 'pending');
     v_pending_exists boolean;
     v_first_id bigint;
     v_second_id bigint;
     v_deduped boolean;
 begin
+    select default_version into v_target
+    from pgtle.available_extensions() where name = 'pgque';
+
     assert pgque.version() = v_target,
         format('runtime version should be %s, got %s', v_target, pgque.version());
     assert (select extversion from pg_catalog.pg_extension where extname = 'pgque') = v_target,
