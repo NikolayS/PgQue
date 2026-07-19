@@ -58,6 +58,53 @@ begin
   perform pgque.drop_queue('partition_limit_atomic_reject', true);
 end $$;
 
+/*
+ * Idempotent re-install must not abort with a bare check violation on rows
+ * created before the n cap existed: the install's pre-flight guard has to
+ * name the offending consumer and tell the operator how to fix it.
+ */
+do $$
+declare
+  v_raised boolean := false;
+begin
+  perform pgque.create_queue('partition_limit_precap');
+  alter table pgque.partition_consumer
+    drop constraint partition_consumer_n_check;
+  insert into pgque.partition_consumer (queue_id, co_name, n)
+  select queue_id, 'precap_workers', 300
+  from pgque.queue
+  where queue_name = 'partition_limit_precap';
+
+  begin
+    perform pgque._partition_n_cap_guard();
+  exception
+    when others then
+      v_raised := true;
+      assert sqlstate = 'P0001'
+        and sqlerrm like '%precap_workers%'
+        and sqlerrm like '%partition_limit_precap%'
+        and sqlerrm like '%n=300%'
+        and sqlerrm like '%256%'
+        and sqlerrm like '%recreate%',
+        format('n-cap guard error must be actionable, got [%s] %s',
+          sqlstate, sqlerrm);
+  end;
+  assert v_raised, 'n-cap guard must reject a pre-cap row';
+
+  delete from pgque.partition_consumer as pc
+  using pgque.queue as q
+  where pc.queue_id = q.queue_id
+    and q.queue_name = 'partition_limit_precap';
+  alter table pgque.partition_consumer
+    add constraint partition_consumer_n_check check (n between 1 and 256);
+
+  -- Clean data passes the guard silently.
+  perform pgque._partition_n_cap_guard();
+
+  perform pgque.drop_queue('partition_limit_precap', true);
+  raise notice 'PASS: pre-cap n rows are caught by the install guard';
+end $$;
+
 do $$
 declare
   v_raised boolean := false;

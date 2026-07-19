@@ -68,7 +68,34 @@ create table if not exists pgque.partition_consumer (
     primary key (queue_id, co_name)
 );
 
+/*
+ * Pre-flight guard for the constraint re-add below: a consumer created
+ * before the n cap existed would otherwise abort the install with a bare
+ * check-violation error. Name the row and the fix instead.
+ */
+create or replace function pgque._partition_n_cap_guard()
+returns void as $$
+declare
+    v_bad record;
+begin
+    select q.queue_name, pc.co_name, pc.n into v_bad
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where pc.n not between 1 and 256
+    order by q.queue_name, pc.co_name
+    limit 1;
+    if found then
+        raise exception 'cannot apply the 256-slot cap: partitioned consumer % on queue % has n=%; recreate it with a smaller slot count (drop every slot via pgque.unsubscribe_slot(), then pgque.subscribe_partitioned() with n <= 256), then re-run the install',
+            v_bad.co_name, v_bad.queue_name, v_bad.n;
+    end if;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
 /* Keep the constraint definition synchronized on idempotent installs. */
+do $$
+begin
+    perform pgque._partition_n_cap_guard();
+end $$;
 alter table pgque.partition_consumer
     drop constraint if exists partition_consumer_n_check;
 alter table pgque.partition_consumer
@@ -844,6 +871,7 @@ grant select on pgque.partition_slot_status to pgque_reader;
 grant select on pgque.partition_slot_status to pgque_admin;
 
 -- Internal helpers: SECURITY DEFINER callees only.
+revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer;
 revoke execute on function pgque._slot_name(text, int, int) from public, pgque_reader, pgque_writer;
 revoke execute on function pgque._slot_guard(text, text, int, int, text) from public, pgque_reader, pgque_writer;
 revoke execute on function pgque._slot_batch(text, text, int, int) from public, pgque_reader, pgque_writer;
