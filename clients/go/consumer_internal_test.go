@@ -154,6 +154,33 @@ func TestConsumer_AckUnknownPolicy_SkipsNack(t *testing.T) {
 	}
 }
 
+func TestConsumer_NullTypeAlwaysUsesUnknownPolicy(t *testing.T) {
+	client := &Client{}
+	stub := &stubBackend{
+		msg: Message{MsgID: 1, BatchID: 100, Type: "", Payload: ""},
+	}
+	var handlerCount int32
+
+	c := client.NewConsumer("dummy_queue", "dummy_consumer",
+		WithPollInterval(10*time.Millisecond))
+	c.backend = stub
+	c.Handle("", func(_ context.Context, _ Message) error {
+		atomic.AddInt32(&handlerCount, 1)
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_ = c.Start(ctx)
+
+	if got := atomic.LoadInt32(&handlerCount); got != 0 {
+		t.Fatalf("NULL/empty type invoked an empty-string handler %d times", got)
+	}
+	if got := atomic.LoadInt32(&stub.nackCount); got != 1 {
+		t.Fatalf("NULL/empty type must follow NackUnknown, got %d Nacks", got)
+	}
+}
+
 func TestConsumer_DefaultMaxMessagesRequestsWholeBatch(t *testing.T) {
 	client := &Client{}
 	stub := &stubBackend{}

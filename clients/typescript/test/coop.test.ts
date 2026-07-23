@@ -215,7 +215,7 @@ describe('Consumer with subconsumer (env-gated)', () => {
     });
     const seen: number[] = [];
     consumer.handle('job', async (msg) => {
-      const p = JSON.parse(msg.payload) as { v: number };
+      const p = JSON.parse(msg.payload!) as { v: number };
       seen.push(p.v);
     });
 
