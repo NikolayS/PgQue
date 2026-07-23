@@ -21,17 +21,14 @@ jobs:
 
       - name: Start PostgreSQL ${{ matrix.pg_version }}
         run: |
+          set -Eeuo pipefail
           docker run -d --name pgque-test \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
             postgres:${{ matrix.pg_version }}
 
-          # Wait for PG to be ready
-          for i in $(seq 1 30); do
-            docker exec pgque-test pg_isready -U postgres && break
-            sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          bash ci/wait-for-postgres.sh pgque-test
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -110,10 +107,7 @@ jobs:
             -p 5432:5432 \
             postgres:19beta1
 
-          for _ in $(seq 1 30); do
-            docker exec pgque-stable-smoke pg_isready -U postgres && break
-            sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          bash ci/wait-for-postgres.sh pgque-stable-smoke
 
       - name: Install frozen stable pgque
         run: |
@@ -459,7 +453,7 @@ jobs:
           docker run -d --name "${PG_CONTAINER}" --network "${PGTT_NET}" \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
-            postgres:${PG_VERSION}
+            "postgres:${PG_VERSION}"
 
           ready=0
           for _ in $(seq 1 60); do
@@ -533,12 +527,9 @@ jobs:
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:${PG_VERSION}
+            "postgres:${PG_VERSION}"
 
-          for i in $(seq 1 30); do
-            docker exec pgque-python-test pg_isready -U postgres && break
-            sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          bash ci/wait-for-postgres.sh pgque-python-test
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -590,12 +581,9 @@ jobs:
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:${PG_VERSION}
+            "postgres:${PG_VERSION}"
 
-          for i in $(seq 1 30); do
-            docker exec pgque-go-test pg_isready -U postgres && break
-            sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          bash ci/wait-for-postgres.sh pgque-go-test
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -634,12 +622,9 @@ jobs:
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:${PG_VERSION}
+            "postgres:${PG_VERSION}"
 
-          for i in $(seq 1 30); do
-            docker exec pgque-ts-test pg_isready -U postgres && break
-            sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          bash ci/wait-for-postgres.sh pgque-ts-test
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -692,12 +677,9 @@ jobs:
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:${PG_VERSION}
+            "postgres:${PG_VERSION}"
 
-          for i in $(seq 1 30); do
-            docker exec pgque-ruby-test pg_isready -U postgres && break
-            sleep 1
-          done || { echo "PG not ready after 30 seconds"; exit 1; }
+          bash ci/wait-for-postgres.sh pgque-ruby-test
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -737,6 +719,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Verify PostgreSQL readiness checks
+        run: bash tests/test_ci_readiness.sh
 
       - name: Build
         run: bash build/transform.sh
