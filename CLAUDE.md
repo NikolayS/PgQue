@@ -133,8 +133,10 @@ pgque/
     SPEC.md            -- PgQ internals reference (from pgq repo)
     PHASES.md          -- what ships in v0.1 vs experimental
   sql/                 -- source SQL files
-    pgque.sql  -- single-file install (built from sources)
-    pgque-unpgque.sql
+    pgque.sql               -- single-file install (built from sources)
+    pgque_uninstall.sql     -- uninstall script
+    pgque-tle.sql           -- pg_tle packaging of the install
+    pgque-tle-uninstall.sql -- pg_tle uninstall script
   tests/               -- regression tests (sql/ + expected/)
   docs/                -- user-facing documentation (flat layout)
     README.md          -- index of the docs directory
