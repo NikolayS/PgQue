@@ -7,9 +7,8 @@
 
 create extension if not exists dblink;
 
-/* Expiry tests need real transaction boundaries: now() is frozen for the
-   whole transaction, so pg_sleep() inside one do-block never expires a key.
-   This temp table carries event ids across the separate transactions. */
+/* This temp table carries event ids across the transaction boundaries used
+   by the expiry tests. */
 create temporary table idem_state (k text primary key, v bigint);
 
 -- Setup
@@ -51,6 +50,74 @@ begin
     'fresh send_idem should insert exactly 1 event, got ' || v_count;
 
   raise notice 'PASS: US-13.1 fresh send inserts, deduped=false';
+end $$;
+
+/* A claim's TTL starts when send_idem runs, not when its surrounding
+   transaction began. The committed claim must therefore still be live even
+   when the transaction was already older than the requested TTL. */
+do $$
+declare
+  v_eid bigint;
+  v_dedup boolean;
+  v_expires_at timestamptz;
+begin
+  perform pg_sleep(1.25);
+
+  select s.event_id, s.deduped
+  into v_eid, v_dedup
+  from pgque.send_idem(
+    'test_idem', 'migrate', '{"late":1}', 'late-txn:k1',
+    '1 second') s;
+  select expires_at into v_expires_at
+  from pgque.idem as k
+  join pgque.queue as q using (queue_id)
+  where q.queue_name = 'test_idem'
+    and k.idem_key = 'late-txn:k1';
+
+  assert not v_dedup, 'first late-transaction send must insert';
+  assert v_expires_at > clock_timestamp(),
+    format('new claim must expire after send time, got expires_at=%s now=%s',
+      v_expires_at, clock_timestamp());
+  insert into idem_state values ('late_txn_eid', v_eid);
+end $$;
+
+do $$
+declare
+  v_eid bigint;
+  v_dedup boolean;
+  v_first bigint;
+begin
+  select v into v_first from idem_state where k = 'late_txn_eid';
+  select s.event_id, s.deduped
+  into v_eid, v_dedup
+  from pgque.send_idem(
+    'test_idem', 'migrate', '{"late":1}', 'late-txn:k1',
+    '100 milliseconds') s;
+
+  assert v_dedup and v_eid = v_first,
+    'immediate post-commit retry must deduplicate a late-transaction send';
+  raise notice 'PASS: idempotency TTL starts at send time, not transaction start';
+end $$;
+
+-- Infinite TTLs create claims that maintenance can never reclaim (PG19+).
+do $$
+declare
+  v_raised boolean := false;
+begin
+  if current_setting('server_version_num')::int >= 190000 then
+    begin
+      execute $q$
+        select * from pgque.send_idem(
+          'test_idem', 'migrate', '{}', 'infinite:k1', 'infinity'::interval)
+      $q$;
+    exception
+      when others then
+        v_raised := true;
+        assert sqlerrm = 'ttl must be a positive finite interval',
+          format('unexpected infinite-TTL error: %s', sqlerrm);
+    end;
+    assert v_raised, 'send_idem must reject an infinite TTL';
+  end if;
 end $$;
 
 -- US-13.1: duplicate within window returns the ORIGINAL event_id,
