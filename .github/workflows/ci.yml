@@ -262,6 +262,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # The upgrade test installs the immutable v0.2.0 release artifact
+          # as its source fixture. Keep tags/history available even after
+          # sql/ is promoted to a newer stable release.
+          fetch-depth: 0
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -305,6 +309,60 @@ jobs:
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_tle_install.sql
+
+      - name: Run data-preserving pg_tle upgrade test
+        run: |
+          set -Eeuo pipefail
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=postgres \
+            --set=ON_ERROR_STOP=1 --command='create database pgque_tle_upgrade'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+            --set=ON_ERROR_STOP=1 --command='create extension pg_tle'
+          git show v0.2.0:sql/pgque-tle.sql \
+            | PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+                --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+                --set=ON_ERROR_STOP=1
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+            --set=ON_ERROR_STOP=1 --command='create extension pgque'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=pgque_tle_upgrade \
+            --set=ON_ERROR_STOP=1 --file=tests/test_tle_upgrade.sql
+
+      - name: Reject an untested pg_tle update without data loss
+        run: |
+          set -Eeuo pipefail
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres --dbname=postgres \
+            --set=ON_ERROR_STOP=1 \
+            --command='create database pgque_tle_unsupported'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres \
+            --dbname=pgque_tle_unsupported \
+            --set=ON_ERROR_STOP=1 --command='create extension pg_tle'
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres \
+            --dbname=pgque_tle_unsupported \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_tle_unsupported_upgrade_fixture.sql
+          if upgrade_output=$(PAGER=cat PGPASSWORD=pgque_test \
+            psql --no-psqlrc \
+              --host=localhost \
+              --username=postgres \
+              --dbname=pgque_tle_unsupported \
+              --set=ON_ERROR_STOP=1 \
+              --file=devel/sql/pgque-tle.sql 2>&1); then
+            echo 'FAIL: untested pg_tle update path was accepted'
+            exit 1
+          fi
+          grep --fixed-strings 'has no tested pg_tle update path' \
+            <<<"${upgrade_output}"
+          PAGER=cat PGPASSWORD=pgque_test psql --no-psqlrc \
+            --host=localhost --username=postgres \
+            --dbname=pgque_tle_unsupported \
+            --set=ON_ERROR_STOP=1 \
+            --file=tests/test_tle_unsupported_upgrade_assertions.sql
 
       - name: Run full regression suite via pg_tle install
         run: |

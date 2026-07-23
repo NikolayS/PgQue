@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2129
+# The installer is assembled incrementally from ordered source sections.
 set -Eeuo pipefail
+IFS=$'\n\t'
 
 # transform.sh -- Mechanical transformation of PgQ sources into pgque
 #
@@ -92,6 +95,8 @@ apply_schema_rename() {
   #
   # Strategy: apply targeted replacements in order of specificity.
   local content="$1"
+  local pgq_literal="'pgq'"
+  local pgque_literal="'pgque'"
 
   # 1. Role names: pgq_reader -> pgque_reader, etc.
   content=$(echo "$content" | sed \
@@ -105,7 +110,7 @@ apply_schema_rename() {
 
   # 3. String literals referencing the schema name:
   #    'pgq' -> 'pgque' (used in information_schema queries, extname, etc.)
-  content=$(echo "$content" | sed "s/'pgq'/'pgque'/g")
+  content="${content//${pgq_literal}/${pgque_literal}}"
 
   # 4. Standalone pgq as schema name in CREATE/DROP SCHEMA, GRANT ON SCHEMA, etc.
   #    "schema pgq" -> "schema pgque"
@@ -139,7 +144,7 @@ apply_txid_function_renames() {
 apply_txid_snapshot_type_rename() {
   # Replace txid_snapshot type with pg_snapshot in column defs and signatures.
   local content="$1"
-  content=$(echo "$content" | sed 's/txid_snapshot/pg_snapshot/g')
+  content="${content//txid_snapshot/pg_snapshot}"
   echo "$content"
 }
 
@@ -302,7 +307,7 @@ for src_file in "${SOURCE_FILES[@]}"; do
   fi
 
   # Determine output filename (rename pgq. prefix in filenames)
-  out_file=$(echo "${src_file}" | sed 's/pgq\./pgque./g')
+  out_file="${src_file//pgq./pgque.}"
   out_path="${OUTPUT_DIR}/${out_file}"
 
   # Read source
@@ -1206,6 +1211,10 @@ echo "=== Packaging pg_tle install script ==="
 
 PGTLE_FILE="${SQL_DIR}/pgque-tle.sql"
 PGTLE_DOLLAR_TAG="pgque_extension_body"
+# This is the prior pg_tle registration from which the current idempotent SQL
+# body is exercised as an extension update in CI. Do not silently register an
+# update from an untested version: ALTER EXTENSION must be a data-safe promise.
+PGTLE_UPGRADE_FROM_VERSION="0.2.0"
 
 # Sanity check: neither dollar-quote tag (the body tag and the outer wrapper
 # tag) may appear in the body content, otherwise the literal terminates early
@@ -1284,47 +1293,61 @@ end \$\$;
 
 -- Step 3: register the extension body with pg_tle.
 -- Same version already registered -> no-op (so deployment scripts can rerun).
--- Different version already registered -> raise so the user goes through the
--- explicit uninstall + reinstall path; pg_tle has no managed upgrade path
--- between unrelated registrations of an extension.
+-- A tested previous version -> register the standalone target version plus a
+-- data-preserving ALTER EXTENSION update path, then make the target default.
 do \$wrapper\$
 declare
     existing_version text;
-begin
-    select default_version into existing_version
-    from pgtle.available_extensions()
-    where name = 'pgque';
-
-    if existing_version = '${PGQUE_VERSION}' then
-        raise notice 'pgque ${PGQUE_VERSION} already registered with pg_tle; skipping install_extension().';
-        return;
-    end if;
-
-    if existing_version is not null then
-        raise exception 'pgque is already registered with pg_tle at version % '
-            'but this script registers version %. Run '
-            '${SQL_REL}/pgque-tle-uninstall.sql first to remove the existing '
-            'registration, then re-run this script.',
-            existing_version, '${PGQUE_VERSION}';
-    end if;
-
-    perform pgtle.install_extension(
-        'pgque',
-        '${PGQUE_VERSION}',
-        'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
+    extension_sql text :=
 \$${PGTLE_DOLLAR_TAG}\$
 HEADER
 
 cat "${INSTALL_FILE}" >> "${PGTLE_FILE}"
 
 cat >> "${PGTLE_FILE}" << FOOTER
-\$${PGTLE_DOLLAR_TAG}\$
+\$${PGTLE_DOLLAR_TAG}\$;
+begin
+    select default_version into existing_version
+    from pgtle.available_extensions()
+    where name = 'pgque';
+
+    if existing_version = '${PGQUE_VERSION}' then
+        raise notice 'pgque ${PGQUE_VERSION} already registered with pg_tle; no registration changes needed.';
+        return;
+    end if;
+
+    if existing_version is null then
+        perform pgtle.install_extension(
+            'pgque',
+            '${PGQUE_VERSION}',
+            'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
+            extension_sql
+        );
+        return;
+    end if;
+
+    if existing_version <> '${PGTLE_UPGRADE_FROM_VERSION}' then
+        raise exception 'pgque has no tested pg_tle update path from version % to %. '
+            'Keep the existing extension installed and consult the PgQue release notes; '
+            'do not uninstall it because that would drop queue data.',
+            existing_version, '${PGQUE_VERSION}';
+    end if;
+
+    -- One transaction makes interrupted/repeated registration safe: either the
+    -- target version, update path, and default all appear, or none of them do.
+    perform pgtle.install_extension_version_sql(
+        'pgque', '${PGQUE_VERSION}', extension_sql
     );
+    perform pgtle.install_update_path(
+        'pgque', existing_version, '${PGQUE_VERSION}', extension_sql
+    );
+    perform pgtle.set_default_version('pgque', '${PGQUE_VERSION}');
 end \$wrapper\$;
 
 \\echo ''
 \\echo 'PgQue ${PGQUE_VERSION} registered with pg_tle.'
-\\echo 'Run create extension pgque; to materialise the schema in this database.'
+\\echo 'New install: run create extension pgque;'
+\\echo 'Existing extension: run alter extension pgque update;'
 FOOTER
 
 pgtle_lines=$(wc -l < "${PGTLE_FILE}")
@@ -1335,6 +1358,13 @@ pgtle_errors=0
 
 if ! grep -q 'pgtle.install_extension(' "${PGTLE_FILE}"; then
   echo "FAIL: pg_tle install script missing pgtle.install_extension() call"
+  pgtle_errors=$((pgtle_errors + 1))
+fi
+
+if ! grep -q 'pgtle.install_extension_version_sql(' "${PGTLE_FILE}" \
+   || ! grep -q 'pgtle.install_update_path(' "${PGTLE_FILE}" \
+   || ! grep -q 'pgtle.set_default_version(' "${PGTLE_FILE}"; then
+  echo "FAIL: pg_tle install script missing version/update/default registration calls"
   pgtle_errors=$((pgtle_errors + 1))
 fi
 

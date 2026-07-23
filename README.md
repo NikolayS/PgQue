@@ -242,6 +242,20 @@ Once pg_tle is loaded, register and create PgQue:
 create extension pgque;
 ```
 
+To upgrade an existing pg_tle installation, load the new release's wrapper
+and then let Postgres apply its registered, data-preserving update path:
+
+```sql
+\i sql/pgque-tle.sql
+alter extension pgque update;
+```
+
+The 0.3 package includes a tested update path from 0.2.0. The registration
+step does not change the active extension; queue data is migrated only by the
+explicit `alter extension`. If the wrapper reports that no tested path exists,
+keep the extension installed and consult the release notes -- do not run the
+uninstall script, because `drop extension pgque cascade` removes queue data.
+
 To uninstall: `\i sql/pgque-tle-uninstall.sql`.
 
 ## Roles and grants
