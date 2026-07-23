@@ -446,11 +446,16 @@ create or replace function pgque.release_slot(
 returns boolean as $$
 declare
     v_queue_id int4;
+    v_n int4;
     v_owner text;
+    v_batch_id bigint;
 begin
-    select ps.queue_id, ps.lease_owner into v_queue_id, v_owner
+    select ps.queue_id, ps.lease_owner, pc.n into v_queue_id, v_owner, v_n
     from pgque.partition_slot as ps
     join pgque.queue as q on q.queue_id = ps.queue_id
+    join pgque.partition_consumer as pc
+      on pc.queue_id = ps.queue_id
+     and pc.co_name = ps.co_name
     where q.queue_name = i_queue
       and ps.co_name = i_consumer
       and ps.slot = i_slot
@@ -462,6 +467,15 @@ begin
 
     if v_owner is null or v_owner <> i_worker then
         return false;
+    end if;
+
+    /* The lease is the process-to-ack fence. Clearing it with an open batch
+       would let a successor receive that same batch while this worker may
+       still be processing it. Crash recovery must go through lease expiry. */
+    v_batch_id := pgque._slot_batch(i_queue, i_consumer, i_slot, v_n);
+    if v_batch_id is not null then
+        raise exception 'cannot release slot % of consumer % on queue % while batch % is open; ack the batch first',
+            i_slot, i_consumer, i_queue, v_batch_id;
     end if;
 
     update pgque.partition_slot
