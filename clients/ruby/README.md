@@ -83,6 +83,20 @@ ticking from your application or an external scheduler — see the
 project [Installation](https://github.com/NikolayS/pgque#installation)
 section for both paths.
 
+### Event inputs
+
+`Pgque::Event` is an optional value object for carrying a payload and type
+together before sending:
+
+```ruby
+event = Pgque::Event.new(payload: { "order_id" => 42 }, type: "order.created")
+client.send("orders", event)
+```
+
+It accepts only `payload:` and `type:`. The receive-side `extra1` through
+`extra4` fields are not supported by this producer wrapper; unknown keywords
+such as `extra:` raise `ArgumentError`.
+
 ### Consumer options
 
 `Consumer.new(..., max_messages: ...)` controls the per-`receive` limit.

@@ -2,12 +2,11 @@
 
 module Pgque
   class Event
-    attr_reader :payload, :type, :extra
+    attr_reader :payload, :type
 
-    def initialize(payload:, type: "default", extra: {})
+    def initialize(payload:, type: "default")
       @payload = payload
       @type = type
-      @extra = extra
     end
   end
 end
