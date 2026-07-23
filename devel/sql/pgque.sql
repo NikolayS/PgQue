@@ -5345,11 +5345,42 @@ begin
     end if;
 end $$;
 
+/* A `#` name is a slot only when subscribe_slot materialized matching
+   partition metadata. Ordinary consumers created before `#` was reserved
+   remain ordinary consumers after upgrade. */
+create or replace function pgque._is_partition_slot_consumer(
+    i_queue_id int4,
+    i_consumer text)
+returns boolean as $$
+begin
+    if i_queue_id is null
+        or i_consumer is null
+        or to_regclass('pgque.partition_consumer') is null
+        or to_regclass('pgque.partition_slot') is null
+    then
+        return false;
+    end if;
+
+    return exists (
+        select 1
+        from pgque.partition_consumer as pc
+        join pgque.partition_slot as ps
+            on ps.queue_id = pc.queue_id
+            and ps.co_name = pc.co_name
+        where pc.queue_id = i_queue_id
+          and pc.co_name || '#' || ps.slot::text || '/' || pc.n::text = i_consumer
+    );
+end;
+$$ language plpgsql stable security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque._is_partition_slot_consumer(int4, text)
+    from public, pgque_reader, pgque_writer;
+
 -- pgque.receive() -- wraps next_batch + get_batch_events
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
 returns setof pgque.message as $$
 declare
+    v_queue_id int4;
     v_batch_id bigint;
     ev record;
     cnt int := 0;
@@ -5359,14 +5390,19 @@ begin
     end if;
 
     /*
-     * Guard the raw slot consumer. subscribe_slot reserves '#' (it rejects '#'
-     * in base consumer names), so a '#' name can only be a partition slot
-     * consumer "<consumer>#<slot>/<n>". The plain receive path applies neither
-     * the lease fence nor the hash filter, so it would hand back the whole
-     * unfiltered stream -- force callers onto the partitioned API.
+     * The plain receive path applies neither the lease fence nor the hash
+     * filter. Refuse cataloged slots while preserving ordinary `#` consumers
+     * that predate the reserved namespace.
      */
     if position('#' in i_consumer) > 0 then
-        raise exception 'consumer % is a partition slot consumer; use pgque.receive_partitioned()', i_consumer;
+        select q.queue_id
+        into v_queue_id
+        from pgque.queue as q
+        where q.queue_name = i_queue;
+
+        if pgque._is_partition_slot_consumer(v_queue_id, i_consumer) then
+            raise exception 'consumer % is a partition slot consumer; use pgque.receive_partitioned()', i_consumer;
+        end if;
     end if;
 
     -- Get next batch (may return NULL if no tick window is ready)
@@ -5403,20 +5439,29 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.ack(i_batch_id bigint)
 returns integer as $$
 declare
+    v_queue_id int4;
     v_cname text;
 begin
     /*
      * Guard the raw slot consumer (see pgque.receive). A partition slot batch
      * must be finished through the lease-fenced ack_partitioned(); plain ack()
      * lets a fenced zombie double-ack it. Resolve the batch's consumer and
-     * reject when its name carries the reserved '#'. An unknown batch id falls
-     * through to finish_batch(), preserving the pre-guard not-found behavior.
+     * reject when the partition catalogs identify it as a slot. An unknown
+     * batch id falls through to finish_batch(), preserving not-found behavior.
      */
-    select c.co_name into v_cname
+    select
+        s.sub_queue,
+        c.co_name
+    into
+        v_queue_id,
+        v_cname
     from pgque.subscription as s
     join pgque.consumer as c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
-    if found and position('#' in v_cname) > 0 then
+    if found
+        and position('#' in v_cname) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, v_cname)
+    then
         raise exception 'batch % belongs to partition slot consumer %; use pgque.ack_partitioned()', i_batch_id, v_cname;
     end if;
 
@@ -5495,6 +5540,7 @@ create or replace function pgque.nack(
     i_reason text default null)
 returns integer as $$
 declare
+    v_queue_id int4;
     v_cname text;
 begin
     /*
@@ -5503,11 +5549,19 @@ begin
      * nack_partitioned), not plain nack(). An unknown batch id falls through to
      * the shared core, which raises the same 'batch not found' as before.
      */
-    select c.co_name into v_cname
+    select
+        s.sub_queue,
+        c.co_name
+    into
+        v_queue_id,
+        v_cname
     from pgque.subscription as s
     join pgque.consumer as c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
-    if found and position('#' in v_cname) > 0 then
+    if found
+        and position('#' in v_cname) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, v_cname)
+    then
         raise exception 'batch % belongs to partition slot consumer %; retry slot batches via pgque.nack_partitioned()', i_batch_id, v_cname;
     end if;
 
@@ -7343,6 +7397,9 @@ returns void as $$
 declare
     v_queue_id int4;
     v_n int4;
+    v_slot_name text;
+    v_slot_materialized boolean;
+    v_registered int;
 begin
     if i_queue is null or i_queue = '' then
         raise exception 'queue name must not be empty';
@@ -7381,8 +7438,26 @@ begin
             i_consumer, i_queue, v_n, i_n;
     end if;
 
-    -- register_consumer is idempotent for an existing subscription.
-    perform pgque.register_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, i_n));
+    v_slot_name := pgque._slot_name(i_consumer, i_slot, i_n);
+    select exists (
+        select 1
+        from pgque.partition_slot as ps
+        where ps.queue_id = v_queue_id
+          and ps.co_name = i_consumer
+          and ps.slot = i_slot
+    ) into v_slot_materialized;
+
+    /*
+     * register_consumer returns zero for an existing subscription. That is
+     * idempotent only when this slot was already materialized; otherwise the
+     * generated name belongs to an ordinary consumer. Raising also rolls back
+     * a partition_consumer row inserted above.
+     */
+    v_registered := pgque.register_consumer(i_queue, v_slot_name);
+    if v_registered = 0 and not v_slot_materialized then
+        raise exception 'consumer name % is already registered as an ordinary consumer on queue %; cannot reuse it for partition slot %/%',
+            v_slot_name, i_queue, i_slot, i_n;
+    end if;
 
     -- Materialize the slot's lease row (unleased). Idempotent re-subscribe.
     insert into pgque.partition_slot (queue_id, co_name, slot)
