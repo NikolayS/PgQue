@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: "Build and validate without publishing"
+        description: "Build and validate without tagging or publishing"
         required: true
         default: true
         type: boolean
@@ -16,12 +16,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-ruby-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}
+      TAG_NAME: ruby/v${{ inputs.version }}
     defaults:
       run:
         working-directory: clients/ruby
@@ -29,6 +34,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -36,42 +43,66 @@ jobs:
           working-directory: clients/ruby
           bundler-cache: true
 
-      - name: Verify version input
+      - name: Verify clean release candidate
         run: |
           set -Eeuo pipefail
-          # Reject malformed input early. Gem::Version is permissive
-          # (accepts 0.2.0, 0.2.0.rc.1, 0.2.0.alpha, 0.2.0.beta.1, ...)
-          # but rejects clear garbage like "x.y.z" or empty strings.
-          ruby -rrubygems -e "Gem::Version.new(ENV.fetch('VERSION'))"
+          IFS=$'\n\t'
+          git diff --exit-code
+          git diff-index --quiet --cached HEAD
+          ruby script/validate_release.rb "$VERSION" "$TAG_NAME"
+          git check-ref-format "refs/tags/$TAG_NAME"
 
-          # The version constant must already match the input -- bumping
-          # version.rb is the responsibility of the release-prep PR, not
-          # this workflow. Any drift here is a configuration error.
-          actual=$(ruby -e 'require_relative "lib/pgque/version"; print Pgque::VERSION')
-          test "$actual" = "$VERSION" || {
-            echo "version input ${VERSION} != lib/pgque/version.rb ${actual}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null; then
+            echo "release tag $TAG_NAME already exists"
             exit 1
-          }
+          else
+            rc=$?
+            if [ "$rc" -ne 2 ]; then
+              echo "failed to check release tag $TAG_NAME"
+              exit "$rc"
+            fi
+          fi
 
-      - name: Build gem
-        run: gem build pgque.gemspec
+      - name: Run tests and build gem
+        run: |
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+          bundle exec rake test
+          gem build pgque.gemspec
+          ruby script/validate_release.rb "$VERSION" "$TAG_NAME" "./pgque-${VERSION}.gem"
 
       - name: Verify built gem installs
         run: |
           set -Eeuo pipefail
-          mkdir -p /tmp/pgque-gem-check
-          gem install --install-dir /tmp/pgque-gem-check --no-document \
-            "./pgque-${VERSION}.gem"
-          GEM_PATH=/tmp/pgque-gem-check GEM_HOME=/tmp/pgque-gem-check \
-            ruby -e '
-              require "pgque"
-              expected = ENV.fetch("VERSION")
-              raise "version mismatch: expected #{expected}, got #{Pgque::VERSION}" \
-                unless Pgque::VERSION == expected
-              raise "Pgque::Client missing"   unless defined?(Pgque::Client)
-              raise "Pgque::Consumer missing" unless defined?(Pgque::Consumer)
-              puts "install verified: pgque #{Pgque::VERSION}"
-            '
+          IFS=$'\n\t'
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          gem install --install-dir "$tmp" --no-document "./pgque-${VERSION}.gem"
+          GEM_PATH="$tmp" GEM_HOME="$tmp" ruby -e '
+            require "pgque"
+            expected = ENV.fetch("VERSION")
+            raise "version mismatch: expected #{expected}, got #{Pgque::VERSION}" \
+              unless Pgque::VERSION == expected
+            raise "Pgque::Client missing"   unless defined?(Pgque::Client)
+            raise "Pgque::Consumer missing" unless defined?(Pgque::Consumer)
+            puts "install verified: pgque #{Pgque::VERSION}"
+          '
+
+      - name: Upload validated gem
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruby-gem-${{ inputs.version }}
+          path: clients/ruby/pgque-${{ inputs.version }}.gem
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Show dry-run result
+        if: inputs.dry_run
+        run: |
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+          echo "dry run complete: validated pgque ${VERSION}"
+          echo "real publish would create ${TAG_NAME} at ${GITHUB_SHA} and push the validated gem"
 
   publish-rubygems:
     if: ${{ !inputs.dry_run }}
@@ -79,49 +110,69 @@ jobs:
     runs-on: ubuntu-latest
     environment: rubygems
     permissions:
-      # contents:write is required so `rake release` (invoked by
-      # rubygems/release-gem) can push the v${VERSION} git tag back to
-      # origin. id-token:write is for the OIDC handshake with
-      # rubygems.org.
       contents: write
       id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      TAG_NAME: ruby/v${{ inputs.version }}
     defaults:
       run:
         working-directory: clients/ruby
     steps:
-      # Check out the branch ref (not the bare SHA) so we land on an
-      # attached HEAD; bundler's release:source_control_push runs plain
-      # `git push`, which fails from detached HEAD. The build job (run
-      # immediately before this one) already verified the version
-      # against the dispatch SHA, so any race with main moving during
-      # the workflow would have to land a new commit AND a version
-      # bump in that window -- vanishingly small.
+      # Tag exactly the SHA validated by the build job. An explicit tag push
+      # works from detached HEAD and cannot race with a later main revision.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
-          # Full history so existing tags are visible to release:guard_clean.
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
           working-directory: clients/ruby
-          bundler-cache: true
 
-      - name: Configure git identity for tag push
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      # rubygems/release-gem performs the OIDC handshake (no long-lived
-      # RUBYGEMS_API_KEY secret needed) and then runs
-      # `bundle exec rake release`, which depends on the gem tasks
-      # provided by `require "bundler/gem_tasks"` in clients/ruby/Rakefile.
-      # The chain is: build -> release:guard_clean -> release:source_control_push
-      # (tags v${VERSION} and pushes the tag) -> release:rubygem_push.
-      - name: Publish to RubyGems via OIDC
-        uses: rubygems/release-gem@v1
+      - uses: actions/download-artifact@v4
         with:
-          working-directory: clients/ruby
-          setup-trusted-publisher: true
-          await-release: true
+          name: ruby-gem-${{ inputs.version }}
+          path: clients/ruby
+
+      - name: Install release tooling
+        run: gem install rubygems-await --version 0.5.4 --no-document
+
+      - name: Revalidate artifact and tag
+        run: |
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+          git diff --exit-code
+          git diff-index --quiet --cached HEAD
+          ruby script/validate_release.rb "$VERSION" "$TAG_NAME" "./pgque-${VERSION}.gem"
+          git check-ref-format "refs/tags/$TAG_NAME"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null; then
+            echo "release tag $TAG_NAME already exists"
+            exit 1
+          else
+            rc=$?
+            if [ "$rc" -ne 2 ]; then
+              echo "failed to check release tag $TAG_NAME"
+              exit "$rc"
+            fi
+          fi
+
+      - name: Configure RubyGems trusted-publishing credentials
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+
+      - name: Create namespaced Ruby release tag
+        run: |
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG_NAME" "$GITHUB_SHA" -m "Ruby client ${VERSION}"
+          git push origin "refs/tags/$TAG_NAME"
+
+      - name: Publish validated gem to RubyGems
+        run: gem push "./pgque-${VERSION}.gem"
+
+      - name: Wait for release to propagate
+        run: gem exec --version 0.5.4 rubygems-await "./pgque-${VERSION}.gem"
