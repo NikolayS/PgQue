@@ -347,8 +347,7 @@ const platformGroups = [
             <div class="console-body">
               <img
                 class="benchmark"
-                src="/images/death_spiral_poster.png"
-                data-gif="/images/death_spiral.gif"
+                src="/images/death_spiral.gif"
                 alt="Throughput of a SKIP LOCKED queue collapsing under sustained load — the failure mode PgQue avoids by construction"
                 loading="eager"
                 width="900"
@@ -661,20 +660,6 @@ const platformGroups = [
           const onScroll = () => nav.classList.toggle('is-stuck', window.scrollY > 8);
           onScroll();
           window.addEventListener('scroll', onScroll, { passive: true });
-        }
-
-        // Benchmark: always lead with the data-rich poster frame on first paint.
-        // Swap to the animated GIF on hover only (same dimensions, no shift); do
-        // NOT auto-swap on viewport visibility — the hero is above the fold, so
-        // that would replace the poster with the GIF's empty first frame at load.
-        const bench = document.querySelector('img.benchmark');
-        if (bench && bench.dataset.gif) {
-          let animated = false;
-          bench.addEventListener('mouseenter', () => {
-            if (animated) return;
-            animated = true;
-            bench.src = bench.dataset.gif;
-          });
         }
 
         // Scroll reveals via IntersectionObserver. Must NEVER leave content hidden.
