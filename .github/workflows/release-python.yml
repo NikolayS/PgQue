@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || inputs.dry_run
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}
@@ -42,10 +42,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install release tooling
+        run: |
+          set -Eeuo pipefail
+          python -m pip install -U \
+            build \
+            packaging \
+            'psycopg[binary]>=3.1,<4' \
+            pytest \
+            twine
+
       - name: Verify version input
         run: |
           set -Eeuo pipefail
-          python -m pip install -U packaging
           # Validate PEP 440 (accepts 0.2.0, 0.2.0rc1, 0.2.0.dev1, 0.2.0a1, 0.2.0.post1, ...).
           # Reject hyphenated forms like 0.2.0-dev that PyPI normalises into something
           # the operator did not type, since "version input == pyproject.toml" then
@@ -71,25 +80,127 @@ jobs:
             exit 1
           }
 
+      - name: Verify source and editable runtime versions
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import importlib.metadata as md
+          import os
+          import sys
+
+          try:
+              installed = md.version("pgque-py")
+          except md.PackageNotFoundError:
+              pass
+          else:
+              sys.exit(f"expected clean source checkout, found pgque-py {installed}")
+
+          import pgque
+
+          expected = os.environ["VERSION"]
+          if pgque.__version__ != expected:
+              sys.exit(
+                  f"source runtime version {pgque.__version__!r} != input {expected!r}"
+              )
+          print(f"source runtime version: {pgque.__version__}")
+          PY
+
+          pytest -q
+
+          python -m pip install --no-deps -e .
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          (
+            cd "$tmp"
+            python - <<'PY'
+          import importlib.metadata as md
+          import os
+          import pgque
+
+          expected = os.environ["VERSION"]
+          distribution = md.version("pgque-py")
+          if distribution != expected or pgque.__version__ != expected:
+              raise SystemExit(
+                  "editable version mismatch: "
+                  f"input={expected!r}, metadata={distribution!r}, "
+                  f"runtime={pgque.__version__!r}"
+              )
+          print(f"editable runtime version: {pgque.__version__}")
+          PY
+          )
+
       - name: Build distribution
         run: |
           set -Eeuo pipefail
-          python -m pip install -U build twine
           python -m build
           python -m twine check dist/*
+
+      - name: Verify built wheel metadata
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from email.parser import BytesParser
+          import os
+          from pathlib import Path
+          import sys
+          from zipfile import ZipFile
+
+          wheels = list(Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              sys.exit(f"expected exactly one wheel, found: {wheels}")
+
+          with ZipFile(wheels[0]) as wheel:
+              metadata_files = [
+                  name
+                  for name in wheel.namelist()
+                  if name.endswith(".dist-info/METADATA")
+              ]
+              if len(metadata_files) != 1:
+                  sys.exit(
+                      f"expected exactly one wheel METADATA file, found: {metadata_files}"
+                  )
+              package_metadata = BytesParser().parsebytes(
+                  wheel.read(metadata_files[0])
+              )
+
+          expected = os.environ["VERSION"]
+          name = package_metadata["Name"]
+          version = package_metadata["Version"]
+          if name != "pgque-py" or version != expected:
+              sys.exit(
+                  "wheel metadata mismatch: "
+                  f"expected pgque-py {expected}, found {name} {version}"
+              )
+          print(f"wheel metadata version: {version}")
+          PY
 
       - name: Verify built wheel installs
         run: |
           set -Eeuo pipefail
-          python -m venv /tmp/pgque-python-wheel-check
-          . /tmp/pgque-python-wheel-check/bin/activate
-          python -m pip install dist/*.whl
-          python - <<'PY'
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          wheel=$(realpath dist/*.whl)
+          python -m venv "$tmp/venv"
+          "$tmp/venv/bin/python" -m pip install "$wheel"
+          (
+            cd "$tmp"
+            "$tmp/venv/bin/python" - <<'PY'
           import importlib.metadata as md
+          import os
           import pgque
-          assert md.version('pgque-py')
-          assert hasattr(pgque, 'PgqueClient')
+
+          expected = os.environ["VERSION"]
+          distribution = md.version("pgque-py")
+          if distribution != expected or pgque.__version__ != expected:
+              raise SystemExit(
+                  "installed wheel version mismatch: "
+                  f"input={expected!r}, metadata={distribution!r}, "
+                  f"runtime={pgque.__version__!r}"
+              )
+          assert hasattr(pgque, "PgqueClient")
+          print(f"installed wheel runtime version: {pgque.__version__}")
           PY
+          )
 
       - name: Upload distributions
         if: ${{ !inputs.dry_run }}
