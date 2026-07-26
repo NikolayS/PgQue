@@ -514,9 +514,11 @@ echo "PASS: pg_notify injected into ticker function (2 injection points verified
 REGISTER_CONSUMER_FILE="${OUTPUT_DIR}/functions/pgque.register_consumer.sql"
 if ! awk '
 /^    -- get consumer and create if new$/ {
-  print "    -- Get or create the consumer. NO KEY UPDATE still serializes"
-  print "    -- registrars, while remaining compatible with FK checks that take"
-  print "    -- KEY SHARE. ON CONFLICT closes the missing-row creation race."
+  print "    /*"
+  print "     * NO KEY UPDATE serializes registrations without conflicting with"
+  print "     * subscription FK checks. The upsert/re-read path serializes"
+  print "     * concurrent creation when there is no row to lock."
+  print "     */"
   print "    select co_id into x_consumer_id from pgque.consumer"
   print "        where co_name = x_consumer_name"
   print "        for no key update;"

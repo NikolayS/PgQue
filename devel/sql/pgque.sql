@@ -1818,9 +1818,11 @@ begin
         raise exception 'Event queue not created yet';
     end if;
 
-    -- Get or create the consumer. NO KEY UPDATE still serializes
-    -- registrars, while remaining compatible with FK checks that take
-    -- KEY SHARE. ON CONFLICT closes the missing-row creation race.
+    /*
+     * NO KEY UPDATE serializes registrations without conflicting with
+     * subscription FK checks. The upsert/re-read path serializes
+     * concurrent creation when there is no row to lock.
+     */
     select co_id into x_consumer_id from pgque.consumer
         where co_name = x_consumer_name
         for no key update;
