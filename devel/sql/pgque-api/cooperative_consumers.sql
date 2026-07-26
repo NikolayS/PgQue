@@ -529,28 +529,15 @@ begin
         raise exception 'Event queue not created yet';
     end if;
 
-    /*
-     * NO KEY UPDATE serializes registrations without conflicting with the
-     * KEY SHARE lock used by subscription's consumer FK. The upsert/re-read
-     * path also serializes concurrent creation when there is no row to lock.
-     */
     select co_id
     into v_main_consumer_id
     from pgque.consumer
     where co_name = i_consumer
-    for no key update;
+    for update;
     if not found then
         insert into pgque.consumer (co_name)
         values (i_consumer)
-        on conflict (co_name) do nothing;
-        select co_id
-        into v_main_consumer_id
-        from pgque.consumer
-        where co_name = i_consumer
-        for no key update;
-        if not found then
-            raise exception 'pgque.register_subconsumer: failed to create consumer %', i_consumer;
-        end if;
+        returning co_id into v_main_consumer_id;
     end if;
 
     select *
@@ -607,24 +594,15 @@ begin
         raise exception 'consumer % on queue % is not a cooperative main consumer', i_consumer, i_queue;
     end if;
 
-    -- Use the same acquisition protocol for the cooperative member row.
     select co_id
     into v_member_consumer_id
     from pgque.consumer
     where co_name = v_member_name
-    for no key update;
+    for update;
     if not found then
         insert into pgque.consumer (co_name)
         values (v_member_name)
-        on conflict (co_name) do nothing;
-        select co_id
-        into v_member_consumer_id
-        from pgque.consumer
-        where co_name = v_member_name
-        for no key update;
-        if not found then
-            raise exception 'pgque.register_subconsumer: failed to create consumer %', v_member_name;
-        end if;
+        returning co_id into v_member_consumer_id;
     end if;
 
     select *
