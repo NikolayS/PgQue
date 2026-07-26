@@ -25,21 +25,95 @@ coop_consumer="coop_${suffix}"
 lock_consumer="lock_${suffix}"
 trigger_name="registration_race_barrier_${$}"
 trigger_function="registration_race_barrier_${$}"
+barrier_table="registration_barrier_${$}"
+race_lock_key=$((357000000 + ($$ % 100000) * 2))
+coop_lock_key=$((race_lock_key + 1))
 workdir="$(mktemp -d)"
+locker_start_delay="${PGQUE_TEST_LOCKER_START_DELAY:-0}"
+
+if [[ ! "${locker_start_delay}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "PGQUE_TEST_LOCKER_START_DELAY must be a non-negative number" >&2
+  exit 2
+fi
 
 cleanup() {
+  local cleanup_status=0
+  local residue
+
+  set +e
   "${psql_base[@]}" -qAtc "
-    drop trigger if exists ${trigger_name} on pgque.consumer;
-    drop function if exists pgque.${trigger_function}();
-    select pgque.drop_queue('${race_queue}', true);
-    select pgque.drop_queue('${coop_queue}', true);
-    select pgque.unsubscribe_slot('${lock_queue}', '${lock_consumer}', 0);
-    select pgque.unsubscribe_slot('${lock_queue}', '${lock_consumer}', 1);
-    select pgque.drop_queue('${lock_queue}', true);
-  " >/dev/null 2>&1 || true
+    select pg_terminate_backend(pid)
+    from pg_stat_activity
+    where pid <> pg_backend_pid()
+      and application_name like '%${suffix}';
+  " >/dev/null 2>&1 || cleanup_status=1
+  "${psql_base[@]}" -qAtc \
+    "drop trigger if exists ${trigger_name} on pgque.consumer" \
+    >/dev/null 2>&1 || cleanup_status=1
+  "${psql_base[@]}" -qAtc \
+    "drop function if exists pgque.${trigger_function}()" \
+    >/dev/null 2>&1 || cleanup_status=1
+  for member in $(seq 1 4); do
+    "${psql_base[@]}" -qAtc \
+      "select pgque.unregister_subconsumer('${coop_queue}', '${coop_consumer}', 'm${member}')" \
+      >/dev/null 2>&1 || cleanup_status=1
+  done
+  "${psql_base[@]}" -qAtc \
+    "select pgque.drop_queue('${race_queue}', true)" \
+    >/dev/null 2>&1 || cleanup_status=1
+  "${psql_base[@]}" -qAtc \
+    "select pgque.drop_queue('${coop_queue}', true)" \
+    >/dev/null 2>&1 || cleanup_status=1
+  for slot in 0 1; do
+    "${psql_base[@]}" -qAtc \
+      "select pgque.unsubscribe_slot('${lock_queue}', '${lock_consumer}', ${slot})" \
+      >/dev/null 2>&1 || cleanup_status=1
+  done
+  "${psql_base[@]}" -qAtc \
+    "select pgque.drop_queue('${lock_queue}', true)" \
+    >/dev/null 2>&1 || cleanup_status=1
+  "${psql_base[@]}" -qAtc \
+    "drop table if exists pgque.${barrier_table}" \
+    >/dev/null 2>&1 || cleanup_status=1
+
+  residue="$("${psql_base[@]}" -qAtc "
+    select
+      (
+        select count(*)
+        from pg_trigger
+        where tgname = '${trigger_name}'
+          and not tgisinternal
+      )
+      + (
+        select count(*)
+        from pg_proc
+        where pronamespace = 'pgque'::regnamespace
+          and proname = '${trigger_function}'
+      )
+      + (
+        select count(*)
+        from pgque.queue
+        where queue_name in ('${race_queue}', '${coop_queue}', '${lock_queue}')
+      )
+      + (
+        select count(*)
+        from pg_class
+        where relnamespace = 'pgque'::regnamespace
+          and relname = '${barrier_table}'
+      )
+  " 2>/dev/null)"
+  if [[ "${residue}" != "0" ]]; then
+    echo "FAIL: registration concurrency cleanup left ${residue:-unknown} database objects" >&2
+    cleanup_status=1
+  fi
   rm -rf "${workdir}"
+  set -e
+  return "${cleanup_status}"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 print_debug() {
   for f in "${workdir}"/*; do
@@ -73,17 +147,77 @@ wait_for_advisory_waiters() {
   return 1
 }
 
+wait_for_locker_ready() {
+  local lock_key="$1"
+  local ready
+
+  for _ in $(seq 1 100); do
+    ready="$("${psql_base[@]}" -qAtc "
+      select ready
+      from pgque.${barrier_table}
+      where lock_key = ${lock_key}
+    ")"
+    if [[ "${ready}" == "t" ]]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  echo "FAIL: advisory barrier ${lock_key} was not acquired" >&2
+  print_debug
+  return 1
+}
+
+release_barrier() {
+  local lock_key="$1"
+
+  "${psql_base[@]}" -qAtc "
+    update pgque.${barrier_table}
+    set release = true
+    where lock_key = ${lock_key}
+  " >/dev/null
+}
+
 run_barrier_locker() {
   local lock_key="$1"
   local app_name="$2"
 
   PGAPPNAME="${app_name}" "${psql_base[@]}" -qAt >"${workdir}/${app_name}.out" 2>"${workdir}/${app_name}.err" <<SQL &
+select pg_sleep(${locker_start_delay});
 select pg_advisory_lock(${lock_key});
-select pg_sleep(5);
+insert into pgque.${barrier_table} (lock_key, ready, release)
+values (${lock_key}, true, false);
+do \$\$
+declare
+  v_release boolean;
+begin
+  for i in 1..600 loop
+    select release
+    into v_release
+    from pgque.${barrier_table}
+    where lock_key = ${lock_key};
+    exit when v_release;
+    perform pg_sleep(0.05);
+  end loop;
+  if not v_release then
+    raise exception 'timed out waiting to release advisory barrier ${lock_key}';
+  end if;
+end
+\$\$;
 select pg_advisory_unlock(${lock_key});
 SQL
   barrier_locker_pid=$!
 }
+
+# Installing a trigger on pgque.consumer is only appropriate in a disposable
+# test database. Allow an explicit override for unusual local naming schemes.
+database_name="$("${psql_base[@]}" -qAtc "select current_database()")"
+if [[ ! "${database_name}" =~ (^|_)test($|_) ]] \
+   && [[ "${PGQUE_ALLOW_TEST_MUTATION:-}" != "1" ]]; then
+  echo "FAIL: refusing to install a test trigger in database '${database_name}'" >&2
+  echo "      use a database name containing 'test' or set PGQUE_ALLOW_TEST_MUTATION=1" >&2
+  exit 2
+fi
 
 # A test-only trigger puts every matching consumer INSERT behind an advisory
 # barrier. Both callers therefore complete their initial "row not found"
@@ -92,6 +226,12 @@ SQL
 select pgque.create_queue('${race_queue}');
 select pgque.create_queue('${coop_queue}');
 select pgque.create_queue('${lock_queue}');
+
+create table pgque.${barrier_table} (
+  lock_key bigint primary key,
+  ready boolean not null,
+  release boolean not null
+);
 
 create function pgque.${trigger_function}()
 returns trigger
@@ -102,8 +242,8 @@ begin
      or new.co_name like 'coop_${suffix}%' then
     perform pg_advisory_xact_lock(
       case
-        when new.co_name like 'race_${suffix}%' then 357001
-        else 357002
+        when new.co_name like 'race_${suffix}%' then ${race_lock_key}
+        else ${coop_lock_key}
       end
     );
   end if;
@@ -117,9 +257,9 @@ for each row execute function pgque.${trigger_function}();
 SQL
 
 # Case 1: two ordinary first registrations must not collide.
-run_barrier_locker 357001 race_locker
+run_barrier_locker "${race_lock_key}" race_locker
 locker_pid="${barrier_locker_pid}"
-sleep 0.2
+wait_for_locker_ready "${race_lock_key}"
 race_pids=()
 for worker in $(seq 1 8); do
   PGAPPNAME="race_worker_${worker}_${suffix}" \
@@ -130,6 +270,7 @@ for worker in $(seq 1 8); do
   race_pids+=("$!")
 done
 wait_for_advisory_waiters "race_worker_%_${suffix}" 8
+release_barrier "${race_lock_key}"
 
 set +e
 race_status=0
@@ -154,9 +295,9 @@ fi
 
 # Case 2: register_consumer_at racing register_subconsumer must safely form
 # one cooperative main plus the requested member.
-run_barrier_locker 357002 coop_locker
+run_barrier_locker "${coop_lock_key}" coop_locker
 locker_pid="${barrier_locker_pid}"
-sleep 0.2
+wait_for_locker_ready "${coop_lock_key}"
 PGAPPNAME="coop_anchor_${suffix}" \
   "${psql_base[@]}" -qAtc "
     select pgque.register_consumer_at(
@@ -180,6 +321,7 @@ for member in $(seq 1 4); do
   coop_member_pids+=("$!")
 done
 wait_for_advisory_waiters "coop_%_${suffix}" 5
+release_barrier "${coop_lock_key}"
 
 set +e
 wait "${coop_anchor_pid}"; coop_anchor_status=$?
@@ -238,7 +380,8 @@ with keys as (
     select 'k' || s as key
     from generate_series(1, 64) s
   ) candidates
-  where ((hashtextextended(key, 0) % 2) + 2) % 2 = 1
+  /* Keep this predicate aligned with partition_keys.sql's slot routing. */
+  where ((pg_catalog.hashtextextended(key, 0) % 2) + 2) % 2 = 1
   limit 5
 )
 select pgque.insert_event('${lock_queue}', 't', '{}', key, null, null, null)
@@ -308,4 +451,9 @@ if (( receiver_status != 0 || holder_status != 0 )); then
   exit 1
 fi
 
+if ! cleanup; then
+  trap - EXIT INT TERM HUP
+  exit 1
+fi
+trap - EXIT INT TERM HUP
 echo "PASS: first registrations serialize without unique violations; registration locks remain compatible with partition receive FK checks"
