@@ -244,6 +244,10 @@ module Pgque
       low = msg.downcase
       if low.include?("queue not found")
         QueueNotFound.new(msg)
+      elsif low.include?("consumer not registered") ||
+            low.include?("consumer not found") ||
+            low.include?("not subscriber to queue")
+        ConsumerNotFound.new(msg)
       elsif low.include?("batch not found")
         BatchNotFound.new(msg)
       else
