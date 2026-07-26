@@ -23,12 +23,33 @@ class TestSend < Minitest::Test
   end
 
   def test_send_event_object
-    with_queue do |queue, _consumer, conn|
+    with_queue do |queue, consumer, conn|
       client = Pgque::Client.new(conn)
-      event = Pgque::Event.new(payload: { "x" => 1 }, type: "custom.t")
+      payload = { "x" => 1 }
+      event = Pgque::Event.new(payload: payload, type: "custom.t")
+      refute_respond_to event, :extra
       eid = client.send(queue, event)
       assert_kind_of Integer, eid
+
+      conn.exec_params("select pgque.force_next_tick($1)", [queue])
+      conn.exec_params("select pgque.ticker($1)", [queue])
+      msg = client.receive(queue, consumer, 1).fetch(0)
+      assert_equal eid, msg.msg_id
+      assert_equal "custom.t", msg.type
+      assert_equal payload, msg.payload
+      client.ack(msg.batch_id)
     end
+  end
+
+  def test_event_rejects_extra_keyword_instead_of_silently_dropping_it
+    error = assert_raises(ArgumentError) do
+      Pgque::Event.new(
+        payload: { "x" => 1 },
+        type: "custom.t",
+        extra: { "trace_id" => "lost" },
+      )
+    end
+    assert_match(/unknown keyword.*extra/, error.message)
   end
 
   def test_send_str_payload_passes_through
