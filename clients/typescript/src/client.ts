@@ -45,8 +45,8 @@ export const pgqueTypes: pg.CustomTypesConfig = {
 interface RawMessageRow {
   msg_id: bigint;
   batch_id: bigint;
-  type: string;
-  payload: string;
+  type: string | null;
+  payload: string | null;
   retry_count: number | null;
   created_at: Date;
   extra1: string | null;

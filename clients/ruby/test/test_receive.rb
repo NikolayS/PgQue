@@ -70,6 +70,23 @@ class TestReceive < Minitest::Test
     end
   end
 
+  def test_receive_preserves_null_type_and_payload
+    with_queue do |queue, consumer, conn|
+      client = Pgque::Client.new(conn)
+      event_id = conn.exec_params(
+        "select pgque.insert_event($1, null, null)", [queue]
+      ).getvalue(0, 0).to_i
+      conn.exec_params("select pgque.force_next_tick($1)", [queue])
+      conn.exec_params("select pgque.ticker($1)", [queue])
+
+      msg = client.receive(queue, consumer, 1).fetch(0)
+      assert_equal event_id, msg.msg_id
+      assert_nil msg.type
+      assert_nil msg.payload
+      client.ack(msg.batch_id)
+    end
+  end
+
   def test_message_timestamp_round_trip
     with_queue do |queue, consumer, conn|
       client = Pgque::Client.new(conn)

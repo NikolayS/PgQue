@@ -107,6 +107,12 @@ registered handler and no `"*"` catch-all. The message is retried (or
 dead-lettered once `queue_max_retries` is exhausted) so unknown types
 are never silently dropped.
 
+Direct SQL and trigger producers can store SQL `NULL` for `ev_type` or
+`ev_data`. `receive` and `receive_coop` preserve these as a message with
+`nil` `type` and `payload`. A nil type never matches a named handler: the
+`"*"` catch-all receives it when registered, otherwise
+`unknown_handler_policy` applies.
+
 To ack unknown types instead, pass `unknown_handler_policy: "ack"`:
 
 ```ruby

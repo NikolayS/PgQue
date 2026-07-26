@@ -94,6 +94,25 @@ class TestCoop < Minitest::Test
     end
   end
 
+  def test_receive_coop_preserves_null_type_and_payload
+    with_coop_queue do |q, conn|
+      client = Pgque::Client.new(conn)
+      client.subscribe_subconsumer(q, consumer_n, "worker-1")
+      event_id = conn.exec_params(
+        "select pgque.insert_event($1, null, null)", [q]
+      ).getvalue(0, 0).to_i
+      tick(conn, q)
+
+      msg = client.receive_coop(
+        q, consumer_n, "worker-1", max_messages: 1
+      ).fetch(0)
+      assert_equal event_id, msg.msg_id
+      assert_nil msg.type
+      assert_nil msg.payload
+      client.ack(msg.batch_id)
+    end
+  end
+
   def test_two_subconsumers_split_batches_no_duplicates
     with_coop_queue do |q, conn|
       Pgque.connect(dsn) do |producer|
