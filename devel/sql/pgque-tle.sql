@@ -6168,9 +6168,11 @@ begin
         raise exception 'Event queue not created yet';
     end if;
 
-    -- NO KEY UPDATE serializes registrations without conflicting with the
-    -- KEY SHARE lock used by subscription's consumer FK. The upsert/re-read
-    -- path also serializes concurrent creation when there is no row to lock.
+    /*
+     * NO KEY UPDATE serializes registrations without conflicting with the
+     * KEY SHARE lock used by subscription's consumer FK. The upsert/re-read
+     * path also serializes concurrent creation when there is no row to lock.
+     */
     select co_id
     into v_main_consumer_id
     from pgque.consumer
