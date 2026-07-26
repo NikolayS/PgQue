@@ -506,59 +506,6 @@ mv "${TICKER_FILE}.tmp" "${TICKER_FILE}"
 
 echo "PASS: pg_notify injected into ticker function (2 injection points verified)"
 
-# PgQ's register_consumer_at uses SELECT ... FOR UPDATE followed by a plain
-# INSERT when no consumer row exists. The stronger lock conflicts with FK
-# triggers' FOR KEY SHARE locks, and a missing row gives concurrent first
-# registrars nothing to serialize on. Keep this as a transform patch rather
-# than modifying the pinned upstream PgQ submodule.
-REGISTER_CONSUMER_FILE="${OUTPUT_DIR}/functions/pgque.register_consumer.sql"
-if ! awk '
-/^    -- get consumer and create if new$/ {
-  print "    /*"
-  print "     * NO KEY UPDATE serializes registrations without conflicting with"
-  print "     * subscription FK checks. The upsert/re-read path serializes"
-  print "     * concurrent creation when there is no row to lock."
-  print "     */"
-  print "    select co_id into x_consumer_id from pgque.consumer"
-  print "        where co_name = x_consumer_name"
-  print "        for no key update;"
-  print "    if not found then"
-  print "        insert into pgque.consumer (co_name) values (x_consumer_name)"
-  print "            on conflict (co_name) do nothing;"
-  print "        select co_id into x_consumer_id from pgque.consumer"
-  print "            where co_name = x_consumer_name"
-  print "            for no key update;"
-  print "        if not found then"
-  print "            raise exception '\''pgque.register_consumer_at: failed to create consumer %'\'', x_consumer_name;"
-  print "        end if;"
-  print "    end if;"
-  replacing = 1
-  replacements++
-  next
-}
-replacing {
-  if (/^    end if;$/) {
-    replacing = 0
-  }
-  next
-}
-{ print }
-END {
-  if (replacements != 1 || replacing) {
-    printf "ERROR: register_consumer_at acquisition patch matched %d times (expected 1)\n", \
-      replacements > "/dev/stderr"
-    exit 1
-  }
-}
-' "${REGISTER_CONSUMER_FILE}" > "${REGISTER_CONSUMER_FILE}.tmp"; then
-  rm -f "${REGISTER_CONSUMER_FILE}.tmp"
-  echo "FAIL: register_consumer_at acquisition patch did not apply" >&2
-  exit 1
-fi
-mv "${REGISTER_CONSUMER_FILE}.tmp" "${REGISTER_CONSUMER_FILE}"
-
-echo "PASS: register_consumer_at uses race-safe, FK-compatible consumer acquisition"
-
 CREATE_QUEUE_FILE="${OUTPUT_DIR}/functions/pgque.create_queue.sql"
 if ! awk '
 /^    if i_queue_name is null then$/ {
