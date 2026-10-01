@@ -6,8 +6,8 @@ import type { ConsumerOptions, HandlerFunc, Message } from './types.js';
 
 /**
  * Default `maxMessages` for the high-level Consumer. PostgreSQL `int4` max
- * (`2^31 - 1`); request the whole PgQ batch by default so a subsequent
- * `pgque.ack(batch_id)` does not strand events the client never saw.
+ * (`2^31 - 1`); request the whole PgQ batch by default so ordinary bursts
+ * do not exceed a smaller receive ceiling (SQLSTATE 54000).
  */
 export const DEFAULT_MAX_MESSAGES = 2_147_483_647;
 

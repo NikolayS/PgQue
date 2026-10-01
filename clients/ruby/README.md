@@ -85,7 +85,7 @@ section for both paths.
 
 ### Consumer options
 
-`Consumer.new(..., max_messages: ...)` controls the per-`receive` limit.
+`Consumer.new(..., max_messages: ...)` sets the complete-batch safety ceiling for each `receive`.
 The default is the Postgres `int` maximum. A batch larger than the configured
 complete-batch safety ceiling returns no partial result and raises SQLSTATE
 `54000`. Roll back and retry with a resource-safe larger ceiling; never
