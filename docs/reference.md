@@ -119,14 +119,16 @@ All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`
 
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
-Pulls the complete next batch for `consumer` on `queue`, or raises an error if it exceeds `max_return`. `max_return` must be >= 1; passing 0 or a negative value raises an error. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
+Pulls the complete next batch for `consumer` on `queue`, or raises an error if it exceeds `max_return`. A non-null `max_return` must be >= 1; passing 0 or a negative value raises an error. SQL `null` disables the explicit ceiling for compatibility; prefer an explicit resource-safe ceiling. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
 Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql
 select * from pgque.receive('orders', 'processor', 100);
 ```
 
-**Complete batch or error.** `max_return` is a safety ceiling, not a page size. Exactly that many events is valid; encountering one more raises an error, with no successful result or consumer advancement from that call. Roll back a failed transaction and retry with a larger ceiling within your resource budget, or use the low-level full-batch interface. Process every event before calling `ack(batch_id)`, which finishes the entire batch. Do not acknowledge after an overflow error. Repeating `receive()` with the same ceiling does not paginate or resolve overflow.
+Overflow reports SQLSTATE `54000` (`program_limit_exceeded`). Like other SQL errors, it aborts the enclosing transaction unless recovered through a savepoint.
+
+**Complete batch or error.** `max_return` is a safety ceiling, not a page size. Exactly that many events is valid; encountering one more raises an error, with no successful result or consumer advancement from that call. Roll back a failed transaction and retry with a larger ceiling within your resource budget, or explicitly manage the complete batch with `pgque.next_batch()`, `pgque.get_batch_events()` and `pgque.finish_batch()` (the low-level PgQ API). Process every event before calling `ack(batch_id)`, which finishes the entire batch. Do not acknowledge after an overflow error. Repeating `receive()` with the same ceiling does not paginate or resolve overflow.
 
 `ticker_max_count` is a tick-trigger threshold, not a hard batch-size cap. Setting `max_return` to that value cannot guarantee success during bursts. Monitor receive errors and consumer lag so an undersized ceiling does not silently stall processing.
 
@@ -168,7 +170,7 @@ Grant: `pgque_reader`. Source: `sql/pgque-api/cooperative_consumers.sql`.
 
 #### `pgque.receive_coop(queue text, consumer text, subconsumer text, max_return int default 100, dead_interval interval default null) → setof pgque.message`
 
-Receives messages for one subconsumer. `max_return` must be >= 1. `dead_interval` enables stale-batch takeover from another inactive member; takeover allocates a fresh `batch_id`, so old tokens cannot ack/nack the new owner's state. The cooperative group is a trust boundary: callers allowed to use the same `(queue, consumer)` can steal stale batches from each other by design, so do not share one cooperative group across mutually untrusted workers.
+Receives messages for one subconsumer. A non-null `max_return` must be >= 1; SQL `null` disables the explicit ceiling as in `receive()`. `dead_interval` enables stale-batch takeover from another inactive member; takeover allocates a fresh `batch_id`, so old tokens cannot ack/nack the new owner's state. The cooperative group is a trust boundary: callers allowed to use the same `(queue, consumer)` can steal stale batches from each other by design, so do not share one cooperative group across mutually untrusted workers.
 
 **Auto-registration.** If the logical `consumer` or `subconsumer` is not yet registered, `receive_coop()` registers them on the fly (creates the `coop_main` row on first call, then the `coop_member` row), so a worker can call `receive_coop()` cold without a prior `register_subconsumer`. Use the explicit `register_subconsumer(..., convert_normal => true)` call only when you need to convert an existing normal consumer into a cooperative main.
 

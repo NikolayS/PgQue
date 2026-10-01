@@ -52,7 +52,9 @@ begin
     loop
         if cnt = i_max_return then
             raise exception 'pgque.receive: batch exceeds max_return of %', i_max_return
-                using hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
+                using
+                    errcode = '54000',
+                    hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
         end if;
         return next row(
             ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,

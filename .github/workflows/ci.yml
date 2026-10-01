@@ -173,6 +173,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Build pgque
         run: bash build/transform.sh
@@ -216,6 +217,15 @@ jobs:
           set -Eeuo pipefail
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_tle_install.sql
+
+      - name: Run pg_tle 0.2.0 upgrade test
+        run: |
+          set -Eeuo pipefail
+          git show v0.2.0:sql/pgque-tle.sql > /tmp/pgque-tle-v0.2.0.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+            -v ON_ERROR_STOP=1 -c 'create database pgque_tle_upgrade'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade \
+            -v ON_ERROR_STOP=1 -f tests/test_tle_upgrade_v0_2.sql
 
       - name: Run full regression suite via pg_tle install
         run: |

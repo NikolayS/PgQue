@@ -26,6 +26,19 @@ transaction and retry with a sufficient ceiling within your resource budget.
 Never acknowledge after a receive error. Ticker thresholds do not cap batch
 size, and repeated receive calls are not pagination.
 
+For a pg_tle-managed v0.2.0 installation, register the update path and apply
+it through Postgres extension management:
+
+```sql
+\i sql/pgque-tle.sql
+alter extension pgque update to '0.2.1';
+select extversion from pg_extension where extname = 'pgque';
+select pgque.version();
+```
+
+Both version queries must return `0.2.1`. The update replaces functions only;
+do not drop or unregister the existing extension before upgrading.
+
 ## v0.1.0 to v0.2.0
 
 The supported v0.1.0 → v0.2.0 path is the same re-install procedure:

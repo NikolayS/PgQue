@@ -26,6 +26,7 @@ declare
   v_before record;
   v_after record;
   v_hint text;
+  v_state text;
 begin
   select s.* into v_before
   from pgque.subscription as s
@@ -38,7 +39,11 @@ begin
   exception
     when others then
       v_raised := true;
-      get stacked diagnostics v_hint = pg_exception_hint;
+      get stacked diagnostics
+        v_hint = pg_exception_hint,
+        v_state = returned_sqlstate;
+      assert v_state = '54000',
+        'receive overflow SQLSTATE must be 54000, got ' || v_state;
       assert sqlerrm like '%batch exceeds max_return of 2%',
         'unexpected receive overflow error: ' || sqlerrm;
       assert v_hint like '%Do not acknowledge after this error%',
@@ -134,6 +139,40 @@ begin
   perform pgque.send('recv_exact', 'ev', 'two');
 end $$;
 
+select pgque.force_next_tick('recv_exact');
+select pgque.ticker();
+
+do $$
+declare
+  v_count int := 0;
+  v_batch_id bigint;
+  v_msg pgque.message;
+  v_active_batch bigint;
+begin
+  for v_msg in select * from pgque.receive('recv_exact', 'c1', 2)
+  loop
+    v_count := v_count + 1;
+    v_batch_id := v_msg.batch_id;
+  end loop;
+  assert v_count = 2, format('exactly N events must succeed, got %s', v_count);
+  perform pgque.ack(v_batch_id);
+
+  v_count := 0;
+  for v_msg in select * from pgque.receive('recv_exact', 'c1', 2147483647)
+  loop
+    v_count := v_count + 1;
+  end loop;
+  assert v_count = 0,
+    format('INT_MAX receive after ack must be empty, got %s', v_count);
+  select s.sub_batch into v_active_batch
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'recv_exact' and c.co_name = 'c1';
+  assert v_active_batch is null,
+    'empty INT_MAX receive must not leave an active batch';
+end $$;
+
 -- A batch containing N-1 events also succeeds.
 do $$
 begin
@@ -160,26 +199,6 @@ begin
   assert v_count = 2,
     format('N-1 events must succeed, got %s', v_count);
   perform pgque.ack(v_batch_id);
-end $$;
-
-select pgque.force_next_tick('recv_exact');
-select pgque.ticker();
-
-do $$
-declare
-  v_count int := 0;
-  v_batch_id bigint;
-  v_msg pgque.message;
-begin
-  for v_msg in select * from pgque.receive('recv_exact', 'c1', 2)
-  loop
-    v_count := v_count + 1;
-    v_batch_id := v_msg.batch_id;
-  end loop;
-  assert v_count = 2, format('exactly N events must succeed, got %s', v_count);
-  perform pgque.ack(v_batch_id);
-
-  perform * from pgque.receive('recv_exact', 'c1', 2147483647);
 end $$;
 
 -- Preserve the SQL NULL behavior: it means no explicit ceiling.
@@ -232,6 +251,7 @@ declare
   v_payloads text[] := array[]::text[];
   v_msg pgque.message;
   v_hint text;
+  v_state text;
 begin
   begin
     perform * from pgque.receive_coop(
@@ -240,7 +260,11 @@ begin
   exception
     when others then
       v_raised := true;
-      get stacked diagnostics v_hint = pg_exception_hint;
+      get stacked diagnostics
+        v_hint = pg_exception_hint,
+        v_state = returned_sqlstate;
+      assert v_state = '54000',
+        'receive_coop overflow SQLSTATE must be 54000, got ' || v_state;
       assert sqlerrm like '%batch exceeds max_return of 2%',
         'unexpected receive_coop overflow error: ' || sqlerrm;
       assert v_hint like '%Do not acknowledge after this error%',

@@ -103,8 +103,8 @@ func TestReceive_RejectsBatchOverMax(t *testing.T) {
 		t.Fatalf("oversized receive returned %d partial messages", len(msgs))
 	}
 	var sqlErr *pgque.SQLError
-	if !errors.As(err, &sqlErr) || sqlErr.SQLSTATE != "P0001" {
-		t.Fatalf("expected propagated P0001 SQLError, got %T: %v", err, err)
+	if !errors.As(err, &sqlErr) || sqlErr.SQLSTATE != "54000" {
+		t.Fatalf("expected propagated 54000 SQLError, got %T: %v", err, err)
 	}
 	if !strings.Contains(err.Error(), "batch exceeds max_return of 10") {
 		t.Fatalf("unexpected overflow error: %v", err)
