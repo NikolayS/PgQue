@@ -84,6 +84,7 @@
 
 \echo 'Running: test_api_receive'
 \i tests/test_api_receive.sql
+\i tests/test_receive_overflow.sql
 
 \echo 'Running: test_api_dlq'
 \i tests/test_api_dlq.sql

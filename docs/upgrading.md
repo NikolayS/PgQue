@@ -12,6 +12,20 @@ The installer is idempotent: it preserves queues, consumers, subscriptions,
 retry rows, DLQ rows, and existing event tables while adding new functions,
 columns, grants, and constraints required by the target release.
 
+## v0.2.0 to v0.2.1
+
+Re-run the installer using the command above. This maintenance release makes
+`pgque.receive()` and `pgque.receive_coop()` reject batches larger than
+`max_return`, rather than returning a truncated result that could be
+acknowledged as a complete batch. The upgrade replaces functions only; it does not
+change tables or queue state.
+
+Applications do not need client-library updates for this server-side fix.
+An undersized receive ceiling now causes an error: roll back the failed
+transaction and retry with a sufficient ceiling within your resource budget.
+Never acknowledge after a receive error. Ticker thresholds do not cap batch
+size, and repeated receive calls are not pagination.
+
 ## v0.1.0 to v0.2.0
 
 The supported v0.1.0 → v0.2.0 path is the same re-install procedure:
@@ -32,7 +46,7 @@ After upgrading, verify the installed version:
 
 ```sql
 select pgque.version();
--- 0.2.0-rc.1, or the exact release you installed
+-- 0.2.1, or the exact release you installed
 ```
 
 You can also run the idempotency smoke test from the repository:

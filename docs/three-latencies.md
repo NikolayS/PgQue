@@ -44,6 +44,6 @@ Per-queue thresholds (`queue_ticker_max_lag` default `3 seconds`, `queue_ticker_
 
 ## Load behavior: PgQue vs. UPDATE/DELETE designs
 
-The key property of the tick model: **e2e does not grow with load.** The ticker fires at its configured rate regardless of backlog, so under pressure batch size grows (up to `queue_ticker_max_count`) — not e2e.
+Tick cadence is independent of batch size, provided the ticker keeps up. Under pressure, batch size can grow beyond `queue_ticker_max_count`: that setting is a tick-trigger threshold, not a hard cap. Overloaded tickers or consumers can also increase end-to-end latency. Size receive ceilings for bursts and monitor consumer lag.
 
 UPDATE/DELETE-based systems use a different model: a consumer call returns messages immediately, marking them consumed via UPDATE (claim) and DELETE (ack) rather than advancing a snapshot cursor. So e2e ≈ consumer poll interval — sub-ms when the consumer is actively polling, up to the poll interval otherwise. Drain rate is `batch_size / poll_interval`; if producers outrun that, queue depth grows and e2e grows with it until consumers scale out. Separately, those UPDATEs and DELETEs produce dead tuples that autovacuum cannot reclaim under MVCC pressure (long-running tx, idle-in-transaction, lagging logical replication slot, physical standby with `hot_standby_feedback=on`) — the bloat failure mode [PgQue avoids by construction](../README.md#why-pgque).

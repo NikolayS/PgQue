@@ -67,7 +67,7 @@ begin;
 commit;
 ```
 
-The `inserted` CTE runs to completion even though the main query does not reference it (data-modifying CTEs always execute). Every row in `msgs` shares the same `batch_id`, so the scalar subquery picks any one of them and `pgque.ack` runs exactly once. **Batch-ownership caveat:** `pgque.ack(batch_id)` advances the consumer past the entire underlying batch, even if `receive()` returned fewer rows than the batch contains (due to `max_return`). Either consume the full batch before acking, or use `max_return >= ticker_max_count` (default 500) to ensure all rows are returned.
+The `inserted` CTE runs to completion even though the main query does not reference it (data-modifying CTEs always execute). Every row in `msgs` shares the same `batch_id`, so the scalar subquery picks any one of them and `pgque.ack` runs exactly once. **Complete batch or error:** `max_return` is a safety ceiling, not pagination. An oversized batch raises an error rather than returning partial results. Roll back and retry with a sufficient ceiling within your resource budget; never acknowledge a failed receive. Process every event before calling `ack()`, which finishes the whole batch. `ticker_max_count` is a tick-trigger threshold, not a hard batch-size cap.
 
 > **Anti-pattern: send + receive in one transaction.** Above merges `receive` + writes + `ack` into one tx — correct. Do **not** also merge `send` / `force_next_tick` / `ticker` into the same tx; the ticker's snapshot must be taken *after* `send` commits.
 >

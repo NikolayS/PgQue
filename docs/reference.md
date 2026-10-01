@@ -119,14 +119,16 @@ All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`
 
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
-Pulls the next batch for `consumer` on `queue` and streams up to `max_return` messages. `max_return` must be >= 1; passing 0 or a negative value raises an error. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
+Pulls the complete next batch for `consumer` on `queue`, or raises an error if it exceeds `max_return`. `max_return` must be >= 1; passing 0 or a negative value raises an error. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
 Grant: `pgque_reader`. Source: `sql/pgque-api/receive.sql`.
 
 ```sql
 select * from pgque.receive('orders', 'processor', 100);
 ```
 
-**Batch-ownership caveat.** `max_return` limits the number of rows returned to the caller, but `ack(batch_id)` advances the consumer cursor past the entire underlying batch. If `max_return < ticker_max_count`, calling `ack()` after a partial receive will drop the unreturned rows from the consumer's perspective. Either consume the full batch before acking, or use `max_return >= ticker_max_count` for safe pagination.
+**Complete batch or error.** `max_return` is a safety ceiling, not a page size. Exactly that many events is valid; encountering one more raises an error, with no successful result or consumer advancement from that call. Roll back a failed transaction and retry with a larger ceiling within your resource budget, or use the low-level full-batch interface. Process every event before calling `ack(batch_id)`, which finishes the entire batch. Do not acknowledge after an overflow error. Repeating `receive()` with the same ceiling does not paginate or resolve overflow.
+
+`ticker_max_count` is a tick-trigger threshold, not a hard batch-size cap. Setting `max_return` to that value cannot guarantee success during bursts. Monitor receive errors and consumer lag so an undersized ceiling does not silently stall processing.
 
 #### `pgque.ack(batch_id bigint) → integer`
 
@@ -170,9 +172,9 @@ Receives messages for one subconsumer. `max_return` must be >= 1. `dead_interval
 
 **Auto-registration.** If the logical `consumer` or `subconsumer` is not yet registered, `receive_coop()` registers them on the fly (creates the `coop_main` row on first call, then the `coop_member` row), so a worker can call `receive_coop()` cold without a prior `register_subconsumer`. Use the explicit `register_subconsumer(..., convert_normal => true)` call only when you need to convert an existing normal consumer into a cooperative main.
 
-**Empty tick windows are auto-finished.** When the current batch's tick window holds no events, `receive_coop()` calls `finish_batch` internally and returns the empty set. Callers polling a quiet queue do not see (and do not need to ack) a `batch_id`; this differs from `receive()`, which still returns an active batch token even when the result set is empty.
+**Empty tick windows are auto-finished.** When the current batch's tick window holds no events, `receive_coop()` calls `finish_batch` internally and returns the empty set. Callers polling a quiet queue do not see (and do not need to ack) a `batch_id`; `receive()` also auto-finishes empty batches.
 
-**Batch-ownership caveat.** As with `receive()`, `max_return` limits only returned rows; `ack(batch_id)` advances the cooperative cursor past the whole underlying batch. Use `max_return >= ticker_max_count` or consume the full batch before acking.
+**Complete batch or error.** As with `receive()`, `max_return` is a safety ceiling, not pagination. An oversized batch raises an error and rolls back allocation or takeover performed by that call. Retry with a sufficient ceiling within your resource budget, process the complete batch, then acknowledge. The ticker threshold does not cap batch size.
 
 **Throughput note.** Cooperative allocation serializes on a `FOR UPDATE` of the `coop_main` subscription row, so many workers polling tiny batches contend on a single hot row. If you scale workers, also tune `ticker_max_count` and tick cadence so each batch is large enough to amortize the lock.
 
