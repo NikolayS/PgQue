@@ -1,5 +1,9 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
+from functools import partial
+
+import pytest
+
 from pgque import PgqueClient
 
 
@@ -94,7 +98,7 @@ def test_process_page_accepts_completed_return_value_without_closing_it():
     assert len(conn.calls) == 2
 
 
-def test_process_page_accepts_completed_iterator_without_closing_it():
+def test_process_page_rejects_unknown_iterator_without_closing_it():
     class ExecutedCursor:
         closed = False
         def __iter__(self): return self
@@ -103,11 +107,10 @@ def test_process_page_accepts_completed_iterator_without_closing_it():
 
     cursor = ExecutedCursor()
     conn = Conn([[page_row()], [["acked", True]]])
-    result = PgqueClient(conn).process_page("q", "c", "w", lambda _: cursor)
-    assert result.processed_count == 1
-    assert result.batch_finished
+    with pytest.raises(TypeError, match="lazy"):
+        PgqueClient(conn).process_page("q", "c", "w", lambda _: cursor)
     assert not cursor.closed
-    assert len(conn.calls) == 2
+    assert len(conn.calls) == 1
 
 
 def test_process_page_does_not_close_unknown_awaitable():
@@ -125,4 +128,23 @@ def test_process_page_does_not_close_unknown_awaitable():
     else:
         raise AssertionError("awaitable return accepted")
     assert not awaitable.closed
+    assert len(conn.calls) == 1
+
+
+@pytest.mark.parametrize("kind", ["map", "filter", "lambda", "partial"])
+def test_process_page_rejects_deferred_side_effect_without_ack(kind):
+    effects = []
+    def effect(value):
+        effects.append(value)
+        return True
+    deferred = {
+        "map": lambda: map(effect, [1]),
+        "filter": lambda: filter(effect, [1]),
+        "lambda": lambda: lambda: effect(1),
+        "partial": lambda: partial(effect, 1),
+    }[kind]()
+    conn = Conn([[page_row()], [["acked", True]]])
+    with pytest.raises(TypeError, match="lazy"):
+        PgqueClient(conn).process_page("q", "c", "w", lambda _: deferred)
+    assert effects == []
     assert len(conn.calls) == 1

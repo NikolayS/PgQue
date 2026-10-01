@@ -4,6 +4,7 @@
 
 """PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
+from collections.abc import Iterator
 import inspect
 import json
 from typing import Any, Callable, Optional, Union
@@ -349,7 +350,10 @@ class PgqueClient:
             result = handler(message)
             if (inspect.isawaitable(result)
                     or inspect.isgenerator(result)
-                    or inspect.isasyncgen(result)):
+                    or inspect.isasyncgen(result)
+                    or callable(result)
+                    or (isinstance(result, Iterator)
+                        and not isinstance(result, psycopg.Cursor))):
                 if inspect.iscoroutine(result):
                     result.close()
                 elif inspect.isgenerator(result):

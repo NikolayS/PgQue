@@ -54,8 +54,12 @@ class TestPageUnit < Minitest::Test
   end
 
   def test_deferred_callable_handler_does_not_ack
-    [proc {}, Fiber.new {}].each do |deferred|
-      conn = PageFakeConnection.new([PageFakeResult.new([row])])
+    callable = Object.new
+    def callable.call; end
+    method = callable.method(:call)
+    [proc {}, Fiber.new {}, callable, method, method.unbind].each do |deferred|
+      ack = PageFakeResult.new([{"status"=>"acked", "batch_finished"=>"t"}])
+      conn = PageFakeConnection.new([PageFakeResult.new([row]), ack])
       assert_raises(TypeError) do
         Pgque::Client.new(conn).process_page("q", "c", "w") { deferred }
       end

@@ -196,7 +196,9 @@ client.conn.commit()
 
 `process_page()` handles at most one ordinary page. It acknowledges only after
 every synchronous handler completes; exceptions and lazy/async handlers leave
-the page outstanding and propagate an error. For this one-shot helper, use an
+the page outstanding and propagate an error. Returned callables and iterators
+are rejected, except synchronous psycopg cursors from completed operations;
+those cursors remain open and caller-owned. For this one-shot helper, use an
 autocommit connection so receive commits before handlers run. Use the low-level
 methods above when controlling database effect/ack transactions explicitly.
 

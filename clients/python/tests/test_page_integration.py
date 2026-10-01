@@ -1,4 +1,8 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+from functools import partial
+
+import pytest
+
 from pgque import PgqueClient
 
 
@@ -33,6 +37,22 @@ def test_page_live_round_trip(conn, setup_queue):
     page = client.receive_page(queue, consumer, "live-worker", page_size=2)
     assert client.renew_page(page.page_token, "live-worker") >= page.lease_until
     conn.execute("create temporary table page_effects (msg_id bigint primary key)")
+    for factory in (map, filter):
+        def lazy_handler(message):
+            return factory(lambda _: conn.execute(
+                "insert into page_effects values (%s)", (message.msg_id,)), [1])
+        with pytest.raises(TypeError, match="lazy"):
+            client.process_page(queue, consumer, "live-worker", lazy_handler, page_size=2)
+        replay = client.receive_page(queue, consumer, "live-worker", page_size=2)
+        assert replay.page_token == page.page_token
+        assert conn.execute("select count(*) from page_effects").fetchone()[0] == 0
+    def deferred_handler(message):
+        return partial(conn.execute, "insert into page_effects values (%s)",
+                       (message.msg_id,))
+    with pytest.raises(TypeError, match="lazy"):
+        client.process_page(queue, consumer, "live-worker", deferred_handler, page_size=2)
+    assert client.receive_page(queue, consumer, "live-worker", page_size=2).page_token == page.page_token
+    assert conn.execute("select count(*) from page_effects").fetchone()[0] == 0
     cursors = []
     def execute_handler(message):
         cursor = conn.execute("insert into page_effects values (%s)",
