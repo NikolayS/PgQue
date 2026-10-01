@@ -6007,12 +6007,13 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
-create or replace function pgque.next_batch_custom(
+create or replace function pgque._next_batch_custom(
     in i_queue_name text,
     in i_consumer_name text,
     in i_min_lag interval,
     in i_min_count int4,
     in i_min_interval interval,
+    in i_paged boolean,
     out batch_id int8,
     out cur_tick_id int8,
     out prev_tick_id int8,
@@ -6022,7 +6023,7 @@ create or replace function pgque.next_batch_custom(
     out prev_tick_event_seq int8)
 as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.next_batch_custom(5)
+-- Function: pgque._next_batch_custom(6)
 --
 --      Makes next block of events active.  Block size can be tuned
 --      with i_min_count, i_min_interval parameters.  Events age can
@@ -6056,12 +6057,13 @@ as $$
 --      prev_tick_event_seq - value from event id sequence at the time tick was issued.
 --
 -- pgque override note:
---      This 5-arg form is the legacy non-cooperative API. Cooperative consumers
+--      The public 5-arg form is the legacy non-cooperative API. Cooperative consumers
 --      must use the 7-arg pgque.next_batch_custom(queue, consumer, subconsumer,
 --      …, dead_interval) below. If the named (queue, consumer) resolves to a
 --      coop_main row that has at least one coop_member, this function raises
 --      with a directive to use the cooperative form. Coop_main rows without
 --      members behave as normal consumers and pass through.
+--      i_paged is reserved for the private paged-delivery allocator path.
 --
 -- Calls:
 --      pgque.find_tick_helper
@@ -6154,6 +6156,9 @@ begin
 
     -- has already active batch
     if batch_id is not null then
+        if not i_paged then
+            perform pgque._assert_unpaged(batch_id);
+        end if;
         return;
     end if;
 
@@ -6233,6 +6238,35 @@ begin
     return;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+create or replace function pgque.next_batch_custom(
+    in i_queue_name text,
+    in i_consumer_name text,
+    in i_min_lag interval,
+    in i_min_count int4,
+    in i_min_interval interval,
+    out batch_id int8,
+    out cur_tick_id int8,
+    out prev_tick_id int8,
+    out cur_tick_time timestamptz,
+    out prev_tick_time timestamptz,
+    out cur_tick_event_seq int8,
+    out prev_tick_event_seq int8)
+as $$
+    select *
+    from pgque._next_batch_custom(
+        i_queue_name,
+        i_consumer_name,
+        i_min_lag,
+        i_min_count,
+        i_min_interval,
+        false
+    );
+$$ language sql security definer set search_path = pgque, pg_catalog;
+
+revoke execute on function pgque._next_batch_custom(
+    text, text, interval, int4, interval, boolean)
+    from public, pgque_reader, pgque_writer, pgque_admin;
 
 create or replace function pgque.finish_batch(
     x_batch_id bigint)
@@ -8667,8 +8701,81 @@ revoke execute on function pgque._event_retry_core(bigint, bigint, timestamptz)
 revoke execute on function pgque._nack_paged_event(bigint, pgque.message, interval, text)
     from public, pgque_reader, pgque_writer, pgque_admin;
 
+/*
+ * Administrative force destroys subscriptions, rather than acknowledging them.
+ * NOWAIT prevents queue -> subscription waiting from deadlocking an ack that
+ * already holds its subscription and is inserting a queue-referencing retry.
+ */
+create or replace function pgque.drop_queue(x_queue_name text, x_force boolean)
+returns integer as $$
+declare
+    v_queue pgque.queue%rowtype;
+    v_consumers int4[];
+    v_table text;
+begin
+    select * into v_queue
+    from pgque.queue
+    where queue_name = x_queue_name
+    for update;
+    if not found then
+        raise exception 'No such event queue';
+    end if;
+    if x_force then
+        perform 1 from pgque.partition_slot
+        where queue_id = v_queue.queue_id
+        order by co_name, slot
+        for update nowait;
+        perform 1 from pgque.subscription
+        where sub_queue = v_queue.queue_id
+        order by sub_consumer
+        for update nowait;
+        select array_agg(sub_consumer) into v_consumers
+        from pgque.subscription
+        where sub_queue = v_queue.queue_id;
+        delete from pgque.retry_queue where ev_queue = v_queue.queue_id;
+        delete from pgque.subscription where sub_queue = v_queue.queue_id;
+        /* Concurrent registration owns its consumer row; leave that identity
+           in place rather than waiting while holding the queue lock. */
+        with orphaned as (
+            select c.co_id
+            from pgque.consumer as c
+            where c.co_id = any(v_consumers)
+                and not exists (
+                    select 1 from pgque.subscription as s
+                    where s.sub_consumer = c.co_id
+                )
+            for update of c skip locked
+        )
+        delete from pgque.consumer as c
+        using orphaned as o
+        where c.co_id = o.co_id;
+    elsif exists (
+        select 1 from pgque.subscription where sub_queue = v_queue.queue_id
+    ) then
+        raise exception 'cannot drop queue, consumers still attached';
+    end if;
+    for i in 0 .. (v_queue.queue_ntables - 1) loop
+        v_table := v_queue.queue_data_pfx || '_' || i::text;
+        execute 'drop table ' || pgque.quote_fqname(v_table);
+    end loop;
+    execute 'drop table ' || pgque.quote_fqname(v_queue.queue_data_pfx);
+    delete from pgque.tick where tick_queue = v_queue.queue_id;
+    execute 'drop sequence ' || pgque.quote_fqname(v_queue.queue_tick_seq);
+    execute 'drop sequence ' || pgque.quote_fqname(v_queue.queue_event_seq);
+    delete from pgque.queue where queue_id = v_queue.queue_id;
+    return 1;
+exception when lock_not_available then
+    raise exception 'queue is in use; retry administrative force drop'
+        using errcode = '40001';
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+revoke execute on function pgque.drop_queue(text, boolean)
+    from public, pgque_reader, pgque_writer;
+grant execute on function pgque.drop_queue(text, boolean) to pgque_admin;
+
 -- pgque-api/paged_batches.sql
--- Durable bounded consumption; see blueprints/PAGED_BATCHES.md (#364).
+-- Durable bounded consumption; see blueprints/PAGED_BATCHES.md.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 do $$
@@ -8872,7 +8979,8 @@ begin
     if position('#' in i_consumer) > 0 then
         raise exception 'use receive_page_partitioned for slot consumers' using errcode = '22023';
     end if;
-    v_batch := pgque.next_batch(i_queue, i_consumer);
+    select batch_id into v_batch
+    from pgque._next_batch_custom(i_queue, i_consumer, null, null, null, true);
     return pgque._receive_page(v_batch, 'normal', i_worker, i_page_size, i_lease);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
@@ -8904,7 +9012,9 @@ declare
 begin
     perform pgque._validate_page_args(i_queue, i_consumer, i_worker, i_page_size, interval '1 second');
     perform pgque._slot_guard(i_queue, i_consumer, i_slot, i_n, i_worker);
-    v_batch := pgque.next_batch(i_queue, pgque._slot_name(i_consumer, i_slot, i_n));
+    select batch_id into v_batch
+    from pgque._next_batch_custom(i_queue, pgque._slot_name(i_consumer, i_slot, i_n),
+        null, null, null, true);
     return pgque._receive_page(v_batch, 'partition', i_worker, i_page_size,
         null, i_consumer, i_slot, i_n);
 end;
@@ -9022,16 +9132,21 @@ begin
         end if;
         v_id := (v_item->>'msg_id')::bigint;
         v_seconds := coalesce((v_item->>'retry_after_seconds')::int4, 60);
-        if exists (select 1 from jsonb_array_elements(v_normalized) as f
-            where f->>'msg_id' = v_id::text) then
-            raise exception 'duplicate failure ID' using errcode = '22023';
-        end if;
-        v_normalized := v_normalized || jsonb_build_array(jsonb_build_object(
-            'msg_id', v_id::text, 'retry_after_seconds', v_seconds,
-            'reason', v_item->>'reason'));
     end loop;
-    select coalesce(jsonb_agg(f order by (f->>'msg_id')::bigint), '[]')
-    into v_normalized from jsonb_array_elements(v_normalized) as f;
+    if exists (
+        select 1
+        from jsonb_array_elements(i_failures) as f
+        group by (f->>'msg_id')::bigint
+        having count(*) > 1
+    ) then
+        raise exception 'duplicate failure ID' using errcode = '22023';
+    end if;
+    select coalesce(jsonb_agg(jsonb_build_object(
+        'msg_id', ((f->>'msg_id')::bigint)::text,
+        'retry_after_seconds', coalesce((f->>'retry_after_seconds')::int4, 60),
+        'reason', f->>'reason') order by (f->>'msg_id')::bigint), '[]')
+    into v_normalized
+    from jsonb_array_elements(i_failures) as f;
     return v_normalized;
 exception when numeric_value_out_of_range or invalid_text_representation then
     raise exception 'failure number out of range' using errcode = '22023';
@@ -9048,12 +9163,18 @@ declare
     v_messages pgque.message[];
     v_message pgque.message;
 begin
-    v_request := pgque._page_failures(i_failures);
     v_state := pgque._lock_page(i_page_token);
     if v_state.last_ack_token = i_page_token then
         if v_state.last_ack_worker is distinct from i_worker then
             raise exception 'wrong receipt worker' using errcode = 'PQP01';
         end if;
+        if i_failures is null or jsonb_typeof(i_failures) <> 'array' then
+            raise exception 'failures must be an array' using errcode = '22023';
+        end if;
+        if jsonb_array_length(i_failures) <> jsonb_array_length(v_state.last_ack_request) then
+            raise exception 'ack receipt request differs' using errcode = 'PQP02';
+        end if;
+        v_request := pgque._page_failures(i_failures);
         if v_state.last_ack_request is distinct from v_request then
             raise exception 'ack receipt request differs' using errcode = 'PQP02';
         end if;
@@ -9061,6 +9182,13 @@ begin
         return;
     end if;
     perform pgque._validate_pending_page(v_state, i_page_token, i_worker);
+    if i_failures is null or jsonb_typeof(i_failures) <> 'array' then
+        raise exception 'failures must be an array' using errcode = '22023';
+    end if;
+    if jsonb_array_length(i_failures) > v_state.pending_page_size then
+        raise exception 'too many failure descriptors' using errcode = '22023';
+    end if;
+    v_request := pgque._page_failures(i_failures);
     if jsonb_array_length(v_request) > 0 then
         select array_agg(m) into v_messages
         from pgque._page_messages(v_state, v_state.pending_page_size) as m;

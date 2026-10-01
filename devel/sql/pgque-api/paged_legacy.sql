@@ -258,3 +258,76 @@ revoke execute on function pgque._event_retry_core(bigint, bigint, timestamptz)
     from public, pgque_reader, pgque_writer, pgque_admin;
 revoke execute on function pgque._nack_paged_event(bigint, pgque.message, interval, text)
     from public, pgque_reader, pgque_writer, pgque_admin;
+
+/*
+ * Administrative force destroys subscriptions, rather than acknowledging them.
+ * NOWAIT prevents queue -> subscription waiting from deadlocking an ack that
+ * already holds its subscription and is inserting a queue-referencing retry.
+ */
+create or replace function pgque.drop_queue(x_queue_name text, x_force boolean)
+returns integer as $$
+declare
+    v_queue pgque.queue%rowtype;
+    v_consumers int4[];
+    v_table text;
+begin
+    select * into v_queue
+    from pgque.queue
+    where queue_name = x_queue_name
+    for update;
+    if not found then
+        raise exception 'No such event queue';
+    end if;
+    if x_force then
+        perform 1 from pgque.partition_slot
+        where queue_id = v_queue.queue_id
+        order by co_name, slot
+        for update nowait;
+        perform 1 from pgque.subscription
+        where sub_queue = v_queue.queue_id
+        order by sub_consumer
+        for update nowait;
+        select array_agg(sub_consumer) into v_consumers
+        from pgque.subscription
+        where sub_queue = v_queue.queue_id;
+        delete from pgque.retry_queue where ev_queue = v_queue.queue_id;
+        delete from pgque.subscription where sub_queue = v_queue.queue_id;
+        /* Concurrent registration owns its consumer row; leave that identity
+           in place rather than waiting while holding the queue lock. */
+        with orphaned as (
+            select c.co_id
+            from pgque.consumer as c
+            where c.co_id = any(v_consumers)
+                and not exists (
+                    select 1 from pgque.subscription as s
+                    where s.sub_consumer = c.co_id
+                )
+            for update of c skip locked
+        )
+        delete from pgque.consumer as c
+        using orphaned as o
+        where c.co_id = o.co_id;
+    elsif exists (
+        select 1 from pgque.subscription where sub_queue = v_queue.queue_id
+    ) then
+        raise exception 'cannot drop queue, consumers still attached';
+    end if;
+    for i in 0 .. (v_queue.queue_ntables - 1) loop
+        v_table := v_queue.queue_data_pfx || '_' || i::text;
+        execute 'drop table ' || pgque.quote_fqname(v_table);
+    end loop;
+    execute 'drop table ' || pgque.quote_fqname(v_queue.queue_data_pfx);
+    delete from pgque.tick where tick_queue = v_queue.queue_id;
+    execute 'drop sequence ' || pgque.quote_fqname(v_queue.queue_tick_seq);
+    execute 'drop sequence ' || pgque.quote_fqname(v_queue.queue_event_seq);
+    delete from pgque.queue where queue_id = v_queue.queue_id;
+    return 1;
+exception when lock_not_available then
+    raise exception 'queue is in use; retry administrative force drop'
+        using errcode = '40001';
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+revoke execute on function pgque.drop_queue(text, boolean)
+    from public, pgque_reader, pgque_writer;
+grant execute on function pgque.drop_queue(text, boolean) to pgque_admin;

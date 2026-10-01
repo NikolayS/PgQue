@@ -43,6 +43,25 @@ class TestPageUnit < Minitest::Test
     assert_equal 1, conn.calls.length
   end
 
+  def test_lazy_handler_does_not_ack
+    [Enumerator.new { |items| items << 1 }, [1].lazy].each do |lazy|
+      conn = PageFakeConnection.new([PageFakeResult.new([row])])
+      assert_raises(TypeError) do
+        Pgque::Client.new(conn).process_page("q", "c", "w") { lazy }
+      end
+      assert_equal 1, conn.calls.length
+    end
+  end
+
+  def test_completed_handler_return_is_accepted
+    ack = PageFakeResult.new([{"status"=>"acked", "batch_finished"=>"t"}])
+    conn = PageFakeConnection.new([PageFakeResult.new([row]), ack])
+    result = Pgque::Client.new(conn).process_page("q", "c", "w") { Object.new }
+    assert_equal 1, result.processed_count
+    assert result.batch_finished
+    assert_equal 2, conn.calls.length
+  end
+
   def test_metadata_only_row_has_no_message
     idle = row.merge("status"=>"idle", "page_batch_id"=>nil,
                      "page_token"=>nil, "page_number"=>nil, "is_last"=>nil,

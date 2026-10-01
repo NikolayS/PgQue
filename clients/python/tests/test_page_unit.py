@@ -78,3 +78,17 @@ def test_process_page_rejects_lazy_return_without_ack():
     else:
         raise AssertionError("lazy return accepted")
     assert len(conn.calls) == 1
+
+
+def test_process_page_accepts_completed_return_value_without_closing_it():
+    class Completed:
+        closed = False
+        def close(self): self.closed = True
+
+    completed = Completed()
+    conn = Conn([[page_row()], [["acked", True]]])
+    result = PgqueClient(conn).process_page("q", "c", "w", lambda _: completed)
+    assert result.processed_count == 1
+    assert result.batch_finished
+    assert not completed.closed
+    assert len(conn.calls) == 2

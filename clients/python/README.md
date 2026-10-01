@@ -178,21 +178,27 @@ client.conn.commit()
 
 Paged methods follow the same caller-managed transaction model. Neither
 `receive_page()` nor `ack_page()` commits implicitly. Use `autocommit=True`, or
-call `client.conn.commit()` at the application transaction boundaries. This
-allows database side effects and `ack_page()` to commit atomically.
+commit the receive before long processing so its lease is visible and its row
+locks are released. Then commit database side effects and `ack_page()` together.
+A receive left uncommitted holds locks and cannot participate in lease takeover
+until that transaction ends. On a processing error, roll back any application
+transaction; do not acknowledge the page.
 
 ```python
 page = client.receive_page("orders", "worker", process_uuid, page_size=100)
+client.conn.commit()  # publish the lease and release receive locks
 if page.status == "page":
     for message in page.messages:
-        handle(message)  # synchronous; must return None
+        handle(message)  # synchronous; must complete before returning
     client.ack_page(page.page_token, process_uuid)
 client.conn.commit()
 ```
 
 `process_page()` handles at most one ordinary page. It acknowledges only after
-every synchronous handler call returns `None`; exceptions and lazy/async
-handlers leave the page outstanding and propagate an error.
+every synchronous handler completes; exceptions and lazy/async handlers leave
+the page outstanding and propagate an error. For this one-shot helper, use an
+autocommit connection so receive commits before handlers run. Use the low-level
+methods above when controlling database effect/ack transactions explicitly.
 
 Don't wrap `send` and `receive` in one explicit tx; same for `maint_retry_events` + `ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
 

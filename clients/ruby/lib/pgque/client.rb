@@ -146,7 +146,13 @@ module Pgque
       return PageResult.new(status: page.status, processed_count: 0,
                             batch_finished: nil) unless page.status == "page"
 
-      page.messages.each { |message| handler.call(message) }
+      page.messages.each do |message|
+        outcome = handler.call(message)
+        if outcome.is_a?(Enumerator)
+          outcome.close if outcome.respond_to?(:close)
+          raise TypeError, "page handler must complete, not return an Enumerator"
+        end
+      end
       ack = ack_page(page.page_token, worker)
       PageResult.new(status: page.status, processed_count: page.messages.length,
                      batch_finished: ack[:batch_finished])

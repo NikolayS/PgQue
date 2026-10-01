@@ -275,7 +275,14 @@ export class Client {
     if (typeof handler !== 'function') throw new TypeError('handler must be a function');
     const page = await this.receivePage(queue, consumer, worker, pageSize, lease);
     if (page.status !== 'page') return {status: page.status, processedCount: 0, batchFinished: null};
-    for (const message of page.messages) await handler(message);
+    for (const message of page.messages) {
+      const outcome: unknown = await handler(message);
+      // Invoking a generator does not execute its body; never acknowledge it.
+      if (outcome !== null && typeof outcome === 'object'
+          && 'next' in outcome && typeof outcome.next === 'function') {
+        throw new TypeError('page handler must complete, not return an iterator');
+      }
+    }
     const ack = await this.ackPage(page.pageToken!, worker);
     return {status: page.status, processedCount: page.messages.length, batchFinished: ack.batchFinished};
   }

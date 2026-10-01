@@ -179,12 +179,13 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
-create or replace function pgque.next_batch_custom(
+create or replace function pgque._next_batch_custom(
     in i_queue_name text,
     in i_consumer_name text,
     in i_min_lag interval,
     in i_min_count int4,
     in i_min_interval interval,
+    in i_paged boolean,
     out batch_id int8,
     out cur_tick_id int8,
     out prev_tick_id int8,
@@ -194,7 +195,7 @@ create or replace function pgque.next_batch_custom(
     out prev_tick_event_seq int8)
 as $$
 -- ----------------------------------------------------------------------
--- Function: pgque.next_batch_custom(5)
+-- Function: pgque._next_batch_custom(6)
 --
 --      Makes next block of events active.  Block size can be tuned
 --      with i_min_count, i_min_interval parameters.  Events age can
@@ -228,12 +229,13 @@ as $$
 --      prev_tick_event_seq - value from event id sequence at the time tick was issued.
 --
 -- pgque override note:
---      This 5-arg form is the legacy non-cooperative API. Cooperative consumers
+--      The public 5-arg form is the legacy non-cooperative API. Cooperative consumers
 --      must use the 7-arg pgque.next_batch_custom(queue, consumer, subconsumer,
 --      …, dead_interval) below. If the named (queue, consumer) resolves to a
 --      coop_main row that has at least one coop_member, this function raises
 --      with a directive to use the cooperative form. Coop_main rows without
 --      members behave as normal consumers and pass through.
+--      i_paged is reserved for the private paged-delivery allocator path.
 --
 -- Calls:
 --      pgque.find_tick_helper
@@ -326,6 +328,9 @@ begin
 
     -- has already active batch
     if batch_id is not null then
+        if not i_paged then
+            perform pgque._assert_unpaged(batch_id);
+        end if;
         return;
     end if;
 
@@ -405,6 +410,35 @@ begin
     return;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+create or replace function pgque.next_batch_custom(
+    in i_queue_name text,
+    in i_consumer_name text,
+    in i_min_lag interval,
+    in i_min_count int4,
+    in i_min_interval interval,
+    out batch_id int8,
+    out cur_tick_id int8,
+    out prev_tick_id int8,
+    out cur_tick_time timestamptz,
+    out prev_tick_time timestamptz,
+    out cur_tick_event_seq int8,
+    out prev_tick_event_seq int8)
+as $$
+    select *
+    from pgque._next_batch_custom(
+        i_queue_name,
+        i_consumer_name,
+        i_min_lag,
+        i_min_count,
+        i_min_interval,
+        false
+    );
+$$ language sql security definer set search_path = pgque, pg_catalog;
+
+revoke execute on function pgque._next_batch_custom(
+    text, text, interval, int4, interval, boolean)
+    from public, pgque_reader, pgque_writer, pgque_admin;
 
 create or replace function pgque.finish_batch(
     x_batch_id bigint)

@@ -14,6 +14,16 @@ const messageRow = {
 };
 
 describe('paged client', () => {
+  it('does not ack an unexecuted generator or async generator handler', async () => {
+    for (const handler of [function* () { yield 1; }, async function* () { yield 1; }]) {
+      const pool = {query: vi.fn().mockResolvedValueOnce({rows:[messageRow]})
+        .mockResolvedValueOnce({rows:[{status:'acked',batch_finished:true}]})};
+      const client = new Client(pool as never);
+      await expect(client.processPage('q', 'c', 'w', handler as never)).rejects.toThrow('iterator');
+      expect(pool.query).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('expands typed rows and preserves bigint precision', async () => {
     const pool = {query: vi.fn().mockResolvedValue({rows: [messageRow]})};
     const page = await new Client(pool as never).receivePage('q', 'c', 'w');

@@ -158,4 +158,8 @@
 \i tests/test_paged_doc.sql
 \i tests/test_paged_history.sql
 
+\i tests/test_paged_destroy.sql
+\i tests/test_paged_validation.sql
+\i tests/test_paged_review.sql
+
 \echo '=== ALL TESTS PASSED ==='

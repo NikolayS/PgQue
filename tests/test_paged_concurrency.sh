@@ -371,3 +371,37 @@ SQL
 echo 'PASS: terminated receive/ack backends rolled back; committed progress recovered; long producer visible only in next tick window'
 
 echo "PASS: concurrent receive serialized (${race_wait_ms}ms); same-worker reconnect redelivered; lost ack replayed; takeover fenced stale token; partition receive obeyed slot-first locking (${slot_wait_ms}ms)"
+
+# An administrative drop must not wait on a subscription while owning the
+# queue row needed by an in-flight ack's retry foreign-key check.
+psql_test <<'SQL' >/dev/null
+select pgque.create_queue('paged_drop_busy');
+select pgque.subscribe('paged_drop_busy', 'c1');
+select pgque.send('paged_drop_busy', 'drop', 'pending');
+select pgque.force_next_tick('paged_drop_busy');
+select pgque.ticker('paged_drop_busy');
+select pgque.receive_page('paged_drop_busy', 'c1', 'w', 1);
+SQL
+psql_test -c "set application_name='page_drop_holder'; begin;
+  select 1 from pgque.subscription where sub_queue =
+    (select queue_id from pgque.queue where queue_name='paged_drop_busy') for update;
+  select pg_sleep(10); rollback;" >"${tmpdir}/drop_holder.out" 2>"${tmpdir}/drop_holder.err" &
+drop_holder_pid=$!
+wait_for_sleep page_drop_holder
+psql_test <<'SQL' >/dev/null
+set statement_timeout = '2s';
+do $$
+begin
+  begin
+    perform pgque.drop_queue('paged_drop_busy', true);
+    assert false, 'force drop must fail fast on busy subscription';
+  exception when serialization_failure then null;
+  end;
+  assert exists (select 1 from pgque.page_state where queue_id =
+    (select queue_id from pgque.queue where queue_name='paged_drop_busy'));
+end $$;
+SQL
+psql_test -c "select pg_terminate_backend(pid) from pg_stat_activity where application_name='page_drop_holder'" >/dev/null
+if wait "$drop_holder_pid"; then fail 'terminated drop holder unexpectedly completed'; fi
+psql_test -c "select pgque.drop_queue('paged_drop_busy',true)" >/dev/null
+echo 'PASS: administrative force drop fails fast while subscription is locked, preserves pending state, and succeeds after unlock'

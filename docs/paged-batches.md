@@ -1,13 +1,12 @@
 ---
-title: Bounded batch processing (0.3 development)
+title: Bounded batch processing
 description: Durable page checkpoints, ownership fencing, and bounded one-shot consumption.
 ---
 
 ## Availability
 
-This API targets **0.3** and is present only in the development installer,
-`devel/sql/pgque.sql`. It is not available in the frozen 0.2.1 installer under
-`sql/`. Existing whole-batch `receive` calls keep their complete-batch-or-error
+This API is present only in the development installer, `devel/sql/pgque.sql`.
+Existing whole-batch `receive` calls keep their complete-batch-or-error
 behavior; `max_return` remains a safety ceiling, not pagination.
 
 A page contains at most `page_size` events. Receiving does not advance progress.
@@ -60,6 +59,13 @@ transaction for atomic checkpointing.
 
 All public page functions are granted to `pgque_reader`. Subscribe explicitly
 before receiving, including cooperative members and partition slots.
+
+For cooperative paging, register each member first with
+`pgque.register_subconsumer(queue, consumer, subconsumer)`. Queue, consumer and
+subconsumer names must be nonempty; cooperative consumer and subconsumer names
+must not contain `.`. The cooperative receive does not auto-register members.
+Its default `dead_interval := null` disables takeover; pass a positive interval
+to allow takeover from an inactive member after its page lease also expires.
 
 | Function | Result |
 | --- | --- |
@@ -136,15 +142,18 @@ from the engine. Failure routing, page checkpoint and ack receipt commit
 atomically. Retrying the identical normalized request never adds another retry;
 a different request for the retained token is an error. Omitted messages are
 asserted successfully processed. There is no separate page nack operation.
+Failed messages retry up to the queue's `max_retries` setting (effective default
+5); once the stored retry count reaches that ceiling, `ack_page` routes them to
+`pgque.dead_letter` instead of scheduling another retry.
 
 | SQLSTATE | Meaning |
 | --- | --- |
 | `22023` | Invalid page argument or failure descriptor |
-| `55000` | Legacy mutation of an active paged batch |
+| `55000` | Legacy mutation of an active page or incompatible active batch state |
 | `PQP01` | Stale page token, wrong worker, or fenced partition epoch |
 | `PQP02` | Retained ack replay with a different failure request |
-| `21000` | Ambiguous duplicate event IDs |
-| `40001` | Concurrent routing/renewal changed; retry the transaction |
+| `21000` | Ambiguous duplicate event IDs or changed pending-page membership |
+| `40001` | Concurrent routing changed or a takeover victim renewed; retry the transaction |
 
 Legacy whole-batch ack, finish, retry, cursor reset and unsubscribe cannot bypass
 an active page, including the interval between page acknowledgments. Finish
@@ -162,6 +171,12 @@ reused, so an ambiguous duplicate in the bounded candidate set raises an error
 before delivery. Privileged event-table mutation or rewinding behind an already
 committed checkpoint is outside the protocol. Do not grant raw table mutation
 to application roles.
+
+Page tokens and worker names provide stale-owner fencing, not per-role
+authorization. `pgque_reader` is a shared trust boundary: any holder can receive
+from any queue and, if it learns a valid token and worker name, can ack or renew
+that page. Do not share one PgQue install among mutually untrusted readers;
+isolate them by database or enforce ownership in app-controlled wrappers.
 
 The additive SDK page helpers process one page per invocation. They do not alter
 existing whole-batch consumer loops, auto-nack on a handler exception, or start
