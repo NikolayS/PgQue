@@ -4,6 +4,7 @@ package pgque_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -76,8 +77,9 @@ func TestSend_MultipleEventsOneBatch(t *testing.T) {
 	}
 }
 
-// TestReceive_RespectsMaxBatch ensures Receive returns at most maxMessages.
-func TestReceive_RespectsMaxBatch(t *testing.T) {
+// TestReceive_RejectsBatchOverMax ensures Receive fails closed and leaves the
+// complete batch available for a retry with a sufficient ceiling.
+func TestReceive_RejectsBatchOverMax(t *testing.T) {
 	client := connectOrSkip(t)
 	defer client.Close()
 	queue, consumer := setupFreshQueue(t, client)
@@ -94,14 +96,42 @@ func TestReceive_RespectsMaxBatch(t *testing.T) {
 	tick(t, client, queue)
 
 	msgs, err := client.Receive(ctx, queue, consumer, 10)
+	if err == nil {
+		t.Fatal("expected oversized batch to raise")
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("oversized receive returned %d partial messages", len(msgs))
+	}
+	var sqlErr *pgque.SQLError
+	if !errors.As(err, &sqlErr) || sqlErr.SQLSTATE != "P0001" {
+		t.Fatalf("expected propagated P0001 SQLError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "batch exceeds max_return of 10") {
+		t.Fatalf("unexpected overflow error: %v", err)
+	}
+
+	msgs, err = client.Receive(ctx, queue, consumer, total)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("complete retry failed: %v", err)
 	}
-	if len(msgs) > 10 {
-		t.Fatalf("Receive returned %d messages, expected ≤ 10", len(msgs))
+	if len(msgs) != total {
+		t.Fatalf("complete retry returned %d messages, expected %d", len(msgs), total)
 	}
-	if len(msgs) > 0 {
-		_, _ = client.Ack(ctx, msgs[0].BatchID)
+	batchID := msgs[0].BatchID
+	for _, msg := range msgs {
+		if msg.BatchID != batchID {
+			t.Fatalf("retry returned mixed batch ids %d and %d", batchID, msg.BatchID)
+		}
+	}
+	if _, err := client.Ack(ctx, batchID); err != nil {
+		t.Fatalf("ack after complete retry failed: %v", err)
+	}
+	msgs, err = client.Receive(ctx, queue, consumer, total)
+	if err != nil {
+		t.Fatalf("receive after ack failed: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no messages after ack, got %d", len(msgs))
 	}
 }
 

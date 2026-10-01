@@ -44,15 +44,22 @@ class TestReceive < Minitest::Test
     end
   end
 
-  def test_receive_returns_at_most_max_messages
+  def test_receive_rejects_batch_over_max_and_retries_complete
     with_queue do |queue, consumer, conn|
       client = Pgque::Client.new(conn)
       5.times { |i| client.send(queue, { "i" => i }) }
       conn.exec_params("select pgque.force_next_tick($1)", [queue])
       conn.exec_params("select pgque.ticker($1)", [queue])
-      msgs = client.receive(queue, consumer, 3)
-      assert_equal 3, msgs.size
+      error = assert_raises(Pgque::Error) do
+        client.receive(queue, consumer, 3)
+      end
+      assert_match(/batch exceeds max_return of 3/, error.message)
+
+      msgs = client.receive(queue, consumer, 5)
+      assert_equal 5, msgs.size
+      assert_equal [0, 1, 2, 3, 4], msgs.map { |m| m.payload["i"] }.sort
       client.ack(msgs[0].batch_id)
+      assert_equal [], client.receive(queue, consumer, 5)
     end
   end
 
