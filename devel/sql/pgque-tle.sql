@@ -5473,7 +5473,9 @@ begin
     loop
         if cnt = i_max_return then
             raise exception 'pgque.receive: batch exceeds max_return of %', i_max_return
-                using hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
+                using
+                    errcode = '54000',
+                    hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
         end if;
         return next row(
             ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,
@@ -6779,7 +6781,9 @@ begin
     loop
         if cnt = i_max_return then
             raise exception 'pgque.receive_coop: batch exceeds max_return of %', i_max_return
-                using hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
+                using
+                    errcode = '54000',
+                    hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
         end if;
         return next row(
             ev.ev_id,
@@ -7735,7 +7739,9 @@ begin
     get diagnostics v_probe_count = row_count;
     if v_probe_count = 1 then
         raise exception 'pgque.receive_partitioned: batch exceeds max of %', i_max
-            using hint = 'Retry with a larger resource-safe max to receive the complete slot batch. Do not acknowledge after this error.';
+            using
+                errcode = '54000',
+                hint = 'Retry with a larger resource-safe max to receive the complete slot batch. Do not acknowledge after this error.';
     end if;
 
     /* get_batch_cursor leaves the cursor open; close it so a repeated call

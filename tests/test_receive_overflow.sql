@@ -26,6 +26,7 @@ declare
   v_before record;
   v_after record;
   v_hint text;
+  v_state text;
 begin
   select s.* into v_before
   from pgque.subscription as s
@@ -38,7 +39,11 @@ begin
   exception
     when others then
       v_raised := true;
-      get stacked diagnostics v_hint = pg_exception_hint;
+      get stacked diagnostics
+        v_hint = pg_exception_hint,
+        v_state = returned_sqlstate;
+      assert v_state = '54000',
+        'receive overflow SQLSTATE must be 54000, got ' || v_state;
       assert sqlerrm like '%batch exceeds max_return of 2%',
         'unexpected receive overflow error: ' || sqlerrm;
       assert v_hint like '%Do not acknowledge after this error%',
@@ -134,6 +139,40 @@ begin
   perform pgque.send('recv_exact', 'ev', 'two');
 end $$;
 
+select pgque.force_next_tick('recv_exact');
+select pgque.ticker();
+
+do $$
+declare
+  v_count int := 0;
+  v_batch_id bigint;
+  v_msg pgque.message;
+  v_active_batch bigint;
+begin
+  for v_msg in select * from pgque.receive('recv_exact', 'c1', 2)
+  loop
+    v_count := v_count + 1;
+    v_batch_id := v_msg.batch_id;
+  end loop;
+  assert v_count = 2, format('exactly N events must succeed, got %s', v_count);
+  perform pgque.ack(v_batch_id);
+
+  v_count := 0;
+  for v_msg in select * from pgque.receive('recv_exact', 'c1', 2147483647)
+  loop
+    v_count := v_count + 1;
+  end loop;
+  assert v_count = 0,
+    format('INT_MAX receive after ack must be empty, got %s', v_count);
+  select s.sub_batch into v_active_batch
+  from pgque.subscription as s
+  join pgque.queue as q on q.queue_id = s.sub_queue
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  where q.queue_name = 'recv_exact' and c.co_name = 'c1';
+  assert v_active_batch is null,
+    'empty INT_MAX receive must not leave an active batch';
+end $$;
+
 -- A batch containing N-1 events also succeeds.
 do $$
 begin
@@ -160,26 +199,6 @@ begin
   assert v_count = 2,
     format('N-1 events must succeed, got %s', v_count);
   perform pgque.ack(v_batch_id);
-end $$;
-
-select pgque.force_next_tick('recv_exact');
-select pgque.ticker();
-
-do $$
-declare
-  v_count int := 0;
-  v_batch_id bigint;
-  v_msg pgque.message;
-begin
-  for v_msg in select * from pgque.receive('recv_exact', 'c1', 2)
-  loop
-    v_count := v_count + 1;
-    v_batch_id := v_msg.batch_id;
-  end loop;
-  assert v_count = 2, format('exactly N events must succeed, got %s', v_count);
-  perform pgque.ack(v_batch_id);
-
-  perform * from pgque.receive('recv_exact', 'c1', 2147483647);
 end $$;
 
 -- Preserve the SQL NULL behavior: it means no explicit ceiling.
@@ -232,6 +251,7 @@ declare
   v_payloads text[] := array[]::text[];
   v_msg pgque.message;
   v_hint text;
+  v_state text;
 begin
   begin
     perform * from pgque.receive_coop(
@@ -240,7 +260,11 @@ begin
   exception
     when others then
       v_raised := true;
-      get stacked diagnostics v_hint = pg_exception_hint;
+      get stacked diagnostics
+        v_hint = pg_exception_hint,
+        v_state = returned_sqlstate;
+      assert v_state = '54000',
+        'receive_coop overflow SQLSTATE must be 54000, got ' || v_state;
       assert sqlerrm like '%batch exceeds max_return of 2%',
         'unexpected receive_coop overflow error: ' || sqlerrm;
       assert v_hint like '%Do not acknowledge after this error%',
@@ -362,6 +386,7 @@ declare
   v_count int := 0;
   v_msg pgque.message;
   v_hint text;
+  v_state text;
 begin
   perform pgque.claim_slot('recv_part_overflow', 'c1', 0, 'worker');
   begin
@@ -371,7 +396,11 @@ begin
   exception
     when others then
       v_raised := true;
-      get stacked diagnostics v_hint = pg_exception_hint;
+      get stacked diagnostics
+        v_hint = pg_exception_hint,
+        v_state = returned_sqlstate;
+      assert v_state = '54000',
+        'receive_partitioned overflow SQLSTATE must be 54000, got ' || v_state;
       assert sqlerrm like '%batch exceeds max of 2%',
         'unexpected receive_partitioned overflow error: ' || sqlerrm;
       assert v_hint like '%Do not acknowledge after this error%',
@@ -397,6 +426,85 @@ begin
   perform pgque.release_slot('recv_part_overflow', 'c1', 0, 'worker');
 end $$;
 
+-- Partition overflow counts only rows matching the slot predicate.
+do $$
+begin
+  perform pgque.create_queue('recv_part_filtered');
+  perform pgque.subscribe_slot('recv_part_filtered', 'c1', 0, 2);
+  perform pgque.send('recv_part_filtered', 'ev', 'match-one', 'tenant-a');
+  perform pgque.send('recv_part_filtered', 'ev', 'other-one', 'tenant-b');
+  perform pgque.send('recv_part_filtered', 'ev', 'match-two', 'tenant-a');
+  perform pgque.send('recv_part_filtered', 'ev', 'other-two', 'tenant-b');
+end $$;
+
+select pgque.force_next_tick('recv_part_filtered');
+select pgque.ticker();
+
+do $$
+declare
+  v_count int := 0;
+  v_msg pgque.message;
+begin
+  perform pgque.claim_slot('recv_part_filtered', 'c1', 0, 'worker');
+  for v_msg in
+    select * from pgque.receive_partitioned(
+      'recv_part_filtered', 'c1', 0, 2, 'worker', 2
+    )
+  loop
+    v_count := v_count + 1;
+    assert v_msg.extra1 = 'tenant-a',
+      'slot 0 must not count or return other-slot rows';
+  end loop;
+  assert v_count = 2,
+    format('exactly 2 matching rows must succeed despite other-slot rows, got %s', v_count);
+  perform pgque.ack_partitioned('recv_part_filtered', 'c1', 0, 2, 'worker');
+end $$;
+
+do $$
+begin
+  perform pgque.send('recv_part_filtered', 'ev', 'match-three', 'tenant-a');
+  perform pgque.send('recv_part_filtered', 'ev', 'other-three', 'tenant-b');
+  perform pgque.send('recv_part_filtered', 'ev', 'match-four', 'tenant-a');
+  perform pgque.send('recv_part_filtered', 'ev', 'match-five', 'tenant-a');
+end $$;
+
+select pgque.force_next_tick('recv_part_filtered');
+select pgque.ticker();
+
+do $$
+declare
+  v_raised boolean := false;
+  v_state text;
+  v_count int := 0;
+  v_msg pgque.message;
+begin
+  begin
+    perform * from pgque.receive_partitioned(
+      'recv_part_filtered', 'c1', 0, 2, 'worker', 2
+    );
+  exception
+    when others then
+      v_raised := true;
+      get stacked diagnostics v_state = returned_sqlstate;
+  end;
+  assert v_raised and v_state = '54000',
+    format('3 matching rows must overflow at max 2 with 54000, got %s', v_state);
+
+  for v_msg in
+    select * from pgque.receive_partitioned(
+      'recv_part_filtered', 'c1', 0, 2, 'worker', 3
+    )
+  loop
+    v_count := v_count + 1;
+    assert v_msg.extra1 = 'tenant-a',
+      'slot 0 retry must not return other-slot rows';
+  end loop;
+  assert v_count = 3,
+    format('partition retry must return all 3 matching rows, got %s', v_count);
+  perform pgque.ack_partitioned('recv_part_filtered', 'c1', 0, 2, 'worker');
+  perform pgque.release_slot('recv_part_filtered', 'c1', 0, 'worker');
+end $$;
+
 do $$
 begin
   perform pgque.unregister_consumer('recv_overflow', 'c1');
@@ -418,5 +526,7 @@ begin
   perform pgque.drop_queue('recv_coop_takeover');
   perform pgque.unsubscribe_slot('recv_part_overflow', 'c1', 0);
   perform pgque.drop_queue('recv_part_overflow');
+  perform pgque.unsubscribe_slot('recv_part_filtered', 'c1', 0);
+  perform pgque.drop_queue('recv_part_filtered');
   raise notice 'PASS: receive ceilings fail closed and preserve complete batches';
 end $$;

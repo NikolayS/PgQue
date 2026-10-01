@@ -433,6 +433,19 @@ With `pg_tle` loaded, register and create PgQue:
 create extension pgque;
 ```
 
+For an existing pg_tle installation, register the supported update path and
+apply it without dropping the extension or its queue data:
+
+```sql
+\i sql/pgque-tle.sql
+alter extension pgque update to '0.2.1';
+select extversion from pg_extension where extname = 'pgque';
+select pgque.version();
+```
+
+Both version queries should agree. Unsupported upgrade origins are rejected;
+never uninstall a populated extension merely to apply an update.
+
 Uninstall the TLE variant with:
 
 ```sql

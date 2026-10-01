@@ -54,6 +54,7 @@ class TestReceive < Minitest::Test
         client.receive(queue, consumer, 3)
       end
       assert_match(/batch exceeds max_return of 3/, error.message)
+      assert_equal "54000", error.cause.result.error_field(PG::Result::PG_DIAG_SQLSTATE)
 
       msgs = client.receive(queue, consumer, 5)
       assert_equal 5, msgs.size
