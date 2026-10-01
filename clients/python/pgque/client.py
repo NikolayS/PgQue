@@ -4,8 +4,10 @@
 
 """PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
+from collections.abc import Iterator
+import inspect
 import json
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import psycopg
 
@@ -16,7 +18,17 @@ from .errors import (
     PgqueError,
     PgqueQueueNotFound,
 )
-from .types import Event, Message
+from .types import Event, Message, Page, PageResult
+
+_PAGE_SQL = """
+select p.status, p.batch_id as page_batch_id, p.page_token::text,
+       p.page_number, p.is_last, p.lease_until, p.fence_epoch,
+       m.msg_id, m.batch_id, m.type, m.payload, m.retry_count,
+       m.created_at, m.extra1, m.extra2, m.extra3, m.extra4, m.ordinality
+from {function} as p
+left join lateral unnest(p.messages) with ordinality as m on true
+order by m.ordinality
+"""
 
 
 def connect(dsn: str, *, autocommit: bool = False) -> "PgqueClient":
@@ -282,6 +294,89 @@ class PgqueClient:
         except psycopg.Error as e:
             raise _wrap_sql_error(e) from e
         return row[0]
+
+    def receive_page(self, queue: str, consumer: str, worker: str,
+                     page_size: int = 100, lease: str = "60 seconds") -> Page:
+        return self._receive_page("pgque.receive_page(%s, %s, %s, %s, %s::interval)",
+                                  (queue, consumer, worker, page_size, lease))
+
+    def receive_page_coop(self, queue: str, consumer: str, subconsumer: str,
+                          worker: str, page_size: int = 100,
+                          dead_interval: Optional[str] = None,
+                          lease: str = "60 seconds") -> Page:
+        return self._receive_page(
+            "pgque.receive_page_coop(%s, %s, %s, %s, %s, %s::interval, %s::interval)",
+            (queue, consumer, subconsumer, worker, page_size, dead_interval, lease))
+
+    def receive_page_partitioned(self, queue: str, consumer: str, slot: int,
+                                 n: int, worker: str,
+                                 page_size: int = 100) -> Page:
+        return self._receive_page(
+            "pgque.receive_page_partitioned(%s, %s, %s, %s, %s, %s)",
+            (queue, consumer, slot, n, worker, page_size))
+
+    def ack_page(self, page_token: str, worker: str,
+                 failures: Optional[list[dict[str, Any]]] = None) -> tuple[str, bool]:
+        try:
+            row = self.conn.execute(
+                "select status, batch_finished from pgque.ack_page(%s::uuid, %s, %s::jsonb)",
+                (page_token, worker, json.dumps(failures or [])),
+            ).fetchone()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        return row[0], row[1]
+
+    def renew_page(self, page_token: str, worker: str):
+        try:
+            return self.conn.execute(
+                "select pgque.renew_page(%s::uuid, %s)", (page_token, worker)
+            ).fetchone()[0]
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+
+    def process_page(self, queue: str, consumer: str, worker: str,
+                     handler: Callable[[Message], Any], page_size: int = 100,
+                     lease: str = "60 seconds") -> PageResult:
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+        if (inspect.iscoroutinefunction(handler)
+                or inspect.isgeneratorfunction(handler)
+                or inspect.isasyncgenfunction(handler)):
+            raise TypeError("handler must be a synchronous function returning None")
+        page = self.receive_page(queue, consumer, worker, page_size, lease)
+        if page.status != "page":
+            return PageResult(page.status, 0, None)
+        for message in page.messages:
+            result = handler(message)
+            if (inspect.isawaitable(result)
+                    or inspect.isgenerator(result)
+                    or inspect.isasyncgen(result)
+                    or callable(result)
+                    or (isinstance(result, Iterator)
+                        and not isinstance(result, psycopg.Cursor))):
+                if inspect.iscoroutine(result):
+                    result.close()
+                elif inspect.isgenerator(result):
+                    result.close()
+                raise TypeError("handler must complete, not return a lazy result")
+        _, finished = self.ack_page(page.page_token, worker)
+        return PageResult(page.status, len(page.messages), finished)
+
+    def _receive_page(self, function: str, params: tuple) -> Page:
+        try:
+            rows = self.conn.execute(_PAGE_SQL.format(function=function), params).fetchall()
+        except psycopg.Error as e:
+            raise _wrap_sql_error(e) from e
+        if not rows:
+            raise PgqueError("paged receive returned no metadata row")
+        first = rows[0]
+        if any(r[:7] != first[:7] for r in rows[1:]):
+            raise PgqueError("paged receive returned inconsistent metadata rows")
+        messages = [Message(r[7], r[8], r[9], r[10], r[11], r[12],
+                            r[13], r[14], r[15], r[16])
+                    for r in rows if r[7] is not None]
+        return Page(first[0], first[1], first[2], first[3], first[4], messages,
+                    first[5], first[6])
 
     def force_next_tick(self, queue: str) -> Optional[int]:
         """Force the next ``pgque.ticker(queue)`` call to insert a tick.

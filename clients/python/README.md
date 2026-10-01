@@ -176,6 +176,32 @@ client.conn.commit()
 
 `send` → ticker → `receive` must each run in its own committed transaction (PgQue is snapshot-based). `pgque.connect(dsn)` is non-autocommit by default — commit between producing and consuming. The `Consumer` uses autocommit plus an explicit `conn.transaction()` around `receive + dispatch + ack`.
 
+Paged methods follow the same caller-managed transaction model. Neither
+`receive_page()` nor `ack_page()` commits implicitly. Use `autocommit=True`, or
+commit the receive before long processing so its lease is visible and its row
+locks are released. Then commit database side effects and `ack_page()` together.
+A receive left uncommitted holds locks and cannot participate in lease takeover
+until that transaction ends. On a processing error, roll back any application
+transaction; do not acknowledge the page.
+
+```python
+page = client.receive_page("orders", "worker", process_uuid, page_size=100)
+client.conn.commit()  # publish the lease and release receive locks
+if page.status == "page":
+    for message in page.messages:
+        handle(message)  # synchronous; must complete before returning
+    client.ack_page(page.page_token, process_uuid)
+client.conn.commit()
+```
+
+`process_page()` handles at most one ordinary page. It acknowledges only after
+every synchronous handler completes; exceptions and lazy/async handlers leave
+the page outstanding and propagate an error. Returned callables and iterators
+are rejected, except synchronous psycopg cursors from completed operations;
+those cursors remain open and caller-owned. For this one-shot helper, use an
+autocommit connection so receive commits before handlers run. Use the low-level
+methods above when controlling database effect/ack transactions explicitly.
+
 Don't wrap `send` and `receive` in one explicit tx; same for `maint_retry_events` + `ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
 
 

@@ -11,7 +11,7 @@ import {
   PgqueQueueNotFoundError,
   PgqueSqlError,
 } from './errors.js';
-import type { ConsumerOptions, Event, Message, NackOptions } from './types.js';
+import type { AckPageResult, ConsumerOptions, Event, Message, NackOptions, Page, PageFailure, PageHandler, ProcessPageResult } from './types.js';
 
 const { Pool, types } = pg;
 
@@ -54,6 +54,23 @@ interface RawMessageRow {
   extra3: string | null;
   extra4: string | null;
 }
+
+interface RawPageRow {
+  status: Page['status']; page_batch_id: bigint | null; page_token: string | null;
+  page_number: bigint | null; is_last: boolean | null; lease_until: Date | null;
+  fence_epoch: bigint | null; msg_id: bigint | null;
+  batch_id: bigint | null; type: string | null; payload: string | null;
+  retry_count: number | null; created_at: Date | null; extra1: string | null;
+  extra2: string | null; extra3: string | null; extra4: string | null;
+}
+
+const PAGE_SELECT = `select p.status, p.batch_id as page_batch_id, p.page_token::text,
+  p.page_number, p.is_last, p.lease_until, p.fence_epoch,
+  m.msg_id, m.batch_id, m.type, m.payload, m.retry_count, m.created_at,
+  m.extra1, m.extra2, m.extra3, m.extra4, m.ordinality
+from %FUNCTION% as p
+left join lateral unnest(p.messages) with ordinality as m on true
+order by m.ordinality`;
 
 /**
  * The main PgQue client backed by a `pg.Pool`. Construct via
@@ -222,6 +239,66 @@ export class Client {
       if (err instanceof PgqueError) throw err;
       throw mapPgError('ack', err);
     }
+  }
+
+  async receivePage(queue: string, consumer: string, worker: string, pageSize = 100, lease = '60 seconds'): Promise<Page> {
+    return this.queryPage('receivePage', 'pgque.receive_page($1,$2,$3,$4,$5::interval)', [queue, consumer, worker, pageSize, lease]);
+  }
+
+  async receivePageCoop(queue: string, consumer: string, subconsumer: string, worker: string, pageSize = 100, deadInterval: string | null = null, lease = '60 seconds'): Promise<Page> {
+    return this.queryPage('receivePageCoop', 'pgque.receive_page_coop($1,$2,$3,$4,$5,$6::interval,$7::interval)', [queue, consumer, subconsumer, worker, pageSize, deadInterval, lease]);
+  }
+
+  async receivePagePartitioned(queue: string, consumer: string, slot: number, n: number, worker: string, pageSize = 100): Promise<Page> {
+    return this.queryPage('receivePagePartitioned', 'pgque.receive_page_partitioned($1,$2,$3,$4,$5,$6)', [queue, consumer, slot, n, worker, pageSize]);
+  }
+
+  async ackPage(pageToken: string, worker: string, failures: PageFailure[] = []): Promise<AckPageResult> {
+    try {
+      const result = await this.pool.query<{status: AckPageResult['status']; batch_finished: boolean}>(
+        'select status, batch_finished from pgque.ack_page($1::uuid,$2,$3::jsonb)',
+        [pageToken, worker, JSON.stringify(failures.map(f => ({msg_id: f.msgId, ...(f.retryAfterSeconds === undefined ? {} : {retry_after_seconds: f.retryAfterSeconds}), ...(f.reason === undefined ? {} : {reason: f.reason})})))],
+      );
+      const row = result.rows[0]; if (!row) throw new PgqueSqlError('ackPage', {cause: new Error('no row returned')});
+      return {status: row.status, batchFinished: row.batch_finished};
+    } catch (err) { if (err instanceof PgqueError) throw err; throw mapPgError('ackPage', err); }
+  }
+
+  async renewPage(pageToken: string, worker: string): Promise<Date> {
+    try {
+      const result = await this.pool.query<{renew_page: Date}>('select pgque.renew_page($1::uuid,$2) as renew_page', [pageToken, worker]);
+      const row = result.rows[0]; if (!row) throw new PgqueSqlError('renewPage', {cause: new Error('no row returned')}); return row.renew_page;
+    } catch (err) { if (err instanceof PgqueError) throw err; throw mapPgError('renewPage', err); }
+  }
+
+  async processPage(queue: string, consumer: string, worker: string, handler: PageHandler, pageSize = 100, lease = '60 seconds'): Promise<ProcessPageResult> {
+    if (typeof handler !== 'function') throw new TypeError('handler must be a function');
+    const page = await this.receivePage(queue, consumer, worker, pageSize, lease);
+    if (page.status !== 'page') return {status: page.status, processedCount: 0, batchFinished: null};
+    for (const message of page.messages) {
+      const outcome: unknown = await handler(message);
+      if (typeof outcome === 'function') {
+        throw new TypeError('page handler must complete, not return a callable');
+      }
+      // Invoking a generator does not execute its body; never acknowledge it.
+      if (outcome !== null && typeof outcome === 'object'
+          && 'next' in outcome && typeof outcome.next === 'function') {
+        throw new TypeError('page handler must complete, not return an iterator');
+      }
+    }
+    const ack = await this.ackPage(page.pageToken!, worker);
+    return {status: page.status, processedCount: page.messages.length, batchFinished: ack.batchFinished};
+  }
+
+  private async queryPage(op: string, fn: string, params: unknown[]): Promise<Page> {
+    try {
+      const result = await this.pool.query<RawPageRow>(PAGE_SELECT.replace('%FUNCTION%', fn), params);
+      const first = result.rows[0]; if (!first) throw new PgqueSqlError(op, {cause: new Error('no metadata row returned')});
+      const metadata = (r: RawPageRow) => [r.status, r.page_batch_id, r.page_token, r.page_number, r.is_last, r.lease_until?.getTime() ?? null, r.fence_epoch];
+      if (result.rows.some(r => metadata(r).some((value, i) => value !== metadata(first)[i]))) throw new PgqueSqlError(op, {cause: new Error('inconsistent metadata rows')});
+      const messages = result.rows.filter((r): r is RawPageRow & RawMessageRow => r.msg_id !== null).map(rowToMessage);
+      return {status: first.status, batchId: first.page_batch_id, pageToken: first.page_token, pageNumber: first.page_number, isLast: first.is_last, messages, leaseUntil: first.lease_until, fenceEpoch: first.fence_epoch};
+    } catch (err) { if (err instanceof PgqueError) throw err; throw mapPgError(op, err); }
   }
 
   /**

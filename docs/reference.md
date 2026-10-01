@@ -18,6 +18,13 @@ Grant: `role_name`. Source: `sql/<path>`.
 
 Functions shipped outside the default install are in the [Experimental](#experimental-not-in-default-install) section.
 
+## Bounded pages (development installer only)
+
+The development installer adds durable `receive_page`, `receive_page_coop`,
+`receive_page_partitioned`, `ack_page`, and `renew_page`. These are **not in
+the release installer**. See [bounded batch processing](paged-batches.md) for signatures,
+checkpoint/lease semantics, failures, and an executable one-page example.
+
 ## Publishing
 
 Single-message `send` wrappers delegate to `pgque.insert_event`; batch `send_batch` wrappers delegate to the internal set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller.
@@ -231,8 +238,16 @@ Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/Nikolay
 
 #### `pgque.drop_queue(queue text, force bool) → integer`
 
-Drops `queue`. When `force` is true, unregisters all attached consumers first.
-Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
+Drops `queue`. In the default frozen installer, `force = true` unregisters the
+attached consumers before dropping the queue. The development installer instead
+treats force-drop as administrative destruction: it deletes subscriptions and
+their page checkpoints directly, without acknowledging or unregistering them.
+Its slot and subscription locks use NOWAIT, for ordinary and paged consumers;
+any locked row aborts the whole operation with SQLSTATE `40001` and no changes
+commit. Retry the whole transaction, and pause consumers when reliable removal
+of a busy queue is required.
+Grant: `pgque_admin`. Sources: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql)
+and [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.set_queue_config(queue text, param text, value text) → integer`
 
@@ -626,8 +641,8 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 
 | Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`); experimental cooperative API (`register_subconsumer`, `unregister_subconsumer`, `subscribe_subconsumer`, `unsubscribe_subconsumer`, cooperative `next_batch`, cooperative `next_batch_custom`, `receive_coop`, `touch_subconsumer`)                        |
-| `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack/finish/inspect consumer batches. |
+| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`); development page API (`receive_page`, `receive_page_coop`, `receive_page_partitioned`, `ack_page`, `renew_page`); experimental cooperative API (`register_subconsumer`, `unregister_subconsumer`, `subscribe_subconsumer`, `unsubscribe_subconsumer`, cooperative `next_batch`, cooperative `next_batch_custom`, `receive_coop`, `touch_subconsumer`) |
+| `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot receive, ack, renew, finish, or inspect consumer batches. |
 | `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
 
 `pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_next_tick` (and its alias `force_tick`), and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
