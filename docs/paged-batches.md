@@ -9,10 +9,12 @@ This API is present only in the development installer, `devel/sql/pgque.sql`.
 Existing whole-batch `receive` calls keep their complete-batch-or-error
 behavior; `max_return` remains a safety ceiling, not pagination.
 
-A page contains at most `page_size` events. Receiving does not advance progress.
-Only a committed `ack_page` advances the durable checkpoint; the final page ack
-finishes the underlying batch. Never acknowledge a page before processing every
-message not explicitly listed as failed.
+A page contains at most `page_size` events. Receiving a nonempty page does not
+advance its durable checkpoint. The `advanced` result is the exception: receive
+finishes one empty tick window internally. Only a committed `ack_page` advances
+a nonempty page checkpoint; the final page ack finishes the underlying batch.
+Never acknowledge a page before processing every message not explicitly listed
+as failed.
 
 ## One invocation, at most N messages
 
@@ -50,6 +52,10 @@ end $$;
 
 Repeat the invocation to process the next page. Production callers should use a
 random process-instance ID, such as a UUID string, instead of the example ID.
+Within the trusted reader group, the worker name is the effective credential:
+same-worker receive returns the pending page and its token. Keep the name stable
+for the process lifetime, generate it randomly, do not reuse it across processes,
+and omit it from logs. The token does not compensate for a guessable worker name.
 For external work, commit receive first, process the returned messages, then ack
 in another transaction. External effects are **at-least-once**: a crash can
 repeat them, so handlers need idempotency. Database effects can share the ack
@@ -86,8 +92,9 @@ Other statuses have an empty message array:
 
 - `idle`: no next tick window is available.
 - `advanced`: one empty window was completed; another invocation may poll again.
-- `busy`: a different worker holds a live page lease; the deadline is exposed,
-  but not that worker's identity or token.
+- `busy`: in normal and cooperative modes, a different worker holds a live page
+  lease; the deadline is exposed, but not that worker's identity or token.
+  Partition mode uses slot ownership and does not return `busy`.
 
 One invocation inspects at most one tick window. `advanced` is not proof the
 queue is empty. A repeated receive by the same owner returns the same pending
@@ -153,12 +160,20 @@ Failed messages retry up to the queue's `max_retries` setting (effective default
 | `PQP01` | Stale page token, wrong worker, or fenced partition epoch |
 | `PQP02` | Retained ack replay with a different failure request |
 | `21000` | Ambiguous duplicate event IDs or changed pending-page membership |
-| `40001` | Concurrent routing changed or a takeover victim renewed; retry the transaction |
+| `40001` | Concurrent routing changed, a takeover victim renewed, or administrative force-drop found a locked subscription/slot; retry the whole transaction |
+| `P0001` | Cooperative membership or partition-slot setup is missing or incompatible at receive time |
 
 Legacy whole-batch ack, finish, retry, cursor reset and unsubscribe cannot bypass
 an active page, including the interval between page acknowledgments. Finish
-paging before switching back to the whole-batch API. Administrative queue
-destruction remains destructive.
+paging before switching back to the whole-batch API.
+
+`drop_queue(queue, true)` is administrative destruction, not an unregister or
+acknowledgment path. In the development installer it deletes subscriptions and
+their page checkpoints directly. It uses NOWAIT for every attached partition
+slot and subscription, whether paged or ordinary: if any is locked, the entire
+drop aborts with `40001` and commits no changes. Retry the whole transaction.
+Pause consumers before force-drop when reliable removal of a busy queue is
+required.
 
 ## Limits and client behavior
 
@@ -174,9 +189,9 @@ to application roles.
 
 Page tokens and worker names provide stale-owner fencing, not per-role
 authorization. `pgque_reader` is a shared trust boundary: any holder can receive
-from any queue and, if it learns a valid token and worker name, can ack or renew
-that page. Do not share one PgQue install among mutually untrusted readers;
-isolate them by database or enforce ownership in app-controlled wrappers.
+from any queue, and a same-worker receive reveals that worker's pending token.
+Do not share one PgQue install among mutually untrusted readers; isolate them by
+database or enforce ownership in app-controlled wrappers.
 
 The additive SDK page helpers process one page per invocation. They do not alter
 existing whole-batch consumer loops, auto-nack on a handler exception, or start

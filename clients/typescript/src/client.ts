@@ -277,6 +277,9 @@ export class Client {
     if (page.status !== 'page') return {status: page.status, processedCount: 0, batchFinished: null};
     for (const message of page.messages) {
       const outcome: unknown = await handler(message);
+      if (typeof outcome === 'function') {
+        throw new TypeError('page handler must complete, not return a callable');
+      }
       // Invoking a generator does not execute its body; never acknowledge it.
       if (outcome !== null && typeof outcome === 'object'
           && 'next' in outcome && typeof outcome.next === 'function') {

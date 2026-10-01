@@ -30,14 +30,20 @@ import { TEST_DSN, setupTestQueue, teardownTestQueue, advanceQueue } from './hel
     expect(page.isLast).toBe(false);
     expect(page.messages.map(m => m.msgId)).toEqual(ids);
     expect((await client.renewPage(page.pageToken!, 'live-worker')).getTime()).toBeGreaterThanOrEqual(page.leaseUntil!.getTime());
-    const failures = [{msgId: ids[0]!.toString(), retryAfterSeconds: 0}];
-    expect(await client.ackPage(page.pageToken!, 'live-worker', failures)).toEqual({status: 'acked', batchFinished: false});
-    expect(await client.ackPage(page.pageToken!, 'live-worker', failures)).toEqual({status: 'already_acked', batchFinished: false});
     const seen: bigint[] = [];
     const result = await client.processPage(queue, consumer, 'live-worker', m => { seen.push(m.msgId); }, 2);
-    expect(result.processedCount).toBe(1);
-    expect(result.batchFinished).toBe(true);
-    expect(seen).toEqual([maxId]);
+    expect(result).toMatchObject({processedCount: 2, batchFinished: false});
+    expect(seen).toEqual(ids);
+    expect(await client.ackPage(page.pageToken!, 'live-worker')).toEqual({status: 'already_acked', batchFinished: false});
+    const maxPage = await client.receivePage(queue, consumer, 'live-worker', 2);
+    expect(maxPage.messages.map(m => m.msgId)).toEqual([maxId]);
+    const failures = [{msgId: maxId.toString(), retryAfterSeconds: 0}];
+    expect(await client.ackPage(maxPage.pageToken!, 'live-worker', failures)).toEqual({status: 'acked', batchFinished: true});
+    expect(await client.ackPage(maxPage.pageToken!, 'live-worker', failures)).toEqual({status: 'already_acked', batchFinished: true});
+    const retry = await client.rawPool.query<{ev_id: string}>(
+      `select ev_id::text from pgque.retry_queue where ev_queue =
+         (select queue_id from pgque.queue where queue_name = $1)`, [queue]);
+    expect(retry.rows.map(row => row.ev_id)).toContain(maxId.toString());
     const idle = await client.receivePage(queue, consumer, 'live-worker');
     expect(['idle', 'advanced']).toContain(idle.status);
     expect(idle.messages).toEqual([]);

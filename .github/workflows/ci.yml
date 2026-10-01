@@ -49,7 +49,9 @@ jobs:
       - name: Run paged concurrency acceptance
         env:
           PGQUE_TEST_IMAGE: postgres:${{ matrix.pg_version }}
-        run: bash tests/test_paged_concurrency.sh
+        run: |
+          bash tests/test_paged_concurrency.sh
+          bash tests/test_paged_drop_timeout.sh
 
       - name: Run experimental tests
         run: |

@@ -15,7 +15,7 @@ Keep the whole-batch receive API and its fail-closed ceiling unchanged. Do not
 change the frozen 0.2.1 artifacts under `sql/`. This is an additive development
 API, not an alteration of PgQ's snapshot membership or rotation algorithm.
 
-## Proposed public SQL surface
+## Implemented public SQL surface
 
 - `receive_page(queue, consumer, worker, page_size := 100, lease := '60 seconds')`
 - `receive_page_coop(queue, consumer, subconsumer, worker, page_size := 100,
@@ -26,8 +26,11 @@ API, not an alteration of PgQ's snapshot membership or rotation algorithm.
 
 All modes require prior explicit subscription setup; paged receive does not
 auto-register identities. This avoids hidden registration mutations during a
-busy-page poll. Names/signatures remain proposals until implementation review. `worker` is an
-explicit unique process-instance identity, not a reusable deployment name.
+busy-page poll. `worker` is an explicit unique process-instance identity, not a
+reusable deployment name. Within the shared reader-role trust boundary, it is the
+effective credential: same-worker receive returns the pending page and token.
+Use a random ID per process, do not reuse it across processes, and omit it from
+logs. A page token does not compensate for a guessable worker name.
 `page_size` is a positive, non-null int4. It is a real page size, not the legacy
 complete-batch safety ceiling. Leases must be finite positive intervals.
 
@@ -42,10 +45,12 @@ A receive returns one `batch_page` envelope:
 - `lease_until`: current claim deadline, also returned for `busy`;
 - `fence_epoch`: partition lease epoch, null for other modes.
 
-Only `page` exposes a token/messages/page number/terminal flag. `busy` exposes
-no competing worker identity or token. `idle` and `advanced` have empty message
-arrays and null claim metadata. Page numbers are one-based bigint diagnostics;
-they survive cooperative transfer and reset only on a new logical tick window.
+Only `page` exposes a token/messages/page number/terminal flag. In normal and
+cooperative modes, `busy` exposes no competing worker identity or token.
+Partition mode uses slot ownership and never returns `busy`. `idle` and
+`advanced` have empty message arrays and null claim metadata. Page numbers are
+one-based bigint diagnostics; they survive cooperative transfer and reset only
+on a new logical tick window.
 
 SDKs do not decode composite arrays. They expand them in the same SQL statement:
 
@@ -71,9 +76,13 @@ do not create an unbounded internal polling loop. `advanced` means an empty
 window was finished and another invocation may poll immediately; `idle` means
 no next window is currently available. Neither claims future producers are idle.
 
-SQLSTATEs: `22023` for invalid arguments, `55000` for forbidden legacy mutation
-of a paged batch, `PQP01` for a stale/wrong-owner token, `PQP02` for an ack replay
-with different failure descriptors, and `21000` for ambiguous duplicate IDs.
+SQLSTATEs: `22023` for invalid arguments or failure descriptors; `55000` for
+forbidden legacy mutation of a paged batch; `PQP01` for a stale/wrong-owner token
+or fenced partition epoch; `PQP02` for an ack replay with different failure
+descriptors; `21000` for ambiguous duplicate IDs or changed membership; `40001`
+for concurrent routing changes, a renewed cooperative victim, or a busy
+administrative force-drop; and `P0001` for receive-time cooperative membership
+or partition-slot setup errors.
 
 An ack returns `acked` or `already_acked`, plus `batch_finished`. Invalid,
 reassigned or superseded tokens raise a distinct stale-page error. Idempotent
@@ -97,9 +106,13 @@ The active paging guard lasts continuously from first paging allocation through
 terminal ack, including intervals between pages with no outstanding token.
 
 1. Lock/allocate the batch using its existing normal, cooperative or partition
-   path. Lock the subscription before page state. The cooperative allocator
-   requires an explicit paging-aware atomic transfer hook; a wrapper cannot
-   reconstruct victim ownership after the existing allocator clears it.
+   path. Lock the subscription before page state. The cooperative allocator uses
+   the private paging-aware `_next_batch_coop(..., i_paged)` allocator so transfer
+   remains atomic; a wrapper cannot reconstruct victim ownership after the
+   existing allocator clears it. Normal and partition allocation use the private
+   `_next_batch_custom(..., i_paged)` allocator. Both private functions are
+   revoked from application and admin roles; public legacy wrappers call them
+   with `i_paged = false`, while paged receive calls them with `true`.
 2. An outstanding page held by another live worker returns `busy`. The same
    worker receives the same token, boundaries and rows, even if it supplies a
    different page size on retry. Pending-page size is immutable.
@@ -166,8 +179,24 @@ must not steal paged victims. Page renewal also refreshes member `sub_active`.
   slot owner/epoch: that is read-only proof of a past commit. Current token, batch,
   owner and epoch are mandatory for pending mutations, renewal and terminal
   completion. Never lock the page before the slot.
-- Lock ordering must match existing allocators and be covered by deterministic
-  two-session tests. Do not introduce a subscription/page/slot inversion.
+- Force `drop_queue` is administrative destruction, not unregister or ack. It
+  deletes subscriptions and cascading page state directly. The development
+  implementation takes queue, then ordered partition-slot and subscription
+  locks with NOWAIT. A lock held by an ordinary or paged consumer aborts the
+  whole operation with `40001`; no deletion commits. Operators retry the whole
+  transaction and pause consumers when reliable removal is required.
+
+### Lock order
+
+Normal page operations lock subscription before page state. Partition page
+operations first resolve routing without a lock, then lock partition slot,
+subscription and page state, and revalidate routing. Cooperative allocation and
+takeover lock the main subscription, current member, victim and page state in
+that order. Force-drop starts with the queue row and must not wait behind those
+consumer paths; its subsequent ordered slot and subscription locks are NOWAIT,
+turning contention into `40001` instead of a lock-order cycle. No path may lock
+page state before its subscription, or a partition subscription/page before its
+slot.
 
 ## Traversal identity and boundedness
 

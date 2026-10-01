@@ -24,6 +24,14 @@ describe('paged client', () => {
     }
   });
 
+  it('does not ack a deferred callable returned by a handler', async () => {
+    const pool = {query: vi.fn().mockResolvedValueOnce({rows:[messageRow]})};
+    const client = new Client(pool as never);
+    await expect(client.processPage('q', 'c', 'w', () => () => undefined))
+      .rejects.toThrow('callable');
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
   it('expands typed rows and preserves bigint precision', async () => {
     const pool = {query: vi.fn().mockResolvedValue({rows: [messageRow]})};
     const page = await new Client(pool as never).receivePage('q', 'c', 'w');

@@ -4,7 +4,6 @@
 
 """PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
-from collections.abc import Iterator
 import inspect
 import json
 from typing import Any, Callable, Optional, Union
@@ -350,11 +349,11 @@ class PgqueClient:
             result = handler(message)
             if (inspect.isawaitable(result)
                     or inspect.isgenerator(result)
-                    or inspect.isasyncgen(result)
-                    or isinstance(result, Iterator)):
-                close = getattr(result, "close", None)
-                if callable(close):
-                    close()
+                    or inspect.isasyncgen(result)):
+                if inspect.iscoroutine(result):
+                    result.close()
+                elif inspect.isgenerator(result):
+                    result.close()
                 raise TypeError("handler must complete, not return a lazy result")
         _, finished = self.ack_page(page.page_token, worker)
         return PageResult(page.status, len(page.messages), finished)

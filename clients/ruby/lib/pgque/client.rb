@@ -152,6 +152,9 @@ module Pgque
           outcome.close if outcome.respond_to?(:close)
           raise TypeError, "page handler must complete, not return an Enumerator"
         end
+        if outcome.is_a?(Proc) || outcome.is_a?(Fiber)
+          raise TypeError, "page handler must complete, not return a deferred callable"
+        end
       end
       ack = ack_page(page.page_token, worker)
       PageResult.new(status: page.status, processed_count: page.messages.length,

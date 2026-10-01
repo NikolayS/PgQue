@@ -32,14 +32,22 @@ class TestPageIntegration < Minitest::Test
       refute page.is_last
       assert_equal ids, page.messages.map(&:msg_id)
       assert_operator client.renew_page(page.page_token, worker), :>=, page.lease_until
-      failures = [{msg_id: ids.first.to_s, retry_after_seconds: 0}]
-      assert_equal({status: "acked", batch_finished: false}, client.ack_page(page.page_token, worker, failures: failures))
-      assert_equal({status: "already_acked", batch_finished: false}, client.ack_page(page.page_token, worker, failures: failures))
       seen = []
       result = client.process_page(queue, consumer, worker, page_size: 2) { |m| seen << m.msg_id }
-      assert_equal 1, result.processed_count
-      assert result.batch_finished
-      assert_equal [max_id], seen
+      assert_equal 2, result.processed_count
+      refute result.batch_finished
+      assert_equal ids, seen
+      assert_equal({status: "already_acked", batch_finished: false}, client.ack_page(page.page_token, worker))
+      max_page = client.receive_page(queue, consumer, worker, page_size: 2)
+      assert_equal [max_id], max_page.messages.map(&:msg_id)
+      failures = [{msg_id: max_id.to_s, retry_after_seconds: 0}]
+      assert_equal({status: "acked", batch_finished: true}, client.ack_page(max_page.page_token, worker, failures: failures))
+      assert_equal({status: "already_acked", batch_finished: true}, client.ack_page(max_page.page_token, worker, failures: failures))
+      retry_ids = conn.exec_params(
+        "select ev_id from pgque.retry_queue where ev_queue = " \
+        "(select queue_id from pgque.queue where queue_name = $1)", [queue],
+      ).map { |row| Integer(row["ev_id"]) }
+      assert_includes retry_ids, max_id
       idle = client.receive_page(queue, consumer, worker)
       assert_includes ["idle", "advanced"], idle.status
       assert_empty idle.messages

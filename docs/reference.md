@@ -238,8 +238,16 @@ Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/Nikolay
 
 #### `pgque.drop_queue(queue text, force bool) → integer`
 
-Drops `queue`. When `force` is true, unregisters all attached consumers first.
-Grant: `pgque_admin`. Source: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
+Drops `queue`. In the default frozen installer, `force = true` unregisters the
+attached consumers before dropping the queue. The development installer instead
+treats force-drop as administrative destruction: it deletes subscriptions and
+their page checkpoints directly, without acknowledging or unregistering them.
+Its slot and subscription locks use NOWAIT, for ordinary and paged consumers;
+any locked row aborts the whole operation with SQLSTATE `40001` and no changes
+commit. Retry the whole transaction, and pause consumers when reliable removal
+of a busy queue is required.
+Grant: `pgque_admin`. Sources: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql)
+and [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.set_queue_config(queue text, param text, value text) → integer`
 

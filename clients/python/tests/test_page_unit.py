@@ -92,3 +92,37 @@ def test_process_page_accepts_completed_return_value_without_closing_it():
     assert result.batch_finished
     assert not completed.closed
     assert len(conn.calls) == 2
+
+
+def test_process_page_accepts_completed_iterator_without_closing_it():
+    class ExecutedCursor:
+        closed = False
+        def __iter__(self): return self
+        def __next__(self): raise StopIteration
+        def close(self): self.closed = True
+
+    cursor = ExecutedCursor()
+    conn = Conn([[page_row()], [["acked", True]]])
+    result = PgqueClient(conn).process_page("q", "c", "w", lambda _: cursor)
+    assert result.processed_count == 1
+    assert result.batch_finished
+    assert not cursor.closed
+    assert len(conn.calls) == 2
+
+
+def test_process_page_does_not_close_unknown_awaitable():
+    class Awaitable:
+        closed = False
+        def __await__(self): return iter(())
+        def close(self): self.closed = True
+
+    awaitable = Awaitable()
+    conn = Conn([[page_row()]])
+    try:
+        PgqueClient(conn).process_page("q", "c", "w", lambda _: awaitable)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("awaitable return accepted")
+    assert not awaitable.closed
+    assert len(conn.calls) == 1

@@ -74,19 +74,33 @@ now(),0,'page.live','{"i":"max"}',null,null,null,null)`, q, c, maxID); err != ni
 		t.Fatalf("bad renewal: %v", err)
 	}
 	zero := int32(0)
-	failures := []pgque.PageFailure{{MsgID: fmt.Sprint(ids[0]), RetryAfterSeconds: &zero}}
-	a, err := client.AckPage(ctx, *p.PageToken, w, failures)
-	if err != nil || a.Status != "acked" || a.BatchFinished {
-		t.Fatalf("bad ack: %#v %v", a, err)
+	firstToken := *p.PageToken
+	var seen []int64
+	r, err := client.ProcessPage(ctx, q, c, w, 2, time.Minute, func(_ context.Context, m pgque.Message) error {
+		seen = append(seen, m.MsgID)
+		return nil
+	})
+	if err != nil || r.ProcessedCount != 2 || r.BatchFinished == nil || *r.BatchFinished || len(seen) != 2 || seen[0] != ids[0] || seen[1] != ids[1] {
+		t.Fatalf("bad helper: %#v %v", r, err)
 	}
-	a, err = client.AckPage(ctx, *p.PageToken, w, failures)
+	a, err := client.AckPage(ctx, firstToken, w, nil)
 	if err != nil || a.Status != "already_acked" || a.BatchFinished {
 		t.Fatalf("bad replay: %#v %v", a, err)
 	}
-	var seen []int64
-	r, err := client.ProcessPage(ctx, q, c, w, 2, time.Minute, func(_ context.Context, m pgque.Message) error { seen = append(seen, m.MsgID); return nil })
-	if err != nil || r.ProcessedCount != 1 || r.BatchFinished == nil || !*r.BatchFinished || len(seen) != 1 || seen[0] != maxID {
-		t.Fatalf("bad helper: %#v %v", r, err)
+	p, err = client.ReceivePage(ctx, q, c, w, 2, time.Minute)
+	if err != nil || len(p.Messages) != 1 || p.Messages[0].MsgID != maxID {
+		t.Fatalf("bad max-int8 page: %#v %v", p, err)
+	}
+	failures := []pgque.PageFailure{{MsgID: fmt.Sprint(maxID), RetryAfterSeconds: &zero}}
+	a, err = client.AckPage(ctx, *p.PageToken, w, failures)
+	if err != nil || a.Status != "acked" || !a.BatchFinished {
+		t.Fatalf("bad max-int8 failure ack: %#v %v", a, err)
+	}
+	var retryID int64
+	err = client.Pool().QueryRow(ctx, `select ev_id from pgque.retry_queue where ev_queue =
+(select queue_id from pgque.queue where queue_name = $1)`, q).Scan(&retryID)
+	if err != nil || retryID != maxID {
+		t.Fatalf("max-int8 failure not routed: %d %v", retryID, err)
 	}
 	p, err = client.ReceivePage(ctx, q, c, w, 2, time.Minute)
 	if err != nil || (p.Status != "idle" && p.Status != "advanced") || len(p.Messages) != 0 || p.PageToken != nil {

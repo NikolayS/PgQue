@@ -279,14 +279,19 @@ begin
         raise exception 'No such event queue';
     end if;
     if x_force then
-        perform 1 from pgque.partition_slot
-        where queue_id = v_queue.queue_id
-        order by co_name, slot
-        for update nowait;
-        perform 1 from pgque.subscription
-        where sub_queue = v_queue.queue_id
-        order by sub_consumer
-        for update nowait;
+        begin
+            perform 1 from pgque.partition_slot
+            where queue_id = v_queue.queue_id
+            order by co_name, slot
+            for update nowait;
+            perform 1 from pgque.subscription
+            where sub_queue = v_queue.queue_id
+            order by sub_consumer
+            for update nowait;
+        exception when lock_not_available then
+            raise exception 'queue is in use; retry administrative force drop'
+                using errcode = '40001';
+        end;
         select array_agg(sub_consumer) into v_consumers
         from pgque.subscription
         where sub_queue = v_queue.queue_id;
@@ -322,9 +327,6 @@ begin
     execute 'drop sequence ' || pgque.quote_fqname(v_queue.queue_event_seq);
     delete from pgque.queue where queue_id = v_queue.queue_id;
     return 1;
-exception when lock_not_available then
-    raise exception 'queue is in use; retry administrative force drop'
-        using errcode = '40001';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 

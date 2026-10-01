@@ -137,7 +137,7 @@ begin
   perform pg_temp.expect_page_error('ack', v_page.page_token, null);
 end $$;
 
-/* A pending partition token is epoch-fenced before any successor re-receives. */
+/* A same-worker ABA is fenced only by the partition epoch. */
 do $$
 begin
   perform pgque.create_queue('review_epoch_fence');
@@ -156,6 +156,7 @@ declare
   v_page record;
   v_epoch_a bigint;
   v_epoch_b bigint;
+  v_epoch_a_again bigint;
 begin
   v_epoch_a := pgque.claim_slot(
     'review_epoch_fence', 'part_c', 0, 'worker-a', interval '1 minute'
@@ -177,6 +178,14 @@ begin
     'review_epoch_fence', 'part_c', 0, 'worker-b', interval '1 minute'
   );
   assert v_epoch_b > v_epoch_a, 'slot takeover must advance the epoch';
+  assert pgque.release_slot(
+    'review_epoch_fence', 'part_c', 0, 'worker-b'
+  ), 'intermediate owner must release the slot';
+  v_epoch_a_again := pgque.claim_slot(
+    'review_epoch_fence', 'part_c', 0, 'worker-a', interval '1 minute'
+  );
+  assert v_epoch_a_again > v_epoch_b,
+    'same worker reclaim after an intermediate owner must advance the epoch';
   assert exists (
     select 1
     from pgque.page_state as ps
@@ -185,7 +194,7 @@ begin
       and ps.pending_token = v_page.page_token
       and ps.pending_worker = 'worker-a'
       and ps.partition_epoch = v_epoch_a
-  ), 'test must retain the old pending token and epoch without re-receive';
+  ), 'test must retain worker-a old token and epoch without re-receive';
 
   perform pg_temp.expect_page_error('ack', v_page.page_token, 'worker-a');
   perform pg_temp.expect_page_error('renew', v_page.page_token, 'worker-a');
@@ -338,6 +347,8 @@ declare
   v_ack record;
   v_before jsonb;
   v_after jsonb;
+  v_last_tick_before bigint;
+  v_last_tick_after bigint;
   v_message pgque.message;
 begin
   select * into v_page
@@ -347,6 +358,9 @@ begin
   select to_jsonb(ps) into v_before
   from pgque.page_state as ps
   where ps.active_batch_id = v_page.batch_id;
+  select s.sub_last_tick into v_last_tick_before
+  from pgque.subscription as s
+  where s.sub_batch = v_page.batch_id;
   v_message := (v_page.messages)[1];
   perform pg_temp.expect_legacy_guard(format(
     'select * from pgque.receive(%L, %L, 1)',
@@ -360,17 +374,40 @@ begin
     'select * from pgque.next_batch_custom(%L, %L, null, null, null)',
     'review_legacy_normal', 'c1'
   ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.event_retry(%s, %s, clock_timestamp())',
+    v_page.batch_id, v_message.msg_id
+  ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.event_retry(%s, %s, 0)',
+    v_page.batch_id, v_message.msg_id
+  ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.batch_retry(%s, 0)', v_page.batch_id
+  ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.register_consumer_at(%L, %L, %s)',
+    'review_legacy_normal', 'c1', v_last_tick_before
+  ));
   select to_jsonb(ps) into v_after
   from pgque.page_state as ps
   where ps.active_batch_id = v_page.batch_id;
+  select s.sub_last_tick into v_last_tick_after
+  from pgque.subscription as s
+  where s.sub_batch = v_page.batch_id;
   assert v_after = v_before,
     'outstanding-page legacy guards must preserve page state';
+  assert v_last_tick_after = v_last_tick_before,
+    'outstanding-page legacy guards must preserve sub_last_tick';
   select * into v_ack
   from pgque.ack_page(v_page.page_token, 'normal-worker');
   assert not v_ack.batch_finished, 'first normal page must leave between-page state';
   select to_jsonb(ps) into v_before
   from pgque.page_state as ps
   where ps.active_batch_id = v_page.batch_id;
+  select s.sub_last_tick into v_last_tick_before
+  from pgque.subscription as s
+  where s.sub_batch = v_page.batch_id;
   perform pg_temp.expect_legacy_guard(format(
     'select * from pgque.receive(%L, %L, 1)',
     'review_legacy_normal', 'c1'
@@ -383,11 +420,31 @@ begin
     'select * from pgque.next_batch_custom(%L, %L, null, null, null)',
     'review_legacy_normal', 'c1'
   ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.event_retry(%s, %s, clock_timestamp())',
+    v_page.batch_id, v_message.msg_id
+  ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.event_retry(%s, %s, 0)',
+    v_page.batch_id, v_message.msg_id
+  ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.batch_retry(%s, 0)', v_page.batch_id
+  ));
+  perform pg_temp.expect_legacy_guard(format(
+    'select pgque.register_consumer_at(%L, %L, %s)',
+    'review_legacy_normal', 'c1', v_last_tick_before
+  ));
   select to_jsonb(ps) into v_after
   from pgque.page_state as ps
   where ps.active_batch_id = v_page.batch_id;
+  select s.sub_last_tick into v_last_tick_after
+  from pgque.subscription as s
+  where s.sub_batch = v_page.batch_id;
   assert v_after = v_before,
     'between-page legacy guards must preserve the checkpoint';
+  assert v_last_tick_after = v_last_tick_before,
+    'between-page legacy guards must preserve sub_last_tick';
 
   perform pgque.claim_slot(
     'review_legacy_part', 'part_c', 0, 'part-worker', interval '1 minute'
@@ -460,6 +517,8 @@ declare
   v_other record;
   v_ack record;
   v_w1_id int4;
+  v_legacy_batch bigint;
+  v_victim_batch bigint;
   v_before jsonb;
   v_after jsonb;
 begin
@@ -500,9 +559,17 @@ begin
     where sub_consumer = v_w1_id and sub_batch = v_page.batch_id
   ), 'live-lease refusal must leave the victim batch assigned';
 
-  perform pgque.next_batch(
+  v_victim_batch := v_page.batch_id;
+  v_legacy_batch := pgque.next_batch(
     'review_coop_gate', 'main_c', 'w3', interval '1 second'
   );
+  assert v_legacy_batch is null,
+    'legacy allocator must return null when the only victim has paged state';
+  assert exists (
+    select 1
+    from pgque.subscription
+    where sub_consumer = v_w1_id and sub_batch = v_victim_batch
+  ), 'legacy allocator must preserve the paged victim batch';
   select to_jsonb(ps) into v_after
   from pgque.page_state as ps
   where ps.active_batch_id = v_page.batch_id;
@@ -566,6 +633,25 @@ begin
     );
   assert v_after = v_before,
     'unregister_subconsumer guard must preserve the outstanding page';
+end $$;
+
+do $$
+declare
+  v_queue text;
+begin
+  foreach v_queue in array array[
+    'review_owner_normal',
+    'review_owner_coop',
+    'review_owner_part',
+    'review_epoch_fence',
+    'review_hash_pages',
+    'review_hash_empty',
+    'review_legacy_normal',
+    'review_legacy_part',
+    'review_coop_gate'
+  ] loop
+    perform pgque.drop_queue(v_queue, true);
+  end loop;
 end $$;
 
 \echo 'PASS: test_paged_review'

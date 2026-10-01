@@ -7,6 +7,10 @@ container="pgque-paged-concurrency-$$"
 password="$(openssl rand -hex 24)"
 tmpdir="$(mktemp -d)"
 postgres_image="${PGQUE_TEST_IMAGE:-postgres:18}"
+case "${postgres_image}" in
+  postgres:1[4-7]*) data_mount=/var/lib/postgresql/data ;;
+  *) data_mount=/var/lib/postgresql ;;
+esac
 
 cleanup() {
   docker rm -f --volumes "${container}" >/dev/null 2>&1 || true
@@ -28,6 +32,7 @@ docker run --detach --name "${container}" \
   --env POSTGRES_PASSWORD="${password}" \
   --env POSTGRES_DB=pgque_test \
   --env POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 \
+  --tmpfs "${data_mount}:rw,size=512m" \
   --volume "${repo}:/repo:ro" \
   "${postgres_image}" \
   -c listen_addresses=localhost \
@@ -39,6 +44,20 @@ psql_test() {
     --workdir /repo "${container}" \
     psql -X -qAt -h 127.0.0.1 -U postgres -d pgque_test \
     -v ON_ERROR_STOP=1 "$@"
+}
+
+wait_for_sleep() {
+  local application="$1"
+  local observed=0
+  for _ in $(seq 1 100); do
+    if [[ "$(psql_test -c "select count(*) from pg_stat_activity where application_name = '${application}' and wait_event = 'PgSleep'")" = 1 ]]; then
+      observed=1
+      break
+    fi
+    sleep 0.05
+  done
+  [[ "${observed}" = 1 ]] \
+    || fail "backend ${application} did not reach transaction barrier"
 }
 
 ready=0
@@ -290,19 +309,82 @@ slot_wait_ms=$(( (slot_finished_ns - slot_started_ns) / 1000000 ))
 grep -Eq '^page\|[1-9][0-9]*\|1$' "${tmpdir}/slot_receiver.out" \
   || fail 'partition receive returned wrong page metadata after lock release'
 
+# Renewal holds the victim subscription lock. A concurrent takeover must skip
+# that row rather than wait or steal it, and the committed renewal remains live.
+psql_test <<'SQL' >/dev/null
+select pgque.create_queue('paged_coop_renew_race');
+select pgque.register_subconsumer('paged_coop_renew_race', 'main_c', 'w1');
+select pgque.register_subconsumer('paged_coop_renew_race', 'main_c', 'w2');
+select pgque.send('paged_coop_renew_race', 'coop', 'one');
+select pgque.force_next_tick('paged_coop_renew_race');
+select pgque.ticker('paged_coop_renew_race');
+SQL
+coop_renew_token="$(psql_test -c "
+  select page_token from pgque.receive_page_coop(
+    'paged_coop_renew_race', 'main_c', 'w1', 'renewing-worker',
+    1, interval '1 second', interval '1 minute'
+  )
+")"
+psql_test -c "
+  update pgque.page_state
+  set pending_lease_until = clock_timestamp() - interval '1 second'
+  where pending_token = '${coop_renew_token}';
+  update pgque.subscription as s
+  set sub_active = clock_timestamp() - interval '2 minutes'
+  from pgque.queue as q, pgque.consumer as c
+  where q.queue_name = 'paged_coop_renew_race'
+    and c.co_name = 'main_c.w1'
+    and s.sub_queue = q.queue_id
+    and s.sub_consumer = c.co_id;
+" >/dev/null
+psql_test -c "set application_name = 'page_coop_renewer'; begin;
+  select pgque.renew_page('${coop_renew_token}', 'renewing-worker');
+  select pg_sleep(5); commit;" \
+  >"${tmpdir}/coop_renewer.out" 2>"${tmpdir}/coop_renewer.err" &
+coop_renewer_pid=$!
+wait_for_sleep page_coop_renewer
+coop_takeover_started_ns="$(date +%s%N)"
+psql_test -F '|' -c "
+  select status, page_token is null, cardinality(messages)
+  from pgque.receive_page_coop(
+    'paged_coop_renew_race', 'main_c', 'w2', 'takeover-worker',
+    1, interval '1 second', interval '1 minute'
+  )
+" >"${tmpdir}/coop_takeover.out" 2>"${tmpdir}/coop_takeover.err" \
+  || fail 'cooperative takeover during renewal failed'
+coop_takeover_finished_ns="$(date +%s%N)"
+coop_takeover_ms=$((
+  (coop_takeover_finished_ns - coop_takeover_started_ns) / 1000000
+))
+[[ "${coop_takeover_ms}" -lt 3000 ]] \
+  || fail "cooperative takeover waited on the renewing victim (${coop_takeover_ms}ms)"
+grep -qx 'idle|t|0' "${tmpdir}/coop_takeover.out" \
+  || fail 'cooperative takeover did not skip the renewing victim'
+wait "${coop_renewer_pid}" || fail 'cooperative victim renewal failed'
+psql_test -F '|' -c "
+  select status, page_token is null, cardinality(messages)
+  from pgque.receive_page_coop(
+    'paged_coop_renew_race', 'main_c', 'w2', 'takeover-worker',
+    1, interval '1 second', interval '1 minute'
+  )
+" >"${tmpdir}/coop_after_renewal.out" 2>"${tmpdir}/coop_after_renewal.err" \
+  || fail 'cooperative takeover after renewal failed'
+grep -qx 'idle|t|0' "${tmpdir}/coop_after_renewal.out" \
+  || fail 'cooperative takeover stole a committed live renewal'
+[[ "$(psql_test -c "
+  select exists (
+    select 1
+    from pgque.page_state as ps
+    join pgque.subscription as s on s.sub_batch = ps.active_batch_id
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    where ps.pending_token = '${coop_renew_token}'
+      and c.co_name = 'main_c.w1'
+      and ps.pending_lease_until > clock_timestamp()
+  )
+")" = t ]] || fail 'renewal contention did not preserve the victim page and assignment'
+echo "PASS: cooperative takeover skipped renewing victim (${coop_takeover_ms}ms) and preserved its page"
+
 # Kill real backends on each side of the receive/ack transaction boundary.
-wait_for_sleep() {
-  local application="$1"
-  local observed=0
-  for _ in $(seq 1 100); do
-    if [[ "$(psql_test -c "select count(*) from pg_stat_activity where application_name = '${application}' and wait_event = 'PgSleep'")" = 1 ]]; then
-      observed=1
-      break
-    fi
-    sleep 0.05
-  done
-  [[ "$observed" = 1 ]] || fail "backend ${application} did not reach transaction barrier"
-}
 psql_test <<'SQL' >/dev/null
 select pgque.create_queue('paged_crash');
 select pgque.subscribe('paged_crash', 'c1');
@@ -405,3 +487,47 @@ psql_test -c "select pg_terminate_backend(pid) from pg_stat_activity where appli
 if wait "$drop_holder_pid"; then fail 'terminated drop holder unexpectedly completed'; fi
 psql_test -c "select pgque.drop_queue('paged_drop_busy',true)" >/dev/null
 echo 'PASS: administrative force drop fails fast while subscription is locked, preserves pending state, and succeeds after unlock'
+
+# The documented NOWAIT policy also applies to ordinary legacy receive
+# transactions, and rejection must leave the queue and subscription intact.
+psql_test <<'SQL' >/dev/null
+select pgque.create_queue('legacy_drop_busy');
+select pgque.subscribe('legacy_drop_busy', 'c1');
+select pgque.send('legacy_drop_busy', 'drop', 'pending');
+select pgque.force_next_tick('legacy_drop_busy');
+select pgque.ticker('legacy_drop_busy');
+SQL
+psql_test -c "set application_name='legacy_drop_holder'; begin;
+  select * from pgque.receive('legacy_drop_busy', 'c1', 1);
+  select pg_sleep(10); rollback;" \
+  >"${tmpdir}/legacy_drop_holder.out" 2>"${tmpdir}/legacy_drop_holder.err" &
+legacy_drop_holder_pid=$!
+wait_for_sleep legacy_drop_holder
+psql_test <<'SQL' >/dev/null
+do $$
+declare
+  v_caught boolean := false;
+begin
+  begin
+    perform pgque.drop_queue('legacy_drop_busy', true);
+  exception when serialization_failure then
+    v_caught := true;
+  end;
+  assert v_caught, 'force drop must raise 40001 for a legacy receive transaction';
+  assert exists (
+    select 1 from pgque.queue where queue_name = 'legacy_drop_busy'
+  ), 'rejected force drop must preserve the legacy queue';
+  assert exists (
+    select 1
+    from pgque.subscription as s
+    join pgque.queue as q on q.queue_id = s.sub_queue
+    where q.queue_name = 'legacy_drop_busy'
+  ), 'rejected force drop must preserve the legacy subscription';
+end $$;
+SQL
+psql_test -c "select pg_terminate_backend(pid) from pg_stat_activity where application_name='legacy_drop_holder'" >/dev/null
+if wait "${legacy_drop_holder_pid}"; then
+  fail 'terminated legacy receive holder unexpectedly completed'
+fi
+psql_test -c "select pgque.drop_queue('legacy_drop_busy', true)" >/dev/null
+echo 'PASS: legacy receive transaction blocks force drop with 40001; state is preserved and retry succeeds after unlock'
