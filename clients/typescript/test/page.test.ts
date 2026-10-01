@@ -27,7 +27,7 @@ describe('paged client', () => {
   it('does not ack a deferred callable returned by a handler', async () => {
     const pool = {query: vi.fn().mockResolvedValueOnce({rows:[messageRow]})};
     const client = new Client(pool as never);
-    await expect(client.processPage('q', 'c', 'w', () => () => undefined))
+    await expect(client.processPage('q', 'c', 'w', (() => () => undefined) as never))
       .rejects.toThrow('callable');
     expect(pool.query).toHaveBeenCalledTimes(1);
   });
