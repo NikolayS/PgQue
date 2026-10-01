@@ -13,6 +13,13 @@ PAGER=cat psql --no-psqlrc -d mydb
 
 A few recipes depend on a ticker turning sent events into deliverable batches. If pg_cron is running `pgque.start()`, ticking is automatic — skip the explicit `force_next_tick` / `ticker` lines. If you tick manually, keep them, and keep `send`, `force_next_tick`, `ticker`, and `receive` in separate transactions (see the snapshot note under exactly-once).
 
+## At most N messages per invocation (0.3 development)
+
+Use the [durable page API](paged-batches.md) in `devel/sql/pgque.sql`.
+`receive_page` returns at most N messages and `ack_page` checkpoints only that
+page. This API is not available in 0.2.1; repeated legacy `receive` calls do not
+paginate, and its `max_return` remains a complete-batch safety ceiling.
+
 ## Fan-out — many consumers, one shared log
 
 Goal: deliver every event to several independent consumers, each at its own pace, without duplicating the event per consumer.

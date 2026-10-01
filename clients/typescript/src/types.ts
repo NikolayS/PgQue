@@ -23,6 +23,26 @@ export interface Message {
   extra4: string | null;
 }
 
+export type PageStatus = 'page' | 'idle' | 'advanced' | 'busy';
+export interface Page {
+  status: PageStatus;
+  batchId: bigint | null;
+  pageToken: string | null;
+  pageNumber: bigint | null;
+  isLast: boolean | null;
+  messages: Message[];
+  leaseUntil: Date | null;
+  fenceEpoch: bigint | null;
+}
+export interface PageFailure {
+  msgId: string;
+  retryAfterSeconds?: number;
+  reason?: string;
+}
+export interface AckPageResult { status: 'acked' | 'already_acked'; batchFinished: boolean; }
+export interface ProcessPageResult { status: PageStatus; processedCount: number; batchFinished: boolean | null; }
+export type PageHandler = (message: Message) => Promise<void> | void;
+
 /**
  * Event input to {@link Client.send}. `payload` is JSON-marshalled before
  * being passed to `pgque.send`; omitted payloads are stored as JSON `null`.

@@ -107,6 +107,7 @@ export default defineConfig({
           items: [
             { label: 'Installation and operations', slug: 'docs/installation' },
             { label: 'Examples', slug: 'docs/examples' },
+            { label: 'Bounded pages (0.3 dev)', slug: 'docs/paged-batches' },
             { label: 'Monitoring and health', slug: 'docs/monitoring' },
           ],
         },

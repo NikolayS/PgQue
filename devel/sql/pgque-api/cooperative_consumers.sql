@@ -75,6 +75,10 @@ begin
         return 0;
     end if;
 
+    perform pgque._assert_unpaged(s.sub_batch)
+    from pgque.subscription as s
+    where s.sub_id = x_sub_id and s.sub_consumer = _consumer_id;
+
     -- consumer + subconsumer count
     select count(*)
     into _sub_id_cnt
@@ -434,6 +438,8 @@ begin
         return 0;
     end if;
 
+    perform pgque._assert_unpaged(x_batch_id);
+
     if v_sub.sub_role = 'coop_main' then
         raise exception 'cannot finish cooperative main consumer batch % as normal active consumer', x_batch_id;
     elsif v_sub.sub_role = 'coop_member' then
@@ -688,14 +694,15 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
-create or replace function pgque.next_batch_custom(
+create or replace function pgque._next_batch_coop(
     in i_queue text,
     in i_consumer text,
     in i_subconsumer text,
     in i_min_lag interval,
     in i_min_count int4,
     in i_min_interval interval,
-    in i_dead_interval interval default null,
+    in i_dead_interval interval,
+    in i_paged boolean,
     out batch_id bigint,
     out prev_tick_id bigint,
     out next_tick_id bigint)
@@ -713,7 +720,11 @@ declare
     v_next_tick_time timestamptz;
     v_next_tick_event_seq bigint;
 begin
-    perform pgque.register_subconsumer(i_queue, i_consumer, i_subconsumer);
+    if i_paged then
+        perform pgque._validate_coop_names(i_queue, i_consumer, i_subconsumer);
+    else
+        perform pgque.register_subconsumer(i_queue, i_consumer, i_subconsumer);
+    end if;
     v_member_name := i_consumer || '.' || i_subconsumer;
 
     select
@@ -760,11 +771,16 @@ begin
     end if;
 
     if v_member.sub_batch is not null then
-        update pgque.subscription
-        set sub_active = now()
-        where
-            sub_queue = v_member.sub_queue
-            and sub_consumer = v_member.sub_consumer;
+        if not i_paged then
+            perform pgque._assert_unpaged(v_member.sub_batch);
+        end if;
+        if not i_paged then
+            update pgque.subscription
+            set sub_active = now()
+            where
+                sub_queue = v_member.sub_queue
+                and sub_consumer = v_member.sub_consumer;
+        end if;
         batch_id := v_member.sub_batch;
         prev_tick_id := v_member.sub_last_tick;
         next_tick_id := v_member.sub_next_tick;
@@ -772,22 +788,42 @@ begin
     end if;
 
     if i_dead_interval is not null then
-        select *
+        select candidate.*
         into v_victim
-        from pgque.subscription
-        where
-            sub_queue = v_main.sub_queue
-            and sub_id = v_main.sub_id
-            and sub_role = 'coop_member'
-            and sub_consumer <> v_member.sub_consumer
-            and sub_batch is not null
-            and sub_active < now() - i_dead_interval
-        order by
-            sub_active asc,
-            sub_consumer asc
-        for update skip locked
+        from pgque.subscription as candidate
+        left join pgque.page_state as page
+            on page.active_batch_id = candidate.sub_batch
+        where candidate.sub_queue = v_main.sub_queue
+            and candidate.sub_id = v_main.sub_id
+            and candidate.sub_role = 'coop_member'
+            and candidate.sub_consumer <> v_member.sub_consumer
+            and candidate.sub_batch is not null
+            and candidate.sub_active < now() - i_dead_interval
+            and (
+                page.active_batch_id is null
+                or (
+                    i_paged
+                    and (
+                        page.pending_token is null
+                        or page.pending_lease_until <= clock_timestamp()
+                    )
+                )
+            )
+        order by candidate.sub_active asc, candidate.sub_consumer asc
+        for update of candidate skip locked
         limit 1;
         if found then
+            -- The joined page predicate used the statement snapshot. Recheck
+            -- after locking the victim so a concurrent renewal cannot be stolen.
+            perform 1 from pgque.page_state
+            where active_batch_id = v_victim.sub_batch
+                and (not i_paged or (
+                    pending_token is not null
+                    and pending_lease_until > clock_timestamp()));
+            if found then
+                raise exception 'cooperative victim renewed; retry transaction'
+                    using errcode = '40001';
+            end if;
             batch_id := nextval('pgque.batch_id_seq');
             update pgque.subscription
             set
@@ -798,6 +834,14 @@ begin
             where
                 sub_queue = v_member.sub_queue
                 and sub_consumer = v_member.sub_consumer;
+            if i_paged and exists (
+                select 1 from pgque.page_state
+                where active_batch_id = v_victim.sub_batch
+            ) then
+                perform pgque._transfer_paged_active(
+                    v_victim.sub_queue, v_victim.sub_consumer,
+                    v_member.sub_consumer, batch_id);
+            end if;
             perform pgque._clear_member_cursor(v_victim.sub_queue, v_victim.sub_consumer);
             prev_tick_id := v_victim.sub_last_tick;
             next_tick_id := v_victim.sub_next_tick;
@@ -910,6 +954,28 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
+create or replace function pgque.next_batch_custom(
+    in i_queue text,
+    in i_consumer text,
+    in i_subconsumer text,
+    in i_min_lag interval,
+    in i_min_count int4,
+    in i_min_interval interval,
+    in i_dead_interval interval default null,
+    out batch_id bigint,
+    out prev_tick_id bigint,
+    out next_tick_id bigint)
+as $$
+    select *
+    from pgque._next_batch_coop(
+        i_queue, i_consumer, i_subconsumer,
+        i_min_lag, i_min_count, i_min_interval, i_dead_interval, false);
+$$ language sql security definer set search_path = pgque, pg_catalog;
+
+revoke execute on function pgque._next_batch_coop(
+    text, text, text, interval, int4, interval, interval, boolean)
+    from public, pgque_reader, pgque_writer, pgque_admin;
+
 create or replace function pgque.next_batch(
     in i_queue text,
     in i_consumer text,
@@ -1007,6 +1073,8 @@ begin
     if not found then
         return 0;
     end if;
+
+    perform pgque._assert_unpaged(v_member.sub_batch);
 
     if v_member.sub_batch is not null then
         if i_batch_handling = 0 then
@@ -1207,3 +1275,7 @@ grant execute on function pgque.next_batch(text, text, text, interval) to pgque_
 grant execute on function pgque.next_batch_custom(text, text, text, interval, int4, interval, interval) to pgque_reader;
 grant execute on function pgque.receive_coop(text, text, text, int, interval) to pgque_reader;
 grant execute on function pgque.touch_subconsumer(text, text, text) to pgque_reader;
+
+revoke execute on function pgque._next_batch_coop(
+    text, text, text, interval, int4, interval, interval, boolean)
+from public, pgque_reader, pgque_writer, pgque_admin;

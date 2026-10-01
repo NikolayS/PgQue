@@ -18,6 +18,13 @@ Grant: `role_name`. Source: `sql/<path>`.
 
 Functions shipped outside the default install are in the [Experimental](#experimental-not-in-default-install) section.
 
+## Bounded pages (0.3 development only)
+
+The development installer adds durable `receive_page`, `receive_page_coop`,
+`receive_page_partitioned`, `ack_page`, and `renew_page`. These are **not in
+0.2.1**. See [bounded batch processing](paged-batches.md) for signatures,
+checkpoint/lease semantics, failures, and an executable one-page example.
+
 ## Publishing
 
 Single-message `send` wrappers delegate to `pgque.insert_event`; batch `send_batch` wrappers delegate to the internal set-based `pgque.insert_event_bulk` primitive. The `text` overloads are the fast path (bytes flow through verbatim); the `jsonb` overloads validate and canonicalize via Postgres before storing. Postgres `text` cannot store NUL (`\x00`), so raw binary must be base64/hex-encoded by the caller.

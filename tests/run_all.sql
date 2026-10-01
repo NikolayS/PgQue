@@ -149,4 +149,13 @@
 \i tests/test_send_idem.sql
 
 \echo ''
+\echo 'Running: durable paged batches'
+\i tests/test_paged_state.sql
+\i tests/test_paged_batches.sql
+\i tests/test_paged_modes.sql
+\i tests/test_paged_legacy.sql
+\i tests/test_paged_edges.sql
+\i tests/test_paged_doc.sql
+\i tests/test_paged_history.sql
+
 \echo '=== ALL TESTS PASSED ==='
