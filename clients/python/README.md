@@ -72,11 +72,13 @@ consumer.start()  # blocks until SIGTERM / SIGINT
 
 `Consumer(..., max_messages=...)` controls the per-`receive` limit.
 The default is the Postgres `int` maximum, so the consumer requests
-the whole PgQ batch before acknowledging it. `ack()` finishes the
-entire underlying PgQ batch, including rows beyond `max_messages`;
-lower this value only if it stays at least as large as the queue's
-worst-case batch size, otherwise rows past the limit are silently
-skipped by the batch ack.
+an entire PgQ batch before acknowledging it. On servers with the overflow
+guard, a batch larger than this ceiling raises an error instead of returning
+partial results. Roll back failed transactions and retry with a sufficient
+ceiling within your resource budget; monitor errors and consumer lag.
+The ticker threshold does not cap batch size. Older servers can truncate
+results, so upgrade the server before relying on this protection.
+`ack()` always finishes the entire batch: process every message first.
 
 ### Handling unknown event types
 

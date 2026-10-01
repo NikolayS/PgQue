@@ -35,7 +35,7 @@ select * from pgque.receive('orders', 'analytics_pipeline', 500);
 
 Result: all three `receive` calls return the same event, each through its own cursor. Acking one consumer's batch does not affect the others.
 
-`max_return` is 500 here to match the default `ticker_max_count`: because `ack` advances past the entire underlying batch, returning fewer rows than the batch holds would silently drop the rest. Use `max_return >= ticker_max_count` whenever you ack what you received.
+`max_return = 500` is a safety ceiling in this example, not a batch-size guarantee. A larger batch raises an error instead of returning a partial batch. Roll back a failed transaction and retry with a larger ceiling within your resource budget; process every returned event before acknowledging. `ticker_max_count` triggers ticks but does not cap batch size, and repeated `receive()` calls do not paginate.
 
 Late-subscriber caveat: `subscribe` (which calls `register_consumer`) starts the consumer at the most recent tick. A consumer will not see events that were sent before it subscribed. Subscribe each consumer before you start producing.
 
@@ -144,7 +144,7 @@ Notes:
 
 - The `inserted` CTE runs even though the final `select` does not reference it — data-modifying CTEs always execute.
 - Every row in a batch shares one `batch_id`, so the scalar subquery picks any row and `pgque.ack` runs once.
-- Batch-ownership caveat: `pgque.ack(batch_id)` advances the consumer past the whole underlying batch even if `receive` returned fewer rows than the batch holds. Consume the full batch before acking, or pass `max_return >= ticker_max_count` (default 500) so every row is returned.
+- `receive()` returns a complete batch or raises on overflow. If the ceiling is too small, roll back this transaction and retry with a larger ceiling within your resource budget. Never acknowledge after a receive error. `ack()` still finishes the whole batch: do not filter out unprocessed messages or add a SQL `limit` to the receive result.
 
 Snapshot rule — do not extend this transaction to cover `send` / `force_next_tick` / `ticker`. The ticker's snapshot must be taken after `send` commits, or the new event is still in-progress at tick time and is excluded from the batch:
 

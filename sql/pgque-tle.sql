@@ -68,8 +68,8 @@ begin
     from pgtle.available_extensions()
     where name = 'pgque';
 
-    if existing_version = '0.2.0' then
-        raise notice 'pgque 0.2.0 already registered with pg_tle; skipping install_extension().';
+    if existing_version = '0.2.1' then
+        raise notice 'pgque 0.2.1 already registered with pg_tle; skipping install_extension().';
         return;
     end if;
 
@@ -78,16 +78,16 @@ begin
             'but this script registers version %. Run '
             'sql/pgque-tle-uninstall.sql first to remove the existing '
             'registration, then re-run this script.',
-            existing_version, '0.2.0';
+            existing_version, '0.2.1';
     end if;
 
     perform pgtle.install_extension(
         'pgque',
-        '0.2.0',
+        '0.2.1',
         'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
 $pgque_extension_body$
 -- pgque.sql -- PgQ Universal Edition
--- Version: 0.2.0
+-- Version: 0.2.1
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -4658,7 +4658,7 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 create or replace function pgque.version()
 returns text as $$
 begin
-    return '0.2.0';
+    return '0.2.1';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -5451,13 +5451,16 @@ begin
                ev_extra1, ev_extra2, ev_extra3, ev_extra4
         from pgque.get_batch_events(v_batch_id)
     loop
+        if cnt = i_max_return then
+            raise exception 'pgque.receive: batch exceeds max_return of %', i_max_return
+                using hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
+        end if;
         return next row(
             ev.ev_id, v_batch_id, ev.ev_type, ev.ev_data,
             ev.ev_retry, ev.ev_time,
             ev.ev_extra1, ev.ev_extra2, ev.ev_extra3, ev.ev_extra4
         )::pgque.message;
         cnt := cnt + 1;
-        exit when cnt >= i_max_return;
     end loop;
 
     -- Empty batch: finish immediately to advance the consumer cursor.
@@ -6705,6 +6708,10 @@ begin
             ev_extra4
         from pgque.get_batch_events(v_batch_id)
     loop
+        if cnt = i_max_return then
+            raise exception 'pgque.receive_coop: batch exceeds max_return of %', i_max_return
+                using hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
+        end if;
         return next row(
             ev.ev_id,
             v_batch_id,
@@ -6718,7 +6725,6 @@ begin
             ev.ev_extra4
         )::pgque.message;
         cnt := cnt + 1;
-        exit when cnt >= i_max_return;
     end loop;
 
     -- Empty batch: release the member token so the subconsumer is not wedged
@@ -7135,5 +7141,5 @@ $pgque_extension_body$
 end $wrapper$;
 
 \echo ''
-\echo 'PgQue 0.2.0 registered with pg_tle.'
+\echo 'PgQue 0.2.1 registered with pg_tle.'
 \echo 'Run create extension pgque; to materialise the schema in this database.'

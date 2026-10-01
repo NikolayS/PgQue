@@ -166,12 +166,14 @@ In production you never call `force_next_tick`: `pg_cron` runs the ticker contin
 
 A batch stays assigned to its consumer until the consumer calls `ack`. Until then the same batch is returned on every `receive` — the cursor has not moved.
 
-Capture the `batch_id` and ack it. In psql, `\gset` saves a single-row result into a variable:
+This tutorial batch contains one event, already inspected above. Capture its `batch_id` and ack it. In psql, `\gset` saves a single-row result into a variable:
 
 ```sql
 select batch_id from pgque.receive('orders', 'processor', 100) limit 1 \gset
 select pgque.ack(:batch_id);
 ```
+
+For a real batch, process every returned message before acknowledging; do not copy the `limit 1` selection as a processing loop. `max_return` is a complete-batch safety ceiling, not pagination. If receive raises an overflow error, roll back and retry with a sufficient ceiling within your resource budget; never acknowledge the failed receive.
 
 ```
  ack

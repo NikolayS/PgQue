@@ -93,7 +93,7 @@ func main() {
 | Option                                  | Default        | Notes                                                                 |
 | --------------------------------------- | -------------- | --------------------------------------------------------------------- |
 | `WithPollInterval(d time.Duration)`     | `30s`          | Idle backoff between polls when the queue is empty.                   |
-| `WithMaxMessages(n int)`                | `math.MaxInt32` | Per-Receive limit. The default requests the whole PgQ batch before `Ack`. If you lower it below the real batch size, `Ack` still finishes the batch and unreturned rows are skipped. |
+| `WithMaxMessages(n int)`                | `math.MaxInt32` | Complete-batch safety ceiling. Servers with the overflow guard raise if the batch is larger; retry with a sufficient ceiling within your resource budget. Older servers can truncate, so upgrade before relying on the guard. Process the whole batch before `Ack`. |
 | `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` logs and skips messages with no registered handler.      |
 | `WithRetryAfter(d time.Duration)`       | `60s`          | Retry delay for Consumer-issued `Nack` calls on handler failure or unknown type. |
 
