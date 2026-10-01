@@ -226,16 +226,16 @@ class PgqueClient:
         Maps to ``pgque.receive(queue, consumer, max_messages)``, which
         opens a batch via ``next_batch`` internally. The caller must
         ``ack()`` the batch (with the ``batch_id`` from any returned
-        message) to advance the consumer past it. ``ack()`` finishes the
-        whole underlying PgQ batch, including rows beyond ``max_messages``;
-        direct callers should pass a value large enough for the queue's
-        possible batch size before acknowledging.
+        message) to advance the consumer past it. ``max_messages`` is a
+        complete-batch safety ceiling. A larger batch returns no partial
+        result and raises SQLSTATE 54000. Roll back and retry with a
+        resource-safe larger ceiling; never acknowledge the failed receive.
+        Ticker thresholds do not cap batch size.
 
         Args:
             queue: Queue name.
             consumer: Consumer name (must be registered on the queue).
-            max_messages: Maximum number of messages to return from the
-                current batch.
+            max_messages: Complete-batch safety ceiling.
 
         Returns:
             List of ``Message`` objects, possibly empty if no batch is
@@ -408,11 +408,11 @@ class PgqueClient:
             queue: Queue name.
             consumer: Logical consumer (the ``coop_main`` row).
             subconsumer: Per-worker member name.
-            max_messages: Maximum rows to return from the current batch.
-                ``ack(batch_id)`` advances the cooperative cursor past
-                the entire underlying batch, so set this >= the queue's
-                worst-case batch size or consume the full batch before
-                acking.
+            max_messages: Complete-batch safety ceiling. A larger batch
+                returns no partial result and raises SQLSTATE 54000. Roll
+                back and retry with a resource-safe larger ceiling; never
+                acknowledge the failed receive. Ticker thresholds do not
+                cap batch size.
             dead_interval: Optional PostgreSQL interval syntax (e.g.
                 ``"5 minutes"``). When set, allows takeover of a stale
                 sibling's batch under a fresh ``batch_id``; the old

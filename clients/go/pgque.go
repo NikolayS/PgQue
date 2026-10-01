@@ -150,11 +150,12 @@ func (c *Client) Unsubscribe(ctx context.Context, queue, consumer string) (int64
 	return n, nil
 }
 
-// Receive fetches up to maxMessages from the next batch for the named
-// consumer. Returns an empty slice when no batch is available; in that
-// case the caller should sleep before polling again. Each returned
-// Message carries a BatchID that must be passed to Ack once all
-// messages in the batch have been processed.
+// Receive fetches the complete next batch for the named consumer when it fits
+// within maxMessages. A larger batch returns no partial result and fails with
+// SQLSTATE 54000; roll back and retry with a resource-safe larger ceiling, and
+// never Ack the failed call. Ticker thresholds do not cap batch size. Returns
+// an empty slice when no batch is available. Ack only after processing every
+// returned Message.
 func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessages int) ([]Message, error) {
 	rows, err := c.pool.Query(ctx,
 		"SELECT * FROM pgque.receive($1, $2, $3)", queue, consumer, maxMessages)
@@ -323,8 +324,10 @@ func (c *Client) UnsubscribeSubconsumer(ctx context.Context, queue, consumer, su
 //
 // receive_coop auto-registers the cooperative main row and the
 // subconsumer on first call, so an explicit SubscribeSubconsumer is
-// not required. WithCoopMaxMessages tunes the per-call row cap
-// (default 100); WithCoopDeadInterval enables stale-worker takeover.
+// not required. WithCoopMaxMessages sets the complete-batch safety ceiling
+// (default 100): overflow returns no partial result and SQLSTATE 54000, so roll
+// back and retry with a resource-safe larger ceiling without acknowledging the
+// failed call. WithCoopDeadInterval enables stale-worker takeover.
 //
 // Experimental in PgQue 0.2.
 func (c *Client) ReceiveCoop(ctx context.Context, queue, consumer, subconsumer string, opts ...ReceiveCoopOption) ([]Message, error) {

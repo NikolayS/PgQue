@@ -45,10 +45,8 @@ func TestRace_ConcurrentSend(t *testing.T) {
 	tick(t, client, queue)
 
 	expected := goroutines * perGoroutine
-	// pgque.receive truncates yielded rows at i_max_return, but Ack
-	// finishes the entire batch — events past the cap are not yielded
-	// again without a fresh tick. Size the cap above the total so the
-	// whole tick window flows out in one call.
+	// The complete batch must fit within maxMessages. This test knows its
+	// maximum producer count, so use a ceiling above that count.
 	total := 0
 	for {
 		msgs, err := client.Receive(ctx, queue, consumer, 2*expected)

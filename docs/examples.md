@@ -113,7 +113,7 @@ Gotchas (each verified against a live install):
 - **A subconsumer with an open (un-acked) batch refuses to unregister.** `unregister_subconsumer` raises unless you pass `batch_handling => 1`, which routes the in-flight messages through the queue's retry/DLQ policy first.
 - **Normal `receive` / `next_batch` raise on cooperative rows.** Calling `pgque.receive('demo', 'workers', …)` on the cooperative main errors with `… is a cooperative main consumer; use cooperative receive/next_batch with a subconsumer`. Member rows are reachable only through `receive_coop()` / cooperative `next_batch()`.
 - **`finish_batch` (and `ack`) reject a `coop_main` batch.** Acks apply to the member-owned batch the subconsumer received, never to the group cursor directly.
-- **Empty tick windows are auto-finished.** When a poll lands on a tick window with no events, `receive_coop()` finishes it internally and returns no rows and no `batch_id` — unlike `receive()`, which still hands back an empty batch token to ack.
+- **Empty tick windows are auto-finished.** When a poll lands on a tick window with no events, `receive_coop()` finishes it internally and returns no rows and no `batch_id`; `receive()` also auto-finishes empty batches.
 - **One hot row.** Batch hand-out serializes on a `FOR UPDATE` of the `workers` main row, so many workers polling tiny batches contend. If you scale the pool, raise `ticker_max_count` / tick cadence so each batch is big enough to amortize the lock.
 
 `pgque.get_consumer_info('demo')` lists the group as `workers` (the main cursor) and each member as `workers.w1`, `workers.w2`. Full signatures are in the [reference](reference.md#cooperative-consumers--subconsumers).

@@ -124,8 +124,10 @@ All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`
 Pulls the complete next batch for `consumer` on `queue`, or raises an error if it exceeds `max_return`. A non-null `max_return` must be >= 1; passing 0 or a negative value raises an error. SQL `null` disables the explicit ceiling for compatibility; prefer an explicit resource-safe ceiling. Returns an empty set if no batch is available. Each row is a `pgque.message` composite (see [§Message type](#message-type)).
 Grant: `pgque_reader`. Source: [`devel/sql/pgque-api/receive.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/receive.sql).
 
+**Choose a ceiling explicitly.** The SQL default is 100, below the default ticker event-count threshold of 500. Ordinary bursts can therefore exceed the default receive ceiling. Pass an explicit ceiling sized for your expected batches and resource budget; alert on SQLSTATE `54000` and consumer lag. The example value below is illustrative, not a batch-size guarantee.
+
 ```sql
-select * from pgque.receive('orders', 'processor', 100);
+select * from pgque.receive('orders', 'processor', 1000);
 ```
 
 Overflow reports SQLSTATE `54000` (`program_limit_exceeded`). Like other SQL errors, it aborts the enclosing transaction unless recovered through a savepoint.
@@ -179,6 +181,8 @@ Receives messages for one subconsumer. A non-null `max_return` must be >= 1; SQL
 **Auto-registration.** If the logical `consumer` or `subconsumer` is not yet registered, `receive_coop()` registers them on the fly (creates the `coop_main` row on first call, then the `coop_member` row), so a worker can call `receive_coop()` cold without a prior `register_subconsumer`. Use the explicit `register_subconsumer(..., convert_normal => true)` call only when you need to convert an existing normal consumer into a cooperative main.
 
 **Empty tick windows are auto-finished.** When the current batch's tick window holds no events, `receive_coop()` calls `finish_batch` internally and returns the empty set. Callers polling a quiet queue do not see (and do not need to ack) a `batch_id`; `receive()` also auto-finishes empty batches.
+
+The default cooperative ceiling is also 100; pass an explicit burst-sized ceiling rather than assuming the ticker threshold caps the batch.
 
 **Complete batch or error.** As with `receive()`, `max_return` is a safety ceiling, not pagination. An oversized batch raises an error and rolls back allocation or takeover performed by that call. Retry with a sufficient ceiling within your resource budget, process the complete batch, then acknowledge. The ticker threshold does not cap batch size.
 

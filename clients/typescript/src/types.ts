@@ -56,15 +56,13 @@ export interface ConsumerOptions {
    */
   pollInterval?: number;
   /**
-   * Maximum messages returned per `receive()` call. By default the
+   * Complete-batch safety ceiling for each `receive()` call. By default the
    * high-level consumer requests the PostgreSQL `int` maximum so it drains
    * the whole PgQ batch before acknowledging it.
    *
-   * WARNING: `pgque.ack(batch_id)` finishes the entire underlying batch,
-   * including rows the client never returned. If you set `maxMessages`
-   * below the real batch size, unreturned rows are skipped after ack.
-   * Only lower this value when it is at least as large as the queue's
-   * possible batch size for your workload.
+   * A larger batch returns no partial result and fails with SQLSTATE 54000.
+   * Roll back and retry with a resource-safe larger ceiling; never acknowledge
+   * the failed receive. Ticker thresholds do not cap batch size.
    */
   maxMessages?: number;
   /**

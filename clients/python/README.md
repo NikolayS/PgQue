@@ -71,14 +71,11 @@ consumer.start()  # blocks until SIGTERM / SIGINT
 ### Consumer options
 
 `Consumer(..., max_messages=...)` controls the per-`receive` limit.
-The default is the Postgres `int` maximum, so the consumer requests
-an entire PgQ batch before acknowledging it. On servers with the overflow
-guard, a batch larger than this ceiling raises an error instead of returning
-partial results. Roll back failed transactions and retry with a sufficient
-ceiling within your resource budget; monitor errors and consumer lag.
-The ticker threshold does not cap batch size. Older servers can truncate
-results, so upgrade the server before relying on this protection.
-`ack()` always finishes the entire batch: process every message first.
+The default is the Postgres `int` maximum. A batch larger than the configured
+complete-batch safety ceiling returns no partial result and raises SQLSTATE
+`54000`. Roll back and retry with a resource-safe larger ceiling; never
+acknowledge the failed receive. Ticker thresholds do not cap batch size.
+Process every message before `ack()`.
 
 ### Handling unknown event types
 

@@ -380,6 +380,11 @@ The installer is idempotent. It preserves queues, consumers, subscriptions, retr
 rows, dead-letter rows, and existing event tables while adding any new functions,
 columns, grants, and constraints the target release needs.
 
+Size receive ceilings explicitly: the SQL default is 100, below the default
+ticker threshold of 500, and bursts can exceed either value. Monitor
+SQLSTATE `54000` and consumer lag; an undersized ceiling must be increased
+within the application's resource budget before processing can resume.
+
 One grant subtlety: `create or replace function` preserves existing grants, and
 Postgres does not auto-revoke role-to-role grants. The installer therefore
 explicitly revokes the older `pgque_reader -> pgque_writer` grant and re-applies
