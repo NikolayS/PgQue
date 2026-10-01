@@ -24,7 +24,9 @@ API, not an alteration of PgQ's snapshot membership or rotation algorithm.
 - `ack_page(page_token uuid, worker text, failures jsonb := '[]')`
 - `renew_page(page_token uuid, worker text)`
 
-Names/signatures remain proposals until implementation review. `worker` is an
+All modes require prior explicit subscription setup; paged receive does not
+auto-register identities. This avoids hidden registration mutations during a
+busy-page poll. Names/signatures remain proposals until implementation review. `worker` is an
 explicit unique process-instance identity, not a reusable deployment name.
 `page_size` is a positive, non-null int4. It is a real page size, not the legacy
 complete-batch safety ceiling. Leases must be finite positive intervals.
@@ -68,6 +70,10 @@ page. One invocation inspects at most one batch window, so long quiet histories
 do not create an unbounded internal polling loop. `advanced` means an empty
 window was finished and another invocation may poll immediately; `idle` means
 no next window is currently available. Neither claims future producers are idle.
+
+SQLSTATEs: `22023` for invalid arguments, `55000` for forbidden legacy mutation
+of a paged batch, `PQP01` for a stale/wrong-owner token, `PQP02` for an ack replay
+with different failure descriptors, and `21000` for ambiguous duplicate IDs.
 
 An ack returns `acked` or `already_acked`, plus `batch_finished`. Invalid,
 reassigned or superseded tokens raise a distinct stale-page error. Idempotent
@@ -132,7 +138,10 @@ must not steal paged victims. Page renewal also refreshes member `sub_active`.
 - Cooperative takeover creates a new PgQ batch token. Transfer the checkpoint
   and pending boundary to the new member before clearing the victim, atomically
   in the allocator under main -> current member -> victim -> page locks. Invalidate
-  the old page token. Do not key progress solely by shared `sub_id`.
+  the old page token. Transfer only active logical-batch fields, preserving the
+  retained ack receipt on each member row. Upsert into the destination without
+  erasing its receipt; leave the victim inactive with its own receipt intact.
+  Do not key progress solely by shared `sub_id`.
 - Partition takeover can retain the PgQ batch ID. Every page mutation must also
   compare the issued partition epoch, including an ABA return to the same
   worker name. Partition lock precedes subscription/page locks.
@@ -152,8 +161,11 @@ must not steal paged victims. Page renewal also refreshes member `sub_active`.
   unsubscribe/reset as administrative force.
 - Token-based partition mutations first perform a non-locking routing lookup,
   then lock the slot, subscription and page state in that order. Revalidate
-  token, routing, batch and epoch after taking the locks, including renew,
-  receipt replay and terminal completion. Never lock the page before the slot.
+  routing and receipt presence after taking the locks. First return any matching
+  retained receipt (token, recorded worker and request) regardless of the current
+  slot owner/epoch: that is read-only proof of a past commit. Current token, batch,
+  owner and epoch are mandatory for pending mutations, renewal and terminal
+  completion. Never lock the page before the slot.
 - Lock ordering must match existing allocators and be covered by deterministic
   two-session tests. Do not introduce a subscription/page/slot inversion.
 
@@ -194,7 +206,7 @@ A descriptor contains `msg_id` as a decimal string (preserving bigint precision)
 `reason`. Reject duplicate IDs, unknown fields, malformed IDs and IDs outside the
 issued page. Canonical event data comes only from the issued immutable interval;
 never trust caller-supplied payload or retry count. Messages omitted from failures
-are asserted successfully processed. Store a normalized request fingerprint with
+are asserted successfully processed. Store the normalized request JSON with
 the ack receipt; a repeat token with different failures is an error, not another
 retry insertion. Same-token retries return the receipt without rerouting events.
 
@@ -226,6 +238,9 @@ explicit errors, not silently skipped acknowledged messages.
   commit; lost ack response; no replay of committed pages after reconnect.
 - Concurrent receivers, lease expiry/takeover, stale tokens, same-worker ABA,
   cooperative ownership transfer and partition filtering before pagination.
+- Lost partition-ack response followed by epoch takeover still replays the
+  retained committed receipt; pending mutations with old epoch remain fenced.
+- Cooperative takeover preserves independent retained receipts on both members.
 - Legacy whole-batch ack/finish/nack bypass attempts while a page is outstanding
   and between pages; wrong worker, forged token, and reader-role execution.
 - Retry/DLQ with transaction rollback and retry maintenance; duplicate event-ID
