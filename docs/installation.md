@@ -380,6 +380,11 @@ The installer is idempotent. It preserves queues, consumers, subscriptions, retr
 rows, dead-letter rows, and existing event tables while adding any new functions,
 columns, grants, and constraints the target release needs.
 
+Size receive ceilings explicitly: the SQL default is 100, below the default
+ticker threshold of 500, and bursts can exceed either value. Monitor
+SQLSTATE `54000` and consumer lag; an undersized ceiling must be increased
+within the application's resource budget before processing can resume.
+
 One grant subtlety: `create or replace function` preserves existing grants, and
 Postgres does not auto-revoke role-to-role grants. The installer therefore
 explicitly revokes the older `pgque_reader -> pgque_writer` grant and re-applies
@@ -432,6 +437,19 @@ With `pg_tle` loaded, register and create PgQue:
 \i sql/pgque-tle.sql
 create extension pgque;
 ```
+
+For an existing pg_tle installation, register the supported update path and
+apply it without dropping the extension or its queue data:
+
+```sql
+\i sql/pgque-tle.sql
+alter extension pgque update to '0.2.1';
+select extversion from pg_extension where extname = 'pgque';
+select pgque.version();
+```
+
+Both version queries should agree. Unsupported upgrade origins are rejected;
+never uninstall a populated extension merely to apply an update.
 
 Uninstall the TLE variant with:
 

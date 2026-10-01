@@ -492,10 +492,9 @@ revoke execute on function pgque.release_slot(text, text, int, text) from public
  * partition keys route to slot 0 (see header).
  *
  * Contract mirrors pgque.receive(): the lease is fenced and renewed first
- * (after N validation); returns up to i_max messages of the slot's current
- * batch; ack_partitioned finishes the WHOLE batch even after a partial
- * receive; an unacked batch is re-issued idempotently. An empty filtered
- * slice is finished immediately so the slot cursor keeps advancing.
+ * (after N validation); i_max is a fail-closed safety ceiling for the slot's
+ * complete current batch; an unacked batch is re-issued idempotently. An
+ * empty filtered slice is finished immediately so the slot cursor advances.
  */
 create or replace function pgque.receive_partitioned(
     i_queue text, i_consumer text, i_slot int, i_n int, i_worker text,
@@ -507,6 +506,7 @@ declare
     v_cname text;
     ev record;
     cnt int := 0;
+    v_probe_count bigint;
 begin
     if i_max is null or i_max < 1 then
         raise exception 'pgque.receive_partitioned: max must be >= 1, got %', i_max;
@@ -535,6 +535,17 @@ begin
         )::pgque.message;
         cnt := cnt + 1;
     end loop;
+
+    /* Probe one row past the ceiling without computing i_max + 1, which
+       would overflow when callers pass the largest int4 value. */
+    execute 'fetch next from ' || quote_ident(v_cname) into ev;
+    get diagnostics v_probe_count = row_count;
+    if v_probe_count = 1 then
+        raise exception 'pgque.receive_partitioned: batch exceeds max of %', i_max
+            using
+                errcode = '54000',
+                hint = 'Retry with a larger resource-safe max to receive the complete slot batch. Do not acknowledge after this error.';
+    end if;
 
     /* get_batch_cursor leaves the cursor open; close it so a repeated call
        in the same transaction does not collide on the cursor name. */

@@ -149,12 +149,11 @@ export class Client {
   }
 
   /**
-   * Fetch up to `maxMessages` from the next batch for `consumer` on `queue`.
-   * Returns an empty array when no batch is currently available.
-   *
-   * WARNING: `ack(batchId)` finishes the whole underlying PgQ batch, including
-   * rows beyond `maxMessages`. Direct receive callers should pass a value large
-   * enough for the queue's possible batch size before acknowledging the batch.
+   * Fetch the complete next batch for `consumer` when it fits within
+   * `maxMessages`. A larger batch returns no partial result and fails with
+   * SQLSTATE 54000. Roll back and retry with a resource-safe larger ceiling;
+   * never acknowledge the failed receive. Ticker thresholds do not cap batch
+   * size. Returns an empty array when no batch is currently available.
    */
   async receive(queue: string, consumer: string, maxMessages = 100): Promise<Message[]> {
     if (!queue) {
@@ -373,9 +372,10 @@ export class Client {
    * Wraps `pgque.receive_coop`. The cooperative main and subconsumer rows
    * are auto-registered on first call.
    *
-   * `options.maxMessages` defaults to `100` (the SQL default). `ack(batchId)`
-   * still finishes the entire underlying batch, so size `maxMessages`
-   * appropriately or use the high-level `Consumer` default.
+   * `options.maxMessages` is a complete-batch safety ceiling and defaults to
+   * `100`. A larger batch returns no partial result and fails with SQLSTATE
+   * 54000. Roll back and retry with a resource-safe larger ceiling; never
+   * acknowledge the failed receive. Ticker thresholds do not cap batch size.
    *
    * `options.deadInterval` is a PostgreSQL `interval` text (e.g.
    * `"5 minutes"`); when set, `receive_coop` may steal a stale sibling's

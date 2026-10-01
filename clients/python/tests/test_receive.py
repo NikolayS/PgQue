@@ -2,7 +2,10 @@
 
 """Consumer-side tests: ``Client.receive`` / ``Client.ack``."""
 
+import json
+
 import pgque
+import pytest
 
 
 def test_receive_empty_when_no_tick(conn, setup_queue):
@@ -52,7 +55,7 @@ def test_ack_advances_position(conn, setup_queue):
     assert msgs2 == []
 
 
-def test_receive_returns_at_most_max_messages(conn, setup_queue):
+def test_receive_rejects_batch_over_max_and_retries_complete(conn, setup_queue):
     queue, consumer = setup_queue
     client = pgque.PgqueClient(conn)
     for i in range(5):
@@ -61,10 +64,24 @@ def test_receive_returns_at_most_max_messages(conn, setup_queue):
     conn.execute("select pgque.force_next_tick(%s)", (queue,))
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
-    msgs = client.receive(queue, consumer, max_messages=3)
-    assert len(msgs) == 3
+    with pytest.raises(
+        pgque.PgqueError, match="batch exceeds max_return of 3"
+    ) as exc_info:
+        client.receive(queue, consumer, max_messages=3)
+    assert exc_info.value.__cause__.sqlstate == "54000"
+
+    # The failed statement returns no partial list and rolls back its batch
+    # allocation. Reset the failed transaction before retrying.
+    conn.rollback()
+    msgs = client.receive(queue, consumer, max_messages=5)
+    assert len(msgs) == 5
+    assert {
+        (m.payload if isinstance(m.payload, dict) else json.loads(m.payload))["i"]
+        for m in msgs
+    } == set(range(5))
     client.ack(msgs[0].batch_id)
     conn.commit()
+    assert client.receive(queue, consumer, max_messages=5) == []
 
 
 def test_receive_preserves_event_type(conn, setup_queue):

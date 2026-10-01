@@ -1143,6 +1143,12 @@ begin
             ev_extra4
         from pgque.get_batch_events(v_batch_id)
     loop
+        if cnt = i_max_return then
+            raise exception 'pgque.receive_coop: batch exceeds max_return of %', i_max_return
+                using
+                    errcode = '54000',
+                    hint = 'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.';
+        end if;
         return next row(
             ev.ev_id,
             v_batch_id,
@@ -1156,7 +1162,6 @@ begin
             ev.ev_extra4
         )::pgque.message;
         cnt := cnt + 1;
-        exit when cnt >= i_max_return;
     end loop;
 
     -- Empty batch: release the member token so the subconsumer is not wedged

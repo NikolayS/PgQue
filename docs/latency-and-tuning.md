@@ -61,12 +61,13 @@ median end-to-end delivery is about 52 ms — almost exactly period/2 — with a
 maximum of roughly one period (about 105–145 ms across the committed runs). See
 [`benchmark/tick-rate/`](https://github.com/NikolayS/pgque/tree/main/benchmark/tick-rate).
 
-### It does not grow with load
+### Tick cadence and batch size
 
-The key property of the tick model: end-to-end latency does not grow with
-load. The ticker fires at its configured rate regardless of backlog. Under
-pressure, the batch size grows (up to `queue_ticker_max_count`) — not the
-delivery latency. A producer-side spike makes batches larger, not later.
+Tick cadence is independent of batch size, provided the ticker keeps up. Under
+pressure, the batch size can grow beyond `queue_ticker_max_count`, which
+is a tick-trigger threshold, not a hard cap. A producer-side spike makes
+batches larger; overloaded tickers or consumers can also increase delivery
+latency. Size receive ceilings for bursts and monitor consumer lag.
 
 ## Tuning the tick cadence
 

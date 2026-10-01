@@ -58,7 +58,7 @@ begin
   assert v_count = 0, 'should have no more messages after ack';
 end $$;
 
--- Step 6: partial receive still acks the whole underlying batch
+-- Step 6: a receive ceiling smaller than the batch fails closed
 do $$
 begin
   perform pgque.create_queue('test_recv_partial');
@@ -80,18 +80,30 @@ end $$;
 
 do $$
 declare
-  v_msg pgque.message;
+  v_raised boolean := false;
   v_count int := 0;
   v_batch_id bigint;
+  v_msg pgque.message;
 begin
-  for v_msg in select * from pgque.receive('test_recv_partial', 'c1', 1)
+  begin
+    perform * from pgque.receive('test_recv_partial', 'c1', 1);
+  exception
+    when others then
+      v_raised := true;
+      assert sqlerrm like '%batch exceeds max_return of 1%',
+        'unexpected overflow error: ' || sqlerrm;
+  end;
+  assert v_raised, 'receive(..., 1) must reject a three-event batch';
+
+  for v_msg in select * from pgque.receive('test_recv_partial', 'c1', 3)
   loop
     v_count := v_count + 1;
     v_batch_id := v_msg.batch_id;
   end loop;
 
-  assert v_count = 1, 'receive(..., 1) should return exactly 1 row';
-  assert v_batch_id is not null, 'batch_id should be set for partial receive';
+  assert v_count = 3,
+    'receive retry must return the complete three-event batch';
+  assert v_batch_id is not null, 'batch_id should be set for complete receive';
 
   perform pgque.ack(v_batch_id);
 end $$;
@@ -107,7 +119,7 @@ begin
   end loop;
 
   assert v_count = 0,
-    'ack(batch_id) should finish the whole batch, even if receive(..., 1) returned one row';
+    'ack(batch_id) should finish the complete batch';
 end $$;
 
 -- Step 7: send(text) fast path must store payload byte-for-byte

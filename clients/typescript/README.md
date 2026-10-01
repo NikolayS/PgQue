@@ -74,7 +74,7 @@ try {
 | `connect(dsn, poolOptions?)` | Connect via `pg.Pool`. Eagerly probes the connection. |
 | `client.send(queue, event)` | Publish; returns event id (`bigint`). |
 | `client.sendBatch(queue, type, payloads)` | Publish a same-type batch atomically; returns event ids (`bigint[]`). |
-| `client.receive(queue, consumer, max?)` | Fetch up to `max` (default 100) messages from the next batch. If you later call `ack(batchId)`, PgQue finishes the whole underlying batch, including rows beyond `max`; size `max` for your queue or use the high-level consumer default. |
+| `client.receive(queue, consumer, max?)` | Fetch the complete next batch when it fits within the safety ceiling (default 100). Overflow returns no partial result and SQLSTATE `54000`; roll back and retry with a resource-safe larger ceiling, and never acknowledge the failed receive. Ticker thresholds do not cap batch size. |
 | `client.ack(batchId)` | Finish the batch. Returns `1` on success, `0` if the batch was already finished or not found (stale/double ack — log at warn level, not an error). |
 | `client.nack(batchId, msg, opts?)` | Single-message retry/DLQ. |
 | `client.subscribe(queue, consumer)` | Wraps `pgque.register_consumer`. |
@@ -121,7 +121,7 @@ identically to the non-cooperative form.
 |---|---|
 | `client.subscribeSubconsumer(queue, consumer, subconsumer)` | Register a subconsumer. Returns `1` first call, `0` if already registered. |
 | `client.unsubscribeSubconsumer(queue, consumer, subconsumer, { batchHandling? })` | Remove a subconsumer. Default raises if a batch is active; `batchHandling: 1` routes the active batch through retry/DLQ first. |
-| `client.receiveCoop(queue, consumer, subconsumer, { maxMessages?, deadInterval? })` | Cooperative receive. Auto-registers main + subconsumer rows on first call. `deadInterval` enables stale-batch takeover; the new owner gets a fresh `batchId`. |
+| `client.receiveCoop(queue, consumer, subconsumer, { maxMessages?, deadInterval? })` | Cooperative receive with a complete-batch safety ceiling. Overflow returns no partial result and SQLSTATE `54000`; roll back and retry with a resource-safe larger ceiling, and never acknowledge the failed receive. Auto-registers main + subconsumer rows; `deadInterval` enables stale-batch takeover under a fresh `batchId`. |
 | `client.touchSubconsumer(queue, consumer, subconsumer)` | Refresh the subconsumer heartbeat so a long-running handler's batch is not taken over. The high-level consumer does not call this automatically. |
 
 Throughput note: cooperative allocation serializes on a `FOR UPDATE` of the

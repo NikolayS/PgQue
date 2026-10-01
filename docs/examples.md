@@ -35,7 +35,7 @@ select * from pgque.receive('orders', 'analytics_pipeline', 500);
 
 Result: all three `receive` calls return the same event, each through its own cursor. Acking one consumer's batch does not affect the others.
 
-`max_return` is 500 here to match the default `ticker_max_count`: because `ack` advances past the entire underlying batch, returning fewer rows than the batch holds would silently drop the rest. Use `max_return >= ticker_max_count` whenever you ack what you received.
+`max_return = 500` is a safety ceiling in this example, not a batch-size guarantee. A larger batch raises an error instead of returning a partial batch. Roll back a failed transaction and retry with a larger ceiling within your resource budget; process every returned event before acknowledging. `ticker_max_count` triggers ticks but does not cap batch size, and repeated `receive()` calls do not paginate.
 
 Late-subscriber caveat: `subscribe` (which calls `register_consumer`) starts the consumer at the most recent tick. A consumer will not see events that were sent before it subscribed. Subscribe each consumer before you start producing.
 
@@ -113,7 +113,7 @@ Gotchas (each verified against a live install):
 - **A subconsumer with an open (un-acked) batch refuses to unregister.** `unregister_subconsumer` raises unless you pass `batch_handling => 1`, which routes the in-flight messages through the queue's retry/DLQ policy first.
 - **Normal `receive` / `next_batch` raise on cooperative rows.** Calling `pgque.receive('demo', 'workers', …)` on the cooperative main errors with `… is a cooperative main consumer; use cooperative receive/next_batch with a subconsumer`. Member rows are reachable only through `receive_coop()` / cooperative `next_batch()`.
 - **`finish_batch` (and `ack`) reject a `coop_main` batch.** Acks apply to the member-owned batch the subconsumer received, never to the group cursor directly.
-- **Empty tick windows are auto-finished.** When a poll lands on a tick window with no events, `receive_coop()` finishes it internally and returns no rows and no `batch_id` — unlike `receive()`, which still hands back an empty batch token to ack.
+- **Empty tick windows are auto-finished.** When a poll lands on a tick window with no events, `receive_coop()` finishes it internally and returns no rows and no `batch_id`; `receive()` also auto-finishes empty batches.
 - **One hot row.** Batch hand-out serializes on a `FOR UPDATE` of the `workers` main row, so many workers polling tiny batches contend. If you scale the pool, raise `ticker_max_count` / tick cadence so each batch is big enough to amortize the lock.
 
 `pgque.get_consumer_info('demo')` lists the group as `workers` (the main cursor) and each member as `workers.w1`, `workers.w2`. Full signatures are in the [reference](reference.md#cooperative-consumers--subconsumers).
@@ -144,7 +144,7 @@ Notes:
 
 - The `inserted` CTE runs even though the final `select` does not reference it — data-modifying CTEs always execute.
 - Every row in a batch shares one `batch_id`, so the scalar subquery picks any row and `pgque.ack` runs once.
-- Batch-ownership caveat: `pgque.ack(batch_id)` advances the consumer past the whole underlying batch even if `receive` returned fewer rows than the batch holds. Consume the full batch before acking, or pass `max_return >= ticker_max_count` (default 500) so every row is returned.
+- `receive()` returns a complete batch or raises on overflow. If the ceiling is too small, roll back this transaction and retry with a larger ceiling within your resource budget. Never acknowledge after a receive error. `ack()` still finishes the whole batch: do not filter out unprocessed messages or add a SQL `limit` to the receive result.
 
 Snapshot rule — do not extend this transaction to cover `send` / `force_next_tick` / `ticker`. The ticker's snapshot must be taken after `send` commits, or the new event is still in-progress at tick time and is excluded from the batch:
 
