@@ -241,7 +241,15 @@ begin
   perform set_config('pgque.test_reinstall_token', v_page.page_token::text, false);
 end $$;
 
+/* Plain SQL reinstall is not an extension upgrade mechanism. */
+select not exists (
+    select 1 from pg_extension where extname = 'pgque'
+) as page_test_plain_install \gset
+\if :page_test_plain_install
 \i devel/sql/pgque.sql
+\else
+\echo 'SKIP: plain SQL reinstall inside pg_tle-owned extension; page continuity still checked'
+\endif
 
 do $$
 declare

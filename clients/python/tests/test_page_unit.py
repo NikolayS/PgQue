@@ -33,6 +33,15 @@ def test_receive_page_uses_typed_expansion_and_preserves_int8():
     assert page.messages[0].msg_id == 2**63 - 2
 
 
+def test_receive_page_decodes_metadata_only_row():
+    row = ("idle", None, None, None, None, None, None,
+           None, None, None, None, None, None, None, None, None, None, None)
+    page = PgqueClient(Conn([[row]])).receive_page("q", "c", "w")
+    assert page.status == "idle"
+    assert page.messages == []
+    assert page.page_token is None
+
+
 def test_process_page_handler_error_leaves_page_outstanding():
     conn = Conn([[page_row()]])
     def fail(_): raise RuntimeError("boom")

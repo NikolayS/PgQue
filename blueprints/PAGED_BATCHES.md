@@ -1,6 +1,6 @@
 # Durable paged batches for 0.3
 
-Status: design candidate; implementation and release acceptance pending.
+Status: implemented candidate; CI, review and release acceptance pending.
 Tracking: #364; bounded-invocation use case: #362.
 
 ## Goal and boundary

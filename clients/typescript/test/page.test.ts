@@ -36,4 +36,19 @@ describe('paged client', () => {
     await expect(client.processPage('q', 'c', 'w', () => undefined)).rejects.toThrow();
     expect(pool.query).toHaveBeenCalledTimes(2);
   });
+
+  it('decodes a metadata-only response without manufacturing a message', async () => {
+    const row = {...messageRow, status: 'idle' as const, page_batch_id: null,
+      page_token: null, page_number: null, is_last: null, lease_until: null,
+      msg_id: null, batch_id: null, type: null, payload: null, created_at: null};
+    const page = await new Client({query: vi.fn().mockResolvedValue({rows:[row]})} as never)
+      .receivePage('q','c','w');
+    expect(page).toMatchObject({status:'idle', pageToken:null, messages:[]});
+  });
+
+  it('serializes bigint failure IDs as decimal strings', async () => {
+    const pool = {query: vi.fn().mockResolvedValue({rows:[{status:'acked',batch_finished:false}]})};
+    await new Client(pool as never).ackPage('token','worker', [{msgId:'9223372036854775807',retryAfterSeconds:0}]);
+    expect(JSON.parse(pool.query.mock.calls[0]![1][2])).toEqual([{msg_id:'9223372036854775807',retry_after_seconds:0}]);
+  });
 });

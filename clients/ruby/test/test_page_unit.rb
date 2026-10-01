@@ -42,4 +42,28 @@ class TestPageUnit < Minitest::Test
     end
     assert_equal 1, conn.calls.length
   end
+
+  def test_metadata_only_row_has_no_message
+    idle = row.merge("status"=>"idle", "page_batch_id"=>nil,
+                     "page_token"=>nil, "page_number"=>nil, "is_last"=>nil,
+                     "msg_id"=>nil, "batch_id"=>nil)
+    page = Pgque::Client.new(PageFakeConnection.new([PageFakeResult.new([idle])]))
+      .receive_page("q", "c", "w")
+    assert_equal "idle", page.status
+    assert_empty page.messages
+    assert_nil page.page_token
+  end
+
+  def test_ack_page_decodes_scalar_table_result_and_failure_json
+    result = PageFakeResult.new([{"status"=>"already_acked",
+                                  "batch_finished"=>"t"}])
+    conn = PageFakeConnection.new([result])
+    ack = Pgque::Client.new(conn).ack_page(
+      "token", "worker",
+      failures: [{msg_id:"9223372036854775807", retry_after_seconds:0}],
+    )
+    assert_equal({status:"already_acked", batch_finished:true}, ack)
+    assert_equal [{"msg_id"=>"9223372036854775807",
+                   "retry_after_seconds"=>0}], JSON.parse(conn.calls[0][1][2])
+  end
 end

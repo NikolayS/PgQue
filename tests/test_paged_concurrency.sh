@@ -290,4 +290,84 @@ slot_wait_ms=$(( (slot_finished_ns - slot_started_ns) / 1000000 ))
 grep -Eq '^page\|[1-9][0-9]*\|1$' "${tmpdir}/slot_receiver.out" \
   || fail 'partition receive returned wrong page metadata after lock release'
 
+# Kill real backends on each side of the receive/ack transaction boundary.
+wait_for_sleep() {
+  local application="$1"
+  local observed=0
+  for _ in $(seq 1 100); do
+    if [[ "$(psql_test -c "select count(*) from pg_stat_activity where application_name = '${application}' and wait_event = 'PgSleep'")" = 1 ]]; then
+      observed=1
+      break
+    fi
+    sleep 0.05
+  done
+  [[ "$observed" = 1 ]] || fail "backend ${application} did not reach transaction barrier"
+}
+psql_test <<'SQL' >/dev/null
+select pgque.create_queue('paged_crash');
+select pgque.subscribe('paged_crash', 'c1');
+select pgque.send('paged_crash', 'crash', 'first');
+select pgque.send('paged_crash', 'crash', 'second');
+select pgque.force_next_tick('paged_crash');
+select pgque.ticker('paged_crash');
+SQL
+psql_test -c "set application_name = 'page_crash_receive'; begin;
+  select page_token from pgque.receive_page('paged_crash','c1','crashed',1);
+  select pg_sleep(10); commit;" >"${tmpdir}/crash_receive.out" 2>"${tmpdir}/crash_receive.err" &
+crash_pid=$!
+wait_for_sleep page_crash_receive
+psql_test -c "select pg_terminate_backend(pid) from pg_stat_activity where application_name='page_crash_receive'" >/dev/null
+if wait "$crash_pid"; then fail 'terminated receive backend unexpectedly committed'; fi
+crash_row="$(psql_test -F '|' -c "select page_token, ((messages)[1]).payload, page_number from pgque.receive_page('paged_crash','c1','survivor',1)")"
+IFS='|' read -r crash_token crash_payload crash_number <<<"${crash_row}"
+[[ "$crash_payload" = first && "$crash_number" = 1 ]] || fail 'uncommitted receive crash advanced progress'
+psql_test -c "set application_name = 'page_crash_ack'; begin;
+  select * from pgque.ack_page('${crash_token}','survivor');
+  select pg_sleep(10); commit;" >"${tmpdir}/crash_ack.out" 2>"${tmpdir}/crash_ack.err" &
+crash_pid=$!
+wait_for_sleep page_crash_ack
+psql_test -c "select pg_terminate_backend(pid) from pg_stat_activity where application_name='page_crash_ack'" >/dev/null
+if wait "$crash_pid"; then fail 'terminated ack backend unexpectedly committed'; fi
+crash_repeat="$(psql_test -F '|' -c "select page_token, ((messages)[1]).payload, page_number from pgque.receive_page('paged_crash','c1','survivor',1)")"
+[[ "$crash_repeat" = "$crash_row" ]] || fail 'uncommitted ack crash changed pending page'
+[[ "$(psql_test -F '|' -c "select * from pgque.ack_page('${crash_token}','survivor')")" = 'acked|f' ]] || fail 'crashed ack was incorrectly recorded as committed'
+[[ "$(psql_test -F '|' -c "select ((messages)[1]).payload, page_number, is_last from pgque.receive_page('paged_crash','c1','survivor',1)")" = 'second|2|t' ]] || fail 'crash recovery skipped or repeated committed progress'
+
+# An in-flight producer must not leak into an older immutable tick window.
+psql_test <<'SQL' >/dev/null
+select pgque.create_queue('paged_long_producer');
+select pgque.subscribe('paged_long_producer', 'c1');
+SQL
+psql_test -c "set application_name='page_long_producer'; begin;
+  select pgque.send('paged_long_producer','producer','late');
+  select pg_sleep(4); commit;" >"${tmpdir}/long_producer.out" 2>"${tmpdir}/long_producer.err" &
+producer_pid=$!
+wait_for_sleep page_long_producer
+psql_test <<'SQL' >/dev/null
+select pgque.send('paged_long_producer','producer','early');
+select pgque.force_next_tick('paged_long_producer');
+select pgque.ticker('paged_long_producer');
+do $$
+declare p pgque.batch_page;
+begin
+  p := pgque.receive_page('paged_long_producer','c1','reader',1);
+  assert p.status = 'page' and p.is_last and (p.messages[1]).payload = 'early';
+  perform pgque.ack_page(p.page_token,'reader');
+end $$;
+SQL
+wait "$producer_pid" || fail 'long producer did not commit'
+psql_test <<'SQL' >/dev/null
+select pgque.force_next_tick('paged_long_producer');
+select pgque.ticker('paged_long_producer');
+do $$
+declare p pgque.batch_page;
+begin
+  p := pgque.receive_page('paged_long_producer','c1','reader',1);
+  assert p.status = 'page' and p.is_last and (p.messages[1]).payload = 'late';
+  perform pgque.ack_page(p.page_token,'reader');
+end $$;
+SQL
+
+echo 'PASS: terminated receive/ack backends rolled back; committed progress recovered; long producer visible only in next tick window'
+
 echo "PASS: concurrent receive serialized (${race_wait_ms}ms); same-worker reconnect redelivered; lost ack replayed; takeover fenced stale token; partition receive obeyed slot-first locking (${slot_wait_ms}ms)"
