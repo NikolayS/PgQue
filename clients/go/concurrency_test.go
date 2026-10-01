@@ -46,7 +46,7 @@ func TestRace_ConcurrentSend(t *testing.T) {
 
 	expected := goroutines * perGoroutine
 	// The complete batch must fit within maxMessages. This test knows its
-	// maximum producer count, so use a ceiling above that count.
+	// maximum message count, so use a ceiling above that count.
 	total := 0
 	for {
 		msgs, err := client.Receive(ctx, queue, consumer, 2*expected)
