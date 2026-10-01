@@ -9,7 +9,7 @@ def test_page_live_round_trip(conn, setup_queue):
     ids = [client.send(queue, {"i": i}, type="page.live") for i in range(2)]
     max_id = 2**63 - 1
     conn.execute(
-        "select pgque.event_retry_raw(%s,%s,now() - interval '1 second',%s," 
+        "select pgque.event_retry_raw(%s,%s,now() - interval '1 second',%s,"
         "now(),0,'page.live','{\"i\":\"max\"}',null,null,null,null)",
         (queue, consumer, max_id),
     )
