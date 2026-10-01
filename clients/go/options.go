@@ -15,15 +15,14 @@ func WithPollInterval(d time.Duration) ConsumerOption {
 	return func(c *Consumer) { c.pollInterval = d }
 }
 
-// WithMaxMessages sets the per-Receive limit. By default the Consumer
+// WithMaxMessages sets the complete-batch safety ceiling. By default the Consumer
 // requests PostgreSQL's int maximum so it drains the whole PgQ batch before
 // acknowledging it. Panics if n <= 0.
 //
-// WARNING: pgque.ack(batch_id) finishes the entire underlying PgQ batch,
-// including rows the consumer never received because of this limit. If you
-// set maxMessages below the real batch size, unreturned rows are skipped
-// after ack. Only lower this value when it is at least as large as the
-// queue's possible batch size for your workload.
+// A larger batch makes Receive fail with SQLSTATE 54000 and returns no partial
+// result. Roll back, retry with a resource-safe larger ceiling, process every
+// message, then Ack. Never Ack a failed Receive. Ticker thresholds do not cap
+// batch size.
 func WithMaxMessages(n int) ConsumerOption {
 	if n <= 0 {
 		panic("pgque: WithMaxMessages requires n > 0")
@@ -123,14 +122,14 @@ func newReceiveCoopConfig() *receiveCoopConfig {
 // ReceiveCoopOption tunes a single Client.ReceiveCoop call.
 type ReceiveCoopOption func(*receiveCoopConfig)
 
-// WithCoopMaxMessages sets the per-call message limit (maps to the
+// WithCoopMaxMessages sets the per-call complete-batch safety ceiling (maps to the
 // i_max_return argument of pgque.receive_coop). Default is 100. Panics
 // if n <= 0.
 //
-// As with Receive, ack(batch_id) finishes the entire underlying batch
-// regardless of how many rows are returned; a low limit can therefore
-// drop rows. Match this to ticker_max_count (or larger) when you care
-// about per-message dispatch.
+// A larger batch makes ReceiveCoop fail with SQLSTATE 54000 and returns no
+// partial result. Roll back, retry with a resource-safe larger ceiling,
+// process every message, then Ack. Never Ack a failed ReceiveCoop. Ticker
+// thresholds do not cap batch size.
 func WithCoopMaxMessages(n int) ReceiveCoopOption {
 	if n <= 0 {
 		panic("pgque: WithCoopMaxMessages requires n > 0")

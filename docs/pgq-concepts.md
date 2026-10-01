@@ -64,7 +64,7 @@ short name below; the function auto-prefixes `queue_` internally.
 
 - `ticker_max_lag` — max wall time between ticks.
 - `ticker_idle_period` — tick interval when idle.
-- `ticker_max_count` — force tick at N events (batch-size cap).
+- `ticker_max_count` — event-count threshold for creating a tick; not a batch-size cap.
 - `rotation_period` — table rotation period (disk vs. history).
 - `max_retries` — retry ceiling before a message goes to `pgque.dead_letter`.
 

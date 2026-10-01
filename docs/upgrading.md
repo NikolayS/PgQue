@@ -12,6 +12,47 @@ The installer is idempotent: it preserves queues, consumers, subscriptions,
 retry rows, DLQ rows, and existing event tables while adding new functions,
 columns, grants, and constraints required by the target release.
 
+## v0.2.0 to v0.2.1
+
+Re-run the installer using the command above. This maintenance release makes
+`pgque.receive()` and `pgque.receive_coop()` reject batches larger than
+`max_return`, rather than returning a truncated result that could be
+acknowledged as a complete batch. The upgrade replaces functions only; it does not
+change tables or queue state.
+
+**Before upgrading, size receive ceilings explicitly.** The SQL default
+`max_return` is 100, below the default ticker event-count threshold of 500;
+ordinary batches can exceed 100. Direct Python and TypeScript receive calls
+and Go `ReceiveCoop` also default to 100. Callers relying on those defaults
+must pass a sufficient resource-safe ceiling before upgrading. Repeating an
+oversized receive with the same ceiling cannot make progress. Alert on
+SQLSTATE `54000` and consumer lag. The high-level consumer loops default to
+the Postgres integer maximum and are not constrained by the SQL default.
+
+Applications do not need client-library updates for this server-side fix.
+An undersized receive ceiling now causes an error: roll back the failed
+transaction and retry with a sufficient ceiling within your resource budget.
+Never acknowledge after a receive error. Ticker thresholds do not cap batch
+size, and repeated receive calls are not pagination.
+
+For a pg_tle-managed v0.2.0 installation, register the update path and apply
+it through Postgres extension management:
+
+```sql
+\i sql/pgque-tle.sql
+alter extension pgque update to '0.2.1';
+select extversion from pg_extension where extname = 'pgque';
+select pgque.version();
+```
+
+The managed pg_tle update path supports exactly a registered `0.2.0` origin.
+Other origins are rejected without changing the installation; do not drop a
+populated extension as a workaround. Plan and test a separate migration for
+those origins.
+
+Both version queries must return `0.2.1`. The update replaces functions only;
+do not drop or unregister the existing extension before upgrading.
+
 ## v0.1.0 to v0.2.0
 
 The supported v0.1.0 → v0.2.0 path is the same re-install procedure:
@@ -32,7 +73,7 @@ After upgrading, verify the installed version:
 
 ```sql
 select pgque.version();
--- 0.2.0-rc.1, or the exact release you installed
+-- 0.2.1, or the exact release you installed
 ```
 
 You can also run the idempotency smoke test from the repository:
