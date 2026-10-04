@@ -10,6 +10,15 @@ module Pgque
   # Ruby's Object#send, so use #__send__ or #public_send when you need
   # to invoke a method on a Pgque::Client instance reflectively.
   class Client
+    PAGE_SELECT = <<~SQL.freeze
+      select p.status, p.batch_id as page_batch_id, p.page_token::text,
+             p.page_number, p.is_last, p.lease_until, p.fence_epoch,
+             m.msg_id, m.batch_id, m.type, m.payload, m.retry_count,
+             m.created_at, m.extra1, m.extra2, m.extra3, m.extra4, m.ordinality
+      from %<function>s as p
+      left join lateral unnest(p.messages) with ordinality as m on true
+      order by m.ordinality
+    SQL
     attr_reader :conn
 
     def self.connect(dsn)
@@ -82,6 +91,76 @@ module Pgque
       integer_scalar(result)
     rescue PG::Error => e
       raise_wrapped_sql_error(e)
+    end
+
+    def receive_page(queue, consumer, worker, page_size: 100,
+                     lease: "60 seconds")
+      query_page("pgque.receive_page($1,$2,$3,$4,$5::interval)",
+                 [queue, consumer, worker, page_size, lease])
+    end
+
+    def receive_page_coop(queue, consumer, subconsumer, worker, page_size: 100,
+                          dead_interval: nil, lease: "60 seconds")
+      query_page(
+        "pgque.receive_page_coop($1,$2,$3,$4,$5,$6::interval,$7::interval)",
+        [queue, consumer, subconsumer, worker, page_size, dead_interval, lease],
+      )
+    end
+
+    def receive_page_partitioned(queue, consumer, slot, n, worker,
+                                 page_size: 100)
+      query_page("pgque.receive_page_partitioned($1,$2,$3,$4,$5,$6)",
+                 [queue, consumer, slot, n, worker, page_size])
+    end
+
+    def ack_page(page_token, worker, failures: [])
+      normalized = failures.map do |failure|
+        failure.transform_keys { |key| key.to_s.sub("msgId", "msg_id")
+          .sub("retryAfterSeconds", "retry_after_seconds") }
+      end
+      result = @conn.exec_params(
+        "select status, batch_finished from " \
+        "pgque.ack_page($1::uuid,$2,$3::jsonb)",
+        [page_token, worker, JSON.dump(normalized)],
+      )
+      {status: result.getvalue(0, 0),
+       batch_finished: result.getvalue(0, 1) == "t"}
+    rescue PG::Error => e
+      raise_wrapped_sql_error(e)
+    end
+
+    def renew_page(page_token, worker)
+      result = @conn.exec_params(
+        "select pgque.renew_page($1::uuid,$2)", [page_token, worker]
+      )
+      Time.parse(scalar(result))
+    rescue PG::Error => e
+      raise_wrapped_sql_error(e)
+    end
+
+    def process_page(queue, consumer, worker, page_size: 100,
+                     lease: "60 seconds", handler: nil, &block)
+      handler ||= block
+      raise ArgumentError, "handler must respond to call" unless handler.respond_to?(:call)
+
+      page = receive_page(queue, consumer, worker,
+                          page_size: page_size, lease: lease)
+      return PageResult.new(status: page.status, processed_count: 0,
+                            batch_finished: nil) unless page.status == "page"
+
+      page.messages.each do |message|
+        outcome = handler.call(message)
+        if outcome.is_a?(Enumerator)
+          outcome.close if outcome.respond_to?(:close)
+          raise TypeError, "page handler must complete, not return an Enumerator"
+        end
+        if outcome.respond_to?(:call) || outcome.is_a?(UnboundMethod) || outcome.is_a?(Fiber)
+          raise TypeError, "page handler must complete, not return a deferred callable"
+        end
+      end
+      ack = ack_page(page.page_token, worker)
+      PageResult.new(status: page.status, processed_count: page.messages.length,
+                     batch_finished: ack[:batch_finished])
     end
 
     def subscribe(queue, consumer)
@@ -195,6 +274,40 @@ module Pgque
     end
 
     private
+
+    def query_page(function, params)
+      result = @conn.exec_params(format(PAGE_SELECT, function: function), params)
+      raise Error, "paged receive returned no metadata row" if result.ntuples.zero?
+
+      first = result[0]
+      metadata = %w[status page_batch_id page_token page_number is_last
+                    lease_until fence_epoch]
+      unless result.all? { |row| metadata.all? { |key| row[key] == first[key] } }
+        raise Error, "paged receive returned inconsistent metadata rows"
+      end
+      messages = result.filter_map do |row|
+        next if row["msg_id"].nil?
+        row_to_message([row["msg_id"], row["batch_id"], row["type"],
+                        row["payload"], row["retry_count"], row["created_at"],
+                        row["extra1"], row["extra2"], row["extra3"], row["extra4"]])
+      end
+      Page.new(
+        status: first["status"],
+        batch_id: integer_or_nil(first["page_batch_id"]),
+        page_token: first["page_token"],
+        page_number: integer_or_nil(first["page_number"]),
+        is_last: first["is_last"].nil? ? nil : first["is_last"] == "t",
+        messages: messages,
+        lease_until: first["lease_until"].nil? ? nil : Time.parse(first["lease_until"]),
+        fence_epoch: integer_or_nil(first["fence_epoch"]),
+      )
+    rescue PG::Error => e
+      raise_wrapped_sql_error(e)
+    end
+
+    def integer_or_nil(value)
+      value.nil? ? nil : value.to_i
+    end
 
     # Hash/Array: JSON-encoded.
     # nil: literal "null" so ::jsonb yields JSON null (not SQL NULL).

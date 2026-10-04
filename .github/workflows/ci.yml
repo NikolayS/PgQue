@@ -46,6 +46,13 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/run_all.sql
 
+      - name: Run paged concurrency acceptance
+        env:
+          PGQUE_TEST_IMAGE: postgres:${{ matrix.pg_version }}
+        run: |
+          bash tests/test_paged_concurrency.sh
+          bash tests/test_paged_drop_timeout.sh
+
       - name: Run experimental tests
         run: |
           # devel/sql/experimental/*.sql is not part of devel/sql/pgque.sql;
