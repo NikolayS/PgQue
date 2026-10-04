@@ -37,6 +37,7 @@ class PgqueReceiveOverflowError(PgqueError):
                 self.configured_limit,
                 self.operation,
             ),
+            self.__dict__,
         )
 
 
