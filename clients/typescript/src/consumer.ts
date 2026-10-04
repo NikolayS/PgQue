@@ -101,7 +101,9 @@ export class Consumer {
       let anyNackFailed = false;
       for (const msg of msgs) {
         batchId = msg.batchId;
-        const handler = this.handlers.get(msg.type);
+        // SQL NULL is not an event type applications can register through
+        // handle(string, ...); always apply the unknown-type policy.
+        const handler = msg.type === null ? undefined : this.handlers.get(msg.type);
         if (!handler) {
           if (this.unknownHandlerPolicy === 'ack') {
             this.logger.warn(

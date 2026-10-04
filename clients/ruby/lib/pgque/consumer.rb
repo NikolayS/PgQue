@@ -169,7 +169,13 @@ module Pgque
     def dispatch_batch(client, batch_id, msgs)
       nack_failed = false
       msgs.each do |msg|
-        handler = @handlers[msg.type] || @default_handler
+        # SQL NULL is not a named event type. It may be handled by the
+        # explicit "*" catch-all, but never by a nil hash key.
+        handler = if msg.type.nil?
+          @default_handler
+        else
+          @handlers[msg.type] || @default_handler
+        end
 
         if handler.nil?
           if @unknown_handler_policy == "ack"

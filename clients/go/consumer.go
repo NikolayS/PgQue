@@ -152,7 +152,13 @@ func (c *Consumer) Start(ctx context.Context) error {
 		nackFailed := false
 		for _, msg := range msgs {
 			batchID = msg.BatchID
-			handler, ok := c.handlers[msg.Type]
+			// SQL NULL is normalized to "" by Receive. Keep it on the
+			// unknown-type path instead of dispatching an empty-string key.
+			var handler HandlerFunc
+			var ok bool
+			if msg.Type != "" {
+				handler, ok = c.handlers[msg.Type]
+			}
 			if !ok {
 				if c.unknownPolicy == AckUnknown {
 					log.Printf("pgque: no handler registered for event type %q, skipping message %d (AckUnknown policy)", msg.Type, msg.MsgID)

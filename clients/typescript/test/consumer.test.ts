@@ -33,11 +33,11 @@ describe('Consumer (env-gated)', () => {
     });
     const seen: Array<{ type: string; v: number }> = [];
     consumer.handle('a', async (msg) => {
-      const p = JSON.parse(msg.payload) as { v: number };
+      const p = JSON.parse(msg.payload!) as { v: number };
       seen.push({ type: 'a', v: p.v });
     });
     consumer.handle('b', async (msg) => {
-      const p = JSON.parse(msg.payload) as { v: number };
+      const p = JSON.parse(msg.payload!) as { v: number };
       seen.push({ type: 'b', v: p.v });
     });
 
@@ -296,6 +296,49 @@ describe('Consumer (env-gated)', () => {
 });
 
 describe('Consumer (in-memory mocks)', () => {
+  it('routes a null type as unknown even if a JS caller registers null', async () => {
+    const msg: Message = {
+      msgId: 9n,
+      batchId: 109n,
+      type: null,
+      payload: null,
+      retryCount: null,
+      createdAt: new Date(),
+      extra1: null,
+      extra2: null,
+      extra3: null,
+      extra4: null,
+    };
+    let receiveCalls = 0;
+    const fakeClient = {
+      receive: vi.fn(async () => {
+        receiveCalls += 1;
+        return receiveCalls === 1 ? [msg] : [];
+      }),
+      ack: vi.fn(async () => 1),
+      nack: vi.fn(async () => undefined),
+    };
+    const handler = vi.fn(async () => undefined);
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 10,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+    consumer.handle(null as unknown as string, handler);
+
+    const ac = new AbortController();
+    const start = consumer.start(ac.signal);
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && fakeClient.nack.mock.calls.length === 0) {
+      await sleep(10);
+    }
+    ac.abort();
+    await start;
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(fakeClient.nack).toHaveBeenCalledTimes(1);
+    expect(fakeClient.ack).toHaveBeenCalledTimes(1);
+  });
+
   it('does not call ack when nack fails for a handler error', async () => {
     const msg: Message = {
       msgId: 1n,

@@ -97,6 +97,12 @@ func main() {
 | `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` logs and skips messages with no registered handler.      |
 | `WithRetryAfter(d time.Duration)`       | `60s`          | Retry delay for Consumer-issued `Nack` calls on handler failure or unknown type. |
 
+PgQ permits SQL `NULL` in `ev_type` and `ev_data` for direct SQL and trigger
+producers. To preserve the existing Go API, `Receive` and `ReceiveCoop`
+normalize either value to the empty string. An empty `Message.Type` never
+matches a handler (including one registered with `Handle("", ...)`); the
+high-level Consumer applies `UnknownHandlerPolicy` instead.
+
 ## Manual ticking
 
 For tests, demos, or manual operation without `pg_cron`, use
