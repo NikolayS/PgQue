@@ -72,7 +72,9 @@ module Pgque
       )
       result.each_row.map { |row| row_to_message(row) }
     rescue PG::Error => e
-      raise_wrapped_sql_error(e)
+      raise_wrapped_sql_error(
+        e, operation: "receive", configured_limit: max_messages
+      )
     end
 
     def ack(batch_id)
@@ -153,7 +155,9 @@ module Pgque
       )
       result.each_row.map { |row| row_to_message(row) }
     rescue PG::Error => e
-      raise_wrapped_sql_error(e)
+      raise_wrapped_sql_error(
+        e, operation: "receive_coop", configured_limit: max_messages
+      )
     end
 
     def touch_subconsumer(queue, consumer, subconsumer)
@@ -239,8 +243,24 @@ module Pgque
       text
     end
 
-    def wrap_sql_error(error)
+    def wrap_sql_error(error, operation: nil, configured_limit: nil)
       msg = error.message.to_s
+      result = error.result
+      if result
+        sqlstate = result.error_field(PG::Result::PG_DIAG_SQLSTATE)
+        primary = result.error_field(PG::Result::PG_DIAG_MESSAGE_PRIMARY)
+        match = /\Apgque\.(receive|receive_coop): batch exceeds max_return of ([0-9]+)\z/.match(primary.to_s)
+        if sqlstate == "54000" && match && match[1] == operation &&
+           match[2].to_i == configured_limit
+          return ReceiveOverflow.new(
+            msg,
+            sqlstate: sqlstate,
+            hint: result.error_field(PG::Result::PG_DIAG_MESSAGE_HINT),
+            configured_limit: match[2].to_i,
+            operation: match[1],
+          )
+        end
+      end
       low = msg.downcase
       if low.include?("queue not found")
         QueueNotFound.new(msg)
@@ -251,8 +271,10 @@ module Pgque
       end
     end
 
-    def raise_wrapped_sql_error(error)
-      wrapped = wrap_sql_error(error)
+    def raise_wrapped_sql_error(error, operation: nil, configured_limit: nil)
+      wrapped = wrap_sql_error(
+        error, operation: operation, configured_limit: configured_limit
+      )
       wrapped.set_backtrace(error.backtrace) if error.backtrace
       raise wrapped, cause: error
     end

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Consumer } from '../src/consumer.js';
 import type { Client } from '../src/client.js';
+import { PgqueReceiveOverflowError } from '../src/errors.js';
 import type { Message } from '../src/types.js';
 import {
   TEST_DSN,
@@ -75,6 +76,42 @@ describe('Cooperative consumers (env-gated)', () => {
     });
     expect(after).toEqual([]);
   });
+
+  skipIfNoDb(
+    'receiveCoop exposes typed overflow and a larger ceiling recovers the full batch',
+    async () => {
+      const sub = 'worker-overflow';
+      await env.client.subscribeSubconsumer(env.queue, env.consumer, sub);
+      for (let i = 0; i < 5; i++) {
+        await env.client.send(env.queue, { type: 'coop.overflow', payload: { i } });
+      }
+      await advanceQueue(env.client, env.queue);
+
+      const error = await env.client
+        .receiveCoop(env.queue, env.consumer, sub, { maxMessages: 3 })
+        .catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(PgqueReceiveOverflowError);
+      expect(error).toMatchObject({
+        sqlstate: '54000',
+        operation: 'receiveCoop',
+        maxMessages: 3,
+      });
+      expect((error as PgqueReceiveOverflowError).hint).toContain(
+        'receive the complete batch',
+      );
+
+      const recovered = await env.client.receiveCoop(env.queue, env.consumer, sub, {
+        maxMessages: 5,
+      });
+      expect(recovered.map((msg) => JSON.parse(msg.payload))).toEqual(
+        Array.from({ length: 5 }, (_, i) => ({ i })),
+      );
+      await env.client.ack(recovered[0]!.batchId);
+      await expect(
+        env.client.receiveCoop(env.queue, env.consumer, sub, { maxMessages: 5 }),
+      ).resolves.toEqual([]);
+    },
+  );
 
   // --------------------------------------------------------------------------
   // Two subconsumers split batches without duplicate delivery

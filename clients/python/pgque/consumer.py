@@ -15,7 +15,7 @@ import psycopg
 from psycopg import sql
 
 from .client import PgqueClient
-from .errors import PgqueError
+from .errors import PgqueError, ReceiveOverflowError
 from .types import Message
 
 logger = logging.getLogger("pgque")
@@ -161,6 +161,10 @@ class Consumer:
                 # KeyboardInterrupt is a BaseException and propagates.
                 try:
                     self._run_session()
+                except ReceiveOverflowError:
+                    # A deterministic complete-batch safety ceiling is not
+                    # transient. Reconnecting cannot change the batch size.
+                    raise
                 except (psycopg.Error, PgqueError):
                     if not self._running:
                         break
@@ -171,6 +175,7 @@ class Consumer:
                     )
                     self._sleep_before_reconnect()
         finally:
+            self._running = False
             if in_main_thread:
                 signal.signal(signal.SIGTERM, original_sigterm)
                 signal.signal(signal.SIGINT, original_sigint)

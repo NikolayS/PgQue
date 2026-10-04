@@ -160,7 +160,7 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 	rows, err := c.pool.Query(ctx,
 		"SELECT * FROM pgque.receive($1, $2, $3)", queue, consumer, maxMessages)
 	if err != nil {
-		return nil, wrapSQLError("receive", err)
+		return nil, wrapReceiveError("receive", maxMessages, err)
 	}
 	defer rows.Close()
 
@@ -173,7 +173,7 @@ func (c *Client) Receive(ctx context.Context, queue, consumer string, maxMessage
 		msgs = append(msgs, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, wrapSQLError("receive rows", err)
+		return nil, wrapReceiveError("receive", maxMessages, err)
 	}
 	return msgs, nil
 }
@@ -343,7 +343,7 @@ func (c *Client) ReceiveCoop(ctx context.Context, queue, consumer, subconsumer s
 		"select * from pgque.receive_coop($1, $2, $3, $4, $5::interval)",
 		queue, consumer, subconsumer, cfg.maxMessages, deadArg)
 	if err != nil {
-		return nil, wrapSQLError("receive coop", err)
+		return nil, wrapReceiveError("receive coop", cfg.maxMessages, err)
 	}
 	defer rows.Close()
 
@@ -356,7 +356,7 @@ func (c *Client) ReceiveCoop(ctx context.Context, queue, consumer, subconsumer s
 		msgs = append(msgs, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, wrapSQLError("receive coop rows", err)
+		return nil, wrapReceiveError("receive coop", cfg.maxMessages, err)
 	}
 	return msgs, nil
 }

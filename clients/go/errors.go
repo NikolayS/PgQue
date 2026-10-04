@@ -34,6 +34,11 @@ var (
 	// ErrBatchNotFound is returned when a SQL call references a batch ID
 	// that does not exist or has already been finished.
 	ErrBatchNotFound = errors.New("pgque: batch not found")
+
+	// ErrReceiveOverflow marks a receive whose complete batch was larger
+	// than the configured safety ceiling. The failed call returns no
+	// messages and must not be acknowledged.
+	ErrReceiveOverflow = errors.New("pgque: receive overflow")
 )
 
 // SQLError wraps a PostgreSQL-side failure with the SQLSTATE code and the
@@ -60,6 +65,75 @@ func (e *SQLError) Error() string {
 }
 
 func (e *SQLError) Unwrap() error { return e.Err }
+
+// ReceiveOverflowError reports that Receive or ReceiveCoop could not return
+// the complete batch within the configured safety ceiling. Use errors.Is with
+// ErrReceiveOverflow or errors.As with either *ReceiveOverflowError or
+// *SQLError. Callers may retry the complete batch with a resource-safe larger
+// ceiling; the failed receive must never be acknowledged.
+type ReceiveOverflowError struct {
+	Op       string
+	SQLSTATE string
+	Hint     string
+	Ceiling  int
+	Err      error
+
+	sqlErr *SQLError
+}
+
+func (e *ReceiveOverflowError) Error() string {
+	if e.sqlErr != nil {
+		return e.sqlErr.Error()
+	}
+	if e.SQLSTATE != "" {
+		return fmt.Sprintf("pgque: %s: receive overflow at configured ceiling %d [SQLSTATE %s]", e.Op, e.Ceiling, e.SQLSTATE)
+	}
+	return fmt.Sprintf("pgque: %s: receive overflow at configured ceiling %d", e.Op, e.Ceiling)
+}
+
+// Unwrap retains compatibility with callers that extract *SQLError or the
+// underlying *pgconn.PgError using errors.As.
+func (e *ReceiveOverflowError) Unwrap() error {
+	if e.sqlErr != nil {
+		return e.sqlErr
+	}
+	return e.Err
+}
+
+func (e *ReceiveOverflowError) Is(target error) bool { return target == ErrReceiveOverflow }
+
+// wrapReceiveError recognizes only the fail-closed overflow emitted by the
+// named PgQue receive function for this exact configured ceiling. Other 54000
+// errors remain ordinary SQLError values.
+func wrapReceiveError(op string, ceiling int, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "54000" {
+		var function string
+		switch op {
+		case "receive":
+			function = "receive"
+		case "receive coop":
+			function = "receive_coop"
+		}
+		expected := fmt.Sprintf("pgque.%s: batch exceeds max_return of %d", function, ceiling)
+		if function != "" && pgErr.Message == expected {
+			sqlErr := &SQLError{Op: op, SQLSTATE: pgErr.Code, Err: err}
+			return &ReceiveOverflowError{
+				Op:       op,
+				SQLSTATE: pgErr.Code,
+				Hint:     pgErr.Hint,
+				Ceiling:  ceiling,
+				Err:      err,
+				sqlErr:   sqlErr,
+			}
+		}
+	}
+	return wrapSQLError(op, err)
+}
 
 // wrapSQLError maps a raw error from pgx into a typed pgque error.
 //

@@ -7,6 +7,7 @@ import {
   PgqueConnectionError,
   PgqueConsumerNotFoundError,
   PgqueQueueNotFoundError,
+  PgqueReceiveOverflowError,
   PgqueSqlError,
   Client,
   connect,
@@ -115,6 +116,31 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
   skipIfNoDb('receive returns empty array when no batch is ready', async () => {
     const msgs = await env.client.receive(env.queue, env.consumer, 10);
     expect(msgs).toEqual([]);
+  });
+
+  skipIfNoDb('receive exposes typed overflow and a larger ceiling recovers the full batch', async () => {
+    for (let i = 0; i < 5; i++) {
+      await env.client.send(env.queue, { type: 'overflow.test', payload: { i } });
+    }
+    await advanceQueue(env.client, env.queue);
+
+    const error = await env.client.receive(env.queue, env.consumer, 3).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(PgqueReceiveOverflowError);
+    expect(error).toMatchObject({
+      sqlstate: '54000',
+      operation: 'receive',
+      maxMessages: 3,
+    });
+    expect((error as PgqueReceiveOverflowError).hint).toContain(
+      'receive the complete batch',
+    );
+
+    const recovered = await env.client.receive(env.queue, env.consumer, 5);
+    expect(recovered.map((msg) => JSON.parse(msg.payload))).toEqual(
+      Array.from({ length: 5 }, (_, i) => ({ i })),
+    );
+    await env.client.ack(recovered[0]!.batchId);
+    await expect(env.client.receive(env.queue, env.consumer, 5)).resolves.toEqual([]);
   });
 
   // ---------------------------------------------------------------------------
@@ -331,13 +357,78 @@ describe('Client (env-gated, requires PGQUE_TEST_DSN)', () => {
 });
 
 describe('Client error classification (in-memory)', () => {
-  function clientThatRaises(message: string): Client {
+  function clientThatRaises(cause: string | Record<string, unknown>): Client {
     return new Client({
       query: async () => {
-        throw { message };
+        throw typeof cause === 'string' ? { message: cause } : cause;
       },
     } as never);
   }
+
+  it.each([
+    {
+      operation: 'receive' as const,
+      ceiling: 7,
+      message: 'pgque.receive: batch exceeds max_return of 7',
+    },
+    {
+      operation: 'receiveCoop' as const,
+      ceiling: 11,
+      message: 'pgque.receive_coop: batch exceeds max_return of 11',
+    },
+  ])('maps $operation overflow to PgqueReceiveOverflowError', async (testCase) => {
+    const cause = {
+      code: '54000',
+      message: testCase.message,
+      hint:
+        'Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.',
+    };
+    const client = clientThatRaises(cause);
+    const call =
+      testCase.operation === 'receive'
+        ? client.receive('q', 'c', testCase.ceiling)
+        : client.receiveCoop('q', 'c', 'worker-1', { maxMessages: testCase.ceiling });
+
+    const error = await call.catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(PgqueReceiveOverflowError);
+    expect(error).toBeInstanceOf(PgqueSqlError);
+    expect(error).toMatchObject({
+      sqlstate: '54000',
+      hint: cause.hint,
+      operation: testCase.operation,
+      maxMessages: testCase.ceiling,
+      cause,
+    });
+  });
+
+  it.each([
+    {
+      label: 'same message with a different SQLSTATE',
+      cause: {
+        code: '22023',
+        message: 'pgque.receive: batch exceeds max_return of 7',
+      },
+    },
+    {
+      label: 'unrelated SQLSTATE 54000 error',
+      cause: { code: '54000', message: 'program limit exceeded elsewhere' },
+    },
+    {
+      label: 'wrong receive message',
+      cause: { code: '54000', message: 'pgque.receive: another failure' },
+    },
+    {
+      label: 'operation/message mismatch',
+      cause: {
+        code: '54000',
+        message: 'pgque.receive_coop: batch exceeds max_return of 7',
+      },
+    },
+  ])('does not classify $label as receive overflow', async ({ cause }) => {
+    const error = await clientThatRaises(cause).receive('q', 'c', 7).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(PgqueSqlError);
+    expect(error).not.toBeInstanceOf(PgqueReceiveOverflowError);
+  });
 
   it.each([
     'queue not found: missing_q',

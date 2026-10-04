@@ -5,6 +5,7 @@
 """PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
 import json
+import re
 from typing import Any, Optional, Union
 
 import psycopg
@@ -15,6 +16,7 @@ from .errors import (
     PgqueConsumerNotFound,
     PgqueError,
     PgqueQueueNotFound,
+    ReceiveOverflowError,
 )
 from .types import Event, Message
 
@@ -41,9 +43,36 @@ def connect(dsn: str, *, autocommit: bool = False) -> "PgqueClient":
     return PgqueClient(conn, _owns_conn=True)
 
 
-def _wrap_sql_error(e: Exception) -> PgqueError:
+_RECEIVE_OVERFLOW_RE = re.compile(
+    r"\Apgque\.(receive|receive_coop): batch exceeds max_return of ([0-9]+)\Z"
+)
+
+
+def _wrap_sql_error(
+    e: Exception,
+    *,
+    operation: str | None = None,
+    configured_limit: int | None = None,
+) -> PgqueError:
     """Map a raw psycopg error to a pgque exception subclass."""
     msg = str(e)
+    diag = getattr(e, "diag", None)
+    primary = getattr(diag, "message_primary", None) or msg
+    sqlstate = getattr(e, "sqlstate", None)
+    overflow_match = _RECEIVE_OVERFLOW_RE.fullmatch(primary)
+    if (
+        sqlstate == "54000"
+        and overflow_match
+        and overflow_match.group(1) == operation
+        and int(overflow_match.group(2)) == configured_limit
+    ):
+        return ReceiveOverflowError(
+            msg,
+            sqlstate=sqlstate,
+            hint=getattr(diag, "message_hint", None),
+            configured_limit=int(overflow_match.group(2)),
+            operation=overflow_match.group(1),
+        )
     low = msg.lower()
     if "queue not found" in low:
         return PgqueQueueNotFound(msg)
@@ -248,7 +277,9 @@ class PgqueClient:
                 (queue, consumer, max_messages),
             ).fetchall()
         except psycopg.Error as e:
-            raise _wrap_sql_error(e) from e
+            raise _wrap_sql_error(
+                e, operation="receive", configured_limit=max_messages
+            ) from e
 
         return [
             Message(
@@ -427,7 +458,9 @@ class PgqueClient:
                 (queue, consumer, subconsumer, max_messages, dead_interval),
             ).fetchall()
         except psycopg.Error as e:
-            raise _wrap_sql_error(e) from e
+            raise _wrap_sql_error(
+                e, operation="receive_coop", configured_limit=max_messages
+            ) from e
 
         return [
             Message(
