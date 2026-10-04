@@ -644,15 +644,11 @@ function mapPgError(
   const overflowOperation =
     op === 'receive' ? 'receive' : op === 'receiveCoop' ? 'receiveCoop' : undefined;
   const overflowFunction = overflowOperation === 'receive' ? 'receive' : 'receive_coop';
-  const overflowMatch = overflowOperation
-    ? new RegExp(`^pgque\\.${overflowFunction}: batch exceeds max_return of ([0-9]+)$`).exec(msg)
-    : null;
   if (
     code === '54000' &&
     overflowOperation !== undefined &&
-    overflowMatch !== null &&
     ctx?.maxMessages !== undefined &&
-    Number(overflowMatch[1]) === ctx.maxMessages
+    msg === `pgque.${overflowFunction}: batch exceeds max_return of ${ctx.maxMessages}`
   ) {
     return new PgqueReceiveOverflowError(overflowOperation, ctx.maxMessages, hint, { cause: err });
   }

@@ -74,10 +74,10 @@ def test_matching_server_text_requires_matching_receive_call_context(
 
 @pytest.mark.parametrize(
     "round_trip",
-    [copy.copy, lambda error: pickle.loads(pickle.dumps(error))],
-    ids=["copy", "pickle"],
+    [copy.copy, copy.deepcopy, lambda error: pickle.loads(pickle.dumps(error))],
+    ids=["copy", "deepcopy", "pickle"],
 )
-def test_receive_overflow_round_trip_preserves_metadata(round_trip):
+def test_receive_overflow_round_trip_preserves_metadata_and_context(round_trip):
     error = pgque.PgqueReceiveOverflowError(
         "pgque.receive: batch exceeds max_return of 17",
         sqlstate="54000",
@@ -85,6 +85,10 @@ def test_receive_overflow_round_trip_preserves_metadata(round_trip):
         configured_limit=17,
         operation="receive",
     )
+    error.queue_context = {"queue": "orders", "worker": "worker-1"}
+    # add_note is public exception API on Python 3.11 and newer.
+    if hasattr(error, "add_note"):
+        error.add_note("while consuming queue orders")
 
     restored = round_trip(error)
 
@@ -95,6 +99,9 @@ def test_receive_overflow_round_trip_preserves_metadata(round_trip):
     assert restored.hint == "increase safely"
     assert restored.configured_limit == 17
     assert restored.operation == "receive"
+    assert restored.queue_context == error.queue_context
+    if hasattr(error, "__notes__"):
+        assert restored.__notes__ == error.__notes__
 
 
 @pytest.mark.parametrize(
@@ -142,28 +149,3 @@ def test_consumer_overflow_fails_fast_without_retry_or_dispatch(
     connection.__exit__.assert_called_once()
     assert signal.getsignal(signal.SIGTERM) is original_sigterm
     assert signal.getsignal(signal.SIGINT) is original_sigint
-
-
-@pytest.mark.parametrize(
-    "round_trip",
-    [copy.copy, copy.deepcopy, lambda error: pickle.loads(pickle.dumps(error))],
-    ids=["copy", "deepcopy", "pickle"],
-)
-def test_receive_overflow_round_trip_preserves_diagnostic_context(round_trip):
-    error = pgque.PgqueReceiveOverflowError(
-        "pgque.receive: batch exceeds max_return of 17",
-        sqlstate="54000",
-        hint="increase safely",
-        configured_limit=17,
-        operation="receive",
-    )
-    error.queue_context = {"queue": "orders", "worker": "worker-1"}
-    # add_note is public exception API on Python 3.11 and newer.
-    if hasattr(error, "add_note"):
-        error.add_note("while consuming queue orders")
-
-    restored = round_trip(error)
-
-    assert restored.queue_context == error.queue_context
-    if hasattr(error, "__notes__"):
-        assert restored.__notes__ == error.__notes__

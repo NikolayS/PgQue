@@ -5,7 +5,6 @@
 """PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
 import json
-import re
 from typing import Any, Optional, Union
 
 import psycopg
@@ -43,11 +42,6 @@ def connect(dsn: str, *, autocommit: bool = False) -> "PgqueClient":
     return PgqueClient(conn, _owns_conn=True)
 
 
-_RECEIVE_OVERFLOW_RE = re.compile(
-    r"\Apgque\.(receive|receive_coop): batch exceeds max_return of ([0-9]+)\Z"
-)
-
-
 def _wrap_sql_error(
     e: Exception,
     *,
@@ -59,19 +53,18 @@ def _wrap_sql_error(
     diag = getattr(e, "diag", None)
     primary = getattr(diag, "message_primary", None) or msg
     sqlstate = getattr(e, "sqlstate", None)
-    overflow_match = _RECEIVE_OVERFLOW_RE.fullmatch(primary)
     if (
         sqlstate == "54000"
-        and overflow_match
-        and overflow_match.group(1) == operation
-        and int(overflow_match.group(2)) == configured_limit
+        and operation in ("receive", "receive_coop")
+        and configured_limit is not None
+        and primary == f"pgque.{operation}: batch exceeds max_return of {configured_limit}"
     ):
         return PgqueReceiveOverflowError(
             msg,
             sqlstate=sqlstate,
             hint=getattr(diag, "message_hint", None),
-            configured_limit=int(overflow_match.group(2)),
-            operation=overflow_match.group(1),
+            configured_limit=configured_limit,
+            operation=operation,
         )
     low = msg.lower()
     if "queue not found" in low:

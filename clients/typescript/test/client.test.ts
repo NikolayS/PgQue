@@ -404,73 +404,47 @@ describe('Client error classification (in-memory)', () => {
     expect((error as Error).message).toBe(`pgque: ${testCase.operation}: ${cause.message}`);
   });
 
-  it.each([
+  const overflowMismatchCases = [
+    { operation: 'receive' as const, serverFunction: 'receive', otherFunction: 'receive_coop' },
+    { operation: 'receiveCoop' as const, serverFunction: 'receive_coop', otherFunction: 'receive' },
+  ].flatMap(({ operation, serverFunction, otherFunction }) => [
     {
-      operation: 'receive' as const,
+      operation,
       label: 'different SQLSTATE',
-      cause: {
-        code: '22023',
-        message: 'pgque.receive: batch exceeds max_return of 7',
-      },
+      cause: { code: '22023', message: `pgque.${serverFunction}: batch exceeds max_return of 7` },
     },
     {
-      operation: 'receive' as const,
+      operation,
       label: 'unrelated 54000 message',
       cause: { code: '54000', message: 'program limit exceeded elsewhere' },
     },
     {
-      operation: 'receive' as const,
+      operation,
       label: 'wrong message',
-      cause: { code: '54000', message: 'pgque.receive: another failure' },
+      cause: { code: '54000', message: `pgque.${serverFunction}: another failure` },
     },
     {
-      operation: 'receive' as const,
+      operation,
       label: 'wrong function',
-      cause: {
-        code: '54000',
-        message: 'pgque.receive_coop: batch exceeds max_return of 7',
-      },
+      cause: { code: '54000', message: `pgque.${otherFunction}: batch exceeds max_return of 7` },
     },
     {
-      operation: 'receive' as const,
+      operation,
       label: 'mismatched server ceiling',
-      cause: { code: '54000', message: 'pgque.receive: batch exceeds max_return of 8' },
+      cause: { code: '54000', message: `pgque.${serverFunction}: batch exceeds max_return of 8` },
     },
-    {
-      operation: 'receiveCoop' as const,
-      label: 'different SQLSTATE',
-      cause: {
-        code: '22023',
-        message: 'pgque.receive_coop: batch exceeds max_return of 7',
-      },
+  ]);
+
+  it.each(overflowMismatchCases)(
+    'does not classify $operation $label as receive overflow',
+    async ({ operation, cause }) => {
+      const error = await receiveCall(clientThatRaises(cause), operation, 7).catch(
+        (err: unknown) => err,
+      );
+      expect(error).toBeInstanceOf(PgqueSqlError);
+      expect(error).not.toBeInstanceOf(PgqueReceiveOverflowError);
     },
-    {
-      operation: 'receiveCoop' as const,
-      label: 'unrelated 54000 message',
-      cause: { code: '54000', message: 'program limit exceeded elsewhere' },
-    },
-    {
-      operation: 'receiveCoop' as const,
-      label: 'wrong message',
-      cause: { code: '54000', message: 'pgque.receive_coop: another failure' },
-    },
-    {
-      operation: 'receiveCoop' as const,
-      label: 'wrong function',
-      cause: { code: '54000', message: 'pgque.receive: batch exceeds max_return of 7' },
-    },
-    {
-      operation: 'receiveCoop' as const,
-      label: 'mismatched server ceiling',
-      cause: { code: '54000', message: 'pgque.receive_coop: batch exceeds max_return of 8' },
-    },
-  ])('does not classify $operation $label as receive overflow', async ({ operation, cause }) => {
-    const error = await receiveCall(clientThatRaises(cause), operation, 7).catch(
-      (err: unknown) => err,
-    );
-    expect(error).toBeInstanceOf(PgqueSqlError);
-    expect(error).not.toBeInstanceOf(PgqueReceiveOverflowError);
-  });
+  );
 
   it.each([
     'queue not found: missing_q',
