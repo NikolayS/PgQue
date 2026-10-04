@@ -36,16 +36,17 @@ The package is for server-side Node/Bun applications. It depends on
 
 Before the first real publish, create GitHub environment `npm` in
 `NikolayS/pgque`. Protect it as appropriate for releases (for example,
-required reviewers and `main` branch restrictions). The workflow also checks
-that it is running from `main`, but environment protection is the human approval
-gate.
+required reviewers and release-branch restrictions). The workflow accepts `main` and
+`maintenance-0-2`. Add the selected branch to the environment allowlist.
+Environment protection remains the approval gate.
 
 ## Release process
 
 The release workflow is `.github/workflows/release-typescript.yml`.
 
 1. Update `clients/typescript/package.json` version and any release notes/changelog if present.
-2. Merge the release prep PR.
+2. Merge the release prep PR into the release branch. Use `maintenance-0-2`
+   for stable 0.2 fixes. Do not publish 0.3 development code as a 0.2 release.
 3. Ensure the `npm` GitHub environment exists and is protected.
 4. In npm, configure Trusted Publishing for:
    - package: `pgque`

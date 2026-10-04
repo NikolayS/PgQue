@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   validate:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/maintenance-0-2'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}

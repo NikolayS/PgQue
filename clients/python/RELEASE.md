@@ -31,15 +31,17 @@ Before the first real publish, create GitHub environments in `NikolayS/pgque`:
 - `pypi`
 
 Protect them as appropriate for releases (for example, required reviewers and
-`main` branch restrictions). The workflow also checks that it is running from
-`main`, but environment protection is the human approval gate.
+release-branch restrictions). The workflow accepts `main` and `maintenance-0-2`.
+Add the selected branch to the environment allowlist. Environment protection
+remains the approval gate.
 
 ## Release process
 
 The release workflow is `.github/workflows/release-python.yml`.
 
 1. Update `clients/python/pyproject.toml` version and any release notes/changelog if present.
-2. Merge the release prep PR.
+2. Merge the release prep PR into the release branch. Use `maintenance-0-2`
+   for stable 0.2 fixes. Do not publish 0.3 development code as a 0.2 release.
 3. Ensure the `testpypi` and `pypi` GitHub environments exist and are protected.
 4. In PyPI, configure Trusted Publisher for:
    - repository: `NikolayS/pgque`
