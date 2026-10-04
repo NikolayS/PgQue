@@ -102,6 +102,16 @@ func TestReceive_RejectsBatchOverMax(t *testing.T) {
 	if len(msgs) != 0 {
 		t.Fatalf("oversized receive returned %d partial messages", len(msgs))
 	}
+	if !errors.Is(err, pgque.ErrReceiveOverflow) {
+		t.Fatalf("expected ErrReceiveOverflow, got %T: %v", err, err)
+	}
+	var overflow *pgque.ReceiveOverflowError
+	if !errors.As(err, &overflow) {
+		t.Fatalf("expected *ReceiveOverflowError, got %T: %v", err, err)
+	}
+	if overflow.Op != "receive" || overflow.Ceiling != 10 || overflow.SQLSTATE != "54000" || overflow.Hint == "" {
+		t.Fatalf("unexpected overflow metadata: %+v", overflow)
+	}
 	var sqlErr *pgque.SQLError
 	if !errors.As(err, &sqlErr) || sqlErr.SQLSTATE != "54000" {
 		t.Fatalf("expected propagated 54000 SQLError, got %T: %v", err, err)

@@ -15,6 +15,7 @@ from .errors import (
     PgqueConsumerNotFound,
     PgqueError,
     PgqueQueueNotFound,
+    PgqueReceiveOverflowError,
 )
 from .types import Event, Message
 
@@ -41,9 +42,30 @@ def connect(dsn: str, *, autocommit: bool = False) -> "PgqueClient":
     return PgqueClient(conn, _owns_conn=True)
 
 
-def _wrap_sql_error(e: Exception) -> PgqueError:
+def _wrap_sql_error(
+    e: Exception,
+    *,
+    operation: str | None = None,
+    configured_limit: int | None = None,
+) -> PgqueError:
     """Map a raw psycopg error to a pgque exception subclass."""
     msg = str(e)
+    diag = getattr(e, "diag", None)
+    primary = getattr(diag, "message_primary", None) or msg
+    sqlstate = getattr(e, "sqlstate", None)
+    if (
+        sqlstate == "54000"
+        and operation in ("receive", "receive_coop")
+        and configured_limit is not None
+        and primary == f"pgque.{operation}: batch exceeds max_return of {configured_limit}"
+    ):
+        return PgqueReceiveOverflowError(
+            msg,
+            sqlstate=sqlstate,
+            hint=getattr(diag, "message_hint", None),
+            configured_limit=configured_limit,
+            operation=operation,
+        )
     low = msg.lower()
     if "queue not found" in low:
         return PgqueQueueNotFound(msg)
@@ -248,7 +270,9 @@ class PgqueClient:
                 (queue, consumer, max_messages),
             ).fetchall()
         except psycopg.Error as e:
-            raise _wrap_sql_error(e) from e
+            raise _wrap_sql_error(
+                e, operation="receive", configured_limit=max_messages
+            ) from e
 
         return [
             Message(
@@ -427,7 +451,9 @@ class PgqueClient:
                 (queue, consumer, subconsumer, max_messages, dead_interval),
             ).fetchall()
         except psycopg.Error as e:
-            raise _wrap_sql_error(e) from e
+            raise _wrap_sql_error(
+                e, operation="receive_coop", configured_limit=max_messages
+            ) from e
 
         return [
             Message(

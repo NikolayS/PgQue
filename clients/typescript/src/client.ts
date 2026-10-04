@@ -9,6 +9,7 @@ import {
   PgqueConsumerNotFoundError,
   PgqueError,
   PgqueQueueNotFoundError,
+  PgqueReceiveOverflowError,
   PgqueSqlError,
 } from './errors.js';
 import type { ConsumerOptions, Event, Message, NackOptions } from './types.js';
@@ -177,7 +178,7 @@ export class Client {
       return result.rows.map(rowToMessage);
     } catch (err) {
       if (err instanceof PgqueError) throw err;
-      throw mapPgError('receive', err, { queue, consumer });
+      throw mapPgError('receive', err, { queue, consumer, maxMessages });
     }
   }
 
@@ -421,7 +422,7 @@ export class Client {
       return result.rows.map(rowToMessage);
     } catch (err) {
       if (err instanceof PgqueError) throw err;
-      throw mapPgError('receiveCoop', err, { queue });
+      throw mapPgError('receiveCoop', err, { queue, consumer, maxMessages });
     }
   }
 
@@ -630,7 +631,7 @@ function serializePayload(payload: unknown): string {
 function mapPgError(
   op: string,
   err: unknown,
-  ctx?: { queue?: string; consumer?: string; batchId?: bigint },
+  ctx?: { queue?: string; consumer?: string; batchId?: bigint; maxMessages?: number },
 ): PgqueError {
   const msg =
     err instanceof Error
@@ -638,6 +639,19 @@ function mapPgError(
       : typeof err === 'object' && err !== null && 'message' in err
         ? String((err as { message?: unknown }).message ?? '')
         : String(err ?? '');
+  const code = getPgErrorField(err, 'code');
+  const hint = getPgErrorField(err, 'hint') || undefined;
+  const overflowOperation =
+    op === 'receive' ? 'receive' : op === 'receiveCoop' ? 'receiveCoop' : undefined;
+  const overflowFunction = overflowOperation === 'receive' ? 'receive' : 'receive_coop';
+  if (
+    code === '54000' &&
+    overflowOperation !== undefined &&
+    ctx?.maxMessages !== undefined &&
+    msg === `pgque.${overflowFunction}: batch exceeds max_return of ${ctx.maxMessages}`
+  ) {
+    return new PgqueReceiveOverflowError(overflowOperation, ctx.maxMessages, hint, { cause: err });
+  }
   if (/(queue not found|no such queue|no such event queue|event queue not found|event queue not created)/i.test(msg)) {
     return new PgqueQueueNotFoundError(ctx?.queue ?? '', { cause: err });
   }
@@ -653,11 +667,14 @@ function mapPgError(
   return new PgqueSqlError(op, { cause: err });
 }
 
+function getPgErrorField(err: unknown, field: 'code' | 'hint'): string {
+  return typeof err === 'object' && err !== null && field in err
+    ? String((err as Record<string, unknown>)[field] ?? '')
+    : '';
+}
+
 function isConnectionError(err: unknown, msg: string): boolean {
-  const code =
-    typeof err === 'object' && err !== null && 'code' in err
-      ? String((err as { code?: unknown }).code ?? '')
-      : '';
+  const code = getPgErrorField(err, 'code');
   return (
     /^(ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|ENOTFOUND|EAI_AGAIN)$/i.test(code) ||
     /(connection terminated|connection closed|pool has ended|pool after calling end|connection timeout|timeout expired|terminating connection|server closed the connection)/i.test(

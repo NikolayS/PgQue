@@ -50,10 +50,15 @@ class TestReceive < Minitest::Test
       5.times { |i| client.send(queue, { "i" => i }) }
       conn.exec_params("select pgque.force_next_tick($1)", [queue])
       conn.exec_params("select pgque.ticker($1)", [queue])
-      error = assert_raises(Pgque::Error) do
+      error = assert_raises(Pgque::ReceiveOverflow) do
         client.receive(queue, consumer, 3)
       end
+      assert_kind_of Pgque::Error, error
       assert_match(/batch exceeds max_return of 3/, error.message)
+      assert_equal "54000", error.sqlstate
+      assert_equal 3, error.configured_limit
+      assert_equal "receive", error.operation
+      assert_match(/larger resource-safe max_return/, error.hint)
       assert_equal "54000", error.cause.result.error_field(PG::Result::PG_DIAG_SQLSTATE)
 
       msgs = client.receive(queue, consumer, 5)

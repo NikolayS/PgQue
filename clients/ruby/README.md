@@ -90,6 +90,12 @@ The default is the Postgres `int` maximum. A batch larger than the configured
 complete-batch safety ceiling returns no partial result and raises SQLSTATE
 `54000`. Roll back and retry with a resource-safe larger ceiling; never
 acknowledge the failed receive. Ticker thresholds do not cap batch size.
+
+The client exposes this specific server error as `Pgque::ReceiveOverflow`, a
+subclass of `Pgque::Error`, for both `receive` and `receive_coop`. It includes
+`sqlstate`, the server `hint`, `configured_limit`, and `operation`. The
+high-level `Consumer` propagates it immediately without running handlers or
+acknowledging; choose a safe larger `max_messages` before starting again.
 Process every message before `ack`.
 
 Other options: `poll_interval:` (seconds between polls when no

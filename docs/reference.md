@@ -136,6 +136,21 @@ Overflow reports SQLSTATE `54000` (`program_limit_exceeded`). Like other SQL err
 
 `ticker_max_count` is a tick-trigger threshold, not a hard batch-size cap. Setting `max_return` to that value cannot guarantee success during bursts. Monitor receive errors and consumer lag so an undersized ceiling does not silently stall processing.
 
+**SDK overflow handling.** Both ordinary and cooperative receive return a typed
+error on batch overflow. High-level consumers stop on this error. The error
+includes the configured ceiling, operation, SQLSTATE, and server hint, but not
+the actual batch size. Other SQL errors keep each SDK's normal error policy.
+SQLSTATE `54000` alone does not identify a receive overflow.
+
+On overflow, do not run handlers or acknowledge the batch. Do not automatically
+raise the resource ceiling or reset the consumer past the batch. Use the
+whole-batch recovery procedure above.
+
+SQL and low-level helpers default to 100 when the argument is optional.
+High-level consumers default to `INT_MAX`. This does not bound memory use.
+Install the updated SDK separately from the database code. See each client
+README for its error type and consumer behavior.
+
 #### `pgque.ack(batch_id bigint) → integer`
 
 Closes the batch and advances the consumer position. Modern alias for `pgque.finish_batch`. Returns `1` on success, `0` if the batch was not found.

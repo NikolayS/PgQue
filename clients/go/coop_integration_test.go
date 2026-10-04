@@ -111,6 +111,56 @@ func TestReceiveCoop_BasicRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReceiveCoop_RejectsBatchOverMax(t *testing.T) {
+	client := connectOrSkip(t)
+	defer client.Close()
+	queue, consumer := setupFreshCoopGroup(t, client)
+	ctx := context.Background()
+	if _, err := client.SubscribeSubconsumer(ctx, queue, consumer, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	const total = 12
+	for i := 0; i < total; i++ {
+		if _, err := client.Send(ctx, queue, pgque.Event{
+			Type: "coop.overflow", Payload: map[string]any{"i": i},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tick(t, client, queue)
+
+	msgs, err := client.ReceiveCoop(ctx, queue, consumer, "worker-1", pgque.WithCoopMaxMessages(5))
+	if !errors.Is(err, pgque.ErrReceiveOverflow) {
+		t.Fatalf("expected ErrReceiveOverflow, got messages=%d, err=%T: %v", len(msgs), err, err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("oversized receive_coop returned %d partial messages", len(msgs))
+	}
+	var overflow *pgque.ReceiveOverflowError
+	if !errors.As(err, &overflow) {
+		t.Fatalf("expected *ReceiveOverflowError, got %T: %v", err, err)
+	}
+	if overflow.Op != "receive coop" || overflow.Ceiling != 5 || overflow.SQLSTATE != "54000" || overflow.Hint == "" {
+		t.Fatalf("unexpected overflow metadata: %+v", overflow)
+	}
+	var sqlErr *pgque.SQLError
+	if !errors.As(err, &sqlErr) || sqlErr.SQLSTATE != "54000" {
+		t.Fatalf("expected compatible 54000 SQLError, got %T: %v", err, err)
+	}
+
+	msgs, err = client.ReceiveCoop(ctx, queue, consumer, "worker-1", pgque.WithCoopMaxMessages(total))
+	if err != nil {
+		t.Fatalf("complete-batch retry failed: %v", err)
+	}
+	if len(msgs) != total {
+		t.Fatalf("complete-batch retry returned %d messages, want %d", len(msgs), total)
+	}
+	if _, err := client.Ack(ctx, msgs[0].BatchID); err != nil {
+		t.Fatalf("ack after complete-batch recovery: %v", err)
+	}
+}
+
 // TestReceiveCoop_TwoSubconsumersDistinctBatches: two subconsumers
 // under one logical consumer must each receive a distinct batch_id
 // across two ticks. Verifies the SQL allocation hands a tick to one

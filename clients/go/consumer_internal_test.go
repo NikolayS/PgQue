@@ -5,11 +5,14 @@ package pgque
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // stubBackend is a Consumer backend that returns a single message on the
@@ -28,6 +31,119 @@ type stubBackend struct {
 	nackErr         error
 	lastMax         int32
 	lastNackOptions NackOptions
+}
+
+type receiveErrorBackend struct {
+	receiveErr error
+	coopErr    error
+
+	receiveCount int32
+	coopCount    int32
+	handlerCount int32
+	nackCount    int32
+	ackCount     int32
+}
+
+func (s *receiveErrorBackend) Receive(_ context.Context, _, _ string, _ int) ([]Message, error) {
+	atomic.AddInt32(&s.receiveCount, 1)
+	return nil, s.receiveErr
+}
+
+func (s *receiveErrorBackend) ReceiveCoop(_ context.Context, _, _, _ string, _ ...ReceiveCoopOption) ([]Message, error) {
+	atomic.AddInt32(&s.coopCount, 1)
+	return nil, s.coopErr
+}
+
+func (s *receiveErrorBackend) Ack(_ context.Context, _ int64) (int64, error) {
+	atomic.AddInt32(&s.ackCount, 1)
+	return 1, nil
+}
+
+func (s *receiveErrorBackend) Nack(_ context.Context, _ int64, _ Message, _ NackOptions) error {
+	atomic.AddInt32(&s.nackCount, 1)
+	return nil
+}
+
+func testOverflowError(op string, ceiling int) error {
+	function := op
+	if op == "receive coop" {
+		function = "receive_coop"
+	}
+	return wrapReceiveError(op, ceiling, &pgconn.PgError{
+		Code:    "54000",
+		Message: fmt.Sprintf("pgque.%s: batch exceeds max_return of %d", function, ceiling),
+		Hint:    "Retry with a larger resource-safe max_return to receive the complete batch. Do not acknowledge after this error.",
+	})
+}
+
+func TestConsumer_ReceiveOverflowFailsFast(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		coop bool
+		op   string
+	}{
+		{"plain", false, "receive"},
+		{"coop", true, "receive coop"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &receiveErrorBackend{}
+			if tc.coop {
+				backend.coopErr = testOverflowError(tc.op, 10)
+			} else {
+				backend.receiveErr = testOverflowError(tc.op, 10)
+			}
+			client := &Client{}
+			opts := []ConsumerOption{WithMaxMessages(10), WithPollInterval(time.Hour)}
+			if tc.coop {
+				opts = append(opts, WithSubconsumer("worker"))
+			}
+			consumer := client.NewConsumer("queue", "consumer", opts...)
+			consumer.backend = backend
+			consumer.Handle("event", func(context.Context, Message) error {
+				atomic.AddInt32(&backend.handlerCount, 1)
+				return nil
+			})
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			err := consumer.Start(ctx)
+			if !errors.Is(err, ErrReceiveOverflow) {
+				t.Fatalf("expected immediate overflow, got %v", err)
+			}
+			if ctx.Err() != nil {
+				t.Fatalf("overflow waited for context cancellation: %v", ctx.Err())
+			}
+			if got := atomic.LoadInt32(&backend.receiveCount) + atomic.LoadInt32(&backend.coopCount); got != 1 {
+				t.Fatalf("receive calls = %d, want 1", got)
+			}
+			if got := atomic.LoadInt32(&backend.handlerCount); got != 0 {
+				t.Fatalf("handler calls = %d, want 0", got)
+			}
+			if got := atomic.LoadInt32(&backend.ackCount); got != 0 {
+				t.Fatalf("ack calls = %d, want 0", got)
+			}
+			if got := atomic.LoadInt32(&backend.nackCount); got != 0 {
+				t.Fatalf("nack calls = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestConsumer_TransientReceiveErrorStillRetriesUntilCancellation(t *testing.T) {
+	backend := &receiveErrorBackend{receiveErr: errors.New("temporary receive failure")}
+	client := &Client{}
+	consumer := client.NewConsumer("queue", "consumer", WithPollInterval(10*time.Millisecond))
+	consumer.backend = backend
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Millisecond)
+	defer cancel()
+	err := consumer.Start(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected cancellation cleanup, got %v", err)
+	}
+	if got := atomic.LoadInt32(&backend.receiveCount); got < 2 {
+		t.Fatalf("transient error was not retried: %d receives", got)
+	}
 }
 
 func (s *stubBackend) Receive(_ context.Context, _, _ string, maxMessages int) ([]Message, error) {

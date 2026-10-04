@@ -94,6 +94,27 @@ class TestCoop < Minitest::Test
     end
   end
 
+  def test_receive_coop_overflow_is_typed_and_does_not_advance
+    with_coop_queue do |q, conn|
+      client = Pgque::Client.new(conn)
+      client.subscribe_subconsumer(q, consumer_n, "worker-1")
+      5.times { |i| client.send(q, { "i" => i }) }
+      tick(conn, q)
+
+      error = assert_raises(Pgque::ReceiveOverflow) do
+        client.receive_coop(q, consumer_n, "worker-1", max_messages: 3)
+      end
+      assert_equal "54000", error.sqlstate
+      assert_equal 3, error.configured_limit
+      assert_equal "receive_coop", error.operation
+      assert_match(/larger resource-safe max_return/, error.hint)
+
+      msgs = client.receive_coop(q, consumer_n, "worker-1", max_messages: 5)
+      assert_equal [0, 1, 2, 3, 4], msgs.map { |m| m.payload["i"] }.sort
+      client.ack(msgs[0].batch_id)
+    end
+  end
+
   def test_two_subconsumers_split_batches_no_duplicates
     with_coop_queue do |q, conn|
       Pgque.connect(dsn) do |producer|

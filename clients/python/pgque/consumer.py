@@ -15,7 +15,7 @@ import psycopg
 from psycopg import sql
 
 from .client import PgqueClient
-from .errors import PgqueError
+from .errors import PgqueError, PgqueReceiveOverflowError
 from .types import Message
 
 logger = logging.getLogger("pgque")
@@ -126,10 +126,11 @@ class Consumer:
         batches. Each batch is processed and acked in a single
         transaction.
 
-        Database errors (failover, restart, network blip) do not kill
-        the loop: the consumer logs the error, waits ``poll_interval``,
-        reconnects, and resumes. Only ``stop()`` / SIGTERM / SIGINT end
-        the loop.
+        Transient database errors (failover, restart, network blip) do not
+        kill the loop: the consumer logs the error, waits ``poll_interval``,
+        reconnects, and resumes. A :class:`PgqueReceiveOverflowError` is
+        deterministic and propagates immediately, before any handler, ack, or
+        nack; restart with a resource-safe larger ``max_messages`` value.
         """
         self._running = True
 
@@ -153,14 +154,19 @@ class Consumer:
 
         try:
             while self._running:
-                # Each session owns one connection. Any database error
-                # (connect failure, receive/ack failure, dead socket in
-                # the LISTEN wait) lands here: log it, wait, reconnect.
+                # Each session owns one connection. Transient database errors
+                # (connect failure, receive/ack failure, dead socket in the
+                # LISTEN wait) land here: log, wait, and reconnect. A receive
+                # overflow is deterministic and handled separately below.
                 # Handler exceptions and nack failures never reach this
                 # point -- they are contained inside _poll_once.
                 # KeyboardInterrupt is a BaseException and propagates.
                 try:
                     self._run_session()
+                except PgqueReceiveOverflowError:
+                    # A deterministic complete-batch safety ceiling is not
+                    # transient. Reconnecting cannot change the batch size.
+                    raise
                 except (psycopg.Error, PgqueError):
                     if not self._running:
                         break
@@ -171,6 +177,7 @@ class Consumer:
                     )
                     self._sleep_before_reconnect()
         finally:
+            self._running = False
             if in_main_thread:
                 signal.signal(signal.SIGTERM, original_sigterm)
                 signal.signal(signal.SIGINT, original_sigint)
