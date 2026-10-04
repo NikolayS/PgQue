@@ -45,17 +45,19 @@ A fine-grained PAT scoped only to the mirror repository is preferred.
 
 Before the first real release, create GitHub environment `go-release` in
 `NikolayS/pgque`. Protect it as appropriate for releases (for example, required
-reviewers and `main` branch restrictions). The workflow also checks that it is
-running from `main`, but environment protection is the human approval gate.
+reviewers and release-branch restrictions). The workflow accepts `main` and
+`maintenance-0-2`. Add the selected branch to the environment allowlist.
+Environment protection remains the approval gate.
 
 ## Release process
 
 The release workflow is `.github/workflows/release-go.yml`.
 
-1. Update `clients/go` docs/code as needed and merge the release prep PR.
+1. Update `clients/go` and merge the release prep PR. Use `maintenance-0-2`
+   for stable 0.2 fixes. Do not publish 0.3 development code as a 0.2 release.
 2. Ensure the `go-release` GitHub environment exists and is protected.
 3. Ensure `PGQUE_GO_MIRROR_TOKEN` is configured.
-4. Run **Release Go client** from `main` with `version=vX.Y.Z` and `dry_run=true`.
+4. Run **Release Go client** from the selected release branch with `version=vX.Y.Z` and `dry_run=true`.
    Dry runs validate tests, subtree split, mirror-root module layout, and public
    tag availability; they do not require the protected `go-release` environment
    or `PGQUE_GO_MIRROR_TOKEN`.

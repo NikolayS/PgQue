@@ -71,6 +71,11 @@ set -Eeuo pipefail
 
 ### Documentation
 
+- Use “80% to ASD-STE100” for all writeups, including docs and release notes.
+  Use short sentences, active voice, clear actions, and consistent terms.
+  Keep technical names and necessary precision. This is a style target,
+  not a claim of formal compliance.
+
 - **Write for new users.** README and docs target someone arriving today, not
   someone migrating from an older state. Do not include "before X" or
   "previously did Y, now does Z" framing in the README or under `docs/`.
