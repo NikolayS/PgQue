@@ -43,6 +43,8 @@ export {
   PgqueConsumerNotFoundError,
   PgqueError,
   PgqueQueueNotFoundError,
+  PgqueReceiveOverflowError,
   PgqueSqlError,
 } from './errors.js';
+export type { PgqueReceiveOperation } from './errors.js';
 export type { ConsumerOptions, Event, HandlerFunc, Message, NackOptions } from './types.js';

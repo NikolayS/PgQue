@@ -151,6 +151,15 @@ All errors derive from `PgqueError`:
 - `PgqueConsumerNotFoundError` — consumer not subscribed
 - `PgqueBatchNotFoundError` — batch is stale, missing, or already finished
 - `PgqueSqlError` — generic SQL failure (with `cause`)
+- `PgqueReceiveOverflowError` — `receive` / `receiveCoop` complete-batch ceiling
+  exceeded. Exposes `sqlstate` (`54000`), PostgreSQL `hint`, `operation`,
+  `maxMessages`, and the original driver error as `cause`.
+
+The high-level consumer treats `PgqueReceiveOverflowError` as terminal and
+rejects `start()` immediately. It does not run handlers, acknowledge or nack,
+or retry with the same ceiling. Recover by raising `maxMessages` to a
+resource-safe value and receiving the **entire unchanged batch**. This recovery
+is not paging: PgQue never returns a partial prefix of an oversized batch.
 
 ## Caveats
 

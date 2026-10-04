@@ -60,3 +60,23 @@ export class PgqueSqlError extends PgqueError {
     this.name = 'PgqueSqlError';
   }
 }
+
+export type PgqueReceiveOperation = 'receive' | 'receiveCoop';
+
+/**
+ * A complete PgQ batch did not fit within the configured receive ceiling.
+ * This is terminal for the high-level consumer until the ceiling is raised.
+ */
+export class PgqueReceiveOverflowError extends PgqueSqlError {
+  readonly sqlstate = '54000';
+
+  constructor(
+    public readonly operation: PgqueReceiveOperation,
+    public readonly maxMessages: number,
+    public readonly hint: string | undefined,
+    options?: { cause?: unknown },
+  ) {
+    super(operation, options);
+    this.name = 'PgqueReceiveOverflowError';
+  }
+}

@@ -173,6 +173,7 @@ class Consumer:
                     self._wait_for_notify_or_stop(conn)
 
         finally:
+            self._running = False
             if in_main_thread:
                 signal.signal(signal.SIGTERM, original_sigterm)
                 signal.signal(signal.SIGINT, original_sigint)

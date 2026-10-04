@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Consumer, DEFAULT_MAX_MESSAGES } from '../src/consumer.js';
 import type { Client } from '../src/client.js';
+import { PgqueReceiveOverflowError } from '../src/errors.js';
 import type { Message } from '../src/types.js';
 import { TEST_DSN, setupTestQueue, teardownTestQueue, advanceQueue, type TestEnv } from './helpers.js';
 
@@ -296,6 +297,74 @@ describe('Consumer (env-gated)', () => {
 });
 
 describe('Consumer (in-memory mocks)', () => {
+  it.each(['receive', 'receiveCoop'] as const)(
+    'stops immediately on typed %s overflow without handlers, ack, nack, retry, or listeners',
+    async (operation) => {
+      const cause = {
+        code: '54000',
+        message:
+          operation === 'receive'
+            ? 'pgque.receive: batch exceeds max_return of 3'
+            : 'pgque.receive_coop: batch exceeds max_return of 3',
+      };
+      const overflow = new PgqueReceiveOverflowError(operation, 3, undefined, { cause });
+      const fakeClient = {
+        receive: vi.fn(async () => {
+          throw overflow;
+        }),
+        receiveCoop: vi.fn(async () => {
+          throw overflow;
+        }),
+        ack: vi.fn(async () => undefined),
+        nack: vi.fn(async () => undefined),
+      };
+      const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+        maxMessages: 3,
+        pollInterval: 1,
+        ...(operation === 'receiveCoop' ? { subconsumer: 'worker-1' } : {}),
+        logger: { warn: () => undefined, error: () => undefined },
+      });
+      const handler = vi.fn(async () => undefined);
+      consumer.handle('event', handler);
+      const ac = new AbortController();
+      const addEventListener = vi.spyOn(ac.signal, 'addEventListener');
+      const removeEventListener = vi.spyOn(ac.signal, 'removeEventListener');
+
+      await expect(consumer.start(ac.signal)).rejects.toBe(overflow);
+      await sleep(20);
+
+      expect(fakeClient.receive).toHaveBeenCalledTimes(operation === 'receive' ? 1 : 0);
+      expect(fakeClient.receiveCoop).toHaveBeenCalledTimes(operation === 'receiveCoop' ? 1 : 0);
+      expect(handler).not.toHaveBeenCalled();
+      expect(fakeClient.ack).not.toHaveBeenCalled();
+      expect(fakeClient.nack).not.toHaveBeenCalled();
+      expect(addEventListener).not.toHaveBeenCalled();
+      expect(removeEventListener).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps retrying ordinary transient receive errors', async () => {
+    const ac = new AbortController();
+    const fakeClient = {
+      receive: vi
+        .fn<() => Promise<Message[]>>()
+        .mockRejectedValueOnce(new Error('temporary network problem'))
+        .mockImplementationOnce(async () => {
+          ac.abort();
+          return [];
+        }),
+      ack: vi.fn(async () => undefined),
+      nack: vi.fn(async () => undefined),
+    };
+    const consumer = new Consumer(fakeClient as unknown as Client, 'q', 'c', {
+      pollInterval: 1,
+      logger: { warn: () => undefined, error: () => undefined },
+    });
+
+    await expect(consumer.start(ac.signal)).resolves.toBeUndefined();
+    expect(fakeClient.receive).toHaveBeenCalledTimes(2);
+  });
+
   it('does not call ack when nack fails for a handler error', async () => {
     const msg: Message = {
       msgId: 1n,

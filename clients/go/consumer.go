@@ -5,6 +5,7 @@ package pgque
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -127,6 +128,9 @@ func (c *Consumer) Start(ctx context.Context) error {
 			msgs, err = c.backend.Receive(ctx, c.queue, c.name, c.maxMessages)
 		}
 		if err != nil {
+			if errors.Is(err, ErrReceiveOverflow) {
+				return err
+			}
 			log.Printf("pgque: receive error: %v", err)
 			select {
 			case <-ctx.Done():
