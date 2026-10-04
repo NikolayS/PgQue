@@ -124,6 +124,37 @@ def test_receive_coop_returns_messages_and_ack_finishes(
     assert follow == []
 
 
+def test_receive_coop_overflow_is_typed_and_does_not_advance(
+    conn, coop_queue, consumer_name
+):
+    client = pgque.PgqueClient(conn)
+    client.subscribe_subconsumer(coop_queue, consumer_name, "worker-1")
+    conn.commit()
+    for i in range(5):
+        client.send(coop_queue, {"i": i})
+    conn.commit()
+    _tick(conn, coop_queue)
+
+    with pytest.raises(pgque.PgqueReceiveOverflowError) as exc_info:
+        client.receive_coop(
+            coop_queue, consumer_name, "worker-1", max_messages=3
+        )
+    error = exc_info.value
+    assert error.sqlstate == "54000"
+    assert error.configured_limit == 3
+    assert error.operation == "receive_coop"
+    assert "larger resource-safe max_return" in error.hint
+    assert error.__cause__.sqlstate == "54000"
+
+    conn.rollback()
+    msgs = client.receive_coop(
+        coop_queue, consumer_name, "worker-1", max_messages=5
+    )
+    assert {_decode(msg.payload)["i"] for msg in msgs} == set(range(5))
+    client.ack(msgs[0].batch_id)
+    conn.commit()
+
+
 def test_two_subconsumers_split_batches_no_duplicates(
     coop_queue, consumer_name, dsn
 ):

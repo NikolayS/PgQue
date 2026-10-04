@@ -2,6 +2,7 @@
 // Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
 import type { Client } from './client.js';
+import { PgqueReceiveOverflowError } from './errors.js';
 import type { ConsumerOptions, HandlerFunc, Message } from './types.js';
 
 /**
@@ -67,7 +68,9 @@ export class Consumer {
   /**
    * Start the poll loop. Resolves when `signal` is aborted; rejects only
    * on terminal errors that should bubble up (the routine `Receive`/`Ack`
-   * errors are logged and the loop continues).
+   * errors are logged and the loop continues). A
+   * {@link PgqueReceiveOverflowError} is terminal and rejects immediately so
+   * callers can raise the configured complete-batch ceiling before retrying.
    *
    * **Abort granularity:** aborting the signal interrupts the inter-poll
    * `sleep()` immediately, but does **not** cancel an in-flight
@@ -87,6 +90,7 @@ export class Consumer {
               })
             : await this.client.receive(this.queue, this.name, this.maxMessages);
       } catch (err) {
+        if (err instanceof PgqueReceiveOverflowError) throw err;
         this.logger.error(`pgque: receive error: ${formatErr(err)}`);
         await sleep(this.pollIntervalMs, signal);
         continue;

@@ -93,7 +93,7 @@ func main() {
 | Option                                  | Default        | Notes                                                                 |
 | --------------------------------------- | -------------- | --------------------------------------------------------------------- |
 | `WithPollInterval(d time.Duration)`     | `30s`          | Idle backoff between polls when the queue is empty.                   |
-| `WithMaxMessages(n int)`                | `math.MaxInt32` | Complete-batch safety ceiling. A larger batch fails with SQLSTATE `54000` and no partial result. Roll back and retry with a resource-safe larger ceiling; never `Ack` the failed receive. Ticker thresholds do not cap batch size. |
+| `WithMaxMessages(n int)`                | `math.MaxInt32` | Complete-batch safety ceiling. A larger batch makes `Consumer.Start` fail fast with `ReceiveOverflowError`, without retrying, dispatching handlers, or acknowledging. |
 | `WithUnknownHandlerPolicy(p)`           | `NackUnknown`  | `AckUnknown` logs and skips messages with no registered handler.      |
 | `WithRetryAfter(d time.Duration)`       | `60s`          | Retry delay for Consumer-issued `Nack` calls on handler failure or unknown type. |
 
@@ -160,14 +160,15 @@ Client methods wrap PostgreSQL-side failures so callers can route on
 recoverable conditions with `errors.Is`:
 
 ```go
-_, err := client.Send(ctx, "orders", pgque.Event{Type: "x", Payload: nil})
+_, err := client.Receive(ctx, "orders", "worker", 100)
 switch {
+case errors.Is(err, pgque.ErrReceiveOverflow):
+    // No partial batch was returned. Choose a resource-safe larger ceiling,
+    // then receive and process the complete batch before acknowledging it.
 case errors.Is(err, pgque.ErrQueueNotFound):
     // create the queue, retry
 case errors.Is(err, pgque.ErrConsumerNotFound):
     // re-register the consumer
-case errors.Is(err, pgque.ErrBatchNotFound):
-    // batch already finished — usually safe to ignore
 case errors.Is(err, pgque.ErrConnection):
     // pool closed, network drop, bad DSN
 case err != nil:
@@ -179,6 +180,17 @@ case err != nil:
     }
 }
 ```
+
+`Receive` and `ReceiveCoop` return `*ReceiveOverflowError` only for PgQue's
+specific SQLSTATE `54000` complete-batch overflow. It preserves the operation,
+configured `Ceiling`, SQLSTATE, and PostgreSQL hint; `errors.As` also extracts
+the compatible `*SQLError`. High-level `Consumer.Start` returns this error
+immediately and performs no handler, `Nack`, `Ack`, or unchanged retry.
+
+Recovery is explicit and must remain full-batch: choose a larger ceiling that
+is safe for the process, call `Receive` or `ReceiveCoop` again, process every
+returned message, and only then `Ack` its batch. Do not treat the ceiling as a
+page size, loop at the same ceiling, or acknowledge the failed receive.
 
 `context.Canceled` and `context.DeadlineExceeded` are preserved through
 the chain, so `errors.Is(err, context.Canceled)` continues to work.
@@ -239,7 +251,7 @@ Options:
 | --- | --- |
 | `WithSubconsumer(name)` | High-level `Consumer`: enables coop mode. |
 | `WithDeadInterval(d)` | High-level `Consumer`: passes a takeover window to `ReceiveCoop`. |
-| `WithCoopMaxMessages(n)` | `ReceiveCoop` complete-batch safety ceiling (default 100). Overflow returns no partial result and SQLSTATE `54000`; roll back and retry with a resource-safe larger ceiling, and never `Ack` the failed receive. |
+| `WithCoopMaxMessages(n)` | `ReceiveCoop` complete-batch safety ceiling (default 100). Overflow returns no partial result as `ReceiveOverflowError`; explicitly retry the complete batch with a resource-safe larger ceiling, never as pages. |
 | `WithCoopDeadInterval(d)` | `ReceiveCoop` takeover window for one call. |
 | `WithBatchHandlingRetry()` | `UnsubscribeSubconsumer`: route active batch through retry/DLQ instead of erroring. |
 

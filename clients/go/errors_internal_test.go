@@ -13,6 +13,89 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+func TestWrapReceiveError_Overflow(t *testing.T) {
+	tests := []struct {
+		op      string
+		ceiling int
+		message string
+	}{
+		{"receive", 10, "pgque.receive: batch exceeds max_return of 10"},
+		{"receive coop", 25, "pgque.receive_coop: batch exceeds max_return of 25"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.op, func(t *testing.T) {
+			pgErr := &pgconn.PgError{Code: "54000", Message: tc.message, Hint: "recover the complete batch"}
+			err := wrapReceiveError(tc.op, tc.ceiling, pgErr)
+
+			if !errors.Is(err, ErrReceiveOverflow) {
+				t.Fatalf("expected ErrReceiveOverflow, got %v", err)
+			}
+			var overflow *ReceiveOverflowError
+			if !errors.As(err, &overflow) {
+				t.Fatalf("expected *ReceiveOverflowError, got %T: %v", err, err)
+			}
+			if overflow.Op != tc.op || overflow.Ceiling != tc.ceiling || overflow.SQLSTATE != "54000" || overflow.Hint != pgErr.Hint {
+				t.Fatalf("overflow metadata = %+v", overflow)
+			}
+			var sqlErr *SQLError
+			if !errors.As(err, &sqlErr) {
+				t.Fatalf("overflow must retain SQLError compatibility: %v", err)
+			}
+			if sqlErr.Op != tc.op || sqlErr.SQLSTATE != "54000" {
+				t.Fatalf("SQLError metadata = %+v", sqlErr)
+			}
+			var underlying *pgconn.PgError
+			if !errors.As(err, &underlying) {
+				t.Fatalf("overflow must retain *pgconn.PgError compatibility: %v", err)
+			}
+			if underlying != pgErr {
+				t.Fatalf("underlying PgError identity changed: got %p, want %p", underlying, pgErr)
+			}
+		})
+	}
+}
+
+func TestWrapReceiveError_DoesNotOverclassify(t *testing.T) {
+	tests := []struct {
+		name    string
+		op      string
+		ceiling int
+		code    string
+		message string
+	}{
+		{"other 54000", "receive", 10, "54000", "statement is too complex"},
+		{"wrong message", "receive", 10, "54000", "pgque.receive: batch exceeds max_return of ten"},
+		{"wrong operation", "receive", 10, "54000", "pgque.receive_coop: batch exceeds max_return of 10"},
+		{"wrong ceiling", "receive", 10, "54000", "pgque.receive: batch exceeds max_return of 11"},
+		{"wrong code", "receive", 10, "P0001", "pgque.receive: batch exceeds max_return of 10"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := wrapReceiveError(tc.op, tc.ceiling, &pgconn.PgError{Code: tc.code, Message: tc.message})
+			if errors.Is(err, ErrReceiveOverflow) {
+				t.Fatalf("unexpected overflow classification: %v", err)
+			}
+			var overflow *ReceiveOverflowError
+			if errors.As(err, &overflow) {
+				t.Fatalf("unexpected *ReceiveOverflowError: %+v", overflow)
+			}
+			var sqlErr *SQLError
+			if !errors.As(err, &sqlErr) {
+				t.Fatalf("expected ordinary *SQLError, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+func TestReceiveOverflowError_ZeroValueDoesNotPanic(t *testing.T) {
+	err := (&ReceiveOverflowError{}).Error()
+	if err == "" {
+		t.Fatal("zero-value ReceiveOverflowError returned an empty message")
+	}
+}
+
 // TestClassifyPgMessage_AllFragments ensures every message fragment we
 // match against sql/pgque.sql maps to the expected sentinel. Locks the
 // classifier against silent drift if a typo is introduced.

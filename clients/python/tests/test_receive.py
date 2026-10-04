@@ -65,10 +65,16 @@ def test_receive_rejects_batch_over_max_and_retries_complete(conn, setup_queue):
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     with pytest.raises(
-        pgque.PgqueError, match="batch exceeds max_return of 3"
+        pgque.PgqueReceiveOverflowError, match="batch exceeds max_return of 3"
     ) as exc_info:
         client.receive(queue, consumer, max_messages=3)
-    assert exc_info.value.__cause__.sqlstate == "54000"
+    error = exc_info.value
+    assert isinstance(error, pgque.PgqueError)
+    assert error.sqlstate == "54000"
+    assert error.configured_limit == 3
+    assert error.operation == "receive"
+    assert "larger resource-safe max_return" in error.hint
+    assert error.__cause__.sqlstate == "54000"
 
     # The failed statement returns no partial list and rolls back its batch
     # allocation. Reset the failed transaction before retrying.
