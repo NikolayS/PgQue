@@ -45,6 +45,13 @@ func TestWrapReceiveError_Overflow(t *testing.T) {
 			if sqlErr.Op != tc.op || sqlErr.SQLSTATE != "54000" {
 				t.Fatalf("SQLError metadata = %+v", sqlErr)
 			}
+			var underlying *pgconn.PgError
+			if !errors.As(err, &underlying) {
+				t.Fatalf("overflow must retain *pgconn.PgError compatibility: %v", err)
+			}
+			if underlying != pgErr {
+				t.Fatalf("underlying PgError identity changed: got %p, want %p", underlying, pgErr)
+			}
 		})
 	}
 }

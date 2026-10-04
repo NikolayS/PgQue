@@ -135,7 +135,7 @@ def test_receive_coop_overflow_is_typed_and_does_not_advance(
     conn.commit()
     _tick(conn, coop_queue)
 
-    with pytest.raises(pgque.ReceiveOverflowError) as exc_info:
+    with pytest.raises(pgque.PgqueReceiveOverflowError) as exc_info:
         client.receive_coop(
             coop_queue, consumer_name, "worker-1", max_messages=3
         )
@@ -144,6 +144,7 @@ def test_receive_coop_overflow_is_typed_and_does_not_advance(
     assert error.configured_limit == 3
     assert error.operation == "receive_coop"
     assert "larger resource-safe max_return" in error.hint
+    assert error.__cause__.sqlstate == "54000"
 
     conn.rollback()
     msgs = client.receive_coop(

@@ -72,11 +72,16 @@ func (e *SQLError) Unwrap() error { return e.Err }
 // *SQLError. Callers may retry the complete batch with a resource-safe larger
 // ceiling; the failed receive must never be acknowledged.
 type ReceiveOverflowError struct {
-	Op       string
+	// Op identifies the receive operation ("receive" or "receive coop").
+	Op string
+	// SQLSTATE is always 54000 for a classified PgQue receive overflow.
 	SQLSTATE string
-	Hint     string
-	Ceiling  int
-	Err      error
+	// Hint is PostgreSQL's recovery hint for the complete batch.
+	Hint string
+	// Ceiling is the max-messages value configured on the failed call.
+	Ceiling int
+	// Err is the underlying error, typically *pgconn.PgError.
+	Err error
 
 	sqlErr *SQLError
 }

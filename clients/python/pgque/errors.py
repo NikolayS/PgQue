@@ -9,7 +9,7 @@ class PgqueError(Exception):
     """Base class for all pgque-raised errors."""
 
 
-class ReceiveOverflowError(PgqueError):
+class PgqueReceiveOverflowError(PgqueError):
     """A complete receive batch exceeded the configured safety ceiling."""
 
     def __init__(
@@ -26,6 +26,34 @@ class ReceiveOverflowError(PgqueError):
         self.hint = hint
         self.configured_limit = configured_limit
         self.operation = operation
+
+    def __reduce__(self):
+        return (
+            _restore_receive_overflow_error,
+            (
+                str(self),
+                self.sqlstate,
+                self.hint,
+                self.configured_limit,
+                self.operation,
+            ),
+        )
+
+
+def _restore_receive_overflow_error(
+    message: str,
+    sqlstate: str,
+    hint: str | None,
+    configured_limit: int,
+    operation: str,
+) -> PgqueReceiveOverflowError:
+    return PgqueReceiveOverflowError(
+        message,
+        sqlstate=sqlstate,
+        hint=hint,
+        configured_limit=configured_limit,
+        operation=operation,
+    )
 
 
 class PgqueConnectionError(PgqueError):

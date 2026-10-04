@@ -65,7 +65,7 @@ def test_receive_rejects_batch_over_max_and_retries_complete(conn, setup_queue):
     conn.execute("select pgque.ticker(%s)", (queue,))
     conn.commit()
     with pytest.raises(
-        pgque.ReceiveOverflowError, match="batch exceeds max_return of 3"
+        pgque.PgqueReceiveOverflowError, match="batch exceeds max_return of 3"
     ) as exc_info:
         client.receive(queue, consumer, max_messages=3)
     error = exc_info.value

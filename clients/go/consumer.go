@@ -85,9 +85,10 @@ func (c *Consumer) dispatchWithRecover(ctx context.Context, fn HandlerFunc, msg 
 	return fn(ctx, msg)
 }
 
-// Start begins the poll loop and blocks until ctx is cancelled. On
-// receive errors it logs and retries after the configured poll
-// interval.
+// Start begins the poll loop and blocks until ctx is cancelled. Transient
+// receive errors are logged and retried after the configured poll interval.
+// A ReceiveOverflowError is returned immediately: no handlers run, no Ack or
+// Nack is issued, and the unchanged ceiling is not retried.
 //
 // Per-batch dispatch semantics:
 //

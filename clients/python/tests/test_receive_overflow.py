@@ -4,6 +4,8 @@
 
 from types import SimpleNamespace
 from unittest import mock
+import copy
+import pickle
 import signal
 
 import pgque
@@ -28,7 +30,7 @@ def test_wraps_only_pgque_receive_overflow(operation):
 
     error = _wrap_sql_error(raw, operation=operation, configured_limit=17)
 
-    assert isinstance(error, pgque.ReceiveOverflowError)
+    assert isinstance(error, pgque.PgqueReceiveOverflowError)
     assert isinstance(error, pgque.PgqueError)
     assert error.sqlstate == "54000"
     assert error.hint == "server hint"
@@ -71,13 +73,38 @@ def test_matching_server_text_requires_matching_receive_call_context(
 
 
 @pytest.mark.parametrize(
+    "round_trip",
+    [copy.copy, lambda error: pickle.loads(pickle.dumps(error))],
+    ids=["copy", "pickle"],
+)
+def test_receive_overflow_round_trip_preserves_metadata(round_trip):
+    error = pgque.PgqueReceiveOverflowError(
+        "pgque.receive: batch exceeds max_return of 17",
+        sqlstate="54000",
+        hint="increase safely",
+        configured_limit=17,
+        operation="receive",
+    )
+
+    restored = round_trip(error)
+
+    assert type(restored) is pgque.PgqueReceiveOverflowError
+    assert str(restored) == str(error)
+    assert restored.args == error.args
+    assert restored.sqlstate == "54000"
+    assert restored.hint == "increase safely"
+    assert restored.configured_limit == 17
+    assert restored.operation == "receive"
+
+
+@pytest.mark.parametrize(
     ("operation", "subconsumer"),
     [("receive", None), ("receive_coop", "worker-1")],
 )
 def test_consumer_overflow_fails_fast_without_retry_or_dispatch(
     operation, subconsumer
 ):
-    overflow = pgque.ReceiveOverflowError(
+    overflow = pgque.PgqueReceiveOverflowError(
         f"pgque.{operation}: batch exceeds max_return of 3",
         sqlstate="54000",
         hint="increase safely",
@@ -111,7 +138,7 @@ def test_consumer_overflow_fails_fast_without_retry_or_dispatch(
             mock.patch.object(
                 consumer, "_sleep_before_reconnect", side_effect=stop_on_retry
             ) as retry:
-        with pytest.raises(pgque.ReceiveOverflowError) as exc_info:
+        with pytest.raises(pgque.PgqueReceiveOverflowError) as exc_info:
             consumer.start()
 
     assert exc_info.value is overflow
