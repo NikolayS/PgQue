@@ -58,7 +58,8 @@ Never acknowledge after a receive error. Ticker thresholds do not cap batch
 size, and repeated receive calls are not pagination.
 
 For a pg_tle-managed v0.2.0 installation, register the update path and apply
-it through Postgres extension management:
+it through Postgres extension management. To stop at the historical v0.2.1
+point release, use the `sql/pgque-tle.sql` file from the v0.2.1 tag:
 
 ```sql
 \i sql/pgque-tle.sql
@@ -67,10 +68,10 @@ select extversion from pg_extension where extname = 'pgque';
 select pgque.version();
 ```
 
-The managed pg_tle update path supports a registered `0.2.0` origin. The
-current installer links this path to the `0.2.1` to `0.2.2` path. Other
-origins are rejected without changing the installation. Do not drop a
-populated extension as a workaround.
+To upgrade to the current release, use the v0.2.2 procedure above. Its installer
+links the `0.2.0` to `0.2.1` path with the `0.2.1` to `0.2.2` path. Other
+origins are rejected without changing the installation. Do not drop a populated
+extension as a workaround.
 
 Both version queries must return `0.2.1`. The update replaces functions only;
 do not drop or unregister the existing extension before upgrading.
