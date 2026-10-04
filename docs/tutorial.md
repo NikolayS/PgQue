@@ -39,7 +39,7 @@ select pgque.version();
 ```
    version
 -------------
- 0.2.0
+ 0.2.2
 (1 row)
 ```
 
@@ -344,7 +344,7 @@ select * from pgque.status();
  component    | status      | detail
 --------------+-------------+----------------------------------------------------------
  postgresql   | info        | PostgreSQL 17.2 on ...
- pgque        | info        | 0.2.0
+ pgque        | info        | 0.2.2
  scheduler    | manual      | ticker_job_id=NULL, maint_job_id=NULL, tick_period_ms=100 (10.00 ticks/sec)
  ticker       | stopped     | not scheduled (tick_period_ms=100)
  maintenance  | stopped     | not scheduled
