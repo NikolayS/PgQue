@@ -439,7 +439,7 @@ create extension pgque;
 ```
 
 For an existing pg_tle installation, register the supported update paths and
-apply it without dropping the extension or its queue data:
+apply the update without dropping the extension or its queue data:
 
 ```sql
 \i sql/pgque-tle.sql
