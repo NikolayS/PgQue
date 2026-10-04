@@ -249,15 +249,15 @@ module Pgque
       if result
         sqlstate = result.error_field(PG::Result::PG_DIAG_SQLSTATE)
         primary = result.error_field(PG::Result::PG_DIAG_MESSAGE_PRIMARY)
-        match = /\Apgque\.(receive|receive_coop): batch exceeds max_return of ([0-9]+)\z/.match(primary.to_s)
-        if sqlstate == "54000" && match && match[1] == operation &&
-           match[2].to_i == configured_limit
+        if sqlstate == "54000" && %w[receive receive_coop].include?(operation) &&
+           !configured_limit.nil? &&
+           primary == "pgque.#{operation}: batch exceeds max_return of #{configured_limit}"
           return ReceiveOverflow.new(
             msg,
             sqlstate: sqlstate,
             hint: result.error_field(PG::Result::PG_DIAG_MESSAGE_HINT),
-            configured_limit: match[2].to_i,
-            operation: match[1],
+            configured_limit: configured_limit,
+            operation: operation,
           )
         end
       end
