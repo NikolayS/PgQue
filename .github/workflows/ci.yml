@@ -307,14 +307,25 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_tle_install.sql
 
-      - name: Run stable pg_tle 0.2.0 upgrade test
+      - name: Run stable pg_tle 0.2.x upgrade tests
         run: |
           set -Eeuo pipefail
           git show v0.2.0:sql/pgque-tle.sql > /tmp/pgque-tle-v0.2.0.sql
+          git show v0.2.1:sql/pgque-tle.sql > /tmp/pgque-tle-v0.2.1.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
-            -v ON_ERROR_STOP=1 -c 'create database pgque_tle_upgrade'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade \
-            -v ON_ERROR_STOP=1 -f tests/test_tle_upgrade_v0_2.sql
+            -v ON_ERROR_STOP=1 \
+            -c 'create database pgque_tle_upgrade_020' \
+            -c 'create database pgque_tle_upgrade_021'
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade_020 \
+            -v ON_ERROR_STOP=1 \
+            -v origin_version=0.2.0 \
+            -v origin_installer=/tmp/pgque-tle-v0.2.0.sql \
+            -f tests/test_tle_upgrade_v0_2.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_upgrade_021 \
+            -v ON_ERROR_STOP=1 \
+            -v origin_version=0.2.1 \
+            -v origin_installer=/tmp/pgque-tle-v0.2.1.sql \
+            -f tests/test_tle_upgrade_v0_2.sql
 
       - name: Run full regression suite via pg_tle install
         run: |
