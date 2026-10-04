@@ -24,7 +24,7 @@ from .errors import (
     PgqueConsumerNotFound,
     PgqueError,
     PgqueQueueNotFound,
-    ReceiveOverflowError,
+    PgqueReceiveOverflowError,
 )
 from .types import Event, Message
 
@@ -40,7 +40,7 @@ __all__ = [
     "PgqueQueueNotFound",
     "PgqueBatchNotFound",
     "PgqueConsumerNotFound",
-    "ReceiveOverflowError",
+    "PgqueReceiveOverflowError",
     "connect",
     "__version__",
 ]

@@ -16,7 +16,7 @@ from .errors import (
     PgqueConsumerNotFound,
     PgqueError,
     PgqueQueueNotFound,
-    ReceiveOverflowError,
+    PgqueReceiveOverflowError,
 )
 from .types import Event, Message
 
@@ -66,7 +66,7 @@ def _wrap_sql_error(
         and overflow_match.group(1) == operation
         and int(overflow_match.group(2)) == configured_limit
     ):
-        return ReceiveOverflowError(
+        return PgqueReceiveOverflowError(
             msg,
             sqlstate=sqlstate,
             hint=getattr(diag, "message_hint", None),

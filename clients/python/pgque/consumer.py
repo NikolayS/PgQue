@@ -124,6 +124,11 @@ class Consumer:
         Opens its own connection, subscribes to LISTEN, and polls for
         batches. Each batch is processed and acked in a single
         transaction.
+
+        Raises:
+            PgqueReceiveOverflowError: The complete batch exceeds
+                ``max_messages``. This propagates before any handler, ack, or
+                nack; restart with a resource-safe larger ceiling.
         """
         self._running = True
 

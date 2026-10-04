@@ -160,7 +160,7 @@ Client methods wrap PostgreSQL-side failures so callers can route on
 recoverable conditions with `errors.Is`:
 
 ```go
-_, err := client.Send(ctx, "orders", pgque.Event{Type: "x", Payload: nil})
+_, err := client.Receive(ctx, "orders", "worker", 100)
 switch {
 case errors.Is(err, pgque.ErrReceiveOverflow):
     // No partial batch was returned. Choose a resource-safe larger ceiling,
@@ -169,8 +169,6 @@ case errors.Is(err, pgque.ErrQueueNotFound):
     // create the queue, retry
 case errors.Is(err, pgque.ErrConsumerNotFound):
     // re-register the consumer
-case errors.Is(err, pgque.ErrBatchNotFound):
-    // batch already finished — usually safe to ignore
 case errors.Is(err, pgque.ErrConnection):
     // pool closed, network drop, bad DSN
 case err != nil:

@@ -134,12 +134,12 @@ Overflow reports SQLSTATE `54000` (`program_limit_exceeded`). Like other SQL err
 
 `ticker_max_count` is a tick-trigger threshold, not a hard batch-size cap. Setting `max_return` to that value cannot guarantee success during bursts. Monitor receive errors and consumer lag so an undersized ceiling does not silently stall processing.
 
-**SDK overflow handling.** Updated SDKs expose a typed receive-overflow error
+**SDK overflow handling.** SDKs expose a typed receive-overflow error
 and their high-level consumers stop rather than retry the same deterministic
 failure indefinitely. The error retains the configured ceiling, operation,
 SQLSTATE and server hint; it does not report the actual batch size. This applies
-to ordinary and cooperative receive. Other SQL errors keep their existing
-handling; SQLSTATE `54000` alone is not unique to receive overflow.
+to ordinary and cooperative receive. Other SQL errors follow each SDK's
+documented error policy; SQLSTATE `54000` alone is not unique to receive overflow.
 
 On overflow, no message handler or acknowledgment should run. Roll back any
 failed explicit transaction, select a sufficient ceiling within the application's
@@ -148,11 +148,11 @@ Do not automatically increase a caller's resource ceiling or reset the consumer
 past the batch. Changing the ticker threshold does not split an existing batch.
 This is whole-batch recovery, not pagination.
 
-SQL and low-level helper defaults remain unchanged. High-level consumers default
-to a whole-batch ceiling (`INT_MAX`), which is not a bounded-memory guarantee.
-SDK packages must be upgraded separately from the database installation; see the
-language-specific client README for its error type and consumer behavior.
-
+SQL and low-level helpers use a default ceiling of 100 where the argument is
+optional. High-level consumers default to a whole-batch ceiling (`INT_MAX`),
+which is not a bounded-memory guarantee. Database installation and SDK package
+installation are separate operations; see the language-specific client README
+for its error type and consumer behavior.
 
 #### `pgque.ack(batch_id bigint) → integer`
 
