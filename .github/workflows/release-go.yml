@@ -29,16 +29,19 @@ jobs:
       VERSION: ${{ inputs.version }}
       MIRROR_REPO: NikolayS/pgque-go
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: clients/go/go.mod
           cache-dependency-path: clients/go/go.sum
+
+      - name: Test atomic mirror publication
+        run: bash tests/test_go_release.sh
 
       - name: Validate version and tests
         run: |
@@ -97,36 +100,35 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       MIRROR_REPO: NikolayS/pgque-go
-      GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: clients/go/go.mod
           cache-dependency-path: clients/go/go.sum
 
       - name: Verify mirror token principal
         env:
-          EXPECTED_LOGIN: NikolayS
+          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "PGQUE_GO_MIRROR_TOKEN is empty or unavailable"
             exit 1
           fi
-          login=$(curl -fsS \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/user | jq -r .login)
+          EXPECTED_LOGIN="${MIRROR_REPO%%/*}"
+          login=$(gh api user --jq .login)
           if [ "$login" != "$EXPECTED_LOGIN" ]; then
             echo "PGQUE_GO_MIRROR_TOKEN resolves to '$login', expected '$EXPECTED_LOGIN'"
             exit 1
           fi
+
+          gh api "repos/$MIRROR_REPO" --jq '.permissions.push' | grep -qx true
 
       - name: Split clients/go subtree
         run: |
@@ -136,10 +138,15 @@ jobs:
           echo "mirror commit: $split_sha"
 
       - name: Push mirror main and tag
+        env:
+          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git"
-          if git ls-remote --exit-code --tags "$remote" "refs/tags/$VERSION" >/dev/null; then
+          remote="https://github.com/${MIRROR_REPO}.git"
+          mirror_git() {
+            git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+          }
+          if mirror_git ls-remote --exit-code --tags "$remote" "refs/tags/$VERSION" >/dev/null; then
             echo "mirror tag $VERSION already exists"
             exit 1
           else
@@ -150,21 +157,24 @@ jobs:
             fi
           fi
 
-          candidate="refs/heads/release-candidate/$VERSION"
-          git push "$remote" "$split_sha:$candidate"
-
           tmp=$(mktemp -d)
-          git clone --no-checkout --filter=blob:none "$remote" "$tmp"
+          trap 'rm -rf "$tmp"' EXIT
+          mirror_git clone --no-checkout --filter=blob:none "$remote" "$tmp"
           git -C "$tmp" config user.name "github-actions[bot]"
           git -C "$tmp" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tmp" fetch origin "$candidate"
-          git -C "$tmp" tag -a "$VERSION" FETCH_HEAD -m "Go client $VERSION"
-          git -C "$tmp" push origin "refs/tags/$VERSION"
-          git push "$remote" "$split_sha:refs/heads/main"
-          git push "$remote" ":$candidate"
+          git -C "$tmp" fetch "$GITHUB_WORKSPACE" "$split_sha"
+          git -C "$tmp" merge-base --is-ancestor origin/main "$split_sha" || {
+            echo "release subtree does not fast-forward mirror main; no refs were published"
+            exit 1
+          }
+          git -C "$tmp" tag -a "$VERSION" "$split_sha" -m "Go client $VERSION"
+          mirror_git -C "$tmp" push --atomic origin \
+            "$split_sha:refs/heads/main" "refs/tags/$VERSION"
 
       - name: Create GitHub Release in mirror
         if: inputs.create_release
+        env:
+          GH_TOKEN: ${{ secrets.PGQUE_GO_MIRROR_TOKEN }}
         run: |
           set -Eeuo pipefail
           gh release create "$VERSION" \
