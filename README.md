@@ -338,7 +338,7 @@ Longer walkthrough in the [tutorial](docs/tutorial.md); patterns like fan-out, e
 
 ## Client libraries
 
-PgQue is SQL-first, so any Postgres driver works. First-party client libraries live in this repo for **Python**, **Go**, and **TypeScript** (all published at `v0.2.0`), plus **Ruby**, shipping in v0.3.
+PgQue is SQL-first, so any Postgres driver works. First-party client libraries live in this repo for **Python**, **Go**, and **TypeScript** (all published at `v0.2.2`), plus **Ruby**, shipping in v0.3.
 
 ### Python (`pgque-py`) — psycopg 3
 
@@ -369,7 +369,7 @@ consumer.start()
 ### Go (`github.com/NikolayS/pgque-go`) — pgx/v5
 
 ```bash
-go get github.com/NikolayS/pgque-go@v0.2.0
+go get github.com/NikolayS/pgque-go@v0.2.2
 ```
 
 ```go
