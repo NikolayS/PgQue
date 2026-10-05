@@ -51,6 +51,11 @@ jobs:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
         run: bash tests/two_session_registration_locks.sh
 
+      - name: Run idempotency lock-wait TTL regression
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: bash tests/two_session_idem_ttl.sh
+
       - name: Run paged concurrency acceptance
         env:
           PGQUE_TEST_IMAGE: postgres:${{ matrix.pg_version }}

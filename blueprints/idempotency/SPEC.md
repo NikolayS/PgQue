@@ -107,10 +107,10 @@ create table pgque.idem_key (
 
 ```sql
 insert into pgque.idem_key(queue_id, idem_key, expires_at)
-  values (v_queue_id, i_idem_key, now() + i_ttl)
+  values (v_queue_id, i_idem_key, clock_timestamp() + i_ttl)
 on conflict (queue_id, idem_key) do update
-  set expires_at = excluded.expires_at
-  where pgque.idem_key.expires_at <= now()    -- only an EXPIRED key can be reclaimed
+  set expires_at = clock_timestamp() + i_ttl
+  where pgque.idem_key.expires_at <= clock_timestamp() -- only expired keys
 returning true into v_claimed;
 
 if v_claimed then
@@ -121,9 +121,13 @@ else
 end if;
 ```
 
-The unique key serializes concurrent producers; the `where expires_at <= now()`
+The unique key serializes concurrent producers; the wall-clock expiry check
 makes a *live* key un-reclaimable (dedup) while letting an *expired* key be
 reused. No advisory lock, no `BEGIN..EXCEPTION` (Key Design Rule 4).
+
+The TTL must be positive and finite. A new claim starts its TTL when the send
+runs, not when the transaction starts. A takeover recalculates expiry after
+any conflicting row-lock wait. Expiry does not wait for transaction commit.
 
 ## 6. Garbage collection
 
@@ -131,7 +135,7 @@ The `idem_key` table is append-ish (one row per live key, upserted). Expired
 rows are dead weight and must be reaped, or the dedup table becomes the bloat
 pgque exists to avoid. Options, in order of preference:
 
-1. **Piggyback on maintenance/rotation.** Delete `where expires_at < now()` in
+1. **Piggyback on maintenance/rotation.** Delete `where expires_at < clock_timestamp()` in
    the same scheduled maintenance that drives ticking/rotation (pg_cron job).
    Bounded, batched, off the hot path.
 2. **Partition by expiry window** and drop whole partitions (if volume warrants).

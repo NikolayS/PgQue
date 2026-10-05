@@ -148,6 +148,9 @@
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
 
+\echo 'Running: test_idem_maintenance_clock'
+\i tests/test_idem_maintenance_clock.sql
+
 \echo ''
 \echo 'Running: durable paged batches'
 \i tests/test_paged_state.sql
