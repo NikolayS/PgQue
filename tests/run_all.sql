@@ -166,6 +166,7 @@
 \echo ''
 \echo 'Running: durable paged batches'
 \i tests/test_paged_state.sql
+\i tests/test_paged_search_path.sql
 \i tests/test_paged_batches.sql
 \i tests/test_paged_modes.sql
 \i tests/test_paged_legacy.sql
