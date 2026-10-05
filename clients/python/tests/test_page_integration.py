@@ -1,4 +1,5 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+from concurrent.futures import Future
 from functools import partial
 
 import pytest
@@ -158,3 +159,34 @@ def test_page_mode_adapters(conn, setup_queue):
     )
     assert empty.status in ("idle", "advanced") and empty.messages == []
     assert empty.page_token is None
+
+
+@pytest.mark.parametrize("state", ["pending", "failed", "succeeded"])
+def test_future_result_keeps_live_page_outstanding(conn, setup_queue, state):
+    queue, consumer = setup_queue
+    conn.autocommit = True
+    client = PgqueClient(conn)
+    worker = "future-worker"
+    msg_id = client.send(queue, {"state": state}, type="page.future")
+    client.force_next_tick(queue)
+    client.ticker(queue)
+    page = client.receive_page(queue, consumer, worker)
+    assert page.status == "page"
+    assert [message.msg_id for message in page.messages] == [msg_id]
+    future = Future()
+    if state == "failed":
+        future.set_exception(RuntimeError("background handler failed"))
+    elif state == "succeeded":
+        future.set_result("completed")
+
+    with pytest.raises(TypeError, match="lazy"):
+        client.process_page(queue, consumer, worker, lambda _: future)
+    replay = client.receive_page(queue, consumer, worker)
+    assert replay.page_token == page.page_token
+    assert [message.msg_id for message in replay.messages] == [msg_id]
+    seen = []
+    result = client.process_page(queue, consumer, worker,
+                                 lambda message: seen.append(message.msg_id))
+    assert seen == [msg_id]
+    assert result.processed_count == 1 and result.batch_finished
+    assert client.ack_page(page.page_token, worker) == ("already_acked", True)

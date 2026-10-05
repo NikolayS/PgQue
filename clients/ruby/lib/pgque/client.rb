@@ -154,8 +154,9 @@ module Pgque
           outcome.close if outcome.respond_to?(:close)
           raise TypeError, "page handler must complete, not return an Enumerator"
         end
-        if outcome.respond_to?(:call) || outcome.is_a?(UnboundMethod) || outcome.is_a?(Fiber)
-          raise TypeError, "page handler must complete, not return a deferred callable"
+        if outcome.respond_to?(:call) || outcome.is_a?(UnboundMethod) ||
+           outcome.is_a?(Fiber) || outcome.is_a?(Thread)
+          raise TypeError, "page handler must complete, not return a deferred result"
         end
       end
       ack = ack_page(page.page_token, worker)

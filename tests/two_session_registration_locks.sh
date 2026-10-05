@@ -16,6 +16,16 @@ if [[ -z "${PGQUE_TEST_DSN:-}" ]]; then
 fi
 
 psql_base=(psql --no-psqlrc -v ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
+
+# Refuse the database before arming any mutating cleanup.
+database_name="$("${psql_base[@]}" -qAtc "select current_database()")"
+if [[ ! "${database_name}" =~ (^|_)test($|_) ]] \
+   && [[ "${PGQUE_ALLOW_TEST_MUTATION:-}" != "1" ]]; then
+  echo "FAIL: refusing to install a test trigger in database '${database_name}'" >&2
+  echo "      use a database name containing 'test' or set PGQUE_ALLOW_TEST_MUTATION=1" >&2
+  exit 2
+fi
+
 suffix="${$}_$(date +%s)"
 race_queue="registration_race_${suffix}"
 coop_queue="registration_coop_race_${suffix}"
@@ -45,6 +55,7 @@ cleanup() {
     select pg_terminate_backend(pid)
     from pg_stat_activity
     where pid <> pg_backend_pid()
+      and datname = current_database()
       and application_name like '%${suffix}';
   " >/dev/null 2>&1 || cleanup_status=1
   "${psql_base[@]}" -qAtc \
@@ -183,7 +194,7 @@ release_barrier() {
 
 run_barrier_locker() {
   local lock_key="$1"
-  local app_name="$2"
+  local app_name="${2}_${suffix}"
 
   PGAPPNAME="${app_name}" "${psql_base[@]}" -qAt >"${workdir}/${app_name}.out" 2>"${workdir}/${app_name}.err" <<SQL &
 select pg_sleep(${locker_start_delay});
@@ -211,16 +222,6 @@ select pg_advisory_unlock(${lock_key});
 SQL
   barrier_locker_pid=$!
 }
-
-# Installing a trigger on pgque.consumer is only appropriate in a disposable
-# test database. Allow an explicit override for unusual local naming schemes.
-database_name="$("${psql_base[@]}" -qAtc "select current_database()")"
-if [[ ! "${database_name}" =~ (^|_)test($|_) ]] \
-   && [[ "${PGQUE_ALLOW_TEST_MUTATION:-}" != "1" ]]; then
-  echo "FAIL: refusing to install a test trigger in database '${database_name}'" >&2
-  echo "      use a database name containing 'test' or set PGQUE_ALLOW_TEST_MUTATION=1" >&2
-  exit 2
-fi
 
 # A test-only trigger puts every matching consumer INSERT behind an advisory
 # barrier. Both callers therefore complete their initial "row not found"
@@ -390,13 +391,31 @@ select pgque.insert_event('${lock_queue}', 't', '{}', key, null, null, null)
 from keys;
 select pgque.force_tick('${lock_queue}');
 select pgque.ticker('${lock_queue}');
+insert into pgque.${barrier_table} (lock_key, ready, release)
+values (0, true, false);
 SQL
 
 PGAPPNAME="registration_holder_${suffix}" \
   "${psql_base[@]}" >"${workdir}/registration_holder.out" 2>"${workdir}/registration_holder.err" <<SQL &
 begin;
 select pgque.register_consumer_at('${lock_queue}', '${lock_consumer}#0/2', null);
-select pg_sleep(5);
+/* Keep the registrar lock until the receiver finishes, not for a fixed delay. */
+do \$\$
+declare
+  v_release boolean;
+begin
+  for i in 1..600 loop
+    select release into v_release
+    from pgque.${barrier_table}
+    where lock_key = 0;
+    exit when v_release;
+    perform pg_sleep(0.05);
+  end loop;
+  if not v_release then
+    raise exception 'timed out waiting to release registration holder';
+  end if;
+end
+\$\$;
 rollback;
 SQL
 registration_holder_pid=$!
@@ -410,7 +429,6 @@ for _ in $(seq 1 50); do
       and state = 'active'
       and wait_event_type = 'Timeout'
       and wait_event = 'PgSleep'
-      and query like 'select pg_sleep(%'
   " | grep -q 1; then
     holder_ready=1
     break
@@ -444,10 +462,12 @@ end
 \$\$;
 SQL
 receiver_status=$?
+release_barrier 0
+release_status=$?
 wait "${registration_holder_pid}"
 holder_status=$?
 set -e
-if (( receiver_status != 0 || holder_status != 0 )); then
+if (( receiver_status != 0 || release_status != 0 || holder_status != 0 )); then
   echo "FAIL: open registration blocked the partition receive/finish path" >&2
   print_debug
   exit 1
