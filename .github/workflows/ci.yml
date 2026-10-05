@@ -47,6 +47,11 @@ jobs:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
         run: bash tests/two_session_registration_locks.sh
 
+      - name: Verify non-superuser install ownership
+        env:
+          PGQUE_TEST_SUPERUSER_DSN: postgresql://postgres:pgque_test@localhost/postgres
+        run: bash tests/security_nonsuperuser_install.sh
+
       - name: Run idempotency lock-wait TTL regression
         env:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
