@@ -41,6 +41,15 @@ jobs:
           check-latest: true
           cache-dependency-path: clients/go/go.sum
 
+      - name: Audit Go dependency graph
+        working-directory: clients/go
+        run: |
+          set -Eeuo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          # Do not use JSON mode as an exit-status findings gate.
+          govulncheck -scan=module
+          go mod verify
+
       - name: Validate version and tests
         run: |
           set -Eeuo pipefail
