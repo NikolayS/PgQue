@@ -246,6 +246,9 @@ returns void as $$
 declare
     v_queue_id int4;
     v_n int4;
+    v_slot_name text;
+    v_slot_materialized boolean;
+    v_registered int;
 begin
     if i_queue is null or i_queue = '' then
         raise exception 'queue name must not be empty';
@@ -284,8 +287,26 @@ begin
             i_consumer, i_queue, v_n, i_n;
     end if;
 
-    -- register_consumer is idempotent for an existing subscription.
-    perform pgque.register_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, i_n));
+    v_slot_name := pgque._slot_name(i_consumer, i_slot, i_n);
+    select exists (
+        select 1
+        from pgque.partition_slot as ps
+        where ps.queue_id = v_queue_id
+          and ps.co_name = i_consumer
+          and ps.slot = i_slot
+    ) into v_slot_materialized;
+
+    /*
+     * register_consumer returns zero for an existing subscription. That is
+     * idempotent only when this slot was already materialized; otherwise the
+     * generated name belongs to an ordinary consumer. Raising also rolls back
+     * a partition_consumer row inserted above.
+     */
+    v_registered := pgque.register_consumer(i_queue, v_slot_name);
+    if v_registered = 0 and not v_slot_materialized then
+        raise exception 'consumer name % is already registered as an ordinary consumer on queue %; cannot reuse it for partition slot %/%',
+            v_slot_name, i_queue, i_slot, i_n;
+    end if;
 
     -- Materialize the slot's lease row (unleased). Idempotent re-subscribe.
     insert into pgque.partition_slot (queue_id, co_name, slot)
