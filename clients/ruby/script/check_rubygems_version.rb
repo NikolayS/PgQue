@@ -24,7 +24,7 @@ module PgqueRelease
 
       published_versions = versions.each_with_index.map do |entry, index|
         number = entry["number"] if entry.is_a?(Hash)
-        unless number.is_a?(String) && !number.empty? && Gem::Version.correct?(number)
+        unless number.is_a?(String) && !number.strip.empty? && Gem::Version.correct?(number)
           raise ArgumentError,
                 "invalid RubyGems versions response: entry #{index} has no string number"
         end

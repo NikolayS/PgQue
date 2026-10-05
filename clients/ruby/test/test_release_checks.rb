@@ -105,6 +105,14 @@ class TestReleaseChecks < Minitest::Test
     end
   end
 
+  def test_rejects_blank_version_numbers_in_registry_response
+    ["", " ", "\t", "\n", " \t\n"].each do |number|
+      assert_raises(ArgumentError, "registry version #{number.inspect} must fail closed") do
+        PgqueRelease::RubyGemsVersionCheck.check!("0.3.0.rc.2", JSON.generate([{ "number" => number }]))
+      end
+    end
+  end
+
   def test_rejects_zero_tests_or_failures_in_any_summary
     ["0 runs, 0 assertions, 0 failures, 0 errors, 0 skips\n",
      "1 runs, 1 assertions, 1 failures, 0 errors, 0 skips\n",
