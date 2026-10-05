@@ -304,6 +304,12 @@ begin
     end if;
     if x_force then
         begin
+            /* Lifecycle calls lock parents before slots. Take the eventual
+               cascade-delete locks now, while NOWAIT can reject a busy queue. */
+            perform 1 from pgque.partition_consumer
+            where queue_id = v_queue.queue_id
+            order by co_name
+            for update nowait;
             perform 1 from pgque.partition_slot
             where queue_id = v_queue.queue_id
             order by co_name, slot
