@@ -449,7 +449,7 @@ begin
     /* Devel builds carry a '-devel' version; a release stamp replaces this
        literal with the release version, then a follow-up restores '-devel'.
        transform.sh reads this literal, so keep it a valid semver string. */
-    return '0.3.0-devel';
+    return '0.3.0-rc.2';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 

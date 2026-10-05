@@ -67,7 +67,7 @@ declare
     source_version text;
     extension_sql text := $pgque_extension_body$
 -- pgque.sql -- PgQ Universal Edition
--- Version: 0.3.0-devel
+-- Version: 0.3.0-rc.2
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 -- Includes code derived from PgQ (ISC license, Marko Kreen / Skype Technologies OU).
 --
@@ -4659,7 +4659,7 @@ begin
     /* Devel builds carry a '-devel' version; a release stamp replaces this
        literal with the release version, then a follow-up restores '-devel'.
        transform.sh reads this literal, so keep it a valid semver string. */
-    return '0.3.0-devel';
+    return '0.3.0-rc.2';
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 
@@ -9594,42 +9594,42 @@ begin
     where extname = 'pgque';
 
     if (existing_version is not null
-        and existing_version not in ('0.2.1', '0.2.2', '0.3.0-devel'))
+        and existing_version not in ('0.2.1', '0.2.2', '0.3.0-rc.2'))
         or (installed_version is not null
-        and installed_version not in ('0.2.1', '0.2.2', '0.3.0-devel')) then
+        and installed_version not in ('0.2.1', '0.2.2', '0.3.0-rc.2')) then
         raise exception 'unsupported pgque version (registered %, installed %); '
-            'this script supports fresh 0.3.0-devel installs and updates '
+            'this script supports fresh 0.3.0-rc.2 installs and updates '
             'from 0.2.1 or 0.2.2 only', existing_version, installed_version
             using errcode = '22023';
     end if;
 
     if existing_version is null then
         perform pgtle.install_extension(
-            'pgque', '0.3.0-devel',
+            'pgque', '0.3.0-rc.2',
             'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)', extension_sql
         );
-    elsif to_regprocedure(format('pgtle.%I()', 'pgque--0.3.0-devel.sql')) is null then
+    elsif to_regprocedure(format('pgtle.%I()', 'pgque--0.3.0-rc.2.sql')) is null then
         /* available_extension_versions() also lists indirect installs. Check
            the direct body so fresh creation never needs an old migration. */
-        perform pgtle.install_extension_version_sql('pgque', '0.3.0-devel', extension_sql);
+        perform pgtle.install_extension_version_sql('pgque', '0.3.0-rc.2', extension_sql);
     end if;
 
     foreach source_version in array array['0.2.1', '0.2.2'] loop
-        if source_version <> '0.3.0-devel' and not exists (
+        if source_version <> '0.3.0-rc.2' and not exists (
             select 1
             from pgtle.extension_update_paths('pgque')
-            where source = source_version and target = '0.3.0-devel'
-            and path = source_version || '--0.3.0-devel'
+            where source = source_version and target = '0.3.0-rc.2'
+            and path = source_version || '--0.3.0-rc.2'
         ) then
             perform pgtle.install_update_path(
-                'pgque', source_version, '0.3.0-devel', extension_sql
+                'pgque', source_version, '0.3.0-rc.2', extension_sql
             );
         end if;
     end loop;
-    perform pgtle.set_default_version('pgque', '0.3.0-devel');
+    perform pgtle.set_default_version('pgque', '0.3.0-rc.2');
 end $wrapper$;
 
 \echo ''
-\echo 'PgQue 0.3.0-devel registered with pg_tle.'
+\echo 'PgQue 0.3.0-rc.2 registered with pg_tle.'
 \echo 'For a fresh install, run: create extension pgque;'
-\echo 'For an installed 0.2.1 or 0.2.2 extension, run: alter extension pgque update to ''0.3.0-devel'';'
+\echo 'For an installed 0.2.1 or 0.2.2 extension, run: alter extension pgque update to ''0.3.0-rc.2'';'

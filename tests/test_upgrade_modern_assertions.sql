@@ -2,7 +2,7 @@
 
 -- Verify the saved modern-release baseline before public API smoke tests.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
--- Invoke with: psql -v expected_version=0.3.0-devel -f this_file.sql
+-- Invoke with: psql -v expected_version=0.3.0-rc.2 -f this_file.sql
 
 set timezone = 'UTC';
 set datestyle = 'ISO, YMD';
