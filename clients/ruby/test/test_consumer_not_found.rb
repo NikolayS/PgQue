@@ -47,6 +47,21 @@ class TestConsumerNotFound < Minitest::Test
     end
   end
 
+  def test_other_sql_errors_keep_their_classification
+    {
+      "queue not found: consumer not registered" => Pgque::QueueNotFound,
+      "batch not found" => Pgque::BatchNotFound,
+      "permission denied" => Pgque::Error,
+    }.each do |message, expected|
+      raw = PG::Error.new(message)
+      error = assert_raises(expected) do
+        Pgque::Client.new(RaisingConn.new(raw)).receive("orders", "worker", 1)
+      end
+      assert_instance_of expected, error
+      assert_same raw, error.cause
+    end
+  end
+
   def test_receive_from_real_unregistered_consumer_preserves_pg_error
     with_queue do |queue, _consumer, conn|
       client = Pgque::Client.new(conn)
