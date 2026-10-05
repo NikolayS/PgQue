@@ -359,8 +359,9 @@ event id instead of appending again; use an effect-scoped key such as
 `tenant:operation:entity:version`. See [Producer idempotency](docs/producer-idempotency.md)
 for exact semantics, maintenance, and composition with partition keys.
 
-Partition keys preserve order for a key while allowing one logical consumer
-to process independent keys across a fixed set of leased slots. Create every
+Partition keys keep each key on one leased slot. Events follow snapshot-window
+order, not global event-ID or producer commit order. One logical consumer can
+process independent keys in parallel. Create every
 slot atomically with `subscribe_partitioned()` before producing, poll every
 slot, and monitor `partition_slot_status`: each slot scans the full stream, so
 `n` slots cost roughly `n` times the reads, and any stopped slot can pin queue

@@ -97,7 +97,8 @@ Grant: `pgque_writer`. Source: [`devel/sql/pgque-api/send.sql`](https://github.c
 
 Keyed JSON send. Stores `partition_key` in `extra1`; partitioned consumers hash
 it to a slot. Equal non-null keys with the same pinned slot count route to the
-same ordered slot. Grant: `pgque_writer`. Source:
+same slot. Events follow snapshot-window order, not global event-ID or
+producer commit order. Grant: `pgque_writer`. Source:
 [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
 
 #### `pgque.send(queue_name text, type_name text, payload text, partition_key text) → bigint`
@@ -240,8 +241,10 @@ perform pgque.nack(msg.batch_id, msg, interval '5 minutes', 'validation failed')
 
 ## Partitioned consumers
 
-Partitioned consumers preserve per-key order while different hash slots run in
-parallel. Every slot is an independent PgQ subscription and must be polled; it
+Partitioned consumers keep each key on one slot. Events are ordered by event
+ID within each snapshot window. A lower ID can appear in a later window if its
+producer commits late. This is not global event-ID FIFO or producer commit
+order. Different hash slots run in parallel. Every slot is an independent PgQ subscription and must be polled; it
 scans the full stream with a server-side hash filter, producing approximately
 `n` times read amplification. Slot leases are transactional rows, so the API
 works with transaction-mode poolers. The first-party clients do not yet wrap
@@ -250,7 +253,7 @@ worker loop, fencing, monitoring, and recovery rules.
 
 #### `pgque.subscribe_partitioned(queue_name text, consumer text, n int) → void`
 
-Atomically pins `n` and creates all slots `0..n-1` at one shared starting tick.
+Atomically pins `n` (1–256) and creates all slots `0..n-1` at one shared starting tick.
 Repeating a complete setup with the same `n` is idempotent and does not move
 cursors. An existing incomplete setup or a different `n` raises. Call before
 producing any events this consumer must see. Grant: `pgque_reader`. Source:
@@ -270,6 +273,13 @@ consumer incomplete and removes retry/dead-letter state owned by that slot.
 Removing the final remaining subscription also removes the pinned-`n` row.
 Grant: `pgque_reader`. Source:
 [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
+
+#### `pgque.unsubscribe_partitioned(queue_name text, consumer text) → void`
+
+Atomically removes every slot, its engine subscription, and the pinned slot
+count. This removes retry and dead-letter state owned by those subscriptions.
+Drain and acknowledge work before a controlled teardown. Grant: `pgque_reader`.
+Source: [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
 
 #### `pgque.claim_slot(queue_name text, consumer text, slot int, worker text, ttl interval default '30 seconds') → bigint`
 
@@ -292,9 +302,12 @@ batch. Crash recovery uses lease expiry instead. Grant: `pgque_reader`. Source:
 Validates the pinned `n`, fences and renews the lease, then returns the current
 batch's events whose normalized `hashtextextended(partition_key, 0)` maps to
 `slot`; null keys map to slot 0. Empty filtered batches are finished
-automatically. As with `receive`, `max_return` limits returned rows while
-`ack_partitioned` finishes the whole underlying batch, so use
-`max_return >= ticker_max_count` unless the full batch is otherwise guaranteed.
+automatically. As with `receive`, `max_return` is a complete-batch safety
+ceiling, not pagination. Overflow raises SQLSTATE `54000` without returning a
+successful partial batch. The ticker threshold is not a hard batch-size cap.
+Process the complete successful result before `ack_partitioned`, or use
+`receive_page_partitioned` and committed `ack_page` checkpoints for bounded
+work.
 Grant: `pgque_reader`. Source:
 [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
 
@@ -421,7 +434,7 @@ Its slot and subscription locks use NOWAIT, for ordinary and paged consumers;
 any locked row aborts the whole operation with SQLSTATE `40001` and no changes
 commit. Retry the whole transaction, and pause consumers when reliable removal
 of a busy queue is required.
-Grant: `pgque_admin`. Sources: [`sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/sql/pgque.sql)
+Grant: `pgque_admin`. Sources: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql)
 and [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 
 #### `pgque.set_queue_config(queue text, param text, value text) → integer`

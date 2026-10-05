@@ -4,9 +4,10 @@ description: Preserve per-key order while scaling a PgQue consumer across leased
 ---
 
 Partition keys split one logical consumer into a fixed number of hash slots.
-Events with the same non-null key always route to the same slot, so that slot
-preserves their stream order while different slots can be processed in
-parallel.
+Events with the same non-null key route to the same slot. Within each snapshot
+window, events are ordered by event ID. A lower ID can appear in a later window
+if its producer commits late. This is not global event-ID FIFO or producer
+commit order. Different slots can run in parallel.
 
 This is a SQL-first API. The first-party clients do not yet provide partition
 worker helpers, automatic claim loops, or rebalance logic. Applications call
@@ -15,7 +16,8 @@ slots.
 
 ## Set up every slot before producing
 
-Create the whole logical consumer atomically:
+Create the whole logical consumer atomically. Commit setup before publishing
+events this consumer must receive:
 
 ```sql
 select pgque.create_queue('orders');
@@ -26,7 +28,7 @@ select pgque.subscribe_partitioned(
 );
 ```
 
-`subscribe_partitioned` pins `n` for `(queue_name, consumer)` and creates all
+`subscribe_partitioned` pins `n` (1–256) for `(queue_name, consumer)` and creates all
 `n` engine subscriptions plus their lease rows at one shared starting tick.
 The call is transactional: it creates the complete set or nothing. Repeating
 the call with the same `n` is idempotent and does not reposition any cursor.
@@ -134,10 +136,12 @@ polling and succeeds only for the owner. It is allowed only at a batch boundary:
 ack the open batch first. A crashed worker should not release; expiry is the
 recovery path.
 
-As with normal `receive`, `max_return` limits rows returned, but
-`ack_partitioned` finishes the whole underlying tick batch. Use a value at least
-as large as `ticker_max_count` (500 by default), or otherwise guarantee that
-the full batch was returned, before acknowledging it.
+As with normal `receive`, `max_return` is a complete-batch safety ceiling, not
+a page size. Overflow raises SQLSTATE `54000`; it does not return a successful
+partial batch. The ticker threshold (500 by default) does not cap batch size.
+Choose a resource-safe ceiling and process the complete successful result
+before acknowledging it. For bounded work, use `receive_page_partitioned` and
+committed `ack_page` checkpoints. See [Bounded batch processing](paged-batches.md).
 
 ## Lease expiry, renewal, and fencing
 
@@ -198,8 +202,8 @@ replay or compensate from an application source of truth. Unsubscribing every
 remaining slot and calling `subscribe_partitioned` again is safe only before
 new required events are produced; it creates a new cursor at the latest tick.
 
-To change `n`, fully remove the old logical consumer and atomically subscribe a
-new one during a controlled production pause. Repartitioning changes the hash
+To change `n`, remove the old logical consumer with `unsubscribe_partitioned`
+and atomically subscribe a new one during a controlled production pause. Repartitioning changes the hash
 mapping, so do not run old and new slot counts as one logical ordered consumer.
 
 For all signatures, defaults, and grants, see the
