@@ -279,14 +279,20 @@ jobs:
             echo 'FAIL: dependent alpha function was replaced'
             exit 1
           fi
-          grep -F 'PostgreSQL cannot rename input parameters in place' /tmp/alpha-blocked.log
+          grep -F 'cannot stabilize named arguments for pgque.send(text,text,jsonb,text) because dependent objects exist:' /tmp/alpha-blocked.log || {
+            cat /tmp/alpha-blocked.log
+            exit 1
+          }
           psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_blocked_assertions.sql
           psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_oversized_fixture.sql
           if psql "${psql_args[@]}" --single-transaction -f devel/sql/pgque.sql > /tmp/alpha-cap.log 2>&1; then
             echo 'FAIL: oversized alpha topology was accepted'
             exit 1
           fi
-          grep -F 'cannot upgrade partitioned consumer oversized-workers on queue upgrade_v03_oversized_q with n=257' /tmp/alpha-cap.log
+          grep -F 'cannot apply the 256-slot cap: partitioned consumer oversized-workers on queue upgrade_v03_oversized_q has n=257;' /tmp/alpha-cap.log || {
+            cat /tmp/alpha-cap.log
+            exit 1
+          }
           psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_oversized_assertions.sql
 
       - name: Upgrade to HEAD
