@@ -4,6 +4,7 @@ from functools import partial
 import pytest
 
 from pgque import PgqueClient
+from pgque.errors import PgqueError
 
 
 def test_page_live_round_trip(conn, setup_queue):
@@ -82,3 +83,78 @@ def test_page_live_round_trip(conn, setup_queue):
                        "(select queue_id from pgque.queue where queue_name = %s)",
                        (queue,)).fetchone()
     assert row[0] == max_id
+
+
+def test_page_mode_adapters(conn, setup_queue):
+    queue, consumer = setup_queue
+    conn.autocommit = True
+    client = PgqueClient(conn)
+    coop, member, coop_worker = consumer + "_group", "member-one", "coop-process"
+    partitioned, partition_worker = consumer + "_partitioned", "partition-process"
+    conn.execute("select pgque.register_subconsumer(%s,%s,%s)",
+                 (queue, coop, member))
+    conn.execute("select pgque.subscribe_partitioned(%s,%s,3)", (queue, partitioned))
+    epoch = conn.execute(
+        "select pgque.claim_slot(%s,%s,2,%s,interval '3 minutes')",
+        (queue, partitioned, partition_worker),
+    ).fetchone()[0]
+    assert epoch is not None
+    keys = {
+        slot: conn.execute(
+            "select 'adapter-key-' || i from generate_series(1,1000) as i "
+            "where (hashtextextended('adapter-key-' || i,0) %% 3 + 3) %% 3 = %s "
+            "order by i limit 1", (slot,),
+        ).fetchone()[0]
+        for slot in (0, 2)
+    }
+    payloads = ["target-first", "other-slot", "target-last"]
+    event_keys = [keys[2], keys[0], keys[2]]
+    ids = [
+        conn.execute("select pgque.send(%s,'adapter.mode',%s::text,%s::text)",
+                     (queue, payload, key)).fetchone()[0]
+        for payload, key in zip(payloads, event_keys)
+    ]
+    client.force_next_tick(queue)
+    client.ticker(queue)
+
+    def check_page(page, indexes):
+        assert page.status == "page" and page.page_token
+        assert page.batch_id is not None and page.page_number == 1
+        assert page.is_last and page.lease_until is not None
+        assert [m.msg_id for m in page.messages] == [ids[i] for i in indexes]
+        assert [m.payload for m in page.messages] == [payloads[i] for i in indexes]
+        assert [m.extra1 for m in page.messages] == [event_keys[i] for i in indexes]
+        assert all(m.batch_id == page.batch_id and m.type == "adapter.mode"
+                   for m in page.messages)
+
+    def check_ack(page, worker):
+        with pytest.raises(PgqueError, match="wrong worker"):
+            client.ack_page(page.page_token, "not-the-owner")
+        assert client.ack_page(page.page_token, worker) == ("acked", True)
+        assert client.ack_page(page.page_token, worker) == ("already_acked", True)
+
+    page = client.receive_page_coop(
+        queue, coop, member, coop_worker, page_size=3,
+        dead_interval=None, lease="3 minutes",
+    )
+    check_page(page, [0, 1, 2])
+    assert page.fence_epoch is None
+    check_ack(page, coop_worker)
+    empty = client.receive_page_coop(
+        queue, coop, member, coop_worker, page_size=3,
+        dead_interval="5 minutes", lease="3 minutes",
+    )
+    assert empty.status in ("idle", "advanced") and empty.messages == []
+    assert empty.page_token is None
+
+    page = client.receive_page_partitioned(
+        queue, partitioned, 2, 3, partition_worker, page_size=2,
+    )
+    check_page(page, [0, 2])
+    assert page.fence_epoch == epoch
+    check_ack(page, partition_worker)
+    empty = client.receive_page_partitioned(
+        queue, partitioned, 2, 3, partition_worker, page_size=2,
+    )
+    assert empty.status in ("idle", "advanced") and empty.messages == []
+    assert empty.page_token is None

@@ -99,12 +99,12 @@ begin
   raise notice 'PASS: idempotency TTL starts at send time, not transaction start';
 end $$;
 
--- Infinite TTLs create claims that maintenance can never reclaim (PG19+).
+-- Infinite TTLs create claims that maintenance can never reclaim (PG17+).
 do $$
 declare
   v_raised boolean := false;
 begin
-  if current_setting('server_version_num')::int >= 190000 then
+  if current_setting('server_version_num')::int >= 170000 then
     begin
       execute $q$
         select * from pgque.send_idem(

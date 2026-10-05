@@ -56,6 +56,11 @@ jobs:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
         run: bash tests/two_session_idem_ttl.sh
 
+      - name: Run idempotency cleanup lock-wait regression
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: python3 tests/two_session_idem_maintenance.py
+
       - name: Run partition release fencing regression
         env:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
@@ -103,12 +108,12 @@ jobs:
         run: |
           # A dependent monitoring view must survive a development reinstall.
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -c 'create view public.partition_status_dependency as select * from pgque.partition_slot_status'
+            -v ON_ERROR_STOP=1 -c 'create view public.partition_status_dependency as select * from pgque.partition_slot_status; grant select on public.partition_status_dependency to pgque_reader'
           # Re-run install -- should produce no errors
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -c 'select count(*) from public.partition_status_dependency; drop view public.partition_status_dependency'
+            -v ON_ERROR_STOP=1 -c 'set role pgque_reader; select count(*) from public.partition_status_dependency; reset role; drop view public.partition_status_dependency'
           # Verify everything still works
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
@@ -202,8 +207,8 @@ jobs:
         if: always()
         run: docker rm -f pgque-stable-smoke
 
-  upgrade-v0-1-to-head:
-    name: upgrade v0.1.0 to HEAD (PG ${{ matrix.pg_version }})
+  upgrade-released-to-head:
+    name: upgrade v${{ matrix.from_version }} to HEAD (PG ${{ matrix.pg_version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -211,6 +216,7 @@ jobs:
         # Upgrade coverage uses oldest/newest supported PG endpoints; the main
         # regression matrix above covers every supported version (14–19).
         pg_version: ['19beta1', '14']
+        from_version: ['0.1.0', '0.2.1', '0.2.2']
 
     steps:
       - uses: actions/checkout@v4
@@ -244,18 +250,23 @@ jobs:
       - name: Build HEAD pgque
         run: bash build/transform.sh
 
-      - name: Install v0.1.0
+      - name: Install released v${{ matrix.from_version }}
         run: |
           set -Eeuo pipefail
-          git show v0.1.0:sql/pgque.sql > /tmp/pgque-v0.1.0.sql
+          git show "v${{ matrix.from_version }}:sql/pgque.sql" > /tmp/pgque-released.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f /tmp/pgque-v0.1.0.sql
+            -v ON_ERROR_STOP=1 -f /tmp/pgque-released.sql
 
-      - name: Prepare v0.1.0 fixture
+      - name: Prepare populated released-version fixture
         run: |
           set -Eeuo pipefail
+          if [[ '${{ matrix.from_version }}' = '0.1.0' ]]; then
+            fixture=tests/test_upgrade_v0_1_fixture.sql
+          else
+            fixture=tests/test_upgrade_modern_fixture.sql
+          fi
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_fixture.sql
+            -v ON_ERROR_STOP=1 -f "$fixture"
 
       - name: Upgrade to HEAD
         run: |
@@ -266,8 +277,14 @@ jobs:
       - name: Verify upgraded state
         run: |
           set -Eeuo pipefail
+          expected_version="$(awk '/^-- Version:/ {print $3; exit}' devel/sql/pgque.sql)"
+          if [[ '${{ matrix.from_version }}' = '0.1.0' ]]; then
+            assertions=tests/test_upgrade_v0_1_assertions.sql
+          else
+            assertions=tests/test_upgrade_modern_assertions.sql
+          fi
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_assertions.sql
+            -v ON_ERROR_STOP=1 -v expected_version="$expected_version" -f "$assertions"
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_security_public_execute.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \

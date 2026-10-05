@@ -54,10 +54,10 @@ process events in parallel.
   trust boundary. So the lease is **load-bearing for G2**, not
   distribution polish. If a leaseholder's worker dies mid-batch, the lease expires
   after its TTL; the successor takes over (epoch bump) and is re-issued the same
-  still-open batch — at-least-once, with possible transient overlap with a zombie
-  for at most the remaining TTL; the zombie's next `receive`/`ack` raises on the
-  epoch/owner mismatch instead of silently double-acking (fenced). Handlers must
-  tolerate redelivery.
+  still-open batch — at-least-once. Lease expiry does not stop the old handler;
+  side effects can overlap with the successor for an unbounded time. The old
+  worker's next guarded `receive`/`ack` fails after takeover (fenced). External
+  effects need application-level idempotency or an enforced epoch fence.
 - **G3 — failure boundary (Phase 2 / `pause`).** Under `pause`, no later event of
   `K` is delivered until `K`'s failed head event is acked or dead-lettered, and
   after it resolves the deferred events deliver in `ev_id` order, exactly once.
@@ -576,10 +576,11 @@ ordinary consumer that merely shares the name shape (`"C#k/N"`, creatable on
 older installs) is never attributed to the slot. Reading lease
 columns rather than `pg_locks` means
 the view **works through poolers** (a backend pid behind PgBouncer was meaningless
-anyway). Zombie caveat: lease-expiry ≠ process-death, so a partitioned worker can
-still emit side effects until the TTL lapses while the successor is re-issued the
-same open batch — bounded by the TTL and fenced by `epoch` (`claim_slot`
-returns it so handlers can stamp it, §8).
+anyway). Lease expiry is not process termination. An old worker can keep emitting
+external side effects after expiry while the successor receives the same open
+batch. TTL does not bound that overlap. `claim_slot` returns an epoch (§8), but
+the side-effect system must enforce that fence; stamping an epoch alone is not
+sufficient. Handlers must tolerate redelivery.
 
 **Works through a transaction-mode pooler (matters for the transaction-pooler ICP).** Every
 lease operation — `claim_slot`, `release_slot`, and the renewals inside

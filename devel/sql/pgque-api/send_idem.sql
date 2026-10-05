@@ -180,7 +180,9 @@ begin
     end if;
 
     delete from pgque.idem k
-    where (k.queue_id, k.idem_key) in (
+    -- Recheck the current tuple after a concurrent takeover's row-lock wait.
+    where k.expires_at < clock_timestamp()
+      and (k.queue_id, k.idem_key) in (
         select d.queue_id, d.idem_key
         from pgque.idem d
         where d.queue_id = v_queue_id
@@ -204,7 +206,9 @@ declare
     v_deleted integer;
 begin
     delete from pgque.idem k
-    where (k.queue_id, k.idem_key) in (
+    -- Recheck the current tuple after a concurrent takeover's row-lock wait.
+    where k.expires_at < clock_timestamp()
+      and (k.queue_id, k.idem_key) in (
         select d.queue_id, d.idem_key
         from pgque.idem d
         where d.expires_at < clock_timestamp()

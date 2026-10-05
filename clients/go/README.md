@@ -115,6 +115,11 @@ _, err = client.Ticker(ctx, "orders")
 
 ## Paged batches
 
+Paging requires this candidate's SDK source and the generated development SQL
+installer, `devel/sql/pgque.sql`. The released v0.2.2 module and the frozen
+`sql/pgque.sql` installer do not contain these APIs. Build and test the SDK from
+`clients/go` until a matching release is published.
+
 Use `ReceivePage`, `ReceivePageCoop`, or `ReceivePagePartitioned` to receive a
 durable page, then `AckPage` or `RenewPage`. `ProcessPage` runs a handler for
 each message and acknowledges only after every handler returns `nil`; a

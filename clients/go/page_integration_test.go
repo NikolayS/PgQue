@@ -3,11 +3,13 @@ package pgque_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	pgque "github.com/NikolayS/pgque-go"
 	"os"
 	"testing"
 	"time"
+
+	pgque "github.com/NikolayS/pgque-go"
 )
 
 func TestPageLiveRoundTrip(t *testing.T) {
@@ -105,5 +107,120 @@ now(),0,'page.live','{"i":"max"}',null,null,null,null)`, q, c, maxID); err != ni
 	p, err = client.ReceivePage(ctx, q, c, w, 2, time.Minute)
 	if err != nil || (p.Status != "idle" && p.Status != "advanced") || len(p.Messages) != 0 || p.PageToken != nil {
 		t.Fatalf("bad idle: %#v %v", p, err)
+	}
+}
+
+func TestPageModeAdapters(t *testing.T) {
+	dsn := os.Getenv("PGQUE_TEST_DSN")
+	if dsn == "" {
+		t.Skip("PGQUE_TEST_DSN not set")
+	}
+	ctx := context.Background()
+	client, err := pgque.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	queue := fmt.Sprintf("page_modes_%d", time.Now().UnixNano())
+	coop, member, coopWorker := queue+"_group", "member-one", "coop-process"
+	partitioned, partitionWorker := queue+"_partitioned", "partition-process"
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := client.Pool().Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec("select pgque.create_queue($1)", queue)
+	defer func() {
+		if _, err := client.Pool().Exec(ctx, "select pgque.drop_queue($1,true)", queue); err != nil {
+			t.Errorf("mode queue cleanup: %v", err)
+		}
+	}()
+	exec("select pgque.register_subconsumer($1,$2,$3)", queue, coop, member)
+	exec("select pgque.subscribe_partitioned($1,$2,3)", queue, partitioned)
+	var epoch int64
+	if err := client.Pool().QueryRow(ctx,
+		"select pgque.claim_slot($1,$2,2,$3,interval '3 minutes')",
+		queue, partitioned, partitionWorker).Scan(&epoch); err != nil {
+		t.Fatal(err)
+	}
+	keys := make(map[int]string)
+	for _, slot := range []int{0, 2} {
+		var key string
+		if err := client.Pool().QueryRow(ctx, `select 'adapter-key-' || i
+from generate_series(1,1000) as i
+where (hashtextextended('adapter-key-' || i,0) % 3 + 3) % 3 = $1
+order by i limit 1`, slot).Scan(&key); err != nil {
+			t.Fatal(err)
+		}
+		keys[slot] = key
+	}
+	payloads := []string{"target-first", "other-slot", "target-last"}
+	eventKeys := []string{keys[2], keys[0], keys[2]}
+	ids := make([]int64, len(payloads))
+	for i, payload := range payloads {
+		if err := client.Pool().QueryRow(ctx,
+			"select pgque.send($1,'adapter.mode',$2::text,$3::text)",
+			queue, payload, eventKeys[i]).Scan(&ids[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec("select pgque.force_next_tick($1)", queue)
+	exec("select pgque.ticker($1)", queue)
+	checkPage := func(page pgque.Page, indexes []int) {
+		t.Helper()
+		if page.Status != "page" || page.PageToken == nil || *page.PageToken == "" ||
+			page.BatchID == nil || page.PageNumber == nil || *page.PageNumber != 1 ||
+			page.IsLast == nil || !*page.IsLast || page.LeaseUntil == nil || len(page.Messages) != len(indexes) {
+			t.Fatalf("bad mode page: %#v", page)
+		}
+		for i, index := range indexes {
+			m := page.Messages[i]
+			if m.MsgID != ids[index] || m.BatchID != *page.BatchID || m.Type != "adapter.mode" ||
+				m.Payload != payloads[index] || m.Extra1 == nil || *m.Extra1 != eventKeys[index] {
+				t.Fatalf("wrong mode message %d: %#v", i, m)
+			}
+		}
+	}
+	checkAck := func(page pgque.Page, worker string) {
+		t.Helper()
+		_, err := client.AckPage(ctx, *page.PageToken, "not-the-owner", nil)
+		var sqlErr *pgque.SQLError
+		if !errors.As(err, &sqlErr) || sqlErr.SQLSTATE != "PQP01" {
+			t.Fatalf("wrong-owner ack error: %v", err)
+		}
+		for _, status := range []string{"acked", "already_acked"} {
+			ack, err := client.AckPage(ctx, *page.PageToken, worker, nil)
+			if err != nil || ack.Status != status || !ack.BatchFinished {
+				t.Fatalf("mode ack/replay: %#v %v", ack, err)
+			}
+		}
+	}
+	page, err := client.ReceivePageCoop(ctx, queue, coop, member, coopWorker, 3, nil, 3*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkPage(page, []int{0, 1, 2})
+	if page.FenceEpoch != nil {
+		t.Fatalf("cooperative page has partition epoch: %v", *page.FenceEpoch)
+	}
+	checkAck(page, coopWorker)
+	deadInterval := 5 * time.Minute
+	empty, err := client.ReceivePageCoop(ctx, queue, coop, member, coopWorker, 3, &deadInterval, 3*time.Minute)
+	if err != nil || (empty.Status != "idle" && empty.Status != "advanced") || len(empty.Messages) != 0 || empty.PageToken != nil {
+		t.Fatalf("bad cooperative empty response: %#v %v", empty, err)
+	}
+	page, err = client.ReceivePagePartitioned(ctx, queue, partitioned, 2, 3, partitionWorker, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkPage(page, []int{0, 2})
+	if page.FenceEpoch == nil || *page.FenceEpoch != epoch {
+		t.Fatalf("partition epoch not decoded: %#v, expected %d", page.FenceEpoch, epoch)
+	}
+	checkAck(page, partitionWorker)
+	empty, err = client.ReceivePagePartitioned(ctx, queue, partitioned, 2, 3, partitionWorker, 2)
+	if err != nil || (empty.Status != "idle" && empty.Status != "advanced") || len(empty.Messages) != 0 || empty.PageToken != nil {
+		t.Fatalf("bad partition empty response: %#v %v", empty, err)
 	}
 }

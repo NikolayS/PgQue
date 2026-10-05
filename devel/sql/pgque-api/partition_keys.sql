@@ -963,7 +963,8 @@ left join pgque.partition_slot as ps
     and ps.slot = gs.slot
 left join pgque.consumer as c
     on ps.slot is not null
-    and c.co_name = pgque._slot_name(pc.co_name, gs.slot, pc.n)
+    -- View callers have no EXECUTE grant on the private naming helper.
+    and c.co_name = pc.co_name || '#' || gs.slot::text || '/' || pc.n::text
 left join pgque.subscription as s
     on s.sub_queue = pc.queue_id
     and s.sub_consumer = c.co_id

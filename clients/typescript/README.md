@@ -93,6 +93,11 @@ match Postgres `bigint` losslessly.
 
 ## Paged batches
 
+Paging requires this candidate's SDK source and the generated development SQL
+installer, `devel/sql/pgque.sql`. The released 0.2.2 package and the frozen
+`sql/pgque.sql` installer do not contain these APIs. Build and test the SDK from
+`clients/typescript` until a matching release is published.
+
 Use `receivePage`, `receivePageCoop`, or `receivePagePartitioned` to receive a
 durable page, then `ackPage` or `renewPage`. `processPage` runs a handler for
 each message and acknowledges only after every handler completes. A handler

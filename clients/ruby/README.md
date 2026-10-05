@@ -107,6 +107,11 @@ own).
 
 ## Paged batches
 
+Paging requires this candidate's SDK source and the generated development SQL
+installer, `devel/sql/pgque.sql`. The frozen `sql/pgque.sql` installer does not
+contain these APIs. Build and test the SDK from `clients/ruby` and use a matching
+SQL release when the candidate is published.
+
 Use `receive_page`, `receive_page_coop`, or `receive_page_partitioned` to
 receive a durable page, then `ack_page` or `renew_page`. `process_page` runs a
 handler for each message and acknowledges only after every handler completes.

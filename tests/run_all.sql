@@ -154,6 +154,9 @@
 \echo 'Running: test_partition_slot_limit'
 \i tests/test_partition_slot_limit.sql
 
+\echo 'Running: test_partition_status_roles'
+\i tests/test_partition_status_roles.sql
+
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
 
