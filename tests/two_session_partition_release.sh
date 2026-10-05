@@ -16,6 +16,16 @@ if [[ -z "${PGQUE_TEST_DSN:-}" ]]; then
 fi
 
 psql_base=(psql --no-psqlrc -X -v ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
+
+# Refuse the database before arming any mutating cleanup.
+database_name="$("${psql_base[@]}" -qAtc 'select current_database()')"
+if [[ ! "${database_name}" =~ (^|_)test($|_) ]] \
+   && [[ "${PGQUE_ALLOW_TEST_MUTATION:-}" != "1" ]]; then
+  echo "FAIL: refusing concurrency test mutations in database '${database_name}'" >&2
+  echo "      use a database name containing 'test' or set PGQUE_ALLOW_TEST_MUTATION=1" >&2
+  exit 2
+fi
+
 run_id="${$}_$(date +%s)"
 legacy_queue="partition_release_legacy_${run_id}"
 open_page_queue="partition_release_page_open_${run_id}"
@@ -36,6 +46,9 @@ cleanup() {
   rm -rf "${workdir}"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 sql_value() {
   "${psql_base[@]}" -qAtc "$1"
@@ -46,12 +59,20 @@ setup_queue() {
   local event_count=$2
   local i
   sql_value "select pgque.create_queue('${queue_name}');
+             update pgque.queue set queue_ticker_paused = true
+             where queue_name = '${queue_name}';
              select pgque.subscribe_slot('${queue_name}', 'workers', 0, 1);" >/dev/null
   for ((i = 1; i <= event_count; i++)); do
     sql_value "select pgque.send('${queue_name}', 'event',
                  jsonb_build_object('n', ${i}), 'partition-key');" >/dev/null
   done
-  sql_value "select pgque.force_next_tick('${queue_name}'); select pgque.ticker();" >/dev/null
+  # Other backends always see a paused queue; only this transaction ticks it.
+  sql_value "do \$\$ begin
+    update pgque.queue set queue_ticker_paused = false where queue_name = '${queue_name}';
+    perform pgque.force_next_tick('${queue_name}');
+    assert pgque.ticker('${queue_name}') is not null, 'expected a new snapshot tick';
+    update pgque.queue set queue_ticker_paused = true where queue_name = '${queue_name}';
+  end \$\$;" >/dev/null
   sql_value "select pgque.claim_slot('${queue_name}', 'workers', 0, 'owner', interval '1 minute');" >/dev/null
 }
 
@@ -75,7 +96,7 @@ expect_release_fenced() {
   local label=$2
   local out_file="${workdir}/${label}.out"
   local err_file="${workdir}/${label}.err"
-  local status
+  local status successor_epoch
 
   set +e
   "${psql_base[@]}" -qAtc \
@@ -98,7 +119,10 @@ expect_release_fenced() {
   # Restore ownership after a RED implementation released it, then prove a
   # separate successor backend cannot claim while the owner is live.
   sql_value "select pgque.claim_slot('${queue_name}', 'workers', 0, 'owner', interval '1 minute');" >/dev/null
-  if [[ -n "$(sql_value "select pgque.claim_slot('${queue_name}', 'workers', 0, 'successor', interval '1 minute')")" ]]; then
+  if ! successor_epoch="$(sql_value "select pgque.claim_slot('${queue_name}', 'workers', 0, 'successor', interval '1 minute')")"; then
+    echo "FAIL: ${label}: successor claim SQL failed" >&2
+    failures=$((failures + 1))
+  elif [[ -n "${successor_epoch}" ]]; then
     echo "FAIL: ${label}: successor claimed before the batch boundary" >&2
     failures=$((failures + 1))
   else

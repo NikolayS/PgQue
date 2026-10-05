@@ -5476,7 +5476,7 @@ begin
             using errcode = '55000';
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /* Clear delivery state without discarding the most recent ack receipt. */
 create or replace function pgque._clear_paged_active(
@@ -5507,7 +5507,7 @@ begin
         queue_id = i_queue_id
         and consumer_id = i_consumer_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /*
  * Move only active cooperative progress. The destination and victim receipts
@@ -5575,7 +5575,7 @@ begin
         i_victim_consumer_id
     );
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._assert_unpaged(bigint)
     from public, pgque_reader, pgque_writer, pgque_admin;
@@ -7805,6 +7805,7 @@ declare
     v_queue_id int4;
     v_n int4;
     v_start_tick bigint;
+    v_created boolean;
     v_complete_slots int4;
     v_registered int4;
     v_slot int4;
@@ -7832,20 +7833,26 @@ begin
 
     /*
      * ON CONFLICT waits for a concurrent creator. The follow-up row lock makes
-     * complete-state inspection serialize with subscribe_slot and another
-     * subscribe_partitioned call for the same logical consumer.
+     * complete-state inspection serialize with other lifecycle calls. If
+     * teardown removed the conflicting row, retry creation at a fresh snapshot.
      */
-    insert into pgque.partition_consumer (queue_id, co_name, n)
-    values (v_queue_id, i_consumer, i_n)
-    on conflict (queue_id, co_name) do nothing
-    returning n into v_n;
-    if not found then
+    loop
+        insert into pgque.partition_consumer (queue_id, co_name, n)
+        values (v_queue_id, i_consumer, i_n)
+        on conflict (queue_id, co_name) do nothing
+        returning n into v_n;
+        v_created := found;
+        exit when v_created;
+
         select pc.n into v_n
         from pgque.partition_consumer as pc
         where pc.queue_id = v_queue_id
           and pc.co_name = i_consumer
         for no key update;
+        exit when found;
+    end loop;
 
+    if not v_created then
         if v_n <> i_n then
             raise exception 'consumer % on queue % is pinned to n=%; got n=% (tear down with pgque.unsubscribe_partitioned() to change the slot count)',
                 i_consumer, i_queue, v_n, i_n;
@@ -8641,11 +8648,12 @@ begin
             i_queue, i_type, i_payload, i_partition_key, i_idem_key,
             null, null);
 
-        -- Record the id for later dedup responses (contention-free: this
-        -- transaction already holds the row lock, invisible to others until
-        -- the claim+append pair commits).
+        /* Finalize the TTL after the claim and append. INSERT values can
+           precede a uniqueness wait whose conflicting row disappears;
+           that successful INSERT never evaluates the ON CONFLICT update. */
         update pgque.idem k
-        set event_id = v_event_id
+        set event_id = v_event_id,
+            expires_at = clock_timestamp() + i_ttl
         where k.queue_id = v_queue_id
           and k.idem_key = i_idem_key;
 
@@ -8795,7 +8803,7 @@ exception
     when unique_violation then
         return 0;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.event_retry(
     x_batch_id bigint,
@@ -8915,7 +8923,7 @@ begin
         perform pgque._event_retry_core(
             i_batch_id,
             v_event.ev_id,
-            current_timestamp + i_retry_after
+            clock_timestamp() + i_retry_after
         );
     end if;
     return 1;
@@ -8923,7 +8931,7 @@ exception
     when no_data_found then
         raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /* Preserve register_consumer_at(), except a real cursor move cannot erase a page. */
 create or replace function pgque.register_consumer_at(
@@ -9065,6 +9073,12 @@ begin
     end if;
     if x_force then
         begin
+            /* Lifecycle calls lock parents before slots. Take the eventual
+               cascade-delete locks now, while NOWAIT can reject a busy queue. */
+            perform 1 from pgque.partition_consumer
+            where queue_id = v_queue.queue_id
+            order by co_name
+            for update nowait;
             perform 1 from pgque.partition_slot
             where queue_id = v_queue.queue_id
             order by co_name, slot
@@ -9173,7 +9187,7 @@ begin
             v_ev.ev_extra2, v_ev.ev_extra3, v_ev.ev_extra4)::pgque.message;
     end loop;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Allocators already hold the subscription lock (and slot lock if applicable).
 create or replace function pgque._receive_page(
@@ -9292,7 +9306,7 @@ begin
     v_result.messages := v_messages;
     return v_result;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._validate_page_args(
     i_queue text, i_consumer text, i_worker text, i_size int4, i_lease interval)
@@ -9311,7 +9325,7 @@ begin
 exception when datetime_field_overflow then
     raise exception 'lease out of range' using errcode = '22023';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_page(
     i_queue text, i_consumer text, i_worker text,
@@ -9328,7 +9342,7 @@ begin
     from pgque._next_batch_custom(i_queue, i_consumer, null, null, null, true);
     return pgque._receive_page(v_batch, 'normal', i_worker, i_page_size, i_lease);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_page_coop(
     i_queue text, i_consumer text, i_subconsumer text, i_worker text,
@@ -9346,7 +9360,7 @@ begin
         i_queue, i_consumer, i_subconsumer, null, null, null, i_dead_interval, true);
     return pgque._receive_page(v_batch, 'coop', i_worker, i_page_size, i_lease);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_page_partitioned(
     i_queue text, i_consumer text, i_slot int4, i_n int4, i_worker text,
@@ -9363,7 +9377,7 @@ begin
     return pgque._receive_page(v_batch, 'partition', i_worker, i_page_size,
         null, i_consumer, i_slot, i_n);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Route without locks, then slot -> subscription -> page. Re-read after locks.
 -- Receipt-only inactive rows have no slot context and need no slot lock.
@@ -9402,7 +9416,7 @@ begin
     end if;
     return v_state;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._validate_pending_page(
     i_state pgque.page_state, i_token uuid, i_worker text)
@@ -9424,7 +9438,7 @@ begin
         raise exception 'page partition epoch fenced' using errcode = 'PQP01';
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.renew_page(i_page_token uuid, i_worker text)
 returns timestamptz as $$
@@ -9448,7 +9462,7 @@ begin
     where sub_queue = v_state.queue_id and sub_consumer = v_state.consumer_id;
     return v_until;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._page_failures(i_failures jsonb)
 returns jsonb as $$
@@ -9496,7 +9510,7 @@ begin
 exception when numeric_value_out_of_range or invalid_text_representation then
     raise exception 'failure number out of range' using errcode = '22023';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.ack_page(
     i_page_token uuid, i_worker text, i_failures jsonb default '[]')
@@ -9564,7 +9578,7 @@ begin
     end if;
     return query select 'acked'::text, v_state.pending_final;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._page_messages(pgque.page_state, int4),
     pgque._receive_page(bigint, text, text, int4, interval, text, int4, int4),
