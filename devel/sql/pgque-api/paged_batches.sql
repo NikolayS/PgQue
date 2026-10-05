@@ -51,7 +51,7 @@ begin
             v_ev.ev_extra2, v_ev.ev_extra3, v_ev.ev_extra4)::pgque.message;
     end loop;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Allocators already hold the subscription lock (and slot lock if applicable).
 create or replace function pgque._receive_page(
@@ -170,7 +170,7 @@ begin
     v_result.messages := v_messages;
     return v_result;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._validate_page_args(
     i_queue text, i_consumer text, i_worker text, i_size int4, i_lease interval)
@@ -189,7 +189,7 @@ begin
 exception when datetime_field_overflow then
     raise exception 'lease out of range' using errcode = '22023';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_page(
     i_queue text, i_consumer text, i_worker text,
@@ -206,7 +206,7 @@ begin
     from pgque._next_batch_custom(i_queue, i_consumer, null, null, null, true);
     return pgque._receive_page(v_batch, 'normal', i_worker, i_page_size, i_lease);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_page_coop(
     i_queue text, i_consumer text, i_subconsumer text, i_worker text,
@@ -224,7 +224,7 @@ begin
         i_queue, i_consumer, i_subconsumer, null, null, null, i_dead_interval, true);
     return pgque._receive_page(v_batch, 'coop', i_worker, i_page_size, i_lease);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_page_partitioned(
     i_queue text, i_consumer text, i_slot int4, i_n int4, i_worker text,
@@ -241,7 +241,7 @@ begin
     return pgque._receive_page(v_batch, 'partition', i_worker, i_page_size,
         null, i_consumer, i_slot, i_n);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Route without locks, then slot -> subscription -> page. Re-read after locks.
 -- Receipt-only inactive rows have no slot context and need no slot lock.
@@ -280,7 +280,7 @@ begin
     end if;
     return v_state;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._validate_pending_page(
     i_state pgque.page_state, i_token uuid, i_worker text)
@@ -302,7 +302,7 @@ begin
         raise exception 'page partition epoch fenced' using errcode = 'PQP01';
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.renew_page(i_page_token uuid, i_worker text)
 returns timestamptz as $$
@@ -326,7 +326,7 @@ begin
     where sub_queue = v_state.queue_id and sub_consumer = v_state.consumer_id;
     return v_until;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._page_failures(i_failures jsonb)
 returns jsonb as $$
@@ -374,7 +374,7 @@ begin
 exception when numeric_value_out_of_range or invalid_text_representation then
     raise exception 'failure number out of range' using errcode = '22023';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.ack_page(
     i_page_token uuid, i_worker text, i_failures jsonb default '[]')
@@ -442,7 +442,7 @@ begin
     end if;
     return query select 'acked'::text, v_state.pending_final;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._page_messages(pgque.page_state, int4),
     pgque._receive_page(bigint, text, text, int4, interval, text, int4, int4),
