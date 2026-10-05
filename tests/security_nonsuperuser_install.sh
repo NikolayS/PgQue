@@ -8,8 +8,11 @@ set -Eeuo pipefail
 #   PGQUE_TEST_SUPERUSER_DSN='dbname=postgres user=postgres' \
 #     tests/security_nonsuperuser_install.sh
 #
-# The superuser connection creates disposable roles and two databases. Each
-# install runs with SET ROLE as a non-superuser owner without app-role grants.
+# The superuser connection creates disposable roles, two databases, and any
+# missing pgque_* app-role fixtures. Each SQL install runs with SET ROLE as a
+# non-superuser owner without app-role grants. App-role bootstrap is separate:
+# PostgreSQL 16+ gives a non-superuser role creator automatic ADMIN membership,
+# which would invalidate this test's membership-independent ownership proof.
 # Bare reader/writer roles must complete keyed delivery but cannot read slot
 # catalogs or call the admin-only get_batch_cursor overloads directly.
 #
@@ -41,10 +44,8 @@ cleanup() {
   local stmt failed=0
   # One psql call per statement: DROP DATABASE refuses to run inside the
   # implicit transaction a multi-statement -c would create, and one failing
-  # drop must not abort the rest. Best-effort: on a cluster where the pgque_*
-  # roles did not pre-exist, the installer created them and (on PG16+) is
-  # recorded as grantor of their memberships, which can block DROP ROLE --
-  # warn, don't fail the run over cleanup.
+  # drop must not abort the rest. Leave the cluster-wide pgque_* app roles
+  # intact for other databases; only the named disposable fixtures are ours.
   for stmt in \
     "drop database if exists ${db_main} with (force)" \
     "drop database if exists ${db_negctl} with (force)" \
@@ -83,11 +84,11 @@ run_step() {
 }
 
 # --- 1. bootstrap: roles + installer-owned databases (superuser) ------------
-# If the cluster-wide pgque_* roles pre-exist (created by an earlier install),
-# make sure the admin memberships the install script conditionally grants are
-# already in place -- a non-superuser installer cannot grant membership in
-# roles it does not administer. On a fresh cluster the installer CREATES the
-# roles itself (that is what CREATEROLE is for) and the grants are its own.
+# Create missing app-role fixtures as superuser so the install owner has no
+# app-role membership on fresh clusters either. Do not revoke creator grants:
+# their dependent grants could change the role hierarchy we intend to test.
+# Preserve existing roles and ensure the hierarchy expected by the installer.
+# This tests SQL installation and co-ownership, not app-role creation rights.
 cat >"${workdir}/00_bootstrap.sql" <<SQL
 create role ${installer} createrole;
 create role ${other_owner};
@@ -95,13 +96,20 @@ create role ${reader_app};
 create role ${writer_app};
 do \$\$
 begin
-  if exists (select 1 from pg_roles where rolname = 'pgque_admin') then
-    if not pg_has_role('pgque_admin', 'pgque_reader', 'member') then
-      grant pgque_reader to pgque_admin;
-    end if;
-    if not pg_has_role('pgque_admin', 'pgque_writer', 'member') then
-      grant pgque_writer to pgque_admin;
-    end if;
+  if not exists (select 1 from pg_roles where rolname = 'pgque_reader') then
+    create role pgque_reader;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'pgque_writer') then
+    create role pgque_writer;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'pgque_admin') then
+    create role pgque_admin;
+  end if;
+  if not pg_has_role('pgque_admin', 'pgque_reader', 'member') then
+    grant pgque_reader to pgque_admin;
+  end if;
+  if not pg_has_role('pgque_admin', 'pgque_writer', 'member') then
+    grant pgque_writer to pgque_admin;
   end if;
 end \$\$;
 create database ${db_main} owner ${installer};
