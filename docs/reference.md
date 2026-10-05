@@ -837,9 +837,15 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 |---|---|
 | `pgque_reader` | Read-only info functions and public tables/views; normal consume API; bounded page API (`receive_page*`, `ack_page`, `renew_page`); partition setup, lease, consume API and `partition_slot_status`; consumer primitives; experimental cooperative API. Internal partition/lease tables and `pgque.idem` are not directly readable. |
 | `pgque_writer` | `insert_event` overloads, all `send` / `send_idem` / `send_batch` overloads, `dlq_replay`, and `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack, finish, or inspect consumer batches. |
-| `pgque_admin` | Member of both reader and writer, plus lifecycle, maintenance including `maint_idem`, DDL, DLQ administration, schema/table/sequence administration, and internal helpers — except `uninstall()` and `insert_event_bulk()`, which are explicitly revoked. Direct access to `pgque.idem` is also revoked. |
+| `pgque_admin` | Member of both reader and writer, plus lifecycle, maintenance including `maint_idem`, DDL, DLQ administration, schema/table/sequence administration, and the administration helpers granted by the installer. Private paging, partition, and retry helpers are not public entry points. `uninstall()`, `insert_event_bulk()`, and direct access to `pgque.idem` are revoked. |
 
-`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_next_tick` (and its alias `force_tick`), and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
+This table describes the development installer. Frozen release installers can have different grants.
+
+`pgque.uninstall()` and `pgque.insert_event_bulk()` are revoked from `pgque_admin` and PUBLIC. Only the install owner can run them directly. Use `send_batch()` instead of `insert_event_bulk()`.
+
+The installer also revokes direct execution of private paging, partition, and retry helpers from application roles, including `pgque_admin`. These include `_next_batch_custom` and `_next_batch_coop`. Use the public consume and page APIs. A schema-wide grant earlier in the installer does not override these later revocations.
+
+The administration API includes `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_next_tick` (and its alias `force_tick`), `create_queue`, `drop_queue`, and `set_queue_config`. Grant these explicitly to additional roles if your policy requires it. To check a specific installed function, use `has_function_privilege(role, function_signature, 'EXECUTE')`.
 
 ## Experimental (not in default install)
 
