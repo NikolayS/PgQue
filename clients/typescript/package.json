@@ -45,6 +45,9 @@
   "engines": {
     "node": ">=20"
   },
+  "overrides": {
+    "vite": "^6.4.3"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
@@ -60,6 +63,6 @@
     "@types/node": "^22.15.3",
     "@types/pg": "^8.15.2",
     "typescript": "^5.8.3",
-    "vitest": "^2.1.9"
+    "vitest": "^3.2.6"
   }
 }

@@ -60,6 +60,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           bun install --frozen-lockfile
+          bun audit --audit-level high
           bun run check
           bun run test
           bun run build
@@ -132,6 +133,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           bun install --frozen-lockfile
+          bun audit --audit-level high
           bun run check
           bun run test
           bun run build
