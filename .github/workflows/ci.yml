@@ -381,6 +381,26 @@ jobs:
             -v origin_installer=/tmp/pgque-tle-v0.2.1.sql \
             -f tests/test_tle_upgrade_v0_2.sql
 
+      - name: Run populated pg_tle release-to-candidate upgrade tests
+        run: |
+          set -Eeuo pipefail
+          expected_version="$(awk '/^-- Version:/ {print $3; exit}' devel/sql/pgque.sql)"
+          test -n "$expected_version"
+          for origin_version in 0.2.1 0.2.2; do
+            origin_installer="/tmp/pgque-tle-candidate-origin-${origin_version}.sql"
+            git show "v${origin_version}:sql/pgque-tle.sql" > "$origin_installer"
+            database="pgque_tle_candidate_${origin_version//./}"
+            PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+              -v ON_ERROR_STOP=1 -c "create database ${database}"
+            PGPASSWORD=pgque_test psql -h localhost -U postgres -d "$database" \
+              -v ON_ERROR_STOP=1 \
+              -v origin_version="$origin_version" \
+              -v origin_installer="$origin_installer" \
+              -v candidate_installer=devel/sql/pgque-tle.sql \
+              -v expected_version="$expected_version" \
+              -f tests/test_tle_upgrade_candidate.sql
+          done
+
       - name: Run full regression suite via pg_tle install
         run: |
           set -Eeuo pipefail

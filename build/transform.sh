@@ -1254,8 +1254,7 @@ fi
 # Wrap devel/sql/pgque.sql as a pg_tle (Trusted Language Extension) so users on
 # managed Postgres can install via create extension pgque and get extension
 # membership / drop extension cascade for free. The output devel/sql/pgque-tle.sql
-# is a single self-contained file that works in any SQL client (psql, GUI
-# tools like DBeaver, JDBC, libpq-direct callers).
+# is a single self-contained psql script.
 
 echo ""
 echo "=== Packaging pg_tle install script ==="
@@ -1338,49 +1337,70 @@ begin
     end if;
 end \$\$;
 
--- Step 3: register the extension body with pg_tle.
--- Same version already registered -> no-op (so deployment scripts can rerun).
--- Different version already registered -> raise so the user goes through the
--- explicit uninstall + reinstall path; pg_tle has no managed upgrade path
--- between unrelated registrations of an extension.
+/* Register bodies and paths only. Installed extensions change only when the
+   caller explicitly runs ALTER EXTENSION UPDATE. Keep one canonical body for
+   both fresh installs and non-destructive updates from supported releases. */
 do \$wrapper\$
 declare
     existing_version text;
-begin
-    select default_version into existing_version
-    from pgtle.available_extensions()
-    where name = 'pgque';
-
-    if existing_version = '${PGQUE_VERSION}' then
-        raise notice 'pgque ${PGQUE_VERSION} already registered with pg_tle; skipping install_extension().';
-        return;
-    end if;
-
-    if existing_version is not null then
-        raise exception 'pgque is already registered with pg_tle at version % '
-            'but this script registers version %. Run '
-            '${SQL_REL}/pgque-tle-uninstall.sql first to remove the existing '
-            'registration, then re-run this script.',
-            existing_version, '${PGQUE_VERSION}';
-    end if;
-
-    perform pgtle.install_extension(
-        'pgque',
-        '${PGQUE_VERSION}',
-        'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
-\$${PGTLE_DOLLAR_TAG}\$
+    installed_version text;
+    source_version text;
+    extension_sql text := \$${PGTLE_DOLLAR_TAG}\$
 HEADER
 
 cat "${INSTALL_FILE}" >> "${PGTLE_FILE}"
 
 cat >> "${PGTLE_FILE}" << FOOTER
-\$${PGTLE_DOLLAR_TAG}\$
-    );
+\$${PGTLE_DOLLAR_TAG}\$;
+begin
+    select default_version into existing_version
+    from pgtle.available_extensions()
+    where name = 'pgque';
+
+    select extversion into installed_version
+    from pg_catalog.pg_extension
+    where extname = 'pgque';
+
+    if (existing_version is not null
+        and existing_version not in ('0.2.1', '0.2.2', '${PGQUE_VERSION}'))
+        or (installed_version is not null
+        and installed_version not in ('0.2.1', '0.2.2', '${PGQUE_VERSION}')) then
+        raise exception 'unsupported pgque version (registered %, installed %); '
+            'this script supports fresh ${PGQUE_VERSION} installs and updates '
+            'from 0.2.1 or 0.2.2 only', existing_version, installed_version
+            using errcode = '22023';
+    end if;
+
+    if existing_version is null then
+        perform pgtle.install_extension(
+            'pgque', '${PGQUE_VERSION}',
+            'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)', extension_sql
+        );
+    elsif to_regprocedure(format('pgtle.%I()', 'pgque--${PGQUE_VERSION}.sql')) is null then
+        /* available_extension_versions() also lists indirect installs. Check
+           the direct body so fresh creation never needs an old migration. */
+        perform pgtle.install_extension_version_sql('pgque', '${PGQUE_VERSION}', extension_sql);
+    end if;
+
+    foreach source_version in array array['0.2.1', '0.2.2'] loop
+        if source_version <> '${PGQUE_VERSION}' and not exists (
+            select 1
+            from pgtle.extension_update_paths('pgque')
+            where source = source_version and target = '${PGQUE_VERSION}'
+            and path = source_version || '--${PGQUE_VERSION}'
+        ) then
+            perform pgtle.install_update_path(
+                'pgque', source_version, '${PGQUE_VERSION}', extension_sql
+            );
+        end if;
+    end loop;
+    perform pgtle.set_default_version('pgque', '${PGQUE_VERSION}');
 end \$wrapper\$;
 
 \\echo ''
 \\echo 'PgQue ${PGQUE_VERSION} registered with pg_tle.'
-\\echo 'Run create extension pgque; to materialise the schema in this database.'
+\\echo 'For a fresh install, run: create extension pgque;'
+\\echo 'For an installed 0.2.1 or 0.2.2 extension, run: alter extension pgque update to ''${PGQUE_VERSION}'';'
 FOOTER
 
 pgtle_lines=$(wc -l < "${PGTLE_FILE}")
