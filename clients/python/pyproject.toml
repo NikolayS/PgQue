@@ -28,7 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
+    "pytest>=9.0.3",
 ]
 
 [project.urls]
@@ -38,7 +38,7 @@ Issues = "https://github.com/NikolayS/pgque/issues"
 Documentation = "https://github.com/NikolayS/pgque/blob/main/docs/reference.md"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
