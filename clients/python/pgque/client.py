@@ -5,6 +5,7 @@
 """PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
 from collections.abc import Iterator
+from concurrent.futures import Future
 import inspect
 import json
 from typing import Any, Callable, Optional, Union
@@ -373,6 +374,7 @@ class PgqueClient:
         for message in page.messages:
             result = handler(message)
             if (inspect.isawaitable(result)
+                    or isinstance(result, Future)
                     or inspect.isgenerator(result)
                     or inspect.isasyncgen(result)
                     or callable(result)
