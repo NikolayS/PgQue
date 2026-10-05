@@ -83,6 +83,13 @@ ticking from your application or an external scheduler — see the
 project [Installation](https://github.com/NikolayS/pgque#installation)
 section for both paths.
 
+### Event inputs
+
+`Pgque::Event.new(payload: { "order_id" => 42 }, type: "order.created")`
+accepts only `payload:` and `type:`. Unknown keywords such as `extra:`
+raise `ArgumentError`. The producer wrapper does not support the
+receive-side `extra1` through `extra4` fields.
+
 ### Consumer options
 
 `Consumer.new(..., max_messages: ...)` sets the complete-batch safety ceiling for each `receive`.
