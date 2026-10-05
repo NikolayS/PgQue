@@ -82,7 +82,7 @@ def main():
         queue = "lifecycle_" + label + "_" + run_id
         queues.append(queue)
         sql(f"select pgque.create_queue('{queue}');")
-        sql(f"select pgque.subscribe_partitioned(queue_name=>'{queue}', consumer=>'workers', n=>2);")
+        sql(f"select pgque.subscribe_partitioned('{queue}', 'workers', 2);")
         return queue
 
     def counts(queue):
@@ -114,7 +114,7 @@ def main():
         holder, holder_pid = hold_parent(queue, "setup_holder")
         name, contender = start("setup_contender", f"""
             begin;
-            select pgque.subscribe_partitioned(queue_name=>'{queue}', consumer=>'workers', n=>2);
+            select pgque.subscribe_partitioned('{queue}', 'workers', 2);
             commit;
             \\q
         """)
@@ -123,7 +123,7 @@ def main():
                 and {holder_pid}=any(pg_blocking_pids(pid));
         """, "setup waits on the existing parent row", contender)
         send(holder, f"""
-            select pgque.unsubscribe_partitioned(queue_name=>'{queue}', consumer=>'workers');
+            select pgque.unsubscribe_partitioned('{queue}', 'workers');
             commit;
             \\q
         """)
@@ -163,7 +163,7 @@ def main():
 
         if blocked:
             send(holder, f"""
-                select pgque.unsubscribe_partitioned(queue_name=>'{queue}', consumer=>'workers');
+                select pgque.unsubscribe_partitioned('{queue}', 'workers');
                 commit;
                 \\q
             """)
@@ -181,7 +181,7 @@ def main():
         assert status != 0 and "40001" in error, "busy force-drop must return 40001: " + error
         assert counts(queue) == before, "rejected force-drop must leave lifecycle state unchanged"
         send(holder, f"""
-            select pgque.unsubscribe_partitioned(queue_name=>'{queue}', consumer=>'workers');
+            select pgque.unsubscribe_partitioned('{queue}', 'workers');
             commit;
             \\q
         """)
