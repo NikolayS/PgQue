@@ -133,9 +133,9 @@ rotation can proceed:
 select pgque.unsubscribe('orders', 'dead_consumer');
 ```
 
-(Or `pgque.drop_queue('orders', true)` to unregister all consumers, if you are
-tearing the queue down.) A dead consumer that you do not intend to restart must
-be unsubscribed, or it will hold the queue's storage forever.
+(Or use the administratively destructive `pgque.drop_queue('orders', true)` if
+you are tearing the entire queue down.) A dead consumer that you do not intend
+to restart must be unsubscribed, or it will hold the queue's storage forever.
 
 ### Threshold table
 

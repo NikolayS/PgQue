@@ -364,7 +364,7 @@ You have driven the ticker by hand all the way through. In production you let a 
 To tear down the queue you built here:
 
 ```sql
-select pgque.drop_queue('orders', true);  -- force=true unregisters the consumer first
+select pgque.drop_queue('orders', true);  -- administratively destroys the queue and subscriptions
 ```
 
 To remove PgQue entirely (drops the `pgque` schema; leaves the roles), see [Installation & operations](installation.md).

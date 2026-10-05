@@ -10,6 +10,7 @@ require "pgque/version"
 require "pgque/errors"
 require "pgque/event"
 require "pgque/message"
+require "pgque/page"
 require "pgque/client"
 require "pgque/consumer"
 

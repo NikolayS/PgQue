@@ -520,6 +520,8 @@ begin
         return;
     end if;
 
+    perform pgque._assert_unpaged(v_batch_id);
+
     v_cname := 'pgque_part_' || v_batch_id::text;
     for ev in
         select ev_id, ev_time, ev_retry, ev_type, ev_data,
@@ -614,6 +616,7 @@ begin
             i_slot, i_consumer, i_queue;
     end if;
 
+    perform pgque._assert_unpaged(v_batch_id);
     return pgque._nack_batch_event(v_batch_id, i_msg, i_retry_after, i_reason);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
