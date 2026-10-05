@@ -1,3 +1,8 @@
+---
+title: Release candidate preparation
+description: Build and verify local prerelease artifacts without publishing them.
+---
+
 # PgQue 0.3 RC2: local build and qualification
 
 This checkout prepares coordinated RC2 artifacts. The commands below build
