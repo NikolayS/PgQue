@@ -226,3 +226,8 @@ See [RELEASE.md](RELEASE.md) for publishing steps.
 ## License
 
 Apache-2.0. Copyright 2026 Nikolay Samokhvalov.
+
+## Nullable messages
+
+Direct SQL and trigger producers can store SQL NULL for `ev_type` or `ev_data`.
+`Message.type` and `Message.payload` are `string | null`. `receive` and `receiveCoop` preserve SQL NULL values. A null type never matches a per-type handler; the unknown-handler policy applies.

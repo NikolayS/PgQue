@@ -32,6 +32,32 @@ class TestConsumerUnit < Minitest::Test
     def nack(*); end
   end
 
+  class NullTypeSpyClient < SpyClient
+    attr_reader :ack_calls, :nack_calls
+
+    def initialize(*)
+      super
+      @ack_calls = []
+      @nack_calls = []
+    end
+
+    def receive(*)
+      [Pgque::Message.new(
+        msg_id: 1, batch_id: 2, type: nil, payload: nil,
+        retry_count: nil, created_at: Time.now,
+      )]
+    end
+
+    def ack(batch_id)
+      @ack_calls << batch_id
+      1
+    end
+
+    def nack(batch_id, msg, **)
+      @nack_calls << [batch_id, msg]
+    end
+  end
+
   def test_consumer_default_max_messages_requests_whole_batch
     cons = Pgque::Consumer.new(dsn, queue: "q", name: "c")
     assert_equal 2_147_483_647, cons.max_messages
@@ -58,6 +84,36 @@ class TestConsumerUnit < Minitest::Test
       cons.poll_once(FakeTxConn.new)
     end
     assert_equal [["q", "c", 123]], spy.receive_calls
+  end
+
+  def test_consumer_routes_null_type_as_unknown_even_with_nil_handler
+    cons = Pgque::Consumer.new(dsn, queue: "q", name: "c")
+    handler_calls = 0
+    cons.on(nil) { handler_calls += 1 }
+    spy = NullTypeSpyClient.new
+
+    Pgque::Client.stub :new, ->(*) { spy } do
+      cons.poll_once(FakeTxConn.new)
+    end
+
+    assert_equal 0, handler_calls
+    assert_equal 1, spy.nack_calls.size
+    assert_equal [2], spy.ack_calls
+  end
+
+  def test_consumer_routes_null_type_to_explicit_catch_all
+    cons = Pgque::Consumer.new(dsn, queue: "q", name: "c")
+    catch_all_calls = 0
+    cons.on("*") { catch_all_calls += 1 }
+    spy = NullTypeSpyClient.new
+
+    Pgque::Client.stub :new, ->(*) { spy } do
+      cons.poll_once(FakeTxConn.new)
+    end
+
+    assert_equal 1, catch_all_calls
+    assert_empty spy.nack_calls
+    assert_equal [2], spy.ack_calls
   end
 
   def test_consumer_rejects_invalid_unknown_handler_policy
