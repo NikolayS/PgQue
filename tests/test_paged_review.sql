@@ -178,9 +178,15 @@ begin
     'review_epoch_fence', 'part_c', 0, 'worker-b', interval '1 minute'
   );
   assert v_epoch_b > v_epoch_a, 'slot takeover must advance the epoch';
-  assert pgque.release_slot(
-    'review_epoch_fence', 'part_c', 0, 'worker-b'
-  ), 'intermediate owner must release the slot';
+  -- An open batch cannot be released. Simulate a second crash/expiry to
+  -- retain the original page while exercising a same-worker ABA takeover.
+  update pgque.partition_slot as ps
+  set lease_until = clock_timestamp() - interval '1 second'
+  from pgque.queue as q
+  where q.queue_name = 'review_epoch_fence'
+    and ps.queue_id = q.queue_id
+    and ps.co_name = 'part_c'
+    and ps.slot = 0;
   v_epoch_a_again := pgque.claim_slot(
     'review_epoch_fence', 'part_c', 0, 'worker-a', interval '1 minute'
   );

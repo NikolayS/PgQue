@@ -202,7 +202,8 @@ optimization is future (R6).
   `"<consumer>#k/n"`; create the `partition_slot` row for `k` (unleased).
   Idempotent for the same `(k,n)`.
 - **`claim_slot(queue, consumer, k int, worker text, ttl interval default
-  '30 seconds')` → bigint (epoch):** validate `ttl >= '1 second'`. Under a row
+  '30 seconds')` → bigint (epoch):** require a finite `ttl >= '1 second'`.
+  Return NULL if another transaction locks the slot row. Otherwise, under a row
   lock on the `partition_slot` row: if the lease is live and owned by another
   worker → return NULL (steered away); if owned by `worker` → renew
   (`lease_until = clock_timestamp() + ttl`), return the **same** epoch; if free or
@@ -212,8 +213,10 @@ optimization is future (R6).
   has taken may be renewed by its own worker (still its epoch — no heir existed, so
   it is safe).
 - **`release_slot(queue, consumer, k int, worker text)` → boolean:** owner-only.
-  If `worker` holds the lease, clear it (`lease_owner = null`) and return true;
-  otherwise return false. Callable only at a batch boundary (§15).
+  If `worker` holds the lease and no batch is open, clear it
+  (`lease_owner = null`) and return true. An owner release raises while a batch
+  is open, including between pages. A non-owner, including NULL, returns false.
+  Callable only at a batch boundary (§15).
 - **`receive_partitioned(queue, consumer, k int, n int, worker text, …)`:** after
   casting `k,n` to int, **require `worker` to hold the lease on slot `k`** (a
   non-owner raises — server-enforced G2); an expired lease still owned by the same

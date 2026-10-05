@@ -7644,7 +7644,7 @@ $$ language sql immutable;
  * 1. Validate (queue, consumer, slot, n) against the pinned slot count
  *    BEFORE any lease error: a wrong-N caller is rejected clearly, never
  *    silently misrouted.
- * 2. Fence the lease: the caller must already hold it as i_worker. An
+ * 2. Fence the lease: the caller must already hold it as a non-NULL i_worker. An
  *    expired lease still owned by the SAME worker (no successor took over)
  *    is renewed, not rejected -- no zombie exists. clock_timestamp() keeps
  *    lease math correct inside a long transaction.
@@ -7696,7 +7696,7 @@ begin
         raise exception 'slot % of consumer % on queue % is not leased; call pgque.claim_slot() first',
             i_slot, i_consumer, i_queue;
     end if;
-    if v_owner <> i_worker then
+    if v_owner is distinct from i_worker then
         raise exception 'lease on slot % of consumer % on queue % is held by worker %, not %; fenced',
             i_slot, i_consumer, i_queue, v_owner, i_worker;
     end if;
@@ -7880,8 +7880,8 @@ revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
 
 /*
  * Claim (or renew) the lease on a slot for a worker id. Returns the epoch
- * fencing token, or null if the slot is currently leased by another live
- * worker (the caller's claim loop then moves to the next slot). The lease
+ * fencing token, or null if the slot is locked by another transaction or
+ * leased by another live worker (the claim loop moves to the next slot). The lease
  * lives in pgque.partition_slot -- plain transactional DML, no session state
  * -- so it survives transaction-mode pooling. Uses clock_timestamp() so a
  * pg_sleep inside a transaction correctly ages a short TTL.
@@ -7904,8 +7904,8 @@ begin
     if i_worker is null or i_worker = '' then
         raise exception 'worker id must not be empty';
     end if;
-    if i_ttl is null or i_ttl < interval '1 second' then
-        raise exception 'lease ttl must be >= 1 second, got %', i_ttl;
+    if i_ttl is null or not isfinite(i_ttl) or i_ttl < interval '1 second' then
+        raise exception 'lease ttl must be a finite interval >= 1 second, got %', i_ttl;
     end if;
 
     select pc.queue_id, pc.n into v_queue_id, v_n
@@ -7927,8 +7927,19 @@ begin
     where queue_id = v_queue_id
       and co_name = i_consumer
       and slot = i_slot
-    for update;
+    for update skip locked;
     if not found then
+        /* A matching row that could not be locked is busy in another
+           transaction. Steer the caller to its next candidate slot. */
+        perform 1
+        from pgque.partition_slot
+        where queue_id = v_queue_id
+          and co_name = i_consumer
+          and slot = i_slot;
+        if found then
+            return null;
+        end if;
+
         raise exception 'slot % of consumer % on queue % is not subscribed; call pgque.subscribe_slot()',
             i_slot, i_consumer, i_queue;
     end if;
@@ -7964,20 +7975,26 @@ revoke execute on function pgque.claim_slot(text, text, int, text, interval) fro
 
 /*
  * Release a lease at a batch boundary. Only the owning worker may release
- * (a non-owner call returns false, never raises). The epoch is KEPT so a
+ * (a non-owner, including NULL, returns false, never raises). The epoch is KEPT so a
  * later takeover still advances the fencing token monotonically. Returns
- * true if this worker held the lease and it was cleared.
+ * true if this worker held the lease and it was cleared. An owner release
+ * raises while the slot has an open batch.
  */
 create or replace function pgque.release_slot(
     i_queue text, i_consumer text, i_slot int, i_worker text)
 returns boolean as $$
 declare
     v_queue_id int4;
+    v_n int4;
     v_owner text;
+    v_batch_id bigint;
 begin
-    select ps.queue_id, ps.lease_owner into v_queue_id, v_owner
+    select ps.queue_id, ps.lease_owner, pc.n into v_queue_id, v_owner, v_n
     from pgque.partition_slot as ps
     join pgque.queue as q on q.queue_id = ps.queue_id
+    join pgque.partition_consumer as pc
+      on pc.queue_id = ps.queue_id
+     and pc.co_name = ps.co_name
     where q.queue_name = i_queue
       and ps.co_name = i_consumer
       and ps.slot = i_slot
@@ -7987,8 +8004,18 @@ begin
             i_slot, i_consumer, i_queue;
     end if;
 
-    if v_owner is null or v_owner <> i_worker then
+    if v_owner is null or v_owner is distinct from i_worker then
         return false;
+    end if;
+
+    /* The slot lock serializes this check with partition receive and ack.
+       Any open batch, including one between pages, prevents release: a
+       successor could otherwise process it while this worker is still busy.
+       Crash recovery must go through lease expiry. */
+    v_batch_id := pgque._slot_batch(i_queue, i_consumer, i_slot, v_n);
+    if v_batch_id is not null then
+        raise exception 'cannot release slot % of consumer % on queue % while batch % is open; ack the batch first',
+            i_slot, i_consumer, i_queue, v_batch_id;
     end if;
 
     update pgque.partition_slot

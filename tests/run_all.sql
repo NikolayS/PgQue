@@ -145,6 +145,9 @@
 \echo 'Running: test_partition_keys'
 \i tests/test_partition_keys.sql
 
+\echo 'Running: test_partition_null_owner'
+\i tests/test_partition_null_owner.sql
+
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
 
