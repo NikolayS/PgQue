@@ -214,7 +214,7 @@ those cursors remain open and caller-owned. For this one-shot helper, use an
 autocommit connection so receive commits before handlers run. Use the low-level
 methods above when controlling database effect/ack transactions explicitly.
 
-Don't wrap `send` and `receive` in one explicit tx; same for `maint_retry_events` + `ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+Don't wrap `send` and `receive` in one explicit tx; same for `maint_retry_events` + `ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/concepts.md#the-snapshot-rule).
 
 
 ## Tests
