@@ -199,7 +199,10 @@ declare
     v_batch bigint;
 begin
     perform pgque._validate_page_args(i_queue, i_consumer, i_worker, i_page_size, i_lease);
-    if position('#' in i_consumer) > 0 then
+    if position('#' in i_consumer) > 0 and pgque._is_partition_slot_consumer(
+        (select q.queue_id from pgque.queue as q where q.queue_name = i_queue),
+        i_consumer)
+    then
         raise exception 'use receive_page_partitioned for slot consumers' using errcode = '22023';
     end if;
     select batch_id into v_batch
