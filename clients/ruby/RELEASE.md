@@ -76,9 +76,10 @@ The release workflow is `.github/workflows/release-ruby.yml`.
 4. Ensure the gem already exists on RubyGems and Trusted Publishing
    is configured (bootstrap section above).
 5. Run **Release Ruby client** with `dry_run=true` first. Dry runs
-   only build, validate the version match, and smoke-install the
-   resulting `.gem`; they do not require the `rubygems` environment
-   approval or OIDC permissions.
+   validate the clean tree, version and namespaced tag, run the test suite,
+   build and inspect the `.gem`, smoke-install it, and confirm the tag is
+   available. They do not create a tag, publish, or require the `rubygems`
+   environment approval or OIDC permissions.
 6. Run it with `dry_run=false`. Approve the `rubygems` environment
    when prompted.
 7. Verify the published artifact installs in a clean environment:
@@ -88,33 +89,35 @@ The release workflow is `.github/workflows/release-ruby.yml`.
    ruby -rpgque -e 'puts Pgque::VERSION'
    ```
 
-The workflow builds with `gem build`, smoke-installs the resulting
-`.gem` against a temporary `GEM_HOME`, and publishes via RubyGems
-Trusted Publishing / OIDC. No long-lived `RUBYGEMS_API_KEY` is
-needed.
+The workflow builds with `gem build`, smoke-installs the resulting `.gem`
+against a temporary `GEM_HOME`, and uploads that exact artifact to the publish
+job. The publish job revalidates the artifact, obtains short-lived credentials
+through RubyGems Trusted Publishing / OIDC, creates the annotated tag
+`ruby/v${VERSION}` at the dispatch SHA, pushes the tag, and publishes with
+`gem push`. No long-lived `RUBYGEMS_API_KEY` is needed.
 
-The publish step uses `rubygems/release-gem@v1`, which runs
-`bundle exec rake release`. That task (provided by
-`require "bundler/gem_tasks"` in `clients/ruby/Rakefile`) chains:
+Ruby client tags are deliberately namespaced. Never use plain `v${VERSION}` for
+a gem release: that namespace belongs to PgQue SQL/server releases, whose
+version is independent from the Ruby client.
 
-1. `rake build` — builds `pgque-${VERSION}.gem` under `pkg/`.
-2. `release:guard_clean` — refuses to release if the working tree
-   has uncommitted changes (CI checkouts are clean).
-3. `release:source_control_push` — annotates the head commit with a
-   `v${VERSION}` tag and pushes that tag to `origin`. The
-   `contents: write` permission on the publish job, plus the
-   `GITHUB_TOKEN` automatically injected by `actions/checkout`, is
-   what authorizes the push. **The release workflow therefore
-   pushes a git tag to `NikolayS/pgque` as a side effect.** If you
-   need to retract a release, yank the gem on RubyGems *and* delete
-   the tag with `git push --delete origin v${VERSION}`.
-4. `release:rubygem_push` — `gem push pkg/pgque-${VERSION}.gem`.
+If `gem push` fails after the namespaced tag has been pushed, delete only that
+Ruby tag, then re-dispatch:
 
-If the gem push fails after the tag has already been pushed (rare
-but possible if rubygems.org is degraded), you'll have a `v${VERSION}`
-tag with no corresponding published gem. Re-running the workflow
-will then fail at `release:guard_clean` if the tag already exists;
-delete the tag and re-dispatch.
+```bash
+git push origin --delete ruby/v0.3.0
+```
+
+If the workflow fails only while waiting for propagation, check RubyGems first:
+the publish may already have succeeded, and retrying or yanking is unnecessary.
+
+To retract a genuinely bad release, yank the gem and remove its namespaced tag:
+
+```bash
+gem yank pgque -v 0.3.0
+git push origin --delete ruby/v0.3.0
+```
+
+Do not delete the SQL/server `v0.3.0` tag when retracting a Ruby client release.
 
 ## Why no test registry?
 
