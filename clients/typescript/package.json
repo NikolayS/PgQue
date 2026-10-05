@@ -47,8 +47,8 @@
   },
   "overrides": {
     "vite": "^6.4.3",
-    "postcss": "^8.5.18",
-    "nanoid": "^3.3.16"
+    "postcss": "^8.5.23",
+    "nanoid": "^3.3.18"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -65,6 +65,6 @@
     "@types/node": "^22.15.3",
     "@types/pg": "^8.15.2",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   }
 }

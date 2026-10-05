@@ -739,7 +739,8 @@ jobs:
           set -Eeuo pipefail
           cd clients/typescript
           bun install --frozen-lockfile
-          bun audit --audit-level high
+          bun audit
+          bun audit --prod
           bun run check
           bun run test
 
