@@ -141,7 +141,8 @@ Do not delete the SQL/server `v0.3.0` tag when retracting a Ruby client release.
 Unlike PyPI's TestPyPI sibling, RubyGems.org has no public staging
 instance. Dry-run validation covers the live source suite, `gem build`, and queue
 operations from an isolated install; the next step is the real publish. If you
-need an isolated end-to-end test for the publish path itself, push to
-a privately-owned alias gem (e.g. `pgque-staging`) using the same
-workflow with a different gemspec name, then drop the alias gem when
-you're done.
+need an isolated end-to-end test for the publish path itself, use a separate
+workflow for a privately owned alias gem. The current workflow and validation
+scripts require the package name `pgque`; changing only the gemspec name does
+not create a supported staging path. Do not weaken the production checks for
+a staging test.

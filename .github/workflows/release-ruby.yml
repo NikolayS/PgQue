@@ -188,6 +188,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       TAG_NAME: ruby/v${{ inputs.version }}
       EXPECTED_GEM_SHA256: ${{ needs.build.outputs.gem_sha256 }}
+      EXPECTED_ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
     defaults:
       run:
         working-directory: clients/ruby
@@ -203,6 +204,13 @@ jobs:
         with:
           ruby-version: "3.3"
           working-directory: clients/ruby
+
+      - name: Verify artifact metadata
+        run: |
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+          [[ "$EXPECTED_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_GEM_SHA256" =~ ^[0-9a-f]{64}$ ]]
 
       - uses: actions/download-artifact@v4
         with:

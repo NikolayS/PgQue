@@ -87,14 +87,55 @@ class TestReleaseArtifact < Minitest::Test
 
   def test_registry_request_errors_fail_closed
     Dir.mktmpdir do |dir|
-      File.write("#{dir}/curl", "#!/bin/sh\nexit 22\n")
+      FileUtils.mkdir_p("#{dir}/script")
+      FileUtils.cp("#{ROOT}/script/check_rubygems_version.rb", "#{dir}/script")
+      File.write("#{dir}/curl", <<~SH)
+        #!/bin/sh
+        echo called >> "$CURL_LOG"
+        if [ "$CURL_STATUS" != 0 ]; then exit "$CURL_STATUS"; fi
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = -o ]; then
+            printf '%s' '[{"number":"0.2.2"}]' > "$2"
+            exit 0
+          fi
+          shift
+        done
+        exit 2
+      SH
       FileUtils.chmod(0o755, "#{dir}/curl")
-      env = {"PATH" => "#{dir}:#{ENV.fetch('PATH')}", "VERSION" => Pgque::VERSION}
+      env = {"PATH" => "#{dir}:#{ENV.fetch('PATH')}", "VERSION" => Pgque::VERSION,
+             "CURL_LOG" => "#{dir}/curl.log", "CURL_STATUS" => "0"}
       ["build", "publish-rubygems"].each do |job|
         name = job == "build" ? "Verify RubyGems version is available" : "Recheck RubyGems version availability"
+        env["CURL_STATUS"] = "0"
+        out, err, status = Open3.capture3(env, "bash", "-c", step(job, name), chdir: dir)
+        assert status.success?, out + err
+        before = File.readlines(env.fetch("CURL_LOG")).length
+        env["CURL_STATUS"] = "22"
         _out, _err, status = Open3.capture3(env, "bash", "-c", step(job, name), chdir: dir)
-        refute status.success?
+        assert_equal 22, status.exitstatus
+        assert_equal before + 1, File.readlines(env.fetch("CURL_LOG")).length
       end
+    end
+  end
+
+  def test_artifact_metadata_must_be_valid_before_download
+    steps = YAML.safe_load_file(WORKFLOW).fetch("jobs").fetch("publish-rubygems").fetch("steps")
+    guard = steps.index { |s| s["name"] == "Verify artifact metadata" }
+    download = steps.index { |s| s["uses"] == "actions/download-artifact@v4" }
+    refute_nil guard, "artifact metadata needs a pre-download guard"
+    assert_operator guard, :<, download
+    script = step("publish-rubygems", "Verify artifact metadata")
+    digest = "a" * 64
+    out, err, status = Open3.capture3({"EXPECTED_ARTIFACT_ID" => "12345", "EXPECTED_GEM_SHA256" => digest}, "bash", "-c", script)
+    assert status.success?, out + err
+    [nil, "", " ", "0", "-1", "1,2", "abc"].each do |id|
+      _out, _err, status = Open3.capture3({"EXPECTED_ARTIFACT_ID" => id, "EXPECTED_GEM_SHA256" => digest}, "bash", "-c", script)
+      refute status.success?, "invalid artifact ID #{id.inspect} must fail"
+    end
+    [nil, "", " ", "xyz"].each do |value|
+      _out, _err, status = Open3.capture3({"EXPECTED_ARTIFACT_ID" => "12345", "EXPECTED_GEM_SHA256" => value}, "bash", "-c", script)
+      refute status.success?, "invalid digest must fail"
     end
   end
 end
