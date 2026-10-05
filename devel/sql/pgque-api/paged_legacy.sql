@@ -34,7 +34,7 @@ exception
     when unique_violation then
         return 0;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.event_retry(
     x_batch_id bigint,
@@ -154,7 +154,7 @@ begin
         perform pgque._event_retry_core(
             i_batch_id,
             v_event.ev_id,
-            current_timestamp + i_retry_after
+            clock_timestamp() + i_retry_after
         );
     end if;
     return 1;
@@ -162,7 +162,7 @@ exception
     when no_data_found then
         raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /* Preserve register_consumer_at(), except a real cursor move cannot erase a page. */
 create or replace function pgque.register_consumer_at(
@@ -304,6 +304,12 @@ begin
     end if;
     if x_force then
         begin
+            /* Lifecycle calls lock parents before slots. Take the eventual
+               cascade-delete locks now, while NOWAIT can reject a busy queue. */
+            perform 1 from pgque.partition_consumer
+            where queue_id = v_queue.queue_id
+            order by co_name
+            for update nowait;
             perform 1 from pgque.partition_slot
             where queue_id = v_queue.queue_id
             order by co_name, slot

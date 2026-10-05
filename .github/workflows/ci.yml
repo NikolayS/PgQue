@@ -62,6 +62,11 @@ jobs:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
         run: python3 tests/two_session_idem_maintenance.py
 
+      - name: Run new idempotency claim clock regressions
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: python3 tests/two_session_idem_claim_clock.py
+
       - name: Run partition release fencing regression
         env:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
@@ -76,6 +81,11 @@ jobs:
         env:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
         run: bash tests/two_session_partition_atomic.sh
+
+      - name: Run partition lifecycle concurrency regressions
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: python3 tests/two_session_partition_lifecycle.py
 
       - name: Run paged concurrency acceptance
         env:

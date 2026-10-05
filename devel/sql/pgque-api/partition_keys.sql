@@ -364,6 +364,7 @@ declare
     v_queue_id int4;
     v_n int4;
     v_start_tick bigint;
+    v_created boolean;
     v_complete_slots int4;
     v_registered int4;
     v_slot int4;
@@ -391,20 +392,26 @@ begin
 
     /*
      * ON CONFLICT waits for a concurrent creator. The follow-up row lock makes
-     * complete-state inspection serialize with subscribe_slot and another
-     * subscribe_partitioned call for the same logical consumer.
+     * complete-state inspection serialize with other lifecycle calls. If
+     * teardown removed the conflicting row, retry creation at a fresh snapshot.
      */
-    insert into pgque.partition_consumer (queue_id, co_name, n)
-    values (v_queue_id, i_consumer, i_n)
-    on conflict (queue_id, co_name) do nothing
-    returning n into v_n;
-    if not found then
+    loop
+        insert into pgque.partition_consumer (queue_id, co_name, n)
+        values (v_queue_id, i_consumer, i_n)
+        on conflict (queue_id, co_name) do nothing
+        returning n into v_n;
+        v_created := found;
+        exit when v_created;
+
         select pc.n into v_n
         from pgque.partition_consumer as pc
         where pc.queue_id = v_queue_id
           and pc.co_name = i_consumer
         for no key update;
+        exit when found;
+    end loop;
 
+    if not v_created then
         if v_n <> i_n then
             raise exception 'consumer % on queue % is pinned to n=%; got n=% (tear down with pgque.unsubscribe_partitioned() to change the slot count)',
                 i_consumer, i_queue, v_n, i_n;

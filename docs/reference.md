@@ -642,7 +642,7 @@ PgQue roles are coarse **database-level** roles. They are intended for trusted a
 
 **What this means in practice:**
 
-- `pgque_reader` gets `select` on **all** tables in the `pgque` schema — it can read events from any queue. It can also call `receive`, `ack`, and `nack` on **any** queue with **any** consumer name. A reader granted for queue A can call `pgque.ack(batch_id)` on a batch opened by a consumer on queue B.
+- `pgque_reader` gets `select` on the public engine and status tables in the `pgque` schema. Internal idempotency and partition lease tables are revoked; use `partition_slot_status`. It can read public events from any queue. It can also call `receive`, `ack`, and `nack` on **any** queue with **any** consumer name. A reader granted for queue A can call `pgque.ack(batch_id)` on a batch opened by a consumer on queue B.
 - `pgque_writer` can produce to **any** queue (`pgque.send`, `pgque.send_batch`, `pgque.insert_event`).
 - There is **no per-queue ACL** and no per-tenant isolation built into PgQue. Queue names and consumer names are plain strings — any role with the matching grant can interact with them.
 
@@ -654,13 +654,19 @@ This is intentional, by design. The batch-ID-based primitives (`ack`, `nack`, `e
 - Use separate databases per tenant and connect each tenant's application to its own database.
 - Wrap the PgQue API in app-owned stored functions that enforce tenant ownership before delegating to `pgque.*`, and grant only those wrapper functions to tenant roles.
 
-| Role           | Functions granted (direct)                                                                                                                                                                                                                                              |
-|----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pgque_reader` | `get_queue_info()`, `get_queue_info(text)`, `get_consumer_info()`, `get_consumer_info(text)`, `get_consumer_info(text, text)`, `get_batch_info(bigint)`, `version()`, `dlq_inspect(text, int)`; `select` on all tables incl. `pgque.dead_letter`; consumer primitives (`register_consumer`, `register_consumer_at`, `unregister_consumer`, `next_batch`, `next_batch_info`, `next_batch_custom`, `get_batch_events`, `finish_batch`, `event_retry` int + timestamptz); modern consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`); development page API (`receive_page`, `receive_page_coop`, `receive_page_partitioned`, `ack_page`, `renew_page`); experimental cooperative API (`register_subconsumer`, `unregister_subconsumer`, `subscribe_subconsumer`, `unsubscribe_subconsumer`, cooperative `next_batch`, cooperative `next_batch_custom`, `receive_coop`, `touch_subconsumer`) |
-| `pgque_writer` | `insert_event` (3, 7), all `send*`, all `send_batch*`, `dlq_replay`, `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot receive, ack, renew, finish, or inspect consumer batches. |
-| `pgque_admin`  | Member of both `pgque_reader` and `pgque_writer`, plus `event_dead`, `dlq_purge`, `all` on `pgque` schema, `all` on all tables and sequences, `execute` on all functions — **except** `uninstall()` and internal `insert_event_bulk()` which are explicitly revoked                                                            |
+| Role | Functions granted directly |
+|---|---|
+| `pgque_reader` | Read-only info functions and public tables/views; normal consume API; bounded page API (`receive_page*`, `ack_page`, `renew_page`); partition setup, lease, consume API and `partition_slot_status`; consumer primitives; experimental cooperative API. Internal partition/lease tables and `pgque.idem` are not directly readable. |
+| `pgque_writer` | `insert_event` overloads, all `send` / `send_idem` / `send_batch` overloads, `dlq_replay`, and `dlq_replay_all`. **Does not inherit `pgque_reader`** — a producer-only role cannot ack, finish, or inspect consumer batches. |
+| `pgque_admin` | Member of both reader and writer, plus lifecycle, maintenance including `maint_idem`, DDL, DLQ administration, schema/table/sequence administration, and the administration helpers granted by the installer. Private paging, partition, and retry helpers are not public entry points. `uninstall()`, `insert_event_bulk()`, and direct access to `pgque.idem` are revoked. |
 
-`pgque.uninstall()` is revoked from both `pgque_admin` (explicitly) and PUBLIC (via the schema-wide blanket revoke). Internal `pgque.insert_event_bulk()` is also revoked from `pgque_admin`; callers must use `send_batch()` wrappers. Only the schema/install owner (typically a superuser) can run `uninstall()` or the internal primitive directly. All other functions not listed in the table above retain `execute` only for `pgque_admin` (the schema-wide blanket revoke from PUBLIC applies, and `pgque_admin` is granted `execute on all functions`) — notably the lifecycle helpers `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_next_tick` (and its alias `force_tick`), and the queue-management helpers `create_queue`, `drop_queue`, `set_queue_config`. Grant these explicitly to additional roles if your policy demands it.
+This table describes the development installer. Frozen release installers can have different grants.
+
+`pgque.uninstall()` and `pgque.insert_event_bulk()` are revoked from `pgque_admin` and PUBLIC. Only the install owner can run them directly. Use `send_batch()` instead of `insert_event_bulk()`.
+
+The installer also revokes direct execution of private paging, partition, and retry helpers from application roles, including `pgque_admin`. These include `_next_batch_custom` and `_next_batch_coop`. Use the public consume and page APIs. A schema-wide grant earlier in the installer does not override these later revocations.
+
+The administration API includes `start`, `stop`, `status`, `maint`, `maint_retry_events`, `ticker`, `force_next_tick` (and its alias `force_tick`), `create_queue`, `drop_queue`, and `set_queue_config`. Grant these explicitly to additional roles if your policy requires it. To check a specific installed function, use `has_function_privilege(role, function_signature, 'EXECUTE')`.
 
 ## Experimental (not in default install)
 

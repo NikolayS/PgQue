@@ -21,6 +21,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     "${container}" \
     psql \
     --no-psqlrc \
+    --host=127.0.0.1 \
     --username=postgres \
     --dbname=pgque_test \
     --command='select 1' \
