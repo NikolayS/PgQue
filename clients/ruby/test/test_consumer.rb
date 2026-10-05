@@ -68,6 +68,32 @@ class TestConsumerUnit < Minitest::Test
     end
   end
 
+  def test_unfinished_batch_retains_poll_backoff
+    msg = Pgque::Message.new(msg_id: 1, batch_id: 2, type: "unknown",
+                            payload: {}, retry_count: nil, created_at: Time.now)
+    cons = Pgque::Consumer.new(dsn, queue: "q", name: "c")
+    spy = SpyClient.new
+    spy.define_singleton_method(:receive) { |*| [msg] }
+    spy.define_singleton_method(:nack) { |*| raise PG::ConnectionBad, "nack failed" }
+    spy.define_singleton_method(:ack) { |*| flunk "unfinished batch must not be acked" }
+    Pgque::Client.stub(:new, spy) do
+      assert_equal false, cons.poll_once(FakeTxConn.new)
+    end
+  end
+
+  def test_stale_ack_retains_poll_backoff
+    msg = Pgque::Message.new(msg_id: 1, batch_id: 2, type: "known",
+                            payload: {}, retry_count: nil, created_at: Time.now)
+    cons = Pgque::Consumer.new(dsn, queue: "q", name: "c")
+    cons.on("known") { |_| }
+    spy = SpyClient.new
+    spy.define_singleton_method(:receive) { |*| [msg] }
+    spy.define_singleton_method(:ack) { |*| 0 }
+    Pgque::Client.stub(:new, spy) do
+      assert_equal false, cons.poll_once(FakeTxConn.new)
+    end
+  end
+
   def test_consumer_dead_interval_without_subconsumer_raises
     skip_dsn_for_this_class!
     assert_raises(ArgumentError) do
@@ -76,16 +102,19 @@ class TestConsumerUnit < Minitest::Test
     end
   end
 
-  def test_running_clears_after_start_failure
+  def test_running_clears_after_unexpected_start_failure
     skip_dsn_for_this_class!
-    # Point at an unreachable port so PG.connect raises immediately
-    # inside start, exiting before the poll loop ever runs.
     cons = Pgque::Consumer.new(
-      "postgresql://nobody:wrong@localhost:1/nodb",
+      "dummy",
       queue: "q", name: "c", logger: silent_logger
     )
+    cons.define_singleton_method(:run_session) do
+      raise "simulated non-database failure"
+    end
+
     refute cons.running?
-    assert_raises(PG::Error) { cons.start }
+    error = assert_raises(RuntimeError) { cons.start }
+    assert_includes error.message, "non-database failure"
     refute cons.running?,
            "consumer.running? must be false after start raised"
   end
@@ -120,6 +149,31 @@ end
 
 class TestConsumerIntegration < Minitest::Test
   include PgqueTest::Helpers
+
+  def test_poll_once_reports_empty_queue
+    with_queue do |queue, consumer_name, conn|
+      consumer = Pgque::Consumer.new(
+        dsn, queue: queue, name: consumer_name, logger: silent_logger
+      )
+
+      assert_equal false, consumer.poll_once(conn)
+    end
+  end
+
+  def test_poll_once_reports_processed_batch
+    with_queue do |queue, consumer_name, conn|
+      client = Pgque::Client.new(conn)
+      client.send(queue, { "i" => 1 }, type: "evt.processed")
+      force_tick(conn, queue)
+
+      consumer = Pgque::Consumer.new(
+        dsn, queue: queue, name: consumer_name, logger: silent_logger
+      )
+      consumer.on("evt.processed") { |_message| }
+
+      assert_equal true, consumer.poll_once(conn)
+    end
+  end
 
   def run_consumer_for(consumer, seconds)
     t = Thread.new { consumer.start }
