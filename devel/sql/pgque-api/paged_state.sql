@@ -78,7 +78,7 @@ begin
             using errcode = '55000';
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /* Clear delivery state without discarding the most recent ack receipt. */
 create or replace function pgque._clear_paged_active(
@@ -109,7 +109,7 @@ begin
         queue_id = i_queue_id
         and consumer_id = i_consumer_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /*
  * Move only active cooperative progress. The destination and victim receipts
@@ -177,7 +177,7 @@ begin
         i_victim_consumer_id
     );
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._assert_unpaged(bigint)
     from public, pgque_reader, pgque_writer, pgque_admin;

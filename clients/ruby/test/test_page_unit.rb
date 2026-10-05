@@ -1,4 +1,5 @@
 require_relative "test_helper"
+require "timeout"
 
 class PageFakeResult
   include Enumerable
@@ -64,6 +65,45 @@ class TestPageUnit < Minitest::Test
         Pgque::Client.new(conn).process_page("q", "c", "w") { deferred }
       end
       assert_equal 1, conn.calls.length
+    end
+  end
+
+  [:pending, :failed, :succeeded].each do |state|
+    define_method("test_#{state}_thread_result_does_not_ack") do
+      release = Queue.new
+      failure = RuntimeError.new("background handler failed")
+      outcome = Thread.new do
+        Thread.current.report_on_exception = false
+        release.pop
+        raise failure if state == :failed
+        :completed
+      end
+      unless state == :pending
+        release << true
+        if state == :failed
+          assert_same failure, assert_raises(RuntimeError) { outcome.value }
+        else
+          assert_equal :completed, outcome.value
+        end
+      end
+      ack = PageFakeResult.new([{"status"=>"acked", "batch_finished"=>"t"}])
+      conn = PageFakeConnection.new([PageFakeResult.new([row]), ack])
+      Timeout.timeout(2) do
+        assert_raises(TypeError) do
+          Pgque::Client.new(conn).process_page("q", "c", "w") { outcome }
+        end
+      end
+      assert_equal 1, conn.calls.length
+      if state == :pending
+        assert outcome.alive?, "client must not stop handler-owned threads"
+      elsif state == :failed
+        assert_same failure, assert_raises(RuntimeError) { outcome.value }
+      else
+        assert_equal :completed, outcome.value
+      end
+    ensure
+      release << true if release
+      outcome.join if outcome&.alive?
     end
   end
 

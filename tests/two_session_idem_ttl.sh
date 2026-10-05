@@ -15,6 +15,16 @@ if [[ -z "${PGQUE_TEST_DSN:-}" ]]; then
 fi
 
 psql_base=(psql --no-psqlrc -v ON_ERROR_STOP=1 "${PGQUE_TEST_DSN}")
+
+# Refuse the database before arming any mutating cleanup.
+database_name="$("${psql_base[@]}" -qAtc 'select current_database()')"
+if [[ ! "${database_name}" =~ (^|_)test($|_) ]] \
+   && [[ "${PGQUE_ALLOW_TEST_MUTATION:-}" != "1" ]]; then
+  echo "FAIL: refusing concurrency test mutations in database '${database_name}'" >&2
+  echo "      use a database name containing 'test' or set PGQUE_ALLOW_TEST_MUTATION=1" >&2
+  exit 2
+fi
+
 suffix="${$}_$(date +%s)"
 queue_name="idem_ttl_lock_${suffix}"
 idem_key="lock_wait_${suffix}"
@@ -31,6 +41,7 @@ cleanup() {
     select pg_terminate_backend(pid)
     from pg_stat_activity
     where pid <> pg_backend_pid()
+      and datname = current_database()
       and application_name in ('${holder_app}', '${contender_app}');
   " >/dev/null 2>&1 || cleanup_status=1
   "${psql_base[@]}" -qAtc \
@@ -63,14 +74,6 @@ print_debug() {
     cat "${file}" >&2 || true
   done
 }
-
-database_name="$("${psql_base[@]}" -qAtc 'select current_database()')"
-if [[ ! "${database_name}" =~ (^|_)test($|_) ]] \
-   && [[ "${PGQUE_ALLOW_TEST_MUTATION:-}" != "1" ]]; then
-  echo "FAIL: refusing concurrency test mutations in database '${database_name}'" >&2
-  echo "      use a database name containing 'test' or set PGQUE_ALLOW_TEST_MUTATION=1" >&2
-  exit 2
-fi
 
 "${psql_base[@]}" >"${workdir}/setup.out" 2>"${workdir}/setup.err" <<SQL
 select pgque.create_queue('${queue_name}');
