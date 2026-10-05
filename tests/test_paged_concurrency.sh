@@ -419,10 +419,24 @@ crash_repeat="$(psql_test -F '|' -c "select page_token, ((messages)[1]).payload,
 psql_test <<'SQL' >/dev/null
 select pgque.create_queue('paged_long_producer');
 select pgque.subscribe('paged_long_producer', 'c1');
+create table public.page_producer_barrier (released boolean not null);
+insert into public.page_producer_barrier values (false);
 SQL
 psql_test -c "set application_name='page_long_producer'; begin;
   select pgque.send('paged_long_producer','producer','late');
-  select pg_sleep(4); commit;" >"${tmpdir}/long_producer.out" 2>"${tmpdir}/long_producer.err" &
+  do \$\$
+  declare released boolean;
+  begin
+    for i in 1..600 loop
+      select b.released into released from public.page_producer_barrier as b;
+      exit when released;
+      perform pg_sleep(0.05);
+    end loop;
+    if not released then
+      raise exception 'timed out waiting to release long producer';
+    end if;
+  end \$\$;
+  commit;" >"${tmpdir}/long_producer.out" 2>"${tmpdir}/long_producer.err" &
 producer_pid=$!
 wait_for_sleep page_long_producer
 psql_test <<'SQL' >/dev/null
@@ -437,7 +451,9 @@ begin
   perform pgque.ack_page(p.page_token,'reader');
 end $$;
 SQL
+psql_test -c 'update public.page_producer_barrier set released = true' >/dev/null
 wait "$producer_pid" || fail 'long producer did not commit'
+psql_test -c 'drop table public.page_producer_barrier' >/dev/null
 psql_test <<'SQL' >/dev/null
 select pgque.force_next_tick('paged_long_producer');
 select pgque.ticker('paged_long_producer');

@@ -1,5 +1,6 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 
+from concurrent.futures import Future
 from functools import partial
 
 import pytest
@@ -148,3 +149,23 @@ def test_process_page_rejects_deferred_side_effect_without_ack(kind):
         PgqueClient(conn).process_page("q", "c", "w", lambda _: deferred)
     assert effects == []
     assert len(conn.calls) == 1
+
+
+@pytest.mark.parametrize("state", ["pending", "failed", "succeeded"])
+def test_process_page_rejects_future_result_without_ack(state):
+    future = Future()
+    failure = RuntimeError("background handler failed")
+    if state == "failed":
+        future.set_exception(failure)
+    elif state == "succeeded":
+        future.set_result("completed")
+    conn = Conn([[page_row()], [["acked", True]]])
+    with pytest.raises(TypeError, match="lazy"):
+        PgqueClient(conn).process_page("q", "c", "w", lambda _: future)
+    assert len(conn.calls) == 1
+    assert not future.cancelled()
+    assert future.done() == (state != "pending")
+    if state == "failed":
+        assert future.exception() is failure
+    elif state == "succeeded":
+        assert future.result() == "completed"

@@ -1,5 +1,6 @@
 # Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 require_relative "test_helper"
+require "timeout"
 
 class TestPageIntegration < Minitest::Test
   include PgqueTest::Helpers
@@ -79,6 +80,54 @@ class TestPageIntegration < Minitest::Test
       assert_includes ["idle", "advanced"], partition_empty.status
       assert_empty partition_empty.messages
       assert_nil partition_empty.page_token
+    end
+  end
+
+  [:pending, :failed, :succeeded].each do |state|
+    define_method("test_#{state}_thread_result_keeps_live_page_outstanding") do
+      release = Queue.new
+      outcome = Thread.new do
+        Thread.current.report_on_exception = false
+        release.pop
+        raise "background handler failed" if state == :failed
+        :completed
+      end
+      unless state == :pending
+        release << true
+        if state == :failed
+          assert_raises(RuntimeError) { outcome.value }
+        else
+          assert_equal :completed, outcome.value
+        end
+      end
+      with_queue do |queue, consumer, conn|
+        client = Pgque::Client.new(conn)
+        worker = "thread-worker"
+        msg_id = client.send(queue, {"state" => state.to_s}, type: "page.thread")
+        client.force_next_tick(queue)
+        client.ticker(queue)
+        page = client.receive_page(queue, consumer, worker)
+        assert_equal "page", page.status
+        assert_equal [msg_id], page.messages.map(&:msg_id)
+
+        Timeout.timeout(2) do
+          assert_raises(TypeError) do
+            client.process_page(queue, consumer, worker) { outcome }
+          end
+        end
+        replay = client.receive_page(queue, consumer, worker)
+        assert_equal page.page_token, replay.page_token
+        assert_equal [msg_id], replay.messages.map(&:msg_id)
+        seen = []
+        result = client.process_page(queue, consumer, worker) { |message| seen << message.msg_id }
+        assert_equal [msg_id], seen
+        assert_equal 1, result.processed_count
+        assert result.batch_finished
+        assert_equal({status: "already_acked", batch_finished: true}, client.ack_page(page.page_token, worker))
+      end
+    ensure
+      release << true if release
+      outcome.join if outcome&.alive?
     end
   end
 
