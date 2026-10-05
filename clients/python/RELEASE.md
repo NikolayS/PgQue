@@ -23,6 +23,11 @@ Use Python/PEP 440 version strings in `pyproject.toml`. For a development or
 pre-release build, use forms like `0.2.0.dev0` or `0.2.0rc1`; do **not** use
 Git-style `0.2.0-dev`, which PyPI rejects.
 
+`pyproject.toml` is the authoritative version source. Installed and editable
+clients expose their distribution metadata as `pgque.__version__`. Direct
+imports from an uninstalled source checkout read the same `project.version`.
+If neither source exists, the runtime version is `0+unknown`.
+
 ## GitHub environment prerequisite
 
 Before the first real publish, create GitHub environments in `NikolayS/pgque`:
