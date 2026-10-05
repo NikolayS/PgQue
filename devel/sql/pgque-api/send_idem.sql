@@ -38,6 +38,50 @@ create index if not exists idem_expires_at_idx on pgque.idem (expires_at);
 revoke all on table pgque.idem from public;
 revoke all on table pgque.idem from pgque_reader, pgque_writer, pgque_admin;
 
+/* PostgreSQL cannot rename function inputs in place. Recreate only exact
+ * alpha contracts; modern reinstalls keep OIDs, grants and dependencies. */
+do $$
+declare
+    v_actual_names text[];
+    v_dependents text;
+    v_function record;
+    v_oid oid;
+begin
+    for v_function in
+        select *
+        from (values
+            ('pgque.send_idem(text,text,text,text,interval,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_idem_key', 'i_ttl', 'i_partition_key']),
+            ('pgque.send_idem(text,text,jsonb,text,interval,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_idem_key', 'i_ttl', 'i_partition_key']),
+            ('pgque.maint_idem(text)',
+                array['i_queue_name'])
+        ) as alpha(signature, old_names)
+    loop
+        v_oid := to_regprocedure(v_function.signature)::oid;
+        if v_oid is not null then
+            select p.proargnames[1:p.pronargs] into v_actual_names
+            from pg_proc as p
+            where p.oid = v_oid;
+            if v_actual_names = v_function.old_names then
+                select string_agg(
+                    distinct pg_catalog.pg_describe_object(
+                        d.classid, d.objid, d.objsubid), ', ')
+                into v_dependents
+                from pg_catalog.pg_depend as d
+                where d.refclassid = 'pg_catalog.pg_proc'::regclass
+                  and d.refobjid = v_oid
+                  and d.deptype in ('n', 'a');
+                if v_dependents is not null then
+                    raise exception 'cannot stabilize named arguments for % because dependent objects exist: %. Drop these dependents, run the transactional upgrade, then recreate them',
+                        v_function.signature, v_dependents;
+                end if;
+                execute 'drop function ' || v_function.signature;
+            end if;
+        end if;
+    end loop;
+end $$;
+
 /*
  * pgque.send_idem(queue, type, payload text, idem_key, ttl, partition_key)
  * Fast path, opaque textual payload (same conventions as pgque.send(text)).
@@ -51,10 +95,17 @@ revoke all on table pgque.idem from pgque_reader, pgque_writer, pgque_admin;
  * usable (a crash can never leave a claimed key with no event).
  */
 create or replace function pgque.send_idem(
-    i_queue text, i_type text, i_payload text, i_idem_key text,
-    i_ttl interval default '1 hour', i_partition_key text default null)
+    queue_name text, type_name text, payload text, idem_key text,
+    ttl interval default '1 hour', partition_key text default null)
 returns table (event_id int8, deduped boolean) as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_type alias for $2;
+    i_payload alias for $3;
+    i_idem_key alias for $4;
+    i_ttl alias for $5;
+    i_partition_key alias for $6;
     v_queue_id int4;
     v_extra_maint text[];
     v_claimed boolean;
@@ -145,9 +196,17 @@ revoke execute on function
  * literals resolve to the text overload -- see send.sql).
  */
 create or replace function pgque.send_idem(
-    i_queue text, i_type text, i_payload jsonb, i_idem_key text,
-    i_ttl interval default '1 hour', i_partition_key text default null)
+    queue_name text, type_name text, payload jsonb, idem_key text,
+    ttl interval default '1 hour', partition_key text default null)
 returns table (event_id int8, deduped boolean) as $$
+#variable_conflict use_column
+declare
+    i_queue alias for $1;
+    i_type alias for $2;
+    i_payload alias for $3;
+    i_idem_key alias for $4;
+    i_ttl alias for $5;
+    i_partition_key alias for $6;
 begin
     return query
     select s.event_id, s.deduped
@@ -166,9 +225,11 @@ revoke execute on function
  * else 0. send_idem() registers it in queue_extra_maint automatically; it
  * shares the install owner with maint(), so maint()'s ownership check passes.
  */
-create or replace function pgque.maint_idem(i_queue_name text)
+create or replace function pgque.maint_idem(queue_name text)
 returns integer as $$
+#variable_conflict use_column
 declare
+    i_queue_name alias for $1;
     v_queue_id int4;
     v_deleted integer;
 begin
