@@ -66,6 +66,11 @@ jobs:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
         run: bash tests/two_session_slot_claim.sh
 
+      - name: Run atomic partition setup and snapshot-window regressions
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: bash tests/two_session_partition_atomic.sh
+
       - name: Run paged concurrency acceptance
         env:
           PGQUE_TEST_IMAGE: postgres:${{ matrix.pg_version }}
@@ -96,9 +101,14 @@ jobs:
 
       - name: Test install idempotency
         run: |
+          # A dependent monitoring view must survive a development reinstall.
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -c 'create view public.partition_status_dependency as select * from pgque.partition_slot_status'
           # Re-run install -- should produce no errors
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -c 'select count(*) from public.partition_status_dependency; drop view public.partition_status_dependency'
           # Verify everything still works
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql

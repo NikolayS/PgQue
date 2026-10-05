@@ -148,6 +148,12 @@
 \echo 'Running: test_partition_null_owner'
 \i tests/test_partition_null_owner.sql
 
+\echo 'Running: test_partition_setup'
+\i tests/test_partition_setup.sql
+
+\echo 'Running: test_partition_slot_limit'
+\i tests/test_partition_slot_limit.sql
+
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
 

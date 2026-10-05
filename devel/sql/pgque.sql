@@ -7441,8 +7441,10 @@ revoke execute on all functions in schema pgque from public;
 --
 -- Partition keys (blueprints/partition-keys/SPEC.md, Phase 1A):
 --   pgque.send(queue, type, payload, partition_key)  -- jsonb + text overloads
+--   pgque.subscribe_partitioned(queue, consumer, n)
 --   pgque.subscribe_slot(queue, consumer, slot, n)
 --   pgque.unsubscribe_slot(queue, consumer, slot)
+--   pgque.unsubscribe_partitioned(queue, consumer)
 --   pgque.claim_slot(queue, consumer, slot, worker, ttl)
 --   pgque.release_slot(queue, consumer, slot, worker)
 --   pgque.receive_partitioned(queue, consumer, slot, n, worker, max)
@@ -7499,16 +7501,53 @@ revoke execute on all functions in schema pgque from public;
 create table if not exists pgque.partition_consumer (
     queue_id    int4    not null references pgque.queue (queue_id) on delete cascade,
     co_name     text    not null,
-    n           int4    not null check (n >= 1),
+    n           int4    not null,
+    constraint partition_consumer_n_check check (n between 1 and 256),
     primary key (queue_id, co_name)
 );
+
+/*
+ * Pre-flight guard for the constraint re-add below: a consumer created
+ * before the n cap existed would otherwise abort the install with a bare
+ * check-violation error. Name the row and the fix instead.
+ */
+create or replace function pgque._partition_n_cap_guard()
+returns void as $$
+declare
+    v_bad record;
+begin
+    select q.queue_name, pc.co_name, pc.n into v_bad
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where pc.n not between 1 and 256
+    order by q.queue_name, pc.co_name
+    limit 1;
+    if found then
+        raise exception 'cannot apply the 256-slot cap: partitioned consumer % on queue % has n=%; recreate it with a smaller slot count (drop every slot via pgque.unsubscribe_slot(), then pgque.subscribe_partitioned() with n <= 256), then re-run the install',
+            v_bad.co_name, v_bad.queue_name, v_bad.n;
+    end if;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+
+revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer;
+
+/* Keep the constraint definition synchronized on idempotent installs. */
+do $$
+begin
+    perform pgque._partition_n_cap_guard();
+end $$;
+alter table pgque.partition_consumer
+    drop constraint if exists partition_consumer_n_check;
+alter table pgque.partition_consumer
+    add constraint partition_consumer_n_check check (n between 1 and 256);
 
 /*
  * Per-slot lease -- SPEC D7/D8/section 15. A slot is owned by a worker id
  * for a TTL window; epoch is the monotonic fencing token, bumped on every
  * takeover of an expired lease. Written only inside SECURITY DEFINER
  * functions (same pattern as partition_consumer); revoked from app roles.
- * One row per subscribed slot, created by subscribe_slot.
+ * One row per subscribed slot, created by subscribe_partitioned or repaired
+ * individually by subscribe_slot (forward-only: the missed window is lost).
  */
 create table if not exists pgque.partition_slot (
     queue_id    int4 not null,
@@ -7523,11 +7562,20 @@ create table if not exists pgque.partition_slot (
 );
 
 /*
- * These drops must precede the new objects: the view's column set changes
- * (create or replace view cannot alter it) and the older advisory-lock slot
- * functions are replaced entirely by the lease model.
+ * Only the old advisory-lock view needs replacement. Keep the lease view
+ * and its dependents on reinstall; new status columns are appended below.
+ * The older advisory-lock functions are replaced entirely by the lease model.
  */
-drop view if exists pgque.partition_slot_status;
+do $$
+begin
+    if exists (
+        select 1 from pg_catalog.pg_attribute
+        where attrelid = pg_catalog.to_regclass('pgque.partition_slot_status')
+          and attname = 'owner_pid' and not attisdropped
+    ) then
+        drop view pgque.partition_slot_status;
+    end if;
+end $$;
 drop function if exists pgque.slot_lock_key(text, text, int);
 drop function if exists pgque.claim_slot(text, text, int);
 drop function if exists pgque.release_slot(text, text, int);
@@ -7578,7 +7626,7 @@ begin
     where q.queue_name = i_queue
       and pc.co_name = i_consumer;
     if not found then
-        raise exception 'consumer % on queue % is not a partitioned consumer; call pgque.subscribe_slot() first',
+        raise exception 'consumer % on queue % is not a partitioned consumer; call pgque.subscribe_partitioned() first',
             i_consumer, i_queue;
     end if;
 
@@ -7677,6 +7725,115 @@ revoke execute on function pgque.send(text, text, text, text) from public;
 -- Slot registration (enforced N)
 -- ---------------------------------------------------------------------------
 
+/*
+ * Atomically materialize every slot for a partitioned consumer at one shared
+ * tick. Existing complete setup is idempotent and never repositions cursors;
+ * existing partial setup requires an explicit repair decision.
+ */
+create or replace function pgque.subscribe_partitioned(
+    i_queue text, i_consumer text, i_n int)
+returns void as $$
+declare
+    v_queue_id int4;
+    v_n int4;
+    v_start_tick bigint;
+    v_complete_slots int4;
+    v_registered int4;
+    v_slot int4;
+    v_slot_name text;
+begin
+    if i_queue is null or i_queue = '' then
+        raise exception 'queue name must not be empty';
+    end if;
+    if i_consumer is null or i_consumer = '' then
+        raise exception 'consumer name must not be empty';
+    end if;
+    if position('#' in i_consumer) > 0 then
+        raise exception 'partitioned consumer name must not contain #: %', i_consumer;
+    end if;
+    if i_n is null or i_n < 1 or i_n > 256 then
+        raise exception 'slot count n must be between 1 and 256, got %', i_n;
+    end if;
+
+    select queue_id into v_queue_id
+    from pgque.queue
+    where queue_name = i_queue;
+    if not found then
+        raise exception 'queue not found: %', i_queue;
+    end if;
+
+    /*
+     * ON CONFLICT waits for a concurrent creator. The follow-up row lock makes
+     * complete-state inspection serialize with subscribe_slot and another
+     * subscribe_partitioned call for the same logical consumer.
+     */
+    insert into pgque.partition_consumer (queue_id, co_name, n)
+    values (v_queue_id, i_consumer, i_n)
+    on conflict (queue_id, co_name) do nothing
+    returning n into v_n;
+    if not found then
+        select pc.n into v_n
+        from pgque.partition_consumer as pc
+        where pc.queue_id = v_queue_id
+          and pc.co_name = i_consumer
+        for no key update;
+
+        if v_n <> i_n then
+            raise exception 'consumer % on queue % is pinned to n=%; got n=% (tear down with pgque.unsubscribe_partitioned() to change the slot count)',
+                i_consumer, i_queue, v_n, i_n;
+        end if;
+
+        select count(*) into v_complete_slots
+        from generate_series(0, i_n - 1) as gs(slot)
+        join pgque.partition_slot as ps
+            on ps.queue_id = v_queue_id
+            and ps.co_name = i_consumer
+            and ps.slot = gs.slot
+        join pgque.consumer as c
+            on c.co_name = pgque._slot_name(i_consumer, gs.slot, i_n)
+        join pgque.subscription as s
+            on s.sub_queue = v_queue_id
+            and s.sub_consumer = c.co_id;
+        if v_complete_slots <> i_n then
+            raise exception 'partitioned consumer % on queue % has incomplete setup (% of % slots subscribed); repair with pgque.subscribe_slot() (forward-only: events ticked while a slot was missing stay lost) or recreate it via pgque.unsubscribe_partitioned() before producing',
+                i_consumer, i_queue, v_complete_slots, i_n;
+        end if;
+
+        return;
+    end if;
+
+    select tick_id into v_start_tick
+    from pgque.tick
+    where tick_queue = v_queue_id
+    order by tick_id desc
+    limit 1;
+    if not found then
+        raise exception 'no ticks for queue: %', i_queue;
+    end if;
+
+    for v_slot in 0..i_n - 1 loop
+        v_slot_name := pgque._slot_name(i_consumer, v_slot, i_n);
+        v_registered := pgque.register_consumer_at(
+            i_queue, v_slot_name, v_start_tick);
+        if v_registered <> 1 then
+            raise exception 'consumer name % is already registered on queue %; cannot reuse it for partition slot %/% (a legacy non-partitioned consumer with that name must be removed first with pgque.unsubscribe())',
+                v_slot_name, i_queue, v_slot, i_n;
+        end if;
+
+        insert into pgque.partition_slot (queue_id, co_name, slot)
+        values (v_queue_id, i_consumer, v_slot);
+    end loop;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.subscribe_partitioned(text, text, int) from public;
+
+/*
+ * Alpha-compatible single-slot registration. Prefer subscribe_partitioned for
+ * new consumers; use this only for explicit repair or controlled setup work.
+ * Repair closes the gap going forward only: the slot starts at the current
+ * tick, and events ticked while it was missing are permanently lost (recreate
+ * the consumer via unsubscribe_partitioned before producing to avoid that).
+ */
 create or replace function pgque.subscribe_slot(
     i_queue text, i_consumer text, i_slot int, i_n int)
 returns void as $$
@@ -7693,8 +7850,8 @@ begin
     if position('#' in i_consumer) > 0 then
         raise exception 'partitioned consumer name must not contain #: %', i_consumer;
     end if;
-    if i_n is null or i_n < 1 then
-        raise exception 'slot count n must be >= 1, got %', i_n;
+    if i_n is null or i_n < 1 or i_n > 256 then
+        raise exception 'slot count n must be between 1 and 256, got %', i_n;
     end if;
     if i_slot is null or i_slot < 0 or i_slot >= i_n then
         raise exception 'slot % out of range for n=% (valid: 0..%)', i_slot, i_n, i_n - 1;
@@ -7717,7 +7874,7 @@ begin
     on conflict (queue_id, co_name) do update set n = pc.n
     returning pc.n into v_n;
     if v_n <> i_n then
-        raise exception 'consumer % on queue % is pinned to n=%; got n=% (unsubscribe all slots to change the slot count)',
+        raise exception 'consumer % on queue % is pinned to n=%; got n=% (tear down with pgque.unsubscribe_partitioned() to change the slot count)',
             i_consumer, i_queue, v_n, i_n;
     end if;
 
@@ -7745,13 +7902,15 @@ returns void as $$
 declare
     v_queue_id int4;
     v_n int4;
+    v_subscribed int4;
 begin
     select pc.n, q.queue_id into v_n, v_queue_id
     from pgque.partition_consumer as pc
     join pgque.queue as q on q.queue_id = pc.queue_id
     where q.queue_name = i_queue
       and pc.co_name = i_consumer
-    for update of pc;
+    -- Serialize lifecycle calls without blocking lease-update FK key shares.
+    for no key update of pc;
     if not found then
         return;
     end if;
@@ -7761,20 +7920,55 @@ begin
             i_slot, i_consumer, i_queue, v_n - 1;
     end if;
 
-    perform pgque.unregister_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, v_n));
+    /*
+     * Dropping one slot of a complete consumer is the documented repair /
+     * controlled path, but it creates the incomplete-setup state that
+     * subscribe_partitioned rejects -- never do it silently. Genuine slots
+     * are counted catalog-driven (partition_slot row AND subscription): a
+     * legacy consumer that merely shares the name shape does not count.
+     */
+    select count(*) into v_subscribed
+    from pgque.partition_slot as ps
+    join pgque.consumer as c
+        on c.co_name = pgque._slot_name(i_consumer, ps.slot, v_n)
+    join pgque.subscription as s
+        on s.sub_queue = v_queue_id
+        and s.sub_consumer = c.co_id
+    where ps.queue_id = v_queue_id
+      and ps.co_name = i_consumer;
+    if v_n > 1 and v_subscribed = v_n then
+        raise warning 'dropping slot % leaves partitioned consumer % on queue % with incomplete setup; repair forward-only with pgque.subscribe_slot() or tear down with pgque.unsubscribe_partitioned()',
+            i_slot, i_consumer, i_queue;
+    end if;
 
-    delete from pgque.partition_slot
+    -- Lock a genuine slot before its subscription, like receive/page ack.
+    -- A name-shaped legacy consumer without this row is not ours to delete.
+    perform 1
+    from pgque.partition_slot
     where queue_id = v_queue_id
       and co_name = i_consumer
-      and slot = i_slot;
+      and slot = i_slot
+    for update;
+    if found then
+        perform pgque.unregister_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, v_n));
 
+        delete from pgque.partition_slot
+        where queue_id = v_queue_id
+          and co_name = i_consumer
+          and slot = i_slot;
+    end if;
+
+    /* Same catalog-driven rule for last-slot cleanup: only genuine slots
+       keep the pinned-N row alive, never a name-shaped legacy consumer. */
     perform 1
-    from pgque.subscription as s
-    join pgque.consumer as c on c.co_id = s.sub_consumer
-    where s.sub_queue = v_queue_id
-      and c.co_name in (
-          select pgque._slot_name(i_consumer, g, v_n)
-          from generate_series(0, v_n - 1) as g);
+    from pgque.partition_slot as ps
+    join pgque.consumer as c
+        on c.co_name = pgque._slot_name(i_consumer, ps.slot, v_n)
+    join pgque.subscription as s
+        on s.sub_queue = v_queue_id
+        and s.sub_consumer = c.co_id
+    where ps.queue_id = v_queue_id
+      and ps.co_name = i_consumer;
     if not found then
         delete from pgque.partition_consumer
         where queue_id = v_queue_id
@@ -7784,6 +7978,66 @@ end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;
 revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
 
+/*
+ * Whole-consumer teardown -- the inverse of subscribe_partitioned. Drops
+ * every slot subscription and the pinned-N row in one transaction. Partial
+ * setups (some slots already gone) tear down cleanly -- this is the recreate
+ * path the incomplete-setup error points to -- and an absent consumer is a
+ * no-op with a notice. Only catalog-registered slots (partition_slot rows)
+ * are dropped: a legacy consumer that merely shares the name shape is left
+ * untouched (remove it with plain pgque.unsubscribe()). NOTE:
+ * unregister_consumer cascades each slot's retry rows and dead_letter audit
+ * (SPEC section 8, teardown).
+ */
+create or replace function pgque.unsubscribe_partitioned(
+    i_queue text, i_consumer text)
+returns void as $$
+declare
+    v_queue_id int4;
+    v_n int4;
+    v_slot int4;
+begin
+    select pc.n, q.queue_id into v_n, v_queue_id
+    from pgque.partition_consumer as pc
+    join pgque.queue as q on q.queue_id = pc.queue_id
+    where q.queue_name = i_queue
+      and pc.co_name = i_consumer
+    -- Serialize lifecycle calls without blocking lease-update FK key shares.
+    for no key update of pc;
+    if not found then
+        raise notice 'partitioned consumer % on queue % does not exist; nothing to tear down',
+            i_consumer, i_queue;
+        return;
+    end if;
+
+    -- Lock every slot before any subscription to match receive/page ack.
+    perform 1
+    from pgque.partition_slot as ps
+    where ps.queue_id = v_queue_id
+      and ps.co_name = i_consumer
+    order by ps.slot
+    for update;
+
+    -- unregister_consumer returns 0 for a slot whose subscription is gone.
+    for v_slot in
+        select ps.slot
+        from pgque.partition_slot as ps
+        where ps.queue_id = v_queue_id
+          and ps.co_name = i_consumer
+        order by ps.slot
+    loop
+        perform pgque.unregister_consumer(
+            i_queue, pgque._slot_name(i_consumer, v_slot, v_n));
+    end loop;
+
+    -- Cascades the remaining partition_slot lease rows.
+    delete from pgque.partition_consumer
+    where queue_id = v_queue_id
+      and co_name = i_consumer;
+end;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+revoke execute on function pgque.unsubscribe_partitioned(text, text) from public;
+
 -- ---------------------------------------------------------------------------
 -- Slot lease -- SPEC D7/D8/section 15
 -- ---------------------------------------------------------------------------
@@ -7792,6 +8046,8 @@ revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
  * Claim (or renew) the lease on a slot for a worker id. Returns the epoch
  * fencing token, or null if the slot is locked by another transaction or
  * leased by another live worker (the claim loop moves to the next slot). The lease
+ * can still belong to this worker while another transaction renews it; a
+ * busy NULL result does not prove loss of the existing lease. The lease
  * lives in pgque.partition_slot -- plain transactional DML, no session state
  * -- so it survives transaction-mode pooling. Uses clock_timestamp() so a
  * pg_sleep inside a transaction correctly ages a short TTL.
@@ -7824,7 +8080,7 @@ begin
     where q.queue_name = i_queue
       and pc.co_name = i_consumer;
     if not found then
-        raise exception 'consumer % on queue % is not a partitioned consumer; call pgque.subscribe_slot() first',
+        raise exception 'consumer % on queue % is not a partitioned consumer; call pgque.subscribe_partitioned() first',
             i_consumer, i_queue;
     end if;
     if i_slot is null or i_slot < 0 or i_slot >= v_n then
@@ -8091,10 +8347,12 @@ revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pg
 -- ---------------------------------------------------------------------------
 
 /*
- * One row per slot 0..n-1 of every partitioned consumer (including slots
- * not yet leased -- an unpolled slot is exactly what the R7 rotation-pinning
- * alert must catch).
+ * One row per expected slot 0..n-1 of every partitioned consumer, including
+ * missing subscriptions and slots not yet leased. An unpolled subscribed slot
+ * is exactly what the R7 rotation-pinning alert must catch.
  *
+ *   subscribed     -- true when the engine subscription exists; false means
+ *                     setup is incomplete and cursor lag is unknown.
  *   lease_owner    -- worker holding a LIVE lease on the slot; null when
  *                     unleased OR the lease has expired (lease_until in the
  *                     past). A stale owner is never shown as current.
@@ -8105,6 +8363,15 @@ revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pg
  *                     filtering (tick_event_seq delta). It over-counts a
  *                     single slot's own share by ~n x, but 0 means "caught
  *                     up" exactly, and growth means the slot is stalling.
+ *
+ * Canonical alert: pending_events > X or not subscribed. A threshold-only
+ * alert (where pending_events > X) skips the NULL-lag rows of unsubscribed
+ * slots, so it never sees incomplete setup.
+ *
+ * Classification is catalog-driven, like the consume API: a slot counts as
+ * subscribed only when its partition_slot row AND its engine subscription
+ * both exist. A legacy ordinary consumer that merely shares the name shape
+ * ("C#k/N") is never attributed to the slot.
  */
 create or replace view pgque.partition_slot_status as
 select
@@ -8119,7 +8386,11 @@ select
     ps.lease_until,
     coalesce(ps.epoch, 0) as epoch,
     s.sub_last_tick as last_tick,
-    greatest(coalesce(latest.tick_event_seq - cur.tick_event_seq, 0), 0) as pending_events
+    case
+        when s.sub_id is null then null
+        else greatest(coalesce(latest.tick_event_seq - cur.tick_event_seq, 0), 0)
+    end as pending_events,
+    s.sub_id is not null as subscribed
 from pgque.partition_consumer as pc
 join pgque.queue as q on q.queue_id = pc.queue_id
 cross join lateral generate_series(0, pc.n - 1) as gs(slot)
@@ -8128,7 +8399,8 @@ left join pgque.partition_slot as ps
     and ps.co_name = pc.co_name
     and ps.slot = gs.slot
 left join pgque.consumer as c
-    on c.co_name = pgque._slot_name(pc.co_name, gs.slot, pc.n)
+    on ps.slot is not null
+    and c.co_name = pgque._slot_name(pc.co_name, gs.slot, pc.n)
 left join pgque.subscription as s
     on s.sub_queue = pc.queue_id
     and s.sub_consumer = c.co_id
@@ -8163,8 +8435,10 @@ grant select on pgque.partition_slot to pgque_admin;
 grant execute on function pgque.send(text, text, jsonb, text)  to pgque_writer;
 grant execute on function pgque.send(text, text, text, text)   to pgque_writer;
 
+grant execute on function pgque.subscribe_partitioned(text, text, int) to pgque_reader;
 grant execute on function pgque.subscribe_slot(text, text, int, int)   to pgque_reader;
 grant execute on function pgque.unsubscribe_slot(text, text, int)      to pgque_reader;
+grant execute on function pgque.unsubscribe_partitioned(text, text)    to pgque_reader;
 grant execute on function pgque.claim_slot(text, text, int, text, interval)    to pgque_reader;
 grant execute on function pgque.release_slot(text, text, int, text)            to pgque_reader;
 grant execute on function pgque.receive_partitioned(text, text, int, int, text, int) to pgque_reader;
@@ -8175,6 +8449,7 @@ grant select on pgque.partition_slot_status to pgque_reader;
 grant select on pgque.partition_slot_status to pgque_admin;
 
 -- Internal helpers: SECURITY DEFINER callees only.
+revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer;
 revoke execute on function pgque._slot_name(text, int, int) from public, pgque_reader, pgque_writer;
 revoke execute on function pgque._slot_guard(text, text, int, int, text) from public, pgque_reader, pgque_writer;
 revoke execute on function pgque._slot_batch(text, text, int, int) from public, pgque_reader, pgque_writer;
