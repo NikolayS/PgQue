@@ -8573,11 +8573,12 @@ begin
             i_queue, i_type, i_payload, i_partition_key, i_idem_key,
             null, null);
 
-        -- Record the id for later dedup responses (contention-free: this
-        -- transaction already holds the row lock, invisible to others until
-        -- the claim+append pair commits).
+        /* Finalize the TTL after the claim and append. INSERT values can
+           precede a uniqueness wait whose conflicting row disappears;
+           that successful INSERT never evaluates the ON CONFLICT update. */
         update pgque.idem k
-        set event_id = v_event_id
+        set event_id = v_event_id,
+            expires_at = clock_timestamp() + i_ttl
         where k.queue_id = v_queue_id
           and k.idem_key = i_idem_key;
 
@@ -8847,7 +8848,7 @@ begin
         perform pgque._event_retry_core(
             i_batch_id,
             v_event.ev_id,
-            current_timestamp + i_retry_after
+            clock_timestamp() + i_retry_after
         );
     end if;
     return 1;

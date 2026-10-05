@@ -154,7 +154,7 @@ begin
         perform pgque._event_retry_core(
             i_batch_id,
             v_event.ev_id,
-            current_timestamp + i_retry_after
+            clock_timestamp() + i_retry_after
         );
     end if;
     return 1;

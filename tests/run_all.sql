@@ -169,6 +169,7 @@
 \i tests/test_paged_batches.sql
 \i tests/test_paged_modes.sql
 \i tests/test_paged_legacy.sql
+\i tests/test_paged_retry_clock.sql
 \i tests/test_paged_edges.sql
 \i tests/test_paged_doc.sql
 \i tests/test_paged_history.sql
