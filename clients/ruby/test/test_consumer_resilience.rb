@@ -172,44 +172,64 @@ class TestConsumerResilience < Minitest::Test
       cons = Pgque::Consumer.new(
         dsn_with_application_name(app_name),
         queue: queue, name: consumer_name,
-        poll_interval: 0.2, logger: silent_logger
+        poll_interval: 10, logger: silent_logger
       )
       seen = []
       cons.on("evt.restart") { |msg| seen << msg.payload }
 
+      # Observe the actual backend only after its receive returned empty.
+      # Run this query on the consumer thread: libpq connections must not be
+      # shared concurrently. The production wait remains unchanged.
+      idle_waits = Queue.new
+      original_wait = cons.method(:wait_for_notify_or_stop)
+      cons.define_singleton_method(:wait_for_notify_or_stop) do |consumer_conn|
+        channels = consumer_conn.exec(
+          "select pg_listening_channels()"
+        ).column_values(0)
+        idle_waits << {
+          pid: consumer_conn.backend_pid, channels: channels,
+          started_at: Process.clock_gettime(Process::CLOCK_MONOTONIC),
+        }
+        original_wait.call(consumer_conn)
+      end
+
       thread, thread_error = start_in_thread(cons)
       begin
-        old_pid = nil
-        connected = wait_until(timeout: 5) do
-          result = conn.exec_params(
-            "select pid from pg_stat_activity " \
-            "where application_name = $1 and pid <> pg_backend_pid()",
-            [app_name],
-          )
-          old_pid = result.ntuples.zero? ? nil : result.getvalue(0, 0).to_i
-        end
-        assert connected, "consumer backend did not appear"
+        initial_wait = nil
+        assert wait_until(timeout: 5) {
+          initial_wait = idle_waits.pop unless idle_waits.empty?
+        }, "consumer did not reach its initial idle wait"
+        channel = "pgque_#{queue}"
+        assert_includes initial_wait[:channels], channel
 
         killed = conn.exec_params(
-          "select pg_terminate_backend($1)", [old_pid]
+          "select pg_terminate_backend($1)", [initial_wait[:pid]]
         ).getvalue(0, 0)
         assert_equal "t", killed
 
-        reconnected = wait_until(timeout: 8) do
-          result = conn.exec_params(
-            "select pid from pg_stat_activity " \
-            "where application_name = $1 and pid <> pg_backend_pid()",
-            [app_name],
-          )
-          result.ntuples.positive? && result.getvalue(0, 0).to_i != old_pid
+        replacement_wait = nil
+        reconnected = wait_until(timeout: 15) do
+          unless idle_waits.empty?
+            observed = idle_waits.pop
+            replacement_wait = observed if observed[:pid] != initial_wait[:pid]
+          end
+          replacement_wait
         end
-        assert reconnected, "consumer did not reconnect after backend termination"
+        assert reconnected, "replacement backend did not reach its idle wait"
+        assert_includes replacement_wait[:channels], channel,
+                        "replacement backend did not restore LISTEN"
 
+        # Send only after the replacement backend is empty and waiting.
+        # Delivery must precede its ten-second polling deadline; an immediate
+        # post-connect receive or polling-only reconnect cannot pass.
         client = Pgque::Client.new(conn)
         client.send(queue, { "r" => 1 }, type: "evt.restart")
         force_tick(conn, queue)
         assert wait_until(timeout: 5) { seen.size == 1 },
-               "reconnected consumer did not resume processing"
+               "replacement backend did not wake on the notification"
+        assert_operator monotonic - replacement_wait[:started_at], :<,
+                        cons.poll_interval,
+                        "delivery waited for the replacement backend's next poll"
         assert thread.alive?
         assert_nil thread_error.call
       ensure
