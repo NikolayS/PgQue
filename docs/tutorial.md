@@ -375,7 +375,9 @@ select * from pgque.status();
 The basic consumer above sees the whole stream. This final exercise combines
 the two SQL-first scaling features: producer idempotency prevents a retry from
 appending twice, while a partition key routes the accepted event to one leased
-slot and preserves order for that key.
+slot. Events for that key follow event-ID order within each snapshot window.
+This is not global producer or commit order: a transaction that commits late
+with a lower event ID can appear in a later window.
 
 Create every slot before producing. The atomic setup gives all four slots the
 same starting tick:

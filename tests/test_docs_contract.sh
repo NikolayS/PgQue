@@ -68,6 +68,9 @@ main() {
   local development_root
   local stable_root
   local output
+  local banner
+  local wrong_tag
+  local failures=0
 
   cd "${repo_root}"
   assert_finite_ttl_wording
@@ -91,6 +94,52 @@ main() {
     exit 1
   fi
 
+  # shellcheck disable=SC2016 # Use the exact Markdown development banners.
+  for banner in \
+    "This page follows the \`main\` branch's in-development build" \
+    'tutorial follows the `main` branch development build'; do
+    write_stable_fixture "${stable_root}"
+    printf '%s\n' "${banner}" >> "${stable_root}/docs/installation.md"
+    if PGQUE_DOCS_ROOT="${stable_root}" \
+      bash build/check-docs-contract.sh >/dev/null 2>&1; then
+      echo "FAIL: stable contract accepted banner: ${banner}" >&2
+      failures=$((failures + 1))
+    fi
+  done
+
+  for wrong_tag in v1x2.3 v1.2x3 v1x2x3; do
+    write_stable_fixture "${stable_root}"
+    printf '%s\n' \
+      "https://github.com/NikolayS/pgque/blob/${wrong_tag}/sql/pgque.sql" \
+      > "${stable_root}/docs/reference.md"
+    if PGQUE_DOCS_ROOT="${stable_root}" \
+      bash build/check-docs-contract.sh >/dev/null 2>&1; then
+      echo "FAIL: stable contract accepted wrong source tag: ${wrong_tag}" >&2
+      failures=$((failures + 1))
+    fi
+  done
+
+  # A dotted prerelease tag must also pass when the link matches literally.
+  write_stable_fixture "${stable_root}"
+  printf '%s\n' 'stable:v1.2.3-rc.2' > "${stable_root}/docs/.release-channel"
+  printf '%s\n' \
+    'https://github.com/NikolayS/pgque/blob/v1.2.3-rc.2/sql/pgque.sql' \
+    > "${stable_root}/docs/reference.md"
+  PGQUE_DOCS_ROOT="${stable_root}" \
+    bash build/check-docs-contract.sh >/dev/null
+
+  # The keyed tutorial must limit its ordering promise to snapshot windows.
+  if ! sed -n '/^## Step 10:/,$p' docs/tutorial.md \
+    | grep -Fq 'event-ID order within each snapshot window'; then
+    echo "FAIL: keyed tutorial omits snapshot-window ordering limit" >&2
+    failures=$((failures + 1))
+  fi
+  if ! sed -n '/^## Step 10:/,$p' docs/tutorial.md \
+    | grep -Fq 'lower event ID can appear in a later window'; then
+    echo "FAIL: keyed tutorial omits late-commit ordering limit" >&2
+    failures=$((failures + 1))
+  fi
+
   mkdir "${workdir}/bin"
   # shellcheck disable=SC2016 # Stub receives positional parameters later.
   printf '%s\n' \
@@ -105,6 +154,8 @@ main() {
     exit 1
   fi
   grep -Fq 'documentation scan failed' <<<"${output}"
+
+  [[ "${failures}" -eq 0 ]] || return 1
 
   echo "PASS: development and stable documentation contracts fail closed"
 }

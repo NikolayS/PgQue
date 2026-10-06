@@ -55,7 +55,7 @@ find_bad_source_links() {
   fi
 
   bad_links="$(printf '%s\n' "${matches}" \
-    | grep -Ev "${allowed_pattern}")" || filter_status=$?
+    | grep -Fv -- "${allowed_pattern}")" || filter_status=$?
   if [[ "${filter_status}" -gt 1 ]]; then
     fail "documentation source-link filter failed"
   fi
@@ -122,6 +122,12 @@ main() {
     forbid_text "in-development default install" "${doc_paths[@]}"
     forbid_text "main branch development build" "${doc_paths[@]}"
     forbid_text "main development build" "${doc_paths[@]}"
+    forbid_text \
+      "This page follows the \`main\` branch's in-development build" \
+      "${doc_paths[@]}"
+    forbid_text \
+      "tutorial follows the \`main\` branch development build" \
+      "${doc_paths[@]}"
 
     require_text "\\i sql/pgque.sql" "README.md"
     require_text "\\i sql/pgque.sql" "docs/installation.md"
