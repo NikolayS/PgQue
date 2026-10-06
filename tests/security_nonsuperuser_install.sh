@@ -31,7 +31,10 @@ cd "${repo_root}"
 
 psql_super=(psql --no-psqlrc -v ON_ERROR_STOP=1 "${PGQUE_TEST_SUPERUSER_DSN}")
 
-suffix="${$}"
+# PIDs can repeat across hosts/containers that share a PostgreSQL cluster.
+# Keep identifiers below PostgreSQL's 63-byte limit with a random run token.
+suffix="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+[[ "${suffix}" =~ ^[0-9a-f]{32}$ ]] || { echo "cannot generate run token" >&2; exit 1; }
 installer="pgque_nsu_installer_${suffix}"
 other_owner="pgque_nsu_other_${suffix}"
 reader_app="pgque_nsu_reader_${suffix}"
@@ -39,24 +42,26 @@ writer_app="pgque_nsu_writer_${suffix}"
 db_main="pgque_nsu_main_${suffix}"
 db_negctl="pgque_nsu_negctl_${suffix}"
 workdir="$(mktemp -d)"
+created_databases=()
+created_roles=()
 
 cleanup() {
-  local stmt failed=0
+  local name failed=0
   # One psql call per statement: DROP DATABASE refuses to run inside the
   # implicit transaction a multi-statement -c would create, and one failing
   # drop must not abort the rest. Leave the cluster-wide pgque_* app roles
-  # intact for other databases; only the named disposable fixtures are ours.
-  for stmt in \
-    "drop database if exists ${db_main} with (force)" \
-    "drop database if exists ${db_negctl} with (force)" \
-    "drop role if exists ${reader_app}" \
-    "drop role if exists ${writer_app}" \
-    "drop role if exists ${other_owner}" \
-    "drop role if exists ${installer}"; do
-    "${psql_super[@]}" -qAtc "${stmt}" >/dev/null 2>&1 || failed=1
+  # intact for other databases. A planned name is NOT proof of ownership:
+  # bootstrap can stop at a collision after creating only some fixtures.
+  for name in "${created_databases[@]}"; do
+    "${psql_super[@]}" -qAtc "drop database if exists ${name} with (force)" \
+      >/dev/null 2>&1 || failed=1
+  done
+  for name in "${created_roles[@]}"; do
+    "${psql_super[@]}" -qAtc "drop role if exists ${name}" \
+      >/dev/null 2>&1 || failed=1
   done
   if (( failed )); then
-    echo "WARNING: test cleanup incomplete (drop pgque_nsu_*_${suffix} databases/roles manually)" >&2
+    echo "WARNING: test cleanup incomplete for owned fixtures: ${created_databases[*]} ${created_roles[*]}" >&2
   fi
   rm -rf "${workdir}"
 }
@@ -83,17 +88,32 @@ run_step() {
   echo "ok: ${name}"
 }
 
+# One CREATE per call: record ownership immediately after that CREATE
+# succeeds, before any later bootstrap command can fail. Do not adopt an
+# existing resource or add its name to the cleanup lists after a collision.
+create_fixture() {
+  local kind="$1" name="$2" options="${3:-}"
+  local step="00_create_${name}"
+  printf 'create %s %s %s;\n' "${kind}" "${name}" "${options}" >"${workdir}/${step}.sql"
+  run_step "${step}" "${workdir}/${step}.sql"
+  if [[ "${kind}" == database ]]; then
+    created_databases+=("${name}")
+  else
+    created_roles=("${name}" "${created_roles[@]}")
+  fi
+}
+
 # --- 1. bootstrap: roles + installer-owned databases (superuser) ------------
 # Create missing app-role fixtures as superuser so the install owner has no
 # app-role membership on fresh clusters either. Do not revoke creator grants:
 # their dependent grants could change the role hierarchy we intend to test.
 # Preserve existing roles and ensure the hierarchy expected by the installer.
 # This tests SQL installation and co-ownership, not app-role creation rights.
+create_fixture role "${installer}" createrole
+create_fixture role "${other_owner}"
+create_fixture role "${reader_app}"
+create_fixture role "${writer_app}"
 cat >"${workdir}/00_bootstrap.sql" <<SQL
-create role ${installer} createrole;
-create role ${other_owner};
-create role ${reader_app};
-create role ${writer_app};
 do \$\$
 begin
   if not exists (select 1 from pg_roles where rolname = 'pgque_reader') then
@@ -112,10 +132,10 @@ begin
     grant pgque_writer to pgque_admin;
   end if;
 end \$\$;
-create database ${db_main} owner ${installer};
-create database ${db_negctl} owner ${installer};
 SQL
 run_step 00_bootstrap "${workdir}/00_bootstrap.sql"
+create_fixture database "${db_main}" "owner ${installer}"
+create_fixture database "${db_negctl}" "owner ${installer}"
 
 # --- 2. install as the NON-superuser owner (both databases) -----------------
 for db in "${db_main}" "${db_negctl}"; do
