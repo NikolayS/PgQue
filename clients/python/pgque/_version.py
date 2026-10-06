@@ -10,6 +10,7 @@ import re
 _DISTRIBUTION_NAME = "pgque-py"
 _PYPROJECT_PATH = Path(__file__).resolve().parent.parent / "pyproject.toml"
 _UNKNOWN_VERSION = "0+unknown"
+_PROJECT_TABLE = re.compile(r"^\[\s*project\s*\]\s*(?:#.*)?$")
 _VERSION_ASSIGNMENT = re.compile(
     r"^version\s*=\s*(['\"])([^'\"]+)\1\s*(?:#.*)?$"
 )
@@ -26,7 +27,7 @@ def source_version(pyproject_path: Path) -> str:
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("["):
-            in_project_table = stripped == "[project]"
+            in_project_table = _PROJECT_TABLE.fullmatch(stripped) is not None
             continue
         if not in_project_table:
             continue
