@@ -1,0 +1,54 @@
+name: Harness self-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, integrate/0.3-20261005, 'rc/**']
+
+jobs:
+  owned-cluster:
+    name: Owned harness controls (PG ${{ matrix.pg_version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pg_version: '14'
+            pg_major: '14'
+          - pg_version: '19beta1'
+            pg_major: '19'
+    container: postgres:${{ matrix.pg_version }}
+    steps:
+      - name: Install tools for checkout and harness controls
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git python3 util-linux
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # The cap guard test installs the exact pinned pre-cap commit.
+          fetch-depth: 0
+
+      - name: Build candidate SQL
+        run: bash build/transform.sh
+
+      - name: Test observed barriers and installed stale-clock control
+        env:
+          PG_BINDIR: /usr/lib/postgresql/${{ matrix.pg_major }}/bin
+        run: runuser -u postgres -- env PG_BINDIR="$PG_BINDIR" python3 tests/test_idem_harness_barriers.py
+
+      - name: Test old-API slot-cap upgrade recovery
+        env:
+          PG_BINDIR: /usr/lib/postgresql/${{ matrix.pg_major }}/bin
+        run: runuser -u postgres -- env PG_BINDIR="$PG_BINDIR" python3 tests/test_partition_cap_upgrade.py
+
+      - name: Test final-assembly definer path guard
+        run: python3 tests/test_definer_search_path_generator.py
+
+      - name: Test every installed definer path and catalog negative controls
+        env:
+          PG_BINDIR: /usr/lib/postgresql/${{ matrix.pg_major }}/bin
+        run: runuser -u postgres -- env PG_BINDIR="$PG_BINDIR" python3 tests/test_definer_search_path.py
