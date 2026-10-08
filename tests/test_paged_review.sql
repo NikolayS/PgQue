@@ -50,19 +50,72 @@ begin
 end;
 $$ language plpgsql;
 
+/* Check the first eligible window without allocating a batch or changing cursors. */
+create or replace function pg_temp.expect_review_window(
+  i_queue text,
+  i_consumer text,
+  i_expected bigint
+)
+returns void as $$
+declare
+  v_queue_id int4;
+  v_start_tick bigint;
+  v_start pg_snapshot;
+  v_end pg_snapshot;
+  v_count bigint;
+begin
+  select
+    q.queue_id,
+    s.sub_last_tick,
+    t.tick_snapshot
+  into strict
+    v_queue_id,
+    v_start_tick,
+    v_start
+  from pgque.queue as q
+  join pgque.subscription as s on s.sub_queue = q.queue_id
+  join pgque.consumer as c on c.co_id = s.sub_consumer
+  join pgque.tick as t
+    on t.tick_queue = s.sub_queue and t.tick_id = s.sub_last_tick
+  where q.queue_name = i_queue and c.co_name = i_consumer;
+
+  select t.tick_snapshot into strict v_end
+  from pgque.tick as t
+  where t.tick_queue = v_queue_id and t.tick_id > v_start_tick
+  order by t.tick_id
+  limit 1;
+
+  execute format(
+    'select count(*) from %s
+     where pg_visible_in_snapshot(ev_txid, $1)
+       and not pg_visible_in_snapshot(ev_txid, $2)',
+    pgque.current_event_table(i_queue)
+  ) into v_count using v_end, v_start;
+  if v_count is distinct from i_expected then
+    raise exception 'review fixture %.% expected % events in its batch window, got %',
+      i_queue, i_consumer, i_expected, v_count;
+  end if;
+end;
+$$ language plpgsql;
+
 /* Every mode rejects wrong/null workers and unknown tokens for ack and renew. */
 do $$
 begin
   perform pgque.create_queue('review_owner_normal');
   perform pgque.subscribe('review_owner_normal', 'c1');
-  perform pgque.send('review_owner_normal', 'normal', 'one');
 
   perform pgque.create_queue('review_owner_coop');
   perform pgque.register_subconsumer('review_owner_coop', 'main_c', 'w1');
-  perform pgque.send('review_owner_coop', 'coop', 'one');
 
   perform pgque.create_queue('review_owner_part');
   perform pgque.subscribe_slot('review_owner_part', 'part_c', 0, 1);
+end $$;
+
+/* Keep setup, publication, tick creation and consumption in separate transactions. */
+do $$
+begin
+  perform pgque.send('review_owner_normal', 'normal', 'one');
+  perform pgque.send('review_owner_coop', 'coop', 'one');
   perform pgque.send('review_owner_part', 'part', 'one', 'key');
 end $$;
 
@@ -80,6 +133,9 @@ declare
   v_ack record;
   v_forged constant uuid := 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 begin
+  perform pg_temp.expect_review_window('review_owner_normal', 'c1', 1);
+  perform pg_temp.expect_review_window('review_owner_coop', 'main_c', 1);
+  perform pg_temp.expect_review_window('review_owner_part', 'part_c#0/1', 1);
   select * into v_page
   from pgque.receive_page(
     'review_owner_normal', 'c1', 'normal-owner', 1, interval '1 minute'
@@ -103,7 +159,8 @@ begin
     'review_owner_coop', 'main_c', 'w1', 'coop-owner',
     1, interval '1 minute', interval '1 minute'
   );
-  assert v_page.status = 'page', 'cooperative ownership fixture must return a page';
+  assert v_page.status = 'page',
+    'cooperative ownership fixture must return a page, got ' || coalesce(v_page.status, 'null');
   perform pg_temp.expect_page_error('ack', v_page.page_token, 'wrong-owner');
   perform pg_temp.expect_page_error('renew', v_page.page_token, 'wrong-owner');
   perform pg_temp.expect_page_error('ack', v_page.page_token, null);
@@ -123,7 +180,8 @@ begin
   from pgque.receive_page_partitioned(
     'review_owner_part', 'part_c', 0, 1, 'part-owner', 1
   );
-  assert v_page.status = 'page', 'partition ownership fixture must return a page';
+  assert v_page.status = 'page',
+    'partition ownership fixture must return a page, got ' || coalesce(v_page.status, 'null');
   perform pg_temp.expect_page_error('ack', v_page.page_token, 'wrong-owner');
   perform pg_temp.expect_page_error('renew', v_page.page_token, 'wrong-owner');
   perform pg_temp.expect_page_error('ack', v_page.page_token, null);
@@ -142,6 +200,10 @@ do $$
 begin
   perform pgque.create_queue('review_epoch_fence');
   perform pgque.subscribe_slot('review_epoch_fence', 'part_c', 0, 1);
+end $$;
+
+do $$
+begin
   perform pgque.send('review_epoch_fence', 'part', 'one', 'key');
 end $$;
 
@@ -158,6 +220,7 @@ declare
   v_epoch_b bigint;
   v_epoch_a_again bigint;
 begin
+  perform pg_temp.expect_review_window('review_epoch_fence', 'part_c#0/1', 1);
   v_epoch_a := pgque.claim_slot(
     'review_epoch_fence', 'part_c', 0, 'worker-a', interval '1 minute'
   );
@@ -210,11 +273,19 @@ end $$;
 do $$
 declare
   v_slot int4;
-  v_key text;
 begin
   perform pgque.create_queue('review_hash_pages');
   for v_slot in 0..2 loop
     perform pgque.subscribe_slot('review_hash_pages', 'part_c', v_slot, 3);
+  end loop;
+end $$;
+
+do $$
+declare
+  v_slot int4;
+  v_key text;
+begin
+  for v_slot in 0..2 loop
     select candidate into strict v_key
     from (
       select 'slot-' || v_slot || '-' || n as candidate
@@ -251,6 +322,9 @@ declare
   v_message pgque.message;
 begin
   for v_slot in 0..2 loop
+    perform pg_temp.expect_review_window(
+      'review_hash_pages', pgque._slot_name('part_c', v_slot, 3), 7
+    );
     perform pgque.claim_slot(
       'review_hash_pages', 'part_c', v_slot,
       'hash-worker-' || v_slot, interval '1 minute'
@@ -300,6 +374,10 @@ do $$
 begin
   perform pgque.create_queue('review_hash_empty');
   perform pgque.subscribe_slot('review_hash_empty', 'part_c', 2, 3);
+end $$;
+
+do $$
+begin
   perform pgque.send('review_hash_empty', 'null-slot', 'only-slot-zero', null);
 end $$;
 
@@ -313,6 +391,7 @@ do $$
 declare
   v_page record;
 begin
+  perform pg_temp.expect_review_window('review_hash_empty', 'part_c#2/3', 1);
   perform pgque.claim_slot(
     'review_hash_empty', 'part_c', 2, 'empty-worker', interval '1 minute'
   );
@@ -331,11 +410,15 @@ do $$
 begin
   perform pgque.create_queue('review_legacy_normal');
   perform pgque.subscribe('review_legacy_normal', 'c1');
-  perform pgque.send('review_legacy_normal', 'normal', 'one');
-  perform pgque.send('review_legacy_normal', 'normal', 'two');
 
   perform pgque.create_queue('review_legacy_part');
   perform pgque.subscribe_slot('review_legacy_part', 'part_c', 0, 1);
+end $$;
+
+do $$
+begin
+  perform pgque.send('review_legacy_normal', 'normal', 'one');
+  perform pgque.send('review_legacy_normal', 'normal', 'two');
   perform pgque.send('review_legacy_part', 'part', 'one', 'key');
   perform pgque.send('review_legacy_part', 'part', 'two', 'key');
 end $$;
@@ -357,6 +440,8 @@ declare
   v_last_tick_after bigint;
   v_message pgque.message;
 begin
+  perform pg_temp.expect_review_window('review_legacy_normal', 'c1', 2);
+  perform pg_temp.expect_review_window('review_legacy_part', 'part_c#0/1', 2);
   select * into v_page
   from pgque.receive_page(
     'review_legacy_normal', 'c1', 'normal-worker', 1, interval '1 minute'
@@ -507,6 +592,10 @@ begin
   perform pgque.register_subconsumer('review_coop_gate', 'main_c', 'w1');
   perform pgque.register_subconsumer('review_coop_gate', 'main_c', 'w2');
   perform pgque.register_subconsumer('review_coop_gate', 'main_c', 'w3');
+end $$;
+
+do $$
+begin
   perform pgque.send('review_coop_gate', 'coop', 'one');
   perform pgque.send('review_coop_gate', 'coop', 'two');
 end $$;
@@ -528,6 +617,7 @@ declare
   v_before jsonb;
   v_after jsonb;
 begin
+  perform pg_temp.expect_review_window('review_coop_gate', 'main_c', 2);
   select * into v_page
   from pgque.receive_page_coop(
     'review_coop_gate', 'main_c', 'w1', 'worker-w1',
