@@ -177,7 +177,7 @@ begin
     end if;
 
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._next_batch_custom(
     in i_queue_name text,
@@ -409,7 +409,7 @@ begin
         and pgque.subscription.sub_role = 'normal';
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.next_batch_custom(
     in i_queue_name text,
@@ -434,7 +434,7 @@ as $$
         i_min_interval,
         false
     );
-$$ language sql security definer set search_path = pgque, pg_catalog;
+$$ language sql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._next_batch_custom(
     text, text, interval, int4, interval, boolean)
@@ -492,7 +492,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque cooperative consumers (experimental in PgQue 0.2)
 create or replace function pgque._validate_coop_names(
@@ -517,7 +517,7 @@ begin
         raise exception 'cooperative subconsumer name must not contain dot: %', i_subconsumer;
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Reset a coop_member subscription's batch token + tick window. Member rows
 -- never advance sub_last_tick on their own — the main consumer owns the
@@ -537,7 +537,7 @@ begin
         sub_queue = p_queue_id
         and sub_consumer = p_consumer_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 drop function if exists pgque.subscribe_subconsumer(text, text, text);
 drop function if exists pgque.register_subconsumer(text, text, text);
@@ -709,7 +709,7 @@ begin
     );
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.subscribe_subconsumer(
     i_queue text,
@@ -720,7 +720,7 @@ returns integer as $$
 begin
     return pgque.register_subconsumer(i_queue, i_consumer, i_subconsumer, i_convert_normal);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.touch_subconsumer(
     i_queue text,
@@ -748,7 +748,7 @@ begin
     get diagnostics v_cnt = row_count;
     return v_cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._next_batch_coop(
     in i_queue text,
@@ -1009,7 +1009,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.next_batch_custom(
     in i_queue text,
@@ -1027,7 +1027,7 @@ as $$
     from pgque._next_batch_coop(
         i_queue, i_consumer, i_subconsumer,
         i_min_lag, i_min_count, i_min_interval, i_dead_interval, false);
-$$ language sql security definer set search_path = pgque, pg_catalog;
+$$ language sql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._next_batch_coop(
     text, text, text, interval, int4, interval, interval, boolean)
@@ -1055,7 +1055,7 @@ begin
         );
     return v_batch_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.unregister_subconsumer(
     i_queue text,
@@ -1221,7 +1221,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.unsubscribe_subconsumer(
     i_queue text,
@@ -1232,7 +1232,7 @@ returns integer as $$
 begin
     return pgque.unregister_subconsumer(i_queue, i_consumer, i_subconsumer, i_batch_handling);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_coop(
     i_queue text,
@@ -1299,7 +1299,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Experimental API comments + grants

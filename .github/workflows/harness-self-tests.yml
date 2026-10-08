@@ -44,3 +44,11 @@ jobs:
         env:
           PG_BINDIR: /usr/lib/postgresql/${{ matrix.pg_major }}/bin
         run: runuser -u postgres -- env PG_BINDIR="$PG_BINDIR" python3 tests/test_partition_cap_upgrade.py
+
+      - name: Test final-assembly definer path guard
+        run: python3 tests/test_definer_search_path_generator.py
+
+      - name: Test every installed definer path and catalog negative controls
+        env:
+          PG_BINDIR: /usr/lib/postgresql/${{ matrix.pg_major }}/bin
+        run: runuser -u postgres -- env PG_BINDIR="$PG_BINDIR" python3 tests/test_definer_search_path.py

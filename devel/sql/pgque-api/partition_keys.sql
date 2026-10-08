@@ -90,7 +90,7 @@ begin
             v_bad.co_name, v_bad.queue_name, v_bad.n;
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer;
 
@@ -256,7 +256,7 @@ begin
 
     return v_n;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- The slot's open engine batch (null when none); raises if unsubscribed.
 create or replace function pgque._slot_batch(
@@ -277,7 +277,7 @@ begin
     end if;
     return v_batch_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Producer: keyed send
@@ -291,7 +291,7 @@ begin
     return pgque.insert_event(i_queue, i_type, i_payload::text,
         i_partition_key, null, null, null);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, jsonb, text) from public;
 
 /*
@@ -306,7 +306,7 @@ begin
     return pgque.insert_event(i_queue, i_type, i_payload,
         i_partition_key, null, null, null);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, text, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -419,7 +419,7 @@ begin
         values (v_queue_id, i_consumer, v_slot);
     end loop;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.subscribe_partitioned(text, text, int) from public;
 
 /*
@@ -481,7 +481,7 @@ begin
     values (v_queue_id, i_consumer, i_slot)
     on conflict (queue_id, co_name, slot) do nothing;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.subscribe_slot(text, text, int, int) from public;
 
 /*
@@ -570,7 +570,7 @@ begin
           and co_name = i_consumer;
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
 
 /*
@@ -630,7 +630,7 @@ begin
     where queue_id = v_queue_id
       and co_name = i_consumer;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.unsubscribe_partitioned(text, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -731,7 +731,7 @@ begin
     -- Leased by another live worker.
     return null;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.claim_slot(text, text, int, text, interval) from public;
 
 /*
@@ -788,7 +788,7 @@ begin
       and slot = i_slot;
     return true;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.release_slot(text, text, int, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -875,7 +875,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.receive_partitioned(text, text, int, int, text, int) from public;
 
 /*
@@ -900,7 +900,7 @@ begin
     end if;
     return pgque.finish_batch(v_batch_id);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.ack_partitioned(text, text, int, int, text) from public;
 
 /*
@@ -934,7 +934,7 @@ begin
     perform pgque._assert_unpaged(v_batch_id);
     return pgque._nack_batch_event(v_batch_id, i_msg, i_retry_after, i_reason);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pgque.message, interval, text) from public;
 
 -- ---------------------------------------------------------------------------
