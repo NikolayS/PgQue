@@ -112,24 +112,6 @@ instance; the default targets `$stderr` at `FATAL`, so the consumer is
 effectively silent unless you set `PGQUE_LOG_LEVEL=warn` or pass your
 own).
 
-## Paged batches
-
-Paging requires this candidate's SDK source and the generated development SQL
-installer, `devel/sql/pgque.sql`. The frozen `sql/pgque.sql` installer does not
-contain these APIs. Build and test the SDK from `clients/ruby` and use a matching
-SQL release when the candidate is published.
-
-Use `receive_page`, `receive_page_coop`, or `receive_page_partitioned` to
-receive a durable page, then `ack_page` or `renew_page`. `process_page` runs a
-handler for each message and acknowledges only after every handler completes.
-Handlers must not return an `Enumerator`, `Proc`, `Fiber`, or `Thread`, even a
-completed thread. These results raise without acknowledging the page. The
-handler must finish the work and check its result before returning. The helper
-does not join or stop threads.
-
-Failure hashes accept `msg_id` / `retry_after_seconds` or their symbol/string
-camel-case equivalents. The message ID must be a decimal string.
-
 ### Handling unknown event types
 
 By default the consumer **nacks** any message whose type has no
@@ -147,6 +129,24 @@ consumer = Pgque::Consumer.new(
   unknown_handler_policy: "ack",  # log WARNING and ack; do not nack
 )
 ```
+
+## Paged batches
+
+Paging requires this candidate's SDK source and the generated development SQL
+installer, `devel/sql/pgque.sql`. The frozen `sql/pgque.sql` installer does not
+contain these APIs. Build and test the SDK from `clients/ruby` and use a matching
+SQL release when the candidate is published.
+
+Use `receive_page`, `receive_page_coop`, or `receive_page_partitioned` to
+receive a durable page, then `ack_page` or `renew_page`. `process_page` runs a
+handler for each message and acknowledges only after every handler completes.
+Handlers must not return an `Enumerator`, `Proc`, `Fiber`, or `Thread`, even a
+completed thread. These results raise without acknowledging the page. The
+handler must finish the work and check its result before returning. The helper
+does not join or stop threads.
+
+Failure hashes accept `msg_id` / `retry_after_seconds` or their symbol/string
+camel-case equivalents. The message ID must be a decimal string.
 
 ## Experimental: cooperative consumers
 
