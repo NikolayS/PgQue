@@ -13,23 +13,25 @@
 
 ## 1. Goal
 
-Within one queue, events sharing a partition key are consumed **in order by a
-single worker at a time**; events with different keys are consumed **in
-parallel** — the log-native ("Kafka partition") model: order *within* a key,
-parallelism *across* keys.
+Within one queue, events sharing a partition key use one slot and one active
+lease owner. Slots consume successive snapshot windows. Events are ordered by
+event ID within each window, not globally across windows. Different slots can
+process events in parallel.
 
 ## 2. The guarantee (precise, testable)
 
-- **G1 — per-key affinity + FIFO.** For a queue whose events carry a partition
+- **G1 — per-key affinity + snapshot-window order.** For a queue whose events carry a partition
   key and a fixed slot count `N`, every event of key `K` maps to one slot
   `slot(K) = (hashtextextended(K, 0) % N + N) % N` (the `+N` normalizes the sign;
   `hashtextextended` returns `bigint`). A **null** partition key (e.g. from the
   keyless `send()` overloads) routes to slot 0, so no event is dropped by the hash
-  filter. Within that slot, non-retried events of
+  filter. Within one batch window, non-retried events of
   `K` are delivered in non-decreasing `ev_id` order, to **no other slot**.
   Intra-batch order is the engine's `order by 1` (`pgque.sql:440`), preserved
-  through `get_batch_cursor`'s filter re-wrap (`pgque.sql:2277`); cross-batch
-  order follows from one subscription's monotonically-advancing cursor.
+  through `get_batch_cursor`'s filter re-wrap (`pgque.sql:2277`). Across batches,
+  the subscription advances through snapshot windows. A lower event ID can
+  commit after a higher ID and become visible in a later window. This API does
+  not guarantee global event-ID FIFO or producer-transaction commit order.
 - **G2 — single in-flight processor per key.** At most one worker at a time is
   *issued* events of `K`, and in steady state at most one *processes* them. Two
   mechanisms compose: (1) the per-subscription receive lock (`next_batch_custom …
@@ -52,10 +54,10 @@ parallelism *across* keys.
   trust boundary. So the lease is **load-bearing for G2**, not
   distribution polish. If a leaseholder's worker dies mid-batch, the lease expires
   after its TTL; the successor takes over (epoch bump) and is re-issued the same
-  still-open batch — at-least-once, with possible transient overlap with a zombie
-  for at most the remaining TTL; the zombie's next `receive`/`ack` raises on the
-  epoch/owner mismatch instead of silently double-acking (fenced). Handlers must
-  tolerate redelivery.
+  still-open batch — at-least-once. Lease expiry does not stop the old handler;
+  side effects can overlap with the successor for an unbounded time. The old
+  worker's next guarded `receive`/`ack` fails after takeover (fenced). External
+  effects need application-level idempotency or an enforced epoch fence.
 - **G3 — failure boundary (Phase 2 / `pause`).** Under `pause`, no later event of
   `K` is delivered until `K`'s failed head event is acked or dead-lettered, and
   after it resolves the deferred events deliver in `ev_id` order, exactly once.
@@ -64,15 +66,17 @@ parallelism *across* keys.
   - **Engine fact:** a retried event keeps its `ev_id`, gets a new `ev_txid`
     (re-injected by `maint_retry_events` → `insert_event_raw`, `pgque.sql:859`),
     and re-routes to the **same slot** because `ev_extra1` is preserved
-    (`pgque.sql:861`). So G1's `ev_id` monotonicity holds only between non-retried
-    events; across a retry the only ordering guarantee is G3's pause boundary.
+    (`pgque.sql:861`). G1's event-ID order applies within a batch window to
+    non-retried events. Retries can arrive in later windows; Phase 1 does not
+    provide the proposed Phase 2 pause boundary.
 
 ## 3. Why it's needed
 
-PgQue is an ordered, immutable **log**, not a job queue — workloads need
-per-entity ordering without global ordering. Motivating case (a multi-tenant
-storage service evaluating PgQue vs pg-boss): millions of file-lifecycle events
-that **must be ordered per tenant** but need **no ordering across tenants**.
+PgQue is an immutable **log** with snapshot-window consumption. Workloads need
+key affinity and sequential processing without a global consumer bottleneck.
+The motivating case is a multi-tenant storage service with millions of
+file-lifecycle events. Applications that require strict producer order must
+also enforce that order; Phase 1 alone does not provide it.
 
 ## 4. Scope and phasing
 
@@ -105,7 +109,7 @@ event stream (entity = partition key).
 producer:  pgque.send('files', 'default', payload, partition_key => tenant_id)
                        │  key → ev_extra1 (send-sourced queues only)
                        ▼
-engine:    append-only tables · global ev_id/ev_txid order   (UNCHANGED)
+engine:    append-only tables · event IDs / transaction snapshots (UNCHANGED)
                        │  full stream
                        ▼
 consumers: N slot consumers, each an INDEPENDENT subscription with its own cursor;
@@ -126,7 +130,7 @@ cross-slot data loss; retry/DLQ rows are slot-scoped (`ev_owner = sub_id`,
            ▼
  ┌──────────────────────────────────────────────────────────┐
  │ ENGINE · sacred — UNCHANGED                                │
- │ append-only tables · global ev_id/ev_txid · rotation      │
+ │ append-only tables · event IDs / snapshots · rotation    │
  │ next_batch / get_batch_cursor(i_extra_where) / order by 1 │
  └───────┬───────────────┬───────────────┬──────────────────┘
          ▼ full stream    ▼ full stream    ▼ full stream
@@ -147,7 +151,7 @@ to slot 0 — G1, so no event is dropped), assembled only from the validated int
 **SECURITY DEFINER ownership (round 3 — corrected).** `get_batch_cursor`'s
 `extra_where` is a trusted-SQL sink, revoked from `public/pgque_reader/
 pgque_writer`, admin-only (`pgque.sql:2221`, `:4852`). `receive_partitioned` and
-`subscribe_slot` reach it **because they are owned by the same role that owns
+`subscribe_partitioned`/`subscribe_slot` reach it **because they are owned by the same role that owns
 `get_batch_cursor` (the install owner) — a function owner may execute its own
 functions regardless of grants.** This is *not* the `receive`/`nack` pattern
 (those never call `get_batch_cursor`; they call reader-granted internals), and it
@@ -168,11 +172,11 @@ optimization is future (R6).
 |----|----------|---------------|-------|
 | D1 | Key location | `ev_extra1`, `send()`-sourced queues only | Triggers use `ev_extra1` for table name. |
 | D2 | Failure policy | `skip` default (Phase 1); `pause` is Phase 2 (§11) | `pause` has open mechanics. |
-| D3 | N | Fixed, persisted in `pgque.partition_consumer(queue, consumer, n)` (written inside SECURITY DEFINER `subscribe_slot`; table revoked from app roles); changed `n` rejected | Enforced invariant, not convention. |
+| D3 | N | Fixed, persisted in `pgque.partition_consumer(queue, consumer, n)` (written inside SECURITY DEFINER `subscribe_partitioned`, with `subscribe_slot` retained for forward-only repair — the missed window is lost; table revoked from app roles); changed `n` rejected | Enforced invariant, not convention. |
 | D4 | Assignment | `(hashtextextended(key,0) % N + N) % N` | Stable, sign-safe. |
 | D5 | State budget | **Phase 1 / happy / `skip`: no state, no per-event writes.** **Phase 2 `pause`:** durable `pgque.partition_block(sub_id, partition_key, head_ev_id)` marker (FK `sub_id → subscription on delete cascade`; index `(sub_id, partition_key)`). Blocked keys additionally incur defer churn (§11 O1) — so "no per-event churn" is a Phase-1/non-blocked-key claim only. | Round 3 corrected the churn framing. |
 | D6 | Producer signature | `send(queue, type, payload, partition_key => text)` | Avoids `send(queue,type,payload)` collision. |
-| D7 | Slot, single-owner, key namespace | slot = consumer `"<consumer>#k/N"`; **G2 = receive lock (batch issuance) + batch-granularity lease held logically across process→ack (§15)**; **slot identity + lease helpers `claim_slot`/`release_slot` are core**, arbitrated by the `pgque.partition_slot` table (all clients agree via shared rows, not a shared lock namespace); `partition_slot_status` view for owner+lag. **`slot_lock_key` removed** (v0.8 — no advisory-lock namespace). | Reader-callable; clients cannot diverge because arbitration is a server-side row. |
+| D7 | Slot, single-owner, key namespace | slot = consumer `"<consumer>#k/N"`; **G2 = receive lock (batch issuance) + batch-granularity lease held logically across process→ack (§15)**; **slot identity + lease helpers `claim_slot`/`release_slot` are core**, arbitrated by the `pgque.partition_slot` table (all clients agree via shared rows, not a shared lock namespace); `subscribe_partitioned` creates the whole slot set atomically; `partition_slot_status` exposes subscription completeness plus owner+lag. **`slot_lock_key` removed** (v0.8 — no advisory-lock namespace). | Reader-callable; clients cannot diverge because arbitration is a server-side row. |
 | D8 | Worker→slot assignment | Client-side **claim loop** (§15) is still client *policy* (which slot to grab, poll cadence), but the arbitration is now **server-side rows**: `claim_slot` returns an epoch or NULL by inspecting/updating `pgque.partition_slot`; **no leader, no `PartitionAssignor`, no rebalance protocol.** Boundary follows the **mechanism/policy seam**: corruption-capable transitions → core SQL, guarded policy loops → client. | Kafka needs an assignor because partitions are exclusive *by protocol*; here the DB arbitrates per batch and per lease. |
 | D9 | Online resize (grow N) | Epoch-gated **drain-then-cutover** state machine in **core SQL** (`begin_resize`/`resize_ready`/`complete_resize`/`abort_resize`); client drives the drain loop, core re-validates on cutover. Immutable N in Phase 1 (§15 → *Online resize*). | Grow-N reshuffles `hash%N` and breaks G1/G2 for in-flight keys (Fabrizio); the log-native analog of Kinesis parent-shard drain. |
 | D10 | No per-interval heartbeat `UPDATE` churn | **Upheld for that specific cost, superseded as an argument against a lease table.** The v0.7 rejection targeted a *per-interval* heartbeat `UPDATE` — that churn is real and still rejected. **Batch-boundary lease renewal (D11) is new information:** the lease is renewed on the `receive`/`ack` writes that already happen per batch, so there is no per-interval churn to add. Observability still via the read-only `pgque.partition_slot_status` view (now reading lease columns, not `pg_locks`). | A *polling* heartbeat buys nothing; a lease renewed at batch boundaries costs no extra round-trips. |
@@ -192,17 +196,26 @@ optimization is future (R6).
   functions.
 - **`partition_slot(queue_id, co_name, slot, lease_owner text, lease_until
   timestamptz, lease_ttl interval, epoch bigint)`:** one row per registered slot,
-  created by `subscribe_slot`. Primary key `(queue_id, co_name, slot)`; FK
+  created atomically by `subscribe_partitioned` or individually by the repair
+  API `subscribe_slot`. Primary key `(queue_id, co_name, slot)`; FK
   `(queue_id, co_name) → partition_consumer on delete cascade` (a dropped consumer
   drops its lease rows). `lease_owner` null when unleased; `epoch` starts at some
   base and increments on every takeover of a free/expired lease (the fencing
   token). Revoked from app roles.
-- **`subscribe_slot(queue, consumer, k int, n int)`:** validate `n>=1 and
-  0<=k<n`; upsert persisted `n`, reject a changed `n` (D3); register
+- **`subscribe_partitioned(queue, consumer, n int)`:** default setup path.
+  Require `1<=n<=256`. Pin N and register all N slot subscriptions and lease
+  rows at one shared starting tick in one transaction. Failure rolls back the
+  whole setup. Repeating a complete setup with the same N keeps its cursors.
+  A pre-existing partial setup raises; atomic setup cannot recover missed history.
+- **`subscribe_slot(queue, consumer, k int, n int)`:** explicit repair path.
+  Require `1<=n<=256 and 0<=k<n`; upsert persisted `n`, reject a changed `n` (D3); register
   `"<consumer>#k/n"`; create the `partition_slot` row for `k` (unleased).
-  Idempotent for the same `(k,n)`.
+  Idempotent for the same `(k,n)`. A repaired slot starts at the current tick.
+  It cannot recover events ticked while it was missing. To start over, use
+  `unsubscribe_partitioned` and recreate the consumer before producing events.
 - **`claim_slot(queue, consumer, k int, worker text, ttl interval default
-  '30 seconds')` → bigint (epoch):** validate `ttl >= '1 second'`. Under a row
+  '30 seconds')` → bigint (epoch):** require a finite `ttl >= '1 second'`.
+  Return NULL if another transaction locks the slot row. Otherwise, under a row
   lock on the `partition_slot` row: if the lease is live and owned by another
   worker → return NULL (steered away); if owned by `worker` → renew
   (`lease_until = clock_timestamp() + ttl`), return the **same** epoch; if free or
@@ -212,8 +225,10 @@ optimization is future (R6).
   has taken may be renewed by its own worker (still its epoch — no heir existed, so
   it is safe).
 - **`release_slot(queue, consumer, k int, worker text)` → boolean:** owner-only.
-  If `worker` holds the lease, clear it (`lease_owner = null`) and return true;
-  otherwise return false. Callable only at a batch boundary (§15).
+  If `worker` holds the lease and no batch is open, clear it
+  (`lease_owner = null`) and return true. An owner release raises while a batch
+  is open, including between pages. A non-owner, including NULL, returns false.
+  Callable only at a batch boundary (§15).
 - **`receive_partitioned(queue, consumer, k int, n int, worker text, …)`:** after
   casting `k,n` to int, **require `worker` to hold the lease on slot `k`** (a
   non-owner raises — server-enforced G2); an expired lease still owned by the same
@@ -237,8 +252,8 @@ optimization is future (R6).
   canonical-event re-query and #104 idempotent-DLQ behaviors are preserved).
   A retried keyed event keeps `ev_extra1`, so redelivery stays on the same slot.
 - **Raw-slot guards:** plain `receive`/`ack`/`nack` reject partition slot
-  consumers — `receive` rejects `#`-carrying consumer names (`subscribe_slot`
-  reserves `#`), `ack`/`nack` resolve the batch's consumer and reject `#`-names —
+  consumers — `receive` rejects `#`-carrying consumer names (the partitioned
+  setup APIs reserve `#`), `ack`/`nack` resolve the batch's consumer and reject `#`-names —
   otherwise the plain path would hand back the whole unfiltered stream with no
   lease fence, and a fenced zombie could double-ack via `ack(batch_id)` (G2, §2).
 - **`pause` (Phase 2):** on nack of `K#i`, upsert `partition_block(sub_id, K,
@@ -251,11 +266,22 @@ optimization is future (R6).
   `subscription` (`partition_block.sub_id → subscription.sub_consumer =
   dead_letter.dl_consumer_id`) — `sub_id` and `co_id` are different ID spaces
   (`dlq.sql:24,75-85`, `pgque.sql:170-183`); do not compare them directly.
-- **Teardown:** `unsubscribe_slot` removes the slot subscription (the
-  `partition_slot` and `partition_block` FKs cascade). Note `unregister_consumer`
-  cascades `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
+- **Teardown:** `unsubscribe_partitioned(queue, consumer)` is the whole-consumer
+  inverse of `subscribe_partitioned`: one transaction drops every slot
+  subscription and the pinned-N row (lease rows cascade via FK). It succeeds on
+  partial setups — it is the recreate path the incomplete-setup error names —
+  and an absent consumer is a notice-level no-op. It drops only
+  catalog-registered slots (`partition_slot` rows): a legacy ordinary consumer
+  that merely shares the name shape survives, with its cursor history, and is
+  removed with plain `unsubscribe`. `unsubscribe_slot` removes one
+  slot (the `partition_slot` and `partition_block` FKs cascade); on a complete
+  consumer it emits a WARNING, because it creates exactly the incomplete-setup
+  state `subscribe_partitioned` rejects; its completeness/last-slot accounting
+  is likewise catalog-driven, so a legacy name-shaped subscription never keeps
+  the pinned-N row alive. Note `unregister_consumer` cascades
+  `dead_letter` (`dlq.sql:24`), so dropping a slot drops its DLQ audit —
   documented.
-- **Grants:** producer → `pgque_writer`; `subscribe_slot`/`unsubscribe_slot`/
+- **Grants:** producer → `pgque_writer`; `subscribe_partitioned`/`subscribe_slot`/`unsubscribe_slot`/`unsubscribe_partitioned`/
   `receive_partitioned`/`ack_partitioned`/`nack_partitioned`/`claim_slot`/
   `release_slot` and `select` on `partition_slot_status` → `pgque_reader`;
   `partition_consumer`/`partition_slot`/`partition_block` revoked from all app
@@ -266,7 +292,7 @@ optimization is future (R6).
 **Phase 1 (must pass to ship):**
 - **T-G1a:** literal `(hashtextextended(K,0)%N+N)%N` on every CI version, pinning
   one concrete `(K, expected)` pair. *(red first)*
-- **T-G1b:** interleave A,B,A,A,B → each key in `ev_id` order across batches, no
+- **T-G1b:** interleave A,B,A,A,B → each key in `ev_id` order within a window, no
   key on two slots. (No existing test guards intra-batch `ev_id` order.)
 - **T-retry-affinity:** nack a keyed event; `maint_retry_events()` +
   `force_next_tick` + `ticker()`; assert redelivery to the **same** slot only.
@@ -277,10 +303,15 @@ optimization is future (R6).
   events, zero loss.
 - **T-security:** run against an install whose owner is a **non-superuser,
   non-`pgque_admin` role** — a bare `pgque_reader` can call
-  `receive_partitioned`/`subscribe_slot` end-to-end, and **cannot** call
+  `receive_partitioned`/`subscribe_partitioned` end-to-end, and **cannot** call
   `get_batch_cursor` directly (`42501`, mirror `test_security_get_batch_cursor.sql`);
   non-integer/out-of-range `n`,`k` rejected.
-- **T-N-invariant:** `subscribe_slot(…,k,n)` idempotent; `(…,k,n2≠n)` raises.
+- **T-setup-atomicity:** `subscribe_partitioned(…,n)` creates all N engine
+  subscriptions at one tick in one transaction; events produced afterward are
+  reachable across the union of all slots. Repeating setup does not reposition
+  cursors. Existing partial setup raises and remains explicitly repairable.
+- **T-N-invariant:** `subscribe_partitioned(…,n)` idempotent; a changed N raises.
+  `subscribe_slot(…,k,n)` retains the same pinned-N invariant for repair.
 - **T-lease (claim/renew/steer/release):** over `N=2`, worker `wk-a` claims slot 0
   (epoch returned); a second worker `wk-b` claiming slot 0 gets NULL (steered
   away); the owner re-claiming slot 0 renews with the **same** epoch; `wk-b` claims
@@ -342,7 +373,10 @@ optimization is future (R6).
   names.** This is the sharpest operational hazard of the N-slot model and gets
   worse as N grows (more slots → more chances one is behind). Mitigation is
   monitoring + bounding N, not code: a per-slot staleness/lag alert is mandatory
-  for any Tier-B deployment, and N should be the minimum that meets the
+  for any Tier-B deployment — canonical form `pending_events > X or not
+  subscribed` on `partition_slot_status`, because a threshold-only alert skips
+  the NULL-lag rows of unsubscribed slots and misses incomplete setup — and N
+  should be the minimum that meets the
   parallelism target (see R2/R4 — N is also the read-amp multiplier, so the same
   "keep N small" pressure applies from two directions). A `pause`-blocked slot
   does *not* pin rotation (deferred events go to retry, not the held cursor),
@@ -421,8 +455,11 @@ coordinator**, so assignment is pull-based and self-balancing.
 calls `pgque.claim_slot(queue, consumer, k, worker, ttl)` — a **core** function
 (D7, D11) that arbitrates over the shared `partition_slot` rows, so Go/Python/TS/CLI
 cannot silently collide on a slot. A non-NULL return (the lease epoch) means the
-worker owns the slot; NULL means another worker holds a live lease and the worker
-moves to the next slot — it never blocks waiting on a busy slot. The first slot it
+worker owns the slot; NULL means the slot is not claimable right now — another
+worker holds a live lease, or the row is momentarily locked by another
+transaction (possibly this worker's own in-flight `receive`/`ack` renewal) —
+and the worker moves to the next slot; it never blocks waiting on a busy slot,
+and it must not infer loss of an existing lease from NULL. The first slot it
 claims, it owns: it calls `receive_partitioned(queue, consumer, k, N, worker, …)`
 for that slot and keeps it **sticky-until-idle** (re-poll the same slot while it
 has work; each `receive`/`ack` renews the lease, so a working slot never expires).
@@ -526,12 +563,26 @@ server-enforced on `receive`/`ack`, with `epoch` fencing the zombie. Its
 ownership+lag benefit — *who owns what, how far behind* — is delivered by
 **`pgque.partition_slot_status`**, a read-only view over the `partition_slot`
 lease columns (`lease_owner`/`lease_until`/`epoch`) + subscription cursors
-(per-slot lag) + resize state. Reading lease columns rather than `pg_locks` means
+(per-slot lag) + resize state. It has one row for every expected slot and an
+explicit `subscribed` boolean. A missing engine subscription reports
+`subscribed=false`, `last_tick=NULL`, and `pending_events=NULL`: zero would mean
+no measured sequence lag, while a missing cursor makes lag unknowable. Zero
+does not exclude unticked events or late producer commits that need later
+snapshot windows without a new event-sequence advance. The
+canonical alert is therefore `pending_events > X or not subscribed` — a
+threshold-only `pending_events > X` alert silently skips the NULL rows, so
+incomplete setup would never fire it. Classification is catalog-driven, the
+same way the consume API classifies: a slot counts as `subscribed` only when
+its `partition_slot` row AND its engine subscription both exist — a legacy
+ordinary consumer that merely shares the name shape (`"C#k/N"`, creatable on
+older installs) is never attributed to the slot. Reading lease
+columns rather than `pg_locks` means
 the view **works through poolers** (a backend pid behind PgBouncer was meaningless
-anyway). Zombie caveat: lease-expiry ≠ process-death, so a partitioned worker can
-still emit side effects until the TTL lapses while the successor is re-issued the
-same open batch — bounded by the TTL and fenced by `epoch` (`claim_slot`
-returns it so handlers can stamp it, §8).
+anyway). Lease expiry is not process termination. An old worker can keep emitting
+external side effects after expiry while the successor receives the same open
+batch. TTL does not bound that overlap. `claim_slot` returns an epoch (§8), but
+the side-effect system must enforce that fence; stamping an epoch alone is not
+sufficient. Handlers must tolerate redelivery.
 
 **Works through a transaction-mode pooler (matters for the transaction-pooler ICP).** Every
 lease operation — `claim_slot`, `release_slot`, and the renewals inside
@@ -696,10 +747,12 @@ fencing) need two sessions and are covered by `tests/two_session_slot_claim.sh`
     `pgque.message.extra1` on receive.
   - *Test:* `us12_partition_keys.sql` — US-12.1.
 - **US-12.2 — Per-key order.** As a consumer, I want all events of one key
-  delivered by exactly one slot, in `ev_id` order, so per-tenant processing is
-  sequential.
+  delivered by exactly one slot, in `ev_id` order within each batch window,
+  so per-tenant processing is sequential.
   - *Accept:* under interleaved keys, every event of one key lands on its hash
-    slot only (zero on any other slot), in non-decreasing `ev_id` order (G1).
+    slot only (zero on any other slot), in non-decreasing `ev_id` order within
+    each window (G1). Across windows, test snapshot progression rather than
+    global event-ID FIFO.
   - *Test:* `us12_partition_keys.sql` — US-12.2.
 - **US-12.3 — Cross-key parallelism.** As an operator, I want N slots consuming
   disjoint key subsets concurrently (union of slots = whole stream, pairwise
@@ -728,15 +781,22 @@ fencing) need two sessions and are covered by `tests/two_session_slot_claim.sh`
   - *Test:* `us12_partition_keys.sql` — US-12.5 (single-session);
     `tests/two_session_slot_claim.sh` (crash recovery).
 - **US-12.6 — Observability.** As an operator, `pgque.partition_slot_status` shows
-  each slot, its `lease_owner` (null if unleased), and cursor lag, so I can alert on
-  a stalled slot (rotation-pinning risk R7) — and it works through a pooler because
+  each expected slot, whether its engine subscription exists, its `lease_owner`
+  (null if unleased), and cursor lag, so I can alert on incomplete setup or a
+  stalled slot (rotation-pinning risk R7) — canonical alert `pending_events > X
+  or not subscribed`, since a threshold-only alert skips the NULL-lag rows of
+  missing subscriptions — and it works through a pooler because
   it reads lease columns, not `pg_locks`.
-  - *Accept:* the view has one row per registered slot with the right `n`,
+  - *Accept:* the view has one row per expected slot with the right `n`,
+    `subscribed=true` for materialized subscriptions; missing subscriptions show
+    `subscribed=false`, `last_tick=NULL`, and `pending_events=NULL`; otherwise
     `lease_owner` null when unleased and equal to the holding worker id when leased
     (clearing on release), and a non-negative `pending_events` lag.
   - *Test:* `us12_partition_keys.sql` — US-12.6.
 - **US-12.7 — Enforced N.** As an operator, a worker calling with the wrong N is
   rejected with a clear error, never silently misrouted.
-  - *Accept:* the first `subscribe_slot` persists N for `(queue, consumer)`;
-    re-calling with the same `(slot, n)` is idempotent, a changed `n` raises (D3).
+  - *Accept:* `subscribe_partitioned` atomically persists N and all N slots for
+    `(queue, consumer)` at one start tick; re-calling with the same N is
+    idempotent without cursor movement, a changed N raises, and existing partial
+    setup is rejected as incomplete (D3).
   - *Test:* `us12_partition_keys.sql` — US-12.7.

@@ -1,13 +1,66 @@
 \set ON_ERROR_STOP on
+\set AUTOCOMMIT on
 
 -- Regression: receive ceilings must fail closed instead of truncating a batch.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
+
+/*
+ * Commit registration before publishing. A setup transaction's own events can
+ * appear visible in its initial tick snapshot. Separate autocommit statements
+ * make the publisher XID newer than that snapshot. Check the actual next tick
+ * window before testing ceilings, including unfiltered partition event counts.
+ */
+create function pg_temp.assert_receive_fixture_window(
+    i_queue text, i_consumer text, i_expected integer)
+returns void language plpgsql as $$
+declare
+    v_queue_id integer;
+    v_events regclass;
+    v_start_tick bigint;
+    v_start_snapshot pg_snapshot;
+    v_end_snapshot pg_snapshot;
+    v_batch bigint;
+    v_count bigint;
+begin
+    select
+        q.queue_id,
+        q.queue_data_pfx::regclass,
+        s.sub_last_tick,
+        t.tick_snapshot,
+        s.sub_batch
+    into strict v_queue_id, v_events, v_start_tick, v_start_snapshot, v_batch
+    from pgque.queue as q
+    join pgque.subscription as s on s.sub_queue = q.queue_id
+    join pgque.consumer as c on c.co_id = s.sub_consumer
+    join pgque.tick as t on t.tick_queue = q.queue_id and t.tick_id = s.sub_last_tick
+    where q.queue_name = i_queue and c.co_name = i_consumer;
+    assert v_batch is null, 'fixture window must not have an allocated batch';
+
+    select tick_snapshot into strict v_end_snapshot
+    from pgque.tick
+    where tick_queue = v_queue_id and tick_id > v_start_tick
+    order by tick_id
+    limit 1;
+
+    execute format(
+        'select count(*) from %s
+        where not pg_visible_in_snapshot(ev_txid, $1)
+        and pg_visible_in_snapshot(ev_txid, $2)', v_events
+    ) into v_count using v_start_snapshot, v_end_snapshot;
+    assert v_count = i_expected,
+        format('fixture %s expected %s newly visible events, got %s; start=%s end=%s',
+            i_queue, i_expected, v_count, v_start_snapshot, v_end_snapshot);
+end $$;
 
 -- Plain receive: N+1 raises, rolls back batch allocation, and all events retry.
 do $$
 begin
   perform pgque.create_queue('recv_overflow');
   perform pgque.register_consumer('recv_overflow', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_overflow', 'ev', '{"n":1}'::text);
   perform pgque.send('recv_overflow', 'ev', '{"n":2}'::text);
   perform pgque.send('recv_overflow', 'ev', '{"n":3}'::text);
@@ -15,6 +68,7 @@ end $$;
 
 select pgque.force_next_tick('recv_overflow');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_overflow', 'c1', 3);
 
 do $$
 declare
@@ -82,6 +136,10 @@ do $$
 begin
   perform pgque.create_queue('recv_active');
   perform pgque.register_consumer('recv_active', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_active', 'ev', 'one');
   perform pgque.send('recv_active', 'ev', 'two');
   perform pgque.send('recv_active', 'ev', 'three');
@@ -89,6 +147,7 @@ end $$;
 
 select pgque.force_next_tick('recv_active');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_active', 'c1', 3);
 
 do $$
 declare
@@ -135,12 +194,17 @@ do $$
 begin
   perform pgque.create_queue('recv_exact');
   perform pgque.register_consumer('recv_exact', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_exact', 'ev', 'one');
   perform pgque.send('recv_exact', 'ev', 'two');
 end $$;
 
 select pgque.force_next_tick('recv_exact');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_exact', 'c1', 2);
 
 do $$
 declare
@@ -178,12 +242,17 @@ do $$
 begin
   perform pgque.create_queue('recv_nminus1');
   perform pgque.register_consumer('recv_nminus1', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_nminus1', 'ev', 'one');
   perform pgque.send('recv_nminus1', 'ev', 'two');
 end $$;
 
 select pgque.force_next_tick('recv_nminus1');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_nminus1', 'c1', 2);
 
 do $$
 declare
@@ -206,6 +275,10 @@ do $$
 begin
   perform pgque.create_queue('recv_null');
   perform pgque.register_consumer('recv_null', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_null', 'ev', 'one');
   perform pgque.send('recv_null', 'ev', 'two');
   perform pgque.send('recv_null', 'ev', 'three');
@@ -213,6 +286,7 @@ end $$;
 
 select pgque.force_next_tick('recv_null');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_null', 'c1', 3);
 
 do $$
 declare
@@ -235,6 +309,10 @@ do $$
 begin
   perform pgque.create_queue('recv_coop_overflow');
   perform pgque.register_subconsumer('recv_coop_overflow', 'main_c', 'w1');
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_coop_overflow', 'ev', 'one');
   perform pgque.send('recv_coop_overflow', 'ev', 'two');
   perform pgque.send('recv_coop_overflow', 'ev', 'three');
@@ -242,6 +320,7 @@ end $$;
 
 select pgque.force_next_tick('recv_coop_overflow');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_coop_overflow', 'main_c', 3);
 
 do $$
 declare
@@ -294,6 +373,10 @@ begin
   perform pgque.create_queue('recv_coop_takeover');
   perform pgque.register_subconsumer('recv_coop_takeover', 'main_c', 'w1');
   perform pgque.register_subconsumer('recv_coop_takeover', 'main_c', 'w2');
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_coop_takeover', 'ev', 'one');
   perform pgque.send('recv_coop_takeover', 'ev', 'two');
   perform pgque.send('recv_coop_takeover', 'ev', 'three');
@@ -301,6 +384,7 @@ end $$;
 
 select pgque.force_next_tick('recv_coop_takeover');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_coop_takeover', 'main_c', 3);
 
 do $$
 declare
@@ -372,6 +456,10 @@ do $$
 begin
   perform pgque.create_queue('recv_part_overflow');
   perform pgque.subscribe_slot('recv_part_overflow', 'c1', 0, 1);
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_part_overflow', 'ev', 'one', 'key');
   perform pgque.send('recv_part_overflow', 'ev', 'two', 'key');
   perform pgque.send('recv_part_overflow', 'ev', 'three', 'key');
@@ -379,6 +467,7 @@ end $$;
 
 select pgque.force_next_tick('recv_part_overflow');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_part_overflow', 'c1#0/1', 3);
 
 do $$
 declare
@@ -431,6 +520,10 @@ do $$
 begin
   perform pgque.create_queue('recv_part_filtered');
   perform pgque.subscribe_slot('recv_part_filtered', 'c1', 0, 2);
+end $$;
+
+do $$
+begin
   perform pgque.send('recv_part_filtered', 'ev', 'match-one', 'tenant-a');
   perform pgque.send('recv_part_filtered', 'ev', 'other-one', 'tenant-b');
   perform pgque.send('recv_part_filtered', 'ev', 'match-two', 'tenant-a');
@@ -439,6 +532,7 @@ end $$;
 
 select pgque.force_next_tick('recv_part_filtered');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_part_filtered', 'c1#0/2', 4);
 
 do $$
 declare
@@ -470,6 +564,7 @@ end $$;
 
 select pgque.force_next_tick('recv_part_filtered');
 select pgque.ticker();
+select pg_temp.assert_receive_fixture_window('recv_part_filtered', 'c1#0/2', 4);
 
 do $$
 declare
@@ -530,3 +625,5 @@ begin
   perform pgque.drop_queue('recv_part_filtered');
   raise notice 'PASS: receive ceilings fail closed and preserve complete batches';
 end $$;
+
+drop function pg_temp.assert_receive_fixture_window(text, text, integer);

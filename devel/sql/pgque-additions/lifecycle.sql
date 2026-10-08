@@ -97,7 +97,7 @@ begin
     update pgque.config set tick_period_ms = p_period_ms;
     return p_period_ms;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.start()
 returns void as $$
@@ -179,7 +179,7 @@ begin
         v_ticker_id, (1000.0 / v_period_ms)::numeric(10, 2),
         v_retry_id, v_maint_id, v_step2_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.stop()
 returns void as $$
@@ -240,7 +240,7 @@ begin
         scheduler = null
     where scheduler is null or scheduler = 'pg_cron';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.start_timetable(i_ticks_per_second integer default 10)
@@ -363,7 +363,7 @@ begin
     raise notice 'pgque started with pg_timetable: ticker=% (% ticks/sec), retry_events=%, maint=%, rotate_step2=%',
         v_ticker_id, i_ticks_per_second, v_retry_id, v_maint_id, v_step2_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.stop_timetable()
 returns void as $$
@@ -416,7 +416,7 @@ begin
         scheduler = null
     where scheduler = 'pg_timetable';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.uninstall()
 returns void as $$
@@ -441,7 +441,7 @@ begin
     -- Note: roles are not dropped here (they may be in use by other databases)
     raise notice 'pgque uninstalled. Run DROP ROLE IF EXISTS pgque_reader, pgque_writer, pgque_admin; manually if needed.';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.version()
 returns text as $$
@@ -449,9 +449,9 @@ begin
     /* Devel builds carry a '-devel' version; a release stamp replaces this
        literal with the release version, then a follow-up restores '-devel'.
        transform.sh reads this literal, so keep it a valid semver string. */
-    return '0.3.0-devel';
+    return '0.3.0-rc.2';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.status()
 returns table (
@@ -519,4 +519,4 @@ begin
     return query select 'consumers'::text, 'info'::text,
         (select count(*)::text from pgque.subscription) || ' active subscriptions';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
