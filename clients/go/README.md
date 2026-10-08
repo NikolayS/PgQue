@@ -312,3 +312,8 @@ See [RELEASE.md](RELEASE.md) for publishing steps.
 ## License
 
 Apache-2.0. Copyright 2026 Nikolay Samokhvalov.
+
+## Nullable messages
+
+Direct SQL and trigger producers can store SQL NULL for `ev_type` or `ev_data`.
+`Receive` and `ReceiveCoop` normalize SQL NULL type and payload to empty strings. An empty type never matches a named handler, including `Handle("", ...)`; the unknown-handler policy applies.

@@ -44,6 +44,9 @@ async function run(): Promise<void> {
       throw new Error(`expected 1 message, got ${msgs.length}`);
     }
     const msg = msgs[0]!;
+    if (msg.payload === null) {
+      throw new Error('expected a JSON payload, got SQL NULL');
+    }
     const parsed = JSON.parse(msg.payload) as { ok: boolean };
     if (!parsed.ok) {
       throw new Error(`unexpected payload: ${msg.payload}`);
