@@ -4,39 +4,27 @@
 
 from importlib import metadata
 from pathlib import Path
-import re
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 
 _DISTRIBUTION_NAME = "pgque-py"
 _PYPROJECT_PATH = Path(__file__).resolve().parent.parent / "pyproject.toml"
 _UNKNOWN_VERSION = "0+unknown"
-_PROJECT_TABLE = re.compile(r"^\[\s*project\s*\]\s*(?:#.*)?$")
-_VERSION_ASSIGNMENT = re.compile(
-    r"^version\s*=\s*(['\"])([^'\"]+)\1\s*(?:#.*)?$"
-)
 
 
 def source_version(pyproject_path: Path) -> str:
     """Read ``project.version`` when running from an unpackaged source tree."""
     try:
-        lines = pyproject_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+        with pyproject_path.open("rb") as source:
+            project = tomllib.load(source).get("project", {})
+    except (OSError, ValueError):
         return _UNKNOWN_VERSION
 
-    in_project_table = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("["):
-            in_project_table = _PROJECT_TABLE.fullmatch(stripped) is not None
-            continue
-        if not in_project_table:
-            continue
-
-        match = _VERSION_ASSIGNMENT.fullmatch(stripped)
-        if match:
-            return match.group(2)
-
-    return _UNKNOWN_VERSION
+    version = project.get("version") if isinstance(project, dict) else None
+    return version if isinstance(version, str) and version else _UNKNOWN_VERSION
 
 
 def resolve_version() -> str:

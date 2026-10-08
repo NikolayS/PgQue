@@ -112,3 +112,25 @@ def test_runtime_version_matches_available_package_metadata():
         )
 
     assert pgque.__version__ == expected
+
+
+@pytest.mark.parametrize("delimiter", ['"""', "'''"])
+def test_source_version_ignores_multiline_string_headers(tmp_path, delimiter):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "[tool.example]\ntext = " + delimiter + "\n"
+        '[project]\nversion = "9.9.9"\n' + delimiter + "\n"
+        '[project]\nversion = "1.2.3rc1"\n', encoding="utf-8")
+    assert version_module.source_version(pyproject) == "1.2.3rc1"
+
+
+@pytest.mark.parametrize("text", [
+    '[project]\nversion = 123\n',
+    '[project]\nversion = ""\n',
+    '[project]\nversion = "unterminated\n',
+    '[project]\nname = "example"\n',
+])
+def test_source_version_invalid_or_missing_version_is_unknown(tmp_path, text):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(text, encoding="utf-8")
+    assert version_module.source_version(pyproject) == "0+unknown"
