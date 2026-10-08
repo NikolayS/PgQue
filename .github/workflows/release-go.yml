@@ -37,8 +37,18 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: clients/go/go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache-dependency-path: clients/go/go.sum
+
+      - name: Audit Go dependency graph
+        working-directory: clients/go
+        run: |
+          set -Eeuo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          # Do not use JSON mode as an exit-status findings gate.
+          govulncheck -scan=module
+          go mod verify
 
       - name: Validate version and tests
         run: |
@@ -108,7 +118,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: clients/go/go.mod
+          go-version: '1.27.x'
+          check-latest: true
           cache-dependency-path: clients/go/go.sum
 
       - name: Verify mirror token principal

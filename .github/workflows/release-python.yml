@@ -74,8 +74,13 @@ jobs:
       - name: Build distribution
         run: |
           set -Eeuo pipefail
-          python -m pip install -U build twine
-          python -m build
+          python -m pip install -U pip build twine pip-audit
+          python -c 'import subprocess, sys, tomllib; subprocess.check_call([sys.executable, "-m", "pip", "install", *tomllib.load(open("pyproject.toml", "rb"))["build-system"]["requires"]])'
+          python -m pip install -e '.[dev]'
+          # Exclude only the local client; audit every installed dependency/tool.
+          python -m pip freeze --all --exclude-editable > "$RUNNER_TEMP/python-audit-requirements.txt"
+          python -m pip_audit --strict --no-deps --disable-pip -r "$RUNNER_TEMP/python-audit-requirements.txt"
+          python -m build --no-isolation
           python -m twine check dist/*
 
       - name: Verify built wheel installs
