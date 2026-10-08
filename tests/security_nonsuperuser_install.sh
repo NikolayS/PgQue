@@ -46,7 +46,8 @@ created_databases=()
 created_roles=()
 
 cleanup() {
-  local name failed=0
+  local status=$? name failed=0
+  trap - EXIT
   # One psql call per statement: DROP DATABASE refuses to run inside the
   # implicit transaction a multi-statement -c would create, and one failing
   # drop must not abort the rest. Leave the cluster-wide pgque_* app roles
@@ -54,16 +55,34 @@ cleanup() {
   # bootstrap can stop at a collision after creating only some fixtures.
   for name in "${created_databases[@]}"; do
     "${psql_super[@]}" -qAtc "drop database if exists ${name} with (force)" \
-      >/dev/null 2>&1 || failed=1
+      >/dev/null 2>&1 || {
+        echo "FAIL: cleanup could not drop owned database ${name}" >&2
+        failed=1
+      }
   done
   for name in "${created_roles[@]}"; do
     "${psql_super[@]}" -qAtc "drop role if exists ${name}" \
-      >/dev/null 2>&1 || failed=1
+      >/dev/null 2>&1 || {
+        echo "FAIL: cleanup could not drop owned role ${name}" >&2
+        failed=1
+      }
   done
   if (( failed )); then
     echo "WARNING: test cleanup incomplete for owned fixtures: ${created_databases[*]} ${created_roles[*]}" >&2
   fi
-  rm -rf "${workdir}"
+  rm -rf "${workdir}" || {
+    echo "FAIL: cleanup could not remove work directory ${workdir}" >&2
+    failed=1
+  }
+  # A cleanup error must fail a successful body, but never mask the body's
+  # original failure. Emit terminal success only after all cleanup succeeds.
+  if (( status == 0 && failed )); then
+    status=1
+  fi
+  if (( status == 0 )); then
+    echo "PASS: security_nonsuperuser_install -- co-ownership invariant holds under a non-superuser, non-pgque_admin install owner (and the harness detects its absence)"
+  fi
+  exit "${status}"
 }
 trap cleanup EXIT
 
@@ -137,6 +156,9 @@ run_step 00_bootstrap "${workdir}/00_bootstrap.sql"
 create_fixture database "${db_main}" "owner ${installer}"
 create_fixture database "${db_negctl}" "owner ${installer}"
 
+# Required oracles use IF/RAISE, not ASSERT: plpgsql.check_asserts can be off
+# in any session, including sessions created by \connect. NULL must fail too.
+
 # --- 2. install as the NON-superuser owner (both databases) -----------------
 for db in "${db_main}" "${db_negctl}"; do
   cat >"${workdir}/10_install_${db}.sql" <<SQL
@@ -144,10 +166,12 @@ for db in "${db_main}" "${db_negctl}"; do
 set role ${installer};
 do \$\$
 begin
-  assert current_user = '${installer}',
-    format('install must run as the test installer, got %s', current_user);
-  assert not (select rolsuper from pg_roles where rolname = current_user),
-    'installer must NOT be superuser';
+  if (current_user = '${installer}') is distinct from true then
+    raise exception '%', format('install must run as the test installer, got %s', current_user);
+  end if;
+  if (not (select rolsuper from pg_roles where rolname = current_user)) is distinct from true then
+    raise exception '%', 'installer must NOT be superuser';
+  end if;
 end \$\$;
 begin;
 \\i devel/sql/pgque.sql
@@ -156,12 +180,15 @@ commit;
    the installer is neither superuser nor a pgque_admin member. */
 do \$\$
 begin
-  assert not pg_has_role(current_user, 'pgque_admin', 'member'),
-    'installer must NOT be a pgque_admin member';
-  assert not pg_has_role(current_user, 'pgque_reader', 'member'),
-    'installer must NOT be a pgque_reader member';
-  assert not pg_has_role(current_user, 'pgque_writer', 'member'),
-    'installer must NOT be a pgque_writer member';
+  if (not pg_has_role(current_user, 'pgque_admin', 'member')) is distinct from true then
+    raise exception '%', 'installer must NOT be a pgque_admin member';
+  end if;
+  if (not pg_has_role(current_user, 'pgque_reader', 'member')) is distinct from true then
+    raise exception '%', 'installer must NOT be a pgque_reader member';
+  end if;
+  if (not pg_has_role(current_user, 'pgque_writer', 'member')) is distinct from true then
+    raise exception '%', 'installer must NOT be a pgque_writer member';
+  end if;
 end \$\$;
 SQL
   if ! "${psql_super[@]}" -f "${workdir}/10_install_${db}.sql" \
@@ -195,8 +222,9 @@ begin
                       'ack_partitioned', 'nack_partitioned',
                       'subscribe_slot', 'claim_slot', 'release_slot')
     and r.rolname <> '${installer}';
-  assert v_bad is null,
-    format('co-ownership broken out of the box: %s', v_bad);
+  if (v_bad is null) is distinct from true then
+    raise exception '%', format('co-ownership broken out of the box: %s', v_bad);
+  end if;
 end \$\$;
 SQL
 run_step 20_ownership "${workdir}/20_ownership.sql"
@@ -248,8 +276,9 @@ declare
 begin
   for v_slot in 0..1 loop
     v_epoch := pgque.claim_slot('nsu_q', 'c', v_slot, 'w0');
-    assert v_epoch is not null,
-      format('reader: claim of free slot %s must return an epoch', v_slot);
+    if (v_epoch is not null) is distinct from true then
+      raise exception '%', format('reader: claim of free slot %s must return an epoch', v_slot);
+    end if;
     for v_msg in
       select * from pgque.receive_partitioned('nsu_q', 'c', v_slot, 2, 'w0', 100)
     loop
@@ -264,17 +293,22 @@ declare
   v_total int;
 begin
   select count(*) into v_total from nsu_got;
-  assert v_total = 6,
-    format('reader must drain all 6 keyed events, got %s', v_total);
+  if (v_total = 6) is distinct from true then
+    raise exception '%', format('reader must drain all 6 keyed events, got %s', v_total);
+  end if;
   perform 1
   from (
     select key from nsu_got group by key having count(distinct slot) > 1
   ) as x;
-  assert not found, 'each key must be delivered by exactly one slot';
+  if (not found) is distinct from true then
+    raise exception '%', 'each key must be delivered by exactly one slot';
+  end if;
   perform 1
   from nsu_got
   where slot <> (pg_catalog.hashtextextended(key, 0) % 2 + 2) % 2;
-  assert not found, 'delivered slot must match hash routing';
+  if (not found) is distinct from true then
+    raise exception '%', 'delivered slot must match hash routing';
+  end if;
   raise notice 'PASS: bare pgque_reader end-to-end (subscribe/claim/receive_partitioned/ack) under a non-superuser install owner';
 end \$\$;
 
@@ -289,8 +323,9 @@ begin
   exception
     when insufficient_privilege then v_state := sqlstate;
   end;
-  assert v_state = '42501',
-    format('expected 42501 for reader on get_batch_cursor/3, got %s', v_state);
+  if (v_state = '42501') is distinct from true then
+    raise exception '%', format('expected 42501 for reader on get_batch_cursor/3, got %s', v_state);
+  end if;
 
   v_state := null;
   begin
@@ -299,8 +334,9 @@ begin
   exception
     when insufficient_privilege then v_state := sqlstate;
   end;
-  assert v_state = '42501',
-    format('expected 42501 for reader on get_batch_cursor/4, got %s', v_state);
+  if (v_state = '42501') is distinct from true then
+    raise exception '%', format('expected 42501 for reader on get_batch_cursor/4, got %s', v_state);
+  end if;
   raise notice 'PASS: reader blocked from get_batch_cursor/3 and /4 (42501)';
 end \$\$;
 
@@ -315,7 +351,9 @@ begin
   exception
     when insufficient_privilege then v_state := sqlstate;
   end;
-  assert v_state = '42501', 'expected 42501 reading partition_consumer as reader';
+  if (v_state = '42501') is distinct from true then
+    raise exception '%', 'expected 42501 reading partition_consumer as reader';
+  end if;
 
   v_state := null;
   begin
@@ -324,7 +362,9 @@ begin
   exception
     when insufficient_privilege then v_state := sqlstate;
   end;
-  assert v_state = '42501', 'expected 42501 reading partition_slot as reader';
+  if (v_state = '42501') is distinct from true then
+    raise exception '%', 'expected 42501 reading partition_slot as reader';
+  end if;
   raise notice 'PASS: partition tables not readable by pgque_reader';
 end \$\$;
 reset role;
@@ -341,7 +381,9 @@ begin
   exception
     when insufficient_privilege then v_state := sqlstate;
   end;
-  assert v_state = '42501', 'expected 42501 reading partition_consumer as writer';
+  if (v_state = '42501') is distinct from true then
+    raise exception '%', 'expected 42501 reading partition_consumer as writer';
+  end if;
 
   v_state := null;
   begin
@@ -350,7 +392,9 @@ begin
   exception
     when insufficient_privilege then v_state := sqlstate;
   end;
-  assert v_state = '42501', 'expected 42501 reading partition_slot as writer';
+  if (v_state = '42501') is distinct from true then
+    raise exception '%', 'expected 42501 reading partition_slot as writer';
+  end if;
   raise notice 'PASS: partition tables not readable by pgque_writer';
 end \$\$;
 reset role;
@@ -386,8 +430,9 @@ begin
   loop
     v_cnt := v_cnt + 1;
   end loop;
-  assert v_cnt = 1,
-    format('negctl pre-flip: expected 1 event, got %s', v_cnt);
+  if (v_cnt = 1) is distinct from true then
+    raise exception '%', format('negctl pre-flip: expected 1 event, got %s', v_cnt);
+  end if;
   perform pgque.ack_partitioned('negq', 'c', 0, 1, 'w0');
   raise notice 'PASS: negctl pre-flip reader flow works';
 end \$\$;
@@ -415,6 +460,9 @@ run_step 50_negctl_flip "${workdir}/50_negctl_flip.sql"
 # Phase C: the same reader flow must now FAIL 42501 on get_batch_cursor.
 cat >"${workdir}/55_negctl_post.sql" <<SQL
 \\connect ${db_negctl}
+-- The helper-identity oracle below compares the complete server diagnostic.
+-- Set its language before leaving the superuser session role.
+set lc_messages = 'C';
 set role ${writer_app};
 select pgque.send('negq', 'ev', 'payload-2', 'k-a');
 reset role;
@@ -438,10 +486,12 @@ begin
         v_state = returned_sqlstate,
         v_msg = message_text;
   end;
-  assert v_state = '42501',
-    format('negctl: expected 42501, got %s', v_state);
-  assert position('get_batch_cursor' in v_msg) > 0,
-    format('negctl: expected the denial to be on get_batch_cursor, got: %s', v_msg);
+  if (v_state = '42501') is distinct from true then
+    raise exception '%', format('negctl: expected 42501, got %s', v_state);
+  end if;
+  if v_msg is distinct from 'permission denied for function get_batch_cursor' then
+    raise exception '%', format('negctl: expected the denial to be on get_batch_cursor, got: %s', v_msg);
+  end if;
   raise notice 'PASS: negative control -- ownership flip breaks the reader flow with 42501 on get_batch_cursor';
 end \$\$;
 reset role;
@@ -452,4 +502,3 @@ grep -h 'NOTICE:.*PASS' \
   "${workdir}/30_flow_main.err" \
   "${workdir}/40_negctl_pre.err" \
   "${workdir}/55_negctl_post.err" 2>/dev/null || true
-echo "PASS: security_nonsuperuser_install -- co-ownership invariant holds under a non-superuser, non-pgque_admin install owner (and the harness detects its absence)"
