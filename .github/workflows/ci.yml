@@ -32,6 +32,28 @@ jobs:
       - name: Build pgque
         run: bash build/transform.sh
 
+      - name: Check NSU cleanup control flow without a database
+        run: python3 tests/test_nonsuperuser_harness_unit.py
+
+      - name: Check NSU isolation and mandatory oracles (private cluster)
+        run: |
+          docker exec --user root pgque-test bash -ec '
+            apt-get update -qq
+            apt-get install -y --no-install-recommends python3
+            mkdir -p /tmp/pgque-private-regression
+          '
+          docker cp tests pgque-test:/tmp/pgque-private-regression/tests
+          docker cp devel pgque-test:/tmp/pgque-private-regression/devel
+          docker exec --user postgres --workdir /tmp/pgque-private-regression \
+            pgque-test bash -c '
+              PG_BINDIR="$(pg_config --bindir)" python3 tests/test_nonsuperuser_cleanup.py
+            '
+
+      - name: Verify non-superuser install ownership (fresh cluster)
+        env:
+          PGQUE_TEST_SUPERUSER_DSN: postgresql://postgres:pgque_test@localhost/postgres
+        run: bash tests/security_nonsuperuser_install.sh
+
       - name: Install pgque
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
@@ -46,6 +68,11 @@ jobs:
         env:
           PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
         run: bash tests/two_session_registration_locks.sh
+
+      - name: Verify non-superuser install ownership (existing roles)
+        env:
+          PGQUE_TEST_SUPERUSER_DSN: postgresql://postgres:pgque_test@localhost/postgres
+        run: bash tests/security_nonsuperuser_install.sh
 
       - name: Run idempotency lock-wait TTL regression
         env:
