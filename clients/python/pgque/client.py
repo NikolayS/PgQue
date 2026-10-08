@@ -4,7 +4,7 @@
 
 """PgqueClient -- thin Python wrapper over the pgque SQL API."""
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterable, Iterator
 from concurrent.futures import Future
 import inspect
 import json
@@ -375,6 +375,7 @@ class PgqueClient:
             result = handler(message)
             if (inspect.isawaitable(result)
                     or isinstance(result, Future)
+                    or isinstance(result, AsyncIterable)
                     or inspect.isgenerator(result)
                     or inspect.isasyncgen(result)
                     or callable(result)
