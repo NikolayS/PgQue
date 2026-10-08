@@ -6,6 +6,9 @@ name: Website build check
 on:
   pull_request:
     paths:
+      - 'README.md'
+      - 'build/check-docs-contract.sh'
+      - 'tests/test_docs_contract.sh'
       - 'web/**'
       - 'docs/**'
       - '.github/workflows/web-ci.yml'
@@ -15,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check documentation release contract
+        run: bash tests/test_docs_contract.sh
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.5
