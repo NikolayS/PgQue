@@ -182,7 +182,11 @@
 \i tests/test_paged_history.sql
 
 \i tests/test_paged_destroy.sql
+\i tests/test_force_drop_registration.sql
 \i tests/test_paged_validation.sql
+\i tests/test_paged_deadline.sql
+\i tests/test_paged_deadline_wiring.sql
+\i tests/test_partition_deadline.sql
 \i tests/test_paged_review.sql
 
 \echo '=== ALL TESTS PASSED ==='

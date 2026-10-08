@@ -101,7 +101,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_inspect() -- inspect DLQ entries for a queue
 create or replace function pgque.dlq_inspect(
@@ -116,7 +116,7 @@ begin
     order by dl.dl_time desc
     limit i_limit_count;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_replay() -- replay a single dead letter event back into the queue
 /* The initial `for update of dl` serializes concurrent replays of one dl_id:
@@ -147,7 +147,7 @@ begin
 
     return v_new_eid;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_replay_all() -- replay all DLQ events for a queue.
 /* Returns (replayed, failed, first_error); per-event failures are caught so
@@ -192,7 +192,7 @@ begin
         end;
     end loop;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_purge() -- purge old DLQ entries
 create or replace function pgque.dlq_purge(
@@ -207,7 +207,7 @@ begin
     get diagnostics v_cnt = row_count;
     return v_cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Grants
