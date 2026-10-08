@@ -180,7 +180,7 @@ apply_bigint_to_xid8() {
 }
 
 apply_search_path_to_security_definer() {
-  # Add SET search_path = pgque, pg_catalog to SECURITY DEFINER functions
+  # Add SET search_path = pgque, pg_catalog, pg_temp to SECURITY DEFINER functions
   # that don't already have it. Handles the pattern:
   #   $$ language plpgsql security definer;
   # and variations with trailing comments.
@@ -192,7 +192,7 @@ apply_search_path_to_security_definer() {
   #   $$ language plpgsql security definer;
   #   $$ language plpgsql security definer; -- comment
   content=$(echo "$content" | sed -E \
-    's/^(\$\$ language plpgsql) security definer;(.*)$/\1 security definer set search_path = pgque, pg_catalog;\2/')
+    's/^(\$\$ language plpgsql) security definer;(.*)$/\1 security definer set search_path = pgque, pg_catalog, pg_temp;\2/')
 
   echo "$content"
 }
@@ -763,14 +763,14 @@ echo "PASS: get_batch_cursor SECURITY header injected (extra_where is trusted SQ
 # at runtime. The sibling get_consumer_info / get_batch_info are already
 # SECURITY DEFINER for exactly this reason; mirror that pattern here.
 # SECURITY DEFINER MUST pin search_path (CLAUDE.md), so attach
-# "set search_path = pgque, pg_catalog" in the same step. This grants no
+# "set search_path = pgque, pg_catalog, pg_temp" in the same step. This grants no
 # privilege beyond reading queue metadata + the queue event sequence.
 GET_QUEUE_INFO_FILE="${OUTPUT_DIR}/functions/pgque.get_queue_info.sql"
 sedi -E \
-  's/^(\$\$ language plpgsql);$/\1 security definer set search_path = pgque, pg_catalog;/' \
+  's/^(\$\$ language plpgsql);$/\1 security definer set search_path = pgque, pg_catalog, pg_temp;/' \
   "${GET_QUEUE_INFO_FILE}"
 
-defcount=$(grep -c 'language plpgsql security definer set search_path = pgque, pg_catalog;' \
+defcount=$(grep -c 'language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;' \
   "${GET_QUEUE_INFO_FILE}")
 if [[ "${defcount}" -ne 2 ]]; then
   echo "ERROR: expected 2 SECURITY DEFINER get_queue_info overloads, got ${defcount}" >&2
@@ -897,7 +897,7 @@ echo "--   1. Schema rename: pgq → pgque" >> "${INSTALL_FILE}"
 echo "--   2. txid_* → pg_* function renames (PG14+ snapshot API)" >> "${INSTALL_FILE}"
 echo "--   3. pg_snapshot_xmin/xmax wrapped with ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
 echo "--   4. pg_current_xact_id() cast to ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
-echo "--   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog" >> "${INSTALL_FILE}"
+echo "--   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog, pg_temp" >> "${INSTALL_FILE}"
 echo "--   6. pgq_node/Londiste hooks removed from maint_operations" >> "${INSTALL_FILE}"
 echo "--   7. pg_notify() injected into ticker for LISTEN/NOTIFY wakeup" >> "${INSTALL_FILE}"
 echo "--   8. create_queue() rejects queue names > 57 bytes (pg_notify limit)" >> "${INSTALL_FILE}"
@@ -1008,7 +1008,7 @@ sedi_must "ticker pg_notify annotation did not apply" \
   "${INSTALL_FILE}"
 
 # search_path pinning — annotate first occurrence only via awk
-if ! awk '/set search_path = pgque, pg_catalog;/ && !sp_done {
+if ! awk '/set search_path = pgque, pg_catalog, pg_temp;/ && !sp_done {
   sp_done=1; sub(/;/, "; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)")
 } {print}
 END {
@@ -1084,6 +1084,12 @@ echo ""
 echo "=== Assembly verification ==="
 
 asm_errors=0
+
+# Check after canonical additions and API overrides, not only transformed PgQ.
+# Every definer declaration must keep trusted schemas before the temp namespace.
+if ! awk -f "${SCRIPT_DIR}/check-definer-search-path.awk" "${INSTALL_FILE}"; then
+  asm_errors=$((asm_errors + 1))
+fi
 
 # Verify header is present
 if head -1 "${INSTALL_FILE}" | grep -q 'pgque.sql'; then

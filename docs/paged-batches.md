@@ -160,7 +160,7 @@ Failed messages retry up to the queue's `max_retries` setting (effective default
 | `PQP01` | Stale page token, wrong worker, or fenced partition epoch |
 | `PQP02` | Retained ack replay with a different failure request |
 | `21000` | Ambiguous duplicate event IDs or changed pending-page membership |
-| `40001` | Concurrent routing changed, a takeover victim renewed, or administrative force-drop found a locked subscription/slot; retry the whole transaction |
+| `40001` | Concurrent routing changed, a takeover victim renewed, or administrative force-drop found a locked subscription/slot or a concurrent registration requires a fresh snapshot; retry the whole transaction |
 | `P0001` | Cooperative membership or partition-slot setup is missing or incompatible at receive time |
 
 Legacy whole-batch ack, finish, retry, cursor reset and unsubscribe cannot bypass
@@ -171,9 +171,11 @@ paging before switching back to the whole-batch API.
 acknowledgment path. In the development installer it deletes subscriptions and
 their page checkpoints directly. It uses NOWAIT for every attached partition
 slot and subscription, whether paged or ordinary: if any is locked, the entire
-drop aborts with `40001` and commits no changes. Retry the whole transaction.
-Pause consumers before force-drop when reliable removal of a busy queue is
-required.
+drop aborts with `40001` and commits no changes. Other queues keep their consumer
+identities. At `REPEATABLE READ` or `SERIALIZABLE`, concurrent registration can
+also require `40001` so orphan cleanup can use a fresh snapshot. Retry the whole
+transaction. Pause consumers before force-drop when reliable removal of a busy
+queue is required.
 
 ## Limits and client behavior
 

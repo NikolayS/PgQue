@@ -142,7 +142,8 @@ begin
         v_result.lease_until := v_slot.lease_until;
         v_result.fence_epoch := v_slot.epoch;
     else
-        v_state.pending_lease_until := clock_timestamp() + v_state.pending_lease_ttl;
+        v_state.pending_lease_until := pgque._lease_deadline(
+            clock_timestamp(), v_state.pending_lease_ttl);
         v_result.lease_until := v_state.pending_lease_until;
     end if;
     update pgque.page_state set
@@ -182,12 +183,8 @@ begin
         raise exception 'nonempty queue/consumer/worker, positive page size and lease required'
             using errcode = '22023';
     end if;
-    -- Timestamp arithmetic also rejects unsupported non-finite/overflow TTLs.
-    if not isfinite(clock_timestamp() + i_lease) then
-        raise exception 'lease must be finite' using errcode = '22023';
-    end if;
-exception when datetime_field_overflow then
-    raise exception 'lease out of range' using errcode = '22023';
+    -- Fail early for invalid input. Issuance checks again after its locks.
+    perform pgque._lease_deadline(clock_timestamp(), i_lease);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
@@ -313,12 +310,12 @@ begin
     v_state := pgque._lock_page(i_page_token);
     perform pgque._validate_pending_page(v_state, i_page_token, i_worker);
     if v_state.mode = 'partition' then
-        update pgque.partition_slot set lease_until = clock_timestamp() + lease_ttl
+        update pgque.partition_slot set lease_until = pgque._lease_deadline(clock_timestamp(), lease_ttl)
         where queue_id = v_state.queue_id and co_name = v_state.partition_co_name
             and slot = v_state.partition_slot
         returning lease_until into v_until;
     else
-        v_until := clock_timestamp() + v_state.pending_lease_ttl;
+        v_until := pgque._lease_deadline(clock_timestamp(), v_state.pending_lease_ttl);
         update pgque.page_state set pending_lease_until = v_until
         where queue_id = v_state.queue_id and consumer_id = v_state.consumer_id;
     end if;
