@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "psycopg[binary]>=3.1,<4",
+    "tomli>=2,<3; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
