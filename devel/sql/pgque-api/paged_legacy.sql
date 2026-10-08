@@ -45,7 +45,7 @@ begin
     perform pgque._assert_unpaged(x_batch_id);
     return pgque._event_retry_core(x_batch_id, x_event_id, x_retry_time);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.event_retry(
     x_batch_id bigint,
@@ -60,7 +60,7 @@ begin
         + ((x_retry_seconds::text || ' seconds')::interval);
     return pgque._event_retry_core(x_batch_id, x_event_id, v_retry_time);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.batch_retry(
     i_batch_id bigint,
@@ -100,7 +100,7 @@ begin
     get diagnostics v_count = row_count;
     return v_count;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /*
  * Route one already-validated paged event without invoking a guarded public
@@ -276,7 +276,7 @@ begin
     values (x_queue_id, x_consumer_id, last_tick);
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._event_retry_core(bigint, bigint, timestamptz)
     from public, pgque_reader, pgque_writer, pgque_admin;
@@ -294,6 +294,9 @@ declare
     v_queue pgque.queue%rowtype;
     v_consumers int4[];
     v_table text;
+    v_error_schema text;
+    v_error_table text;
+    v_error_constraint text;
 begin
     select * into v_queue
     from pgque.queue
@@ -329,7 +332,8 @@ begin
         delete from pgque.subscription where sub_queue = v_queue.queue_id;
         /* Concurrent registration owns its consumer row; leave that identity
            in place rather than waiting while holding the queue lock. */
-        with orphaned as (
+        select array_agg(orphaned.co_id) into v_consumers
+        from (
             select c.co_id
             from pgque.consumer as c
             where c.co_id = any(v_consumers)
@@ -338,10 +342,29 @@ begin
                     where s.sub_consumer = c.co_id
                 )
             for update of c skip locked
-        )
-        delete from pgque.consumer as c
-        using orphaned as o
-        where c.co_id = o.co_id;
+        ) as orphaned;
+        /* A registration can commit after the candidate snapshot but before
+           its row lock. Recheck in a new statement after owning that lock. */
+        begin
+            delete from pgque.consumer as c
+            where c.co_id = any(v_consumers)
+                and not exists (
+                    select 1 from pgque.subscription as s
+                    where s.sub_consumer = c.co_id
+                );
+        exception when foreign_key_violation then
+            get stacked diagnostics v_error_schema = schema_name,
+                v_error_table = table_name, v_error_constraint = constraint_name;
+            /* Higher isolation retains the old transaction snapshot. Surface
+               this exact concurrent reference as a whole-transaction retry. */
+            if current_setting('transaction_isolation') in ('repeatable read', 'serializable')
+                and v_error_schema = 'pgque' and v_error_table = 'subscription'
+                and v_error_constraint = 'sub_consumer_fkey' then
+                raise exception 'consumer registered concurrently; retry administrative force drop'
+                    using errcode = '40001';
+            end if;
+            raise;
+        end;
     elsif exists (
         select 1 from pgque.subscription where sub_queue = v_queue.queue_id
     ) then
@@ -358,7 +381,7 @@ begin
     delete from pgque.queue where queue_id = v_queue.queue_id;
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque.drop_queue(text, boolean)
     from public, pgque_reader, pgque_writer;

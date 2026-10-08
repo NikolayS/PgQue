@@ -100,7 +100,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, 'default', payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, jsonb) from public;
 
 -- pgque.send(queue, payload text) -- fast path, opaque textual payload.
@@ -109,7 +109,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, 'default', payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text) from public;
 
 -- pgque.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
@@ -118,7 +118,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, type_name, payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, jsonb) from public;
 
 -- pgque.send(queue, type, payload text) -- fast path with explicit type
@@ -127,7 +127,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, type_name, payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, text) from public;
 
 -- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
@@ -200,7 +200,7 @@ begin
 
     return v_ids;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.send_batch(queue, payloads jsonb[]) -- default-type batch send
 create or replace function pgque.send_batch(queue_name text, payloads jsonb[])
@@ -208,7 +208,7 @@ returns bigint[] as $$
 begin
     return pgque.send_batch(queue_name, 'default', payloads);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, jsonb[]) from public;
 
 -- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
@@ -225,7 +225,7 @@ begin
 
     return pgque.insert_event_bulk(queue_name, type_name, payloads::text[]);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, text, jsonb[]) from public;
 
 -- pgque.send_batch(queue, payloads text[]) -- default-type fast-path batch send
@@ -234,7 +234,7 @@ returns bigint[] as $$
 begin
     return pgque.send_batch(queue_name, 'default', payloads);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, text[]) from public;
 
 -- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
@@ -251,7 +251,7 @@ begin
 
     return pgque.insert_event_bulk(queue_name, type_name, payloads);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, text, text[]) from public;
 
 -- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
@@ -271,7 +271,7 @@ begin
 
     return pgque.register_consumer(queue, consumer);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.subscribe(text, text) from public;
 
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
@@ -280,7 +280,7 @@ returns integer as $$
 begin
     return pgque.unregister_consumer(queue, consumer);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.unsubscribe(text, text) from public;
 
 -- Restore owners for wrappers that had to be dropped during v0.1.0 upgrade.
