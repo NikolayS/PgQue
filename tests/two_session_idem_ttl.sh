@@ -31,12 +31,17 @@ idem_key="lock_wait_${suffix}"
 holder_app="idem_ttl_holder_${suffix}"
 contender_app="idem_ttl_contender_${suffix}"
 workdir="$(mktemp -d)"
+holder_input_open=0
 
 cleanup() {
   local cleanup_status=0
   local residue
 
   set +e
+  if (( holder_input_open )); then
+    exec {holder_input}>&-
+    holder_input_open=0
+  fi
   "${psql_base[@]}" -qAtc "
     select pg_terminate_backend(pid)
     from pg_stat_activity
@@ -88,31 +93,30 @@ where q.queue_id = k.queue_id
   and k.idem_key = '${idem_key}';
 SQL
 
-# Hold the expired claim row. The contender starts its statement while this
-# lock is held, then waits longer than its requested TTL before takeover.
-PGAPPNAME="${holder_app}" "${psql_base[@]}" \
-  >"${workdir}/holder.out" 2>"${workdir}/holder.err" <<SQL &
+# Keep the transaction open under explicit control. The acknowledgment is
+# produced only after the conflicting row lock has actually been acquired.
+mkfifo "${workdir}/holder.in"
+PGAPPNAME="${holder_app}" timeout --kill-after=2s 25s "${psql_base[@]}" -qAt \
+  <"${workdir}/holder.in" >"${workdir}/holder.out" 2>"${workdir}/holder.err" &
+holder_pid=$!
+exec {holder_input}>"${workdir}/holder.in"
+holder_input_open=1
+cat >&"${holder_input}" <<SQL
 begin;
+set local statement_timeout = '15s';
+set local idle_in_transaction_session_timeout = '20s';
 select 1
 from pgque.idem as k
 inner join pgque.queue as q on q.queue_id = k.queue_id
 where q.queue_name = '${queue_name}'
   and k.idem_key = '${idem_key}'
 for update of k;
-select pg_sleep(4);
-commit;
+select 'holder-ready:${suffix}:' || pg_backend_pid();
 SQL
-holder_pid=$!
 
 holder_ready=0
 for _ in $(seq 1 100); do
-  if "${psql_base[@]}" -qAtc "
-    select 1
-    from pg_stat_activity
-    where application_name = '${holder_app}'
-      and wait_event_type = 'Timeout'
-      and wait_event = 'PgSleep'
-  " | grep -qx 1; then
+  if grep -Eq "^holder-ready:${suffix}:[0-9]+$" "${workdir}/holder.out"; then
     holder_ready=1
     break
   fi
@@ -123,8 +127,16 @@ if (( holder_ready != 1 )); then
   print_debug
   exit 1
 fi
+holder_backend_pid="$(sed -n "s/^holder-ready:${suffix}:\([0-9][0-9]*\)$/\1/p" "${workdir}/holder.out")"
+if [[ ! "${holder_backend_pid}" =~ ^[0-9]+$ ]]; then
+  echo "FAIL: invalid holder acknowledgment" >&2
+  print_debug
+  exit 1
+fi
+echo "barrier: holder backend ${holder_backend_pid} acknowledged the row lock"
 
-PGAPPNAME="${contender_app}" "${psql_base[@]}" \
+# Bound client lifetime as well as server statements, including startup.
+PGAPPNAME="${contender_app}" timeout --kill-after=2s 25s "${psql_base[@]}" \
   >"${workdir}/contender.out" 2>"${workdir}/contender.err" <<SQL &
 set statement_timeout = '15s';
 select event_id, deduped
@@ -142,9 +154,11 @@ begin
   where q.queue_name = '${queue_name}'
     and k.idem_key = '${idem_key}';
 
-  assert v_remaining > interval '1 second', format(
-    'takeover TTL was not measured from lock acquisition: remaining=%s',
-    v_remaining);
+  if (v_remaining > interval '1 second') is distinct from true then
+    raise exception '%', format(
+      'takeover TTL was not measured from lock acquisition: remaining=%s',
+      v_remaining);
+  end if;
 end
 \$\$;
 
@@ -156,8 +170,9 @@ begin
   into strict v_deduped
   from pgque.send_idem(
     '${queue_name}', 'retry', '{}', '${idem_key}', interval '2 seconds') as s;
-  assert v_deduped,
-    'immediate retry after lock-wait takeover must deduplicate';
+  if v_deduped is distinct from true then
+    raise exception 'immediate retry after lock-wait takeover must deduplicate';
+  end if;
 end
 \$\$;
 SQL
@@ -165,12 +180,17 @@ contender_pid=$!
 
 contender_waiting=0
 for _ in $(seq 1 100); do
-  if "${psql_base[@]}" -qAtc "
-    select 1
+  probe="$("${psql_base[@]}" -qAtc "
+    select pid, extract(epoch from clock_timestamp())
     from pg_stat_activity
     where application_name = '${contender_app}'
+      and datname = current_database()
       and wait_event_type = 'Lock'
-  " | grep -qx 1; then
+      and ${holder_backend_pid} = any(pg_blocking_pids(pid))
+  ")"
+  if [[ "${probe}" =~ ^[0-9]+\|[0-9]+([.][0-9]+)?$ ]]; then
+    contender_backend_pid="${probe%%|*}"
+    blocked_at="${probe#*|}"
     contender_waiting=1
     break
   fi
@@ -181,6 +201,32 @@ if (( contender_waiting != 1 )); then
   print_debug
   exit 1
 fi
+
+echo "barrier: contender backend ${contender_backend_pid} blocked by holder ${holder_backend_pid} at ${blocked_at}"
+# Start the TTL-aging delay at the observed specific blocker, not at holder
+# startup. Recheck the same relationship before releasing the transaction.
+sleep 2.25
+release_probe="$("${psql_base[@]}" -qAtc "
+  select pid, extract(epoch from clock_timestamp()) - ${blocked_at}::numeric,
+         extract(epoch from clock_timestamp())
+  from pg_stat_activity
+  where pid = ${contender_backend_pid}
+    and application_name = '${contender_app}'
+    and datname = current_database()
+    and wait_event_type = 'Lock'
+    and ${holder_backend_pid} = any(pg_blocking_pids(pid))
+    and extract(epoch from clock_timestamp()) - ${blocked_at}::numeric > 2
+")"
+if [[ -z "${release_probe}" ]]; then
+  echo "FAIL: contender did not remain blocked by this holder for its full requested TTL" >&2
+  print_debug
+  exit 1
+fi
+IFS='|' read -r checked_pid observed_wait release_epoch <<<"${release_probe}"
+echo "release: holder=${holder_backend_pid} contender=${checked_pid} observed_wait_seconds=${observed_wait} requested_ttl_seconds=2 release_epoch=${release_epoch}"
+printf 'commit;\n\\q\n' >&"${holder_input}"
+exec {holder_input}>&-
+holder_input_open=0
 
 set +e
 wait "${contender_pid}"

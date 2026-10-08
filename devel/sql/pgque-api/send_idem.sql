@@ -187,7 +187,7 @@ begin
     end if;
     return next;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function
     pgque.send_idem(text, text, text, text, interval, text) from public;
 
@@ -215,7 +215,7 @@ begin
         i_queue, i_type, i_payload::text, i_idem_key, i_ttl,
         i_partition_key) s;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function
     pgque.send_idem(text, text, jsonb, text, interval, text) from public;
 
@@ -254,7 +254,7 @@ begin
 
     return case when v_deleted >= 10000 then 1 else 0 end;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.maint_idem(text) from public;
 
 /*
@@ -279,7 +279,7 @@ begin
 
     return case when v_deleted >= 10000 then 1 else 0 end;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.maint_idem() from public;
 
 -- Grants: send_idem -> pgque_writer (producer); maint_idem -> pgque_admin.

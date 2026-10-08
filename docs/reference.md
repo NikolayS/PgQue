@@ -432,8 +432,12 @@ treats force-drop as administrative destruction: it deletes subscriptions and
 their page checkpoints directly, without acknowledging or unregistering them.
 Its slot and subscription locks use NOWAIT, for ordinary and paged consumers;
 any locked row aborts the whole operation with SQLSTATE `40001` and no changes
-commit. Retry the whole transaction, and pause consumers when reliable removal
-of a busy queue is required.
+commit. Consumer identities used by another queue are retained. Orphan cleanup
+skips locked identities and rechecks subscriptions after locking each candidate.
+At `REPEATABLE READ` or `SERIALIZABLE`, a concurrent registration can require a
+fresh snapshot; this also aborts with `40001`, without partial queue removal.
+Retry the whole transaction. Pause consumers when reliable removal of a busy
+queue is required.
 Grant: `pgque_admin`. Sources: [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql)
 and [`devel/sql/pgque.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque.sql).
 

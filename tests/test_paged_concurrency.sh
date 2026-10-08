@@ -139,10 +139,18 @@ psql_test -F '|' -c "
   )
 " >"${tmpdir}/same_worker.out" 2>"${tmpdir}/same_worker.err" \
   || fail 'same-worker reconnect failed'
-first_token="$(cut -d '|' -f 1 "${tmpdir}/same_worker.out")"
-[[ "${first_token}" =~ ^[0-9a-f-]{36}$ ]] \
-  || fail "same-worker reconnect did not return a UUID token: ${first_token}"
-grep -qx "${first_token}|page|1|1|t" "${tmpdir}/same_worker.out" \
+first_token=""
+mapfile -t original_tokens < <(
+  grep -Ex '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+    "${tmpdir}/receiver1.out"
+)
+[[ "${#original_tokens[@]}" = 1 ]] \
+  || fail 'original receiver did not return exactly one UUID token'
+first_token="${original_tokens[0]}"
+reconnect_token="$(cut -d '|' -f 1 "${tmpdir}/same_worker.out")"
+[[ "${reconnect_token}" = "${first_token}" ]] \
+  || fail 'same-worker reconnect did not preserve the original token'
+grep -Fqx "${first_token}|page|1|1|t" "${tmpdir}/same_worker.out" \
   || fail 'same-worker reconnect did not redeliver the identical page'
 
 # Commit the ack in one backend and throw away its result, exactly the state a

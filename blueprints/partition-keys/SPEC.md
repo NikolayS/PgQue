@@ -566,7 +566,9 @@ lease columns (`lease_owner`/`lease_until`/`epoch`) + subscription cursors
 (per-slot lag) + resize state. It has one row for every expected slot and an
 explicit `subscribed` boolean. A missing engine subscription reports
 `subscribed=false`, `last_tick=NULL`, and `pending_events=NULL`: zero would mean
-known caught-up state, while a missing cursor makes lag unknowable. The
+no measured sequence lag, while a missing cursor makes lag unknowable. Zero
+does not exclude unticked events or late producer commits that need later
+snapshot windows without a new event-sequence advance. The
 canonical alert is therefore `pending_events > X or not subscribed` — a
 threshold-only `pending_events > X` alert silently skips the NULL rows, so
 incomplete setup would never fire it. Classification is catalog-driven, the
