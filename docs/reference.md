@@ -341,8 +341,11 @@ One row for every expected slot, including missing subscriptions. Columns:
 | `last_tick` | `bigint` | Slot cursor; null when unsubscribed. |
 | `pending_events` | `bigint` | Pre-filter event-sequence lag; null when unsubscribed. |
 
-`pending_events` over-counts one slot's routed share by approximately `n`, but
-zero means caught up exactly and sustained growth identifies a stalled slot.
+`pending_events` measures the tick event-sequence difference before hash filtering.
+It over-counts one slot's routed share by approximately `n`. Zero means no
+measured sequence lag, not no undelivered work. Unticked events and late producer
+commits can require later snapshot windows without a new event-sequence advance.
+Sustained growth can mean a stalled slot or a live consumer slower than production.
 Grant: `select` to `pgque_reader` and `pgque_admin`. Source:
 [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
 

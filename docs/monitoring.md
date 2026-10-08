@@ -119,12 +119,14 @@ order by queue_name, consumer, slot;
 | `lease_until` | stored expiry, including an expired lease | repeatedly expires during normal work when TTL/renewal is too short |
 | `epoch` | fencing counter incremented on takeover | rapid growth indicates worker churn or repeated expiry |
 | `last_tick` | this slot's independent cursor | freezes while the queue's latest tick advances when polling stops |
-| `pending_events` | pre-hash-filter event-sequence lag | sustained growth means the slot is behind; zero means caught up exactly |
+| `pending_events` | pre-hash-filter event-sequence lag | growth means measured lag is increasing; zero means no measured sequence lag |
 
 `pending_events` counts the queue stream before the slot's hash filter, so it
 overstates the slot's own routed share by approximately `n`. Use it for trends
-and zero/nonzero state, not as an exact number of messages the worker will
-receive.
+not as an exact number of messages the worker will receive. Zero does not prove
+that all work is delivered: unticked events and late producer commits can need
+later snapshot windows without a new event-sequence advance. Growth can mean a
+stalled slot or a live consumer slower than production.
 
 Every slot must advance. Each is an independent subscription over the full
 stream, and one unpolled slot pins table rotation even when all other slots are
