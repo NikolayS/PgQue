@@ -854,7 +854,8 @@ begin
             and candidate.sub_role = 'coop_member'
             and candidate.sub_consumer <> v_member.sub_consumer
             and candidate.sub_batch is not null
-            and candidate.sub_active < now() - i_dead_interval
+            -- A receiver can wait past the dead threshold in this transaction.
+            and candidate.sub_active < clock_timestamp() - i_dead_interval
             and (
                 page.active_batch_id is null
                 or (

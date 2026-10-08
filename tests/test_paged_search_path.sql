@@ -1,4 +1,4 @@
--- New paging definer functions must place the temporary namespace last.
+-- Paging and legacy wrapper definer functions must place the temporary namespace last.
 -- Copyright 2026 Nikolay Samokhvalov. Apache-2.0 license.
 \set ON_ERROR_STOP on
 
@@ -13,6 +13,7 @@ declare
     v_bad integer := 0;
 begin
     foreach v_signature in array array[
+        'pgque._lease_deadline(timestamp with time zone,interval)',
         'pgque._assert_unpaged(bigint)',
         'pgque._clear_paged_active(integer,integer)',
         'pgque._transfer_paged_active(integer,integer,integer,bigint)',
@@ -28,10 +29,17 @@ begin
         'pgque._validate_pending_page(pgque.page_state,uuid,text)',
         'pgque.renew_page(uuid,text)',
         'pgque._page_failures(jsonb)',
-        'pgque.ack_page(uuid,text,jsonb)'
+        'pgque.ack_page(uuid,text,jsonb)',
+        'pgque.event_retry(bigint,bigint,timestamp with time zone)',
+        'pgque.event_retry(bigint,bigint,integer)',
+        'pgque.batch_retry(bigint,integer)',
+        'pgque.register_consumer_at(text,text,bigint)',
+        'pgque.drop_queue(text,boolean)'
     ] loop
         v_oid := to_regprocedure(v_signature);
-        assert v_oid is not null, format('expected paging function missing: %s', v_signature);
+        if v_oid is null then
+            raise exception 'expected function missing: %', v_signature;
+        end if;
         select p.prosecdef, (
             select setting
             from unnest(p.proconfig) as setting
@@ -47,6 +55,8 @@ begin
                 v_signature, v_definer, v_path;
         end if;
     end loop;
-    assert v_bad = 0, format('%s paging function(s) have an unsafe configured search_path', v_bad);
+    if v_bad <> 0 then
+        raise exception '% function(s) have an unsafe configured search_path', v_bad;
+    end if;
 end $$;
-\echo 'PASS: all 16 new paging functions explicitly place pg_temp last'
+\echo 'PASS: all 22 lease, paging and legacy wrapper functions explicitly place pg_temp last'

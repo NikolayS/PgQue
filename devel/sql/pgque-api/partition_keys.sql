@@ -86,7 +86,7 @@ begin
     order by q.queue_name, pc.co_name
     limit 1;
     if found then
-        raise exception 'cannot apply the 256-slot cap: partitioned consumer % on queue % has n=%; recreate it with a smaller slot count (drop every slot via pgque.unsubscribe_slot(), then pgque.subscribe_partitioned() with n <= 256), then re-run the install',
+        raise exception 'cannot apply the 256-slot cap: partitioned consumer % on queue % has n=%; first drain pending work or explicitly accept its loss; then remove every old slot with pgque.unsubscribe_slot(); re-run the install; only then recreate the consumer with pgque.subscribe_partitioned() and n <= 256',
             v_bad.co_name, v_bad.queue_name, v_bad.n;
     end if;
 end;
@@ -150,6 +150,31 @@ drop function if exists pgque._touch_lease(int4, text, text, int, text);
 -- ---------------------------------------------------------------------------
 -- Internal helpers
 -- ---------------------------------------------------------------------------
+
+-- Calendar intervals can compare positive yet move a timestamp backward.
+-- Call after ownership locks, with one captured clock per computed deadline.
+create or replace function pgque._lease_deadline(
+    i_now timestamptz, i_lease interval)
+returns timestamptz as $$
+declare
+    v_until timestamptz;
+begin
+    if i_now is null or not isfinite(i_now)
+        or i_lease is null or i_lease <= interval '0' then
+        raise exception 'positive lease and finite reference time required' using errcode = '22023';
+    end if;
+    v_until := i_now + i_lease;
+    if not isfinite(v_until) or v_until <= i_now then
+        raise exception 'lease must produce a finite future deadline' using errcode = '22023';
+    end if;
+    return v_until;
+exception when datetime_field_overflow then
+    raise exception 'lease out of range' using errcode = '22023';
+end;
+$$ language plpgsql stable security definer set search_path = pgque, pg_catalog, pg_temp;
+
+revoke execute on function pgque._lease_deadline(timestamptz, interval)
+from public, pgque_reader, pgque_writer, pgque_admin;
 
 -- Engine consumer name for slot k of consumer C with slot count N: "C#k/N".
 create or replace function pgque._slot_name(
@@ -224,7 +249,7 @@ begin
 
     -- Owner (possibly with an expired-but-un-taken-over lease): renew.
     update pgque.partition_slot
-    set lease_until = clock_timestamp() + v_ttl
+    set lease_until = pgque._lease_deadline(clock_timestamp(), v_ttl)
     where queue_id = v_queue_id
       and co_name = i_consumer
       and slot = i_slot;
@@ -683,7 +708,7 @@ begin
     if v_owner = i_worker then
         -- Renew: same epoch, no takeover.
         update pgque.partition_slot
-        set lease_until = clock_timestamp() + i_ttl,
+        set lease_until = pgque._lease_deadline(clock_timestamp(), i_ttl),
             lease_ttl = i_ttl
         where queue_id = v_queue_id
           and co_name = i_consumer
@@ -694,7 +719,7 @@ begin
         v_epoch := v_epoch + 1;
         update pgque.partition_slot
         set lease_owner = i_worker,
-            lease_until = clock_timestamp() + i_ttl,
+            lease_until = pgque._lease_deadline(clock_timestamp(), i_ttl),
             lease_ttl = i_ttl,
             epoch = v_epoch
         where queue_id = v_queue_id
@@ -931,8 +956,11 @@ revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pg
  *   pending_events -- approximate lag: events in the queue between the
  *                     slot's cursor tick and the latest tick, BEFORE hash
  *                     filtering (tick_event_seq delta). It over-counts a
- *                     single slot's own share by ~n x, but 0 means "caught
- *                     up" exactly, and growth means the slot is stalling.
+ *                     single slot's own share by ~n x. Zero means no measured
+ *                     sequence lag, not no undelivered work. Unticked events
+ *                     and late producer commits can need later snapshot windows
+ *                     without a new event-sequence advance. Growth can mean a
+ *                     stalled slot or a live consumer slower than production.
  *
  * Canonical alert: pending_events > X or not subscribed. A threshold-only
  * alert (where pending_events > X) skips the NULL-lag rows of unsubscribed
