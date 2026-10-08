@@ -184,7 +184,7 @@ optimization is future (R6).
 
 ## 8. Implementation details
 
-- **Producer:** `send(queue, type, payload, partition_key text default null)` →
+- **Producer:** `send(queue_name, type_name, payload, partition_key text)` →
   `insert_event(…, ev_extra1 => partition_key, …)`. SECURITY DEFINER, pinned
   search_path; revoke public, grant `pgque_writer`.
 - **Tables (created in Phase 1, `if not exists`):** `partition_consumer`
@@ -202,18 +202,18 @@ optimization is future (R6).
   drops its lease rows). `lease_owner` null when unleased; `epoch` starts at some
   base and increments on every takeover of a free/expired lease (the fencing
   token). Revoked from app roles.
-- **`subscribe_partitioned(queue, consumer, n int)`:** default setup path.
+- **`subscribe_partitioned(queue_name, consumer, n int)`:** default setup path.
   Require `1<=n<=256`. Pin N and register all N slot subscriptions and lease
   rows at one shared starting tick in one transaction. Failure rolls back the
   whole setup. Repeating a complete setup with the same N keeps its cursors.
   A pre-existing partial setup raises; atomic setup cannot recover missed history.
-- **`subscribe_slot(queue, consumer, k int, n int)`:** explicit repair path.
+- **`subscribe_slot(queue_name, consumer, slot int, n int)`:** explicit repair path.
   Require `1<=n<=256 and 0<=k<n`; upsert persisted `n`, reject a changed `n` (D3); register
   `"<consumer>#k/n"`; create the `partition_slot` row for `k` (unleased).
   Idempotent for the same `(k,n)`. A repaired slot starts at the current tick.
   It cannot recover events ticked while it was missing. To start over, use
   `unsubscribe_partitioned` and recreate the consumer before producing events.
-- **`claim_slot(queue, consumer, k int, worker text, ttl interval default
+- **`claim_slot(queue_name, consumer, slot int, worker text, ttl interval default
   '30 seconds')` → bigint (epoch):** require a finite `ttl >= '1 second'`.
   Return NULL if another transaction locks the slot row. Otherwise, under a row
   lock on the `partition_slot` row: if the lease is live and owned by another
@@ -224,12 +224,12 @@ optimization is future (R6).
   `epoch`**, return the new epoch. Grace rule: an expired lease that no successor
   has taken may be renewed by its own worker (still its epoch — no heir existed, so
   it is safe).
-- **`release_slot(queue, consumer, k int, worker text)` → boolean:** owner-only.
+- **`release_slot(queue_name, consumer, slot int, worker text)` → boolean:** owner-only.
   If `worker` holds the lease and no batch is open, clear it
   (`lease_owner = null`) and return true. An owner release raises while a batch
   is open, including between pages. A non-owner, including NULL, returns false.
   Callable only at a batch boundary (§15).
-- **`receive_partitioned(queue, consumer, k int, n int, worker text, …)`:** after
+- **`receive_partitioned(queue_name, consumer, slot int, n int, worker text, max_return int default 100)`:** after
   casting `k,n` to int, **require `worker` to hold the lease on slot `k`** (a
   non-owner raises — server-enforced G2); an expired lease still owned by the same
   worker (no successor took over) is renewed under the grace rule; **renew the
@@ -241,21 +241,21 @@ optimization is future (R6).
   lease `epoch`** so a handler can stamp it into side effects as a user-space
   **fencing token** (a zombie worker on an old epoch is then detectable downstream) —
   this is the consumer for the `epoch` column (D11, §15).
-- **`ack_partitioned(queue, consumer, k int, n int, worker text)`:** same lease
+- **`ack_partitioned(queue_name, consumer, slot int, n int, worker text)`:** same lease
   precondition and renewal as `receive_partitioned` — a non-owner (e.g. a zombie
   after takeover) raises instead of acking, which is the fencing behavior.
-- **`nack_partitioned(queue, consumer, k int, n int, worker text, msg
-  pgque.message, retry_after interval, reason text)`:** the lease-fenced
+- **`nack_partitioned(queue_name, consumer, slot int, n int, worker text, msg
+  pgque.message, retry_after interval default '60 seconds', reason text default null)`:** the lease-fenced
   per-message retry/DLQ path for slots (plain `nack` rejects slot batches, which
   otherwise would have no retry path). Validates N, fences+renews the lease, then
   routes through the shared retry/DLQ core (`_nack_batch_event` — the #98
   canonical-event re-query and #104 idempotent-DLQ behaviors are preserved).
   A retried keyed event keeps `ev_extra1`, so redelivery stays on the same slot.
-- **Raw-slot guards:** plain `receive`/`ack`/`nack` reject partition slot
-  consumers — `receive` rejects `#`-carrying consumer names (the partitioned
-  setup APIs reserve `#`), `ack`/`nack` resolve the batch's consumer and reject `#`-names —
-  otherwise the plain path would hand back the whole unfiltered stream with no
-  lease fence, and a fenced zombie could double-ack via `ack(batch_id)` (G2, §2).
+- **Raw-slot guards:** plain `receive`/`ack`/`nack` and `receive_page` reject
+  consumers identified by the partition catalogs for that queue. Legacy ordinary
+  consumers with `#` in their names remain valid. New registrations reserve `#`.
+  These guards prevent unfiltered delivery and acknowledgment without a lease
+  fence (G2, §2).
 - **`pause` (Phase 2):** on nack of `K#i`, upsert `partition_block(sub_id, K,
   head_ev_id => ev_id)`. A later event of a blocked key (open marker with
   `head_ev_id < ev_id`) is **deferred** (see §11 O1 for the missing primitive),

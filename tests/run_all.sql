@@ -163,6 +163,9 @@
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
 
+\echo 'Running: test_named_arguments_v0_3'
+\i tests/test_named_arguments_v0_3.sql
+
 \echo 'Running: test_idem_maintenance_clock'
 \i tests/test_idem_maintenance_clock.sql
 

@@ -224,7 +224,7 @@ jobs:
         # Upgrade coverage uses oldest/newest supported PG endpoints; the main
         # regression matrix above covers every supported version (14–19).
         pg_version: ['19beta1', '14']
-        from_version: ['0.1.0', '0.2.0', '0.2.1', '0.2.2']
+        from_version: ['0.1.0', '0.2.0', '0.2.1', '0.2.2', '0.3.0-alpha.1']
 
     steps:
       - uses: actions/checkout@v4
@@ -261,7 +261,11 @@ jobs:
       - name: Install released v${{ matrix.from_version }}
         run: |
           set -Eeuo pipefail
-          git show "v${{ matrix.from_version }}:sql/pgque.sql" > /tmp/pgque-released.sql
+          install_sql=sql/pgque.sql
+          if [[ '${{ matrix.from_version }}' = '0.3.0-alpha.1' ]]; then
+            install_sql=devel/sql/pgque.sql
+          fi
+          git show "v${{ matrix.from_version }}:${install_sql}" > /tmp/pgque-released.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f /tmp/pgque-released.sql
 
@@ -272,11 +276,39 @@ jobs:
             fixture=tests/test_upgrade_v0_1_fixture.sql
           elif [[ '${{ matrix.from_version }}' = '0.2.0' ]]; then
             fixture=tests/test_upgrade_v0_2_fixture.sql
+          elif [[ '${{ matrix.from_version }}' = '0.3.0-alpha.1' ]]; then
+            fixture=tests/test_upgrade_v0_3_alpha_fixture.sql
           else
             fixture=tests/test_upgrade_modern_fixture.sql
           fi
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f "$fixture"
+
+      - name: Check rejected alpha upgrades preserve state
+        if: matrix.from_version == '0.3.0-alpha.1'
+        run: |
+          set -Eeuo pipefail
+          export PGPASSWORD=pgque_test
+          psql_args=(--no-psqlrc -h localhost -U postgres -d pgque_test -v ON_ERROR_STOP=1)
+          if psql "${psql_args[@]}" --single-transaction -f devel/sql/pgque.sql > /tmp/alpha-blocked.log 2>&1; then
+            echo 'FAIL: dependent alpha function was replaced'
+            exit 1
+          fi
+          grep -F 'cannot stabilize named arguments for pgque.send(text,text,jsonb,text) because dependent objects exist:' /tmp/alpha-blocked.log || {
+            cat /tmp/alpha-blocked.log
+            exit 1
+          }
+          psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_blocked_assertions.sql
+          psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_oversized_fixture.sql
+          if psql "${psql_args[@]}" --single-transaction -f devel/sql/pgque.sql > /tmp/alpha-cap.log 2>&1; then
+            echo 'FAIL: oversized alpha topology was accepted'
+            exit 1
+          fi
+          grep -F 'cannot apply the 256-slot cap: partitioned consumer oversized-workers on queue upgrade_v03_oversized_q has n=257;' /tmp/alpha-cap.log || {
+            cat /tmp/alpha-cap.log
+            exit 1
+          }
+          psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_oversized_assertions.sql
 
       - name: Upgrade to HEAD
         run: |
@@ -292,6 +324,8 @@ jobs:
             assertions=tests/test_upgrade_v0_1_assertions.sql
           elif [[ '${{ matrix.from_version }}' = '0.2.0' ]]; then
             assertions=tests/test_upgrade_v0_2_assertions.sql
+          elif [[ '${{ matrix.from_version }}' = '0.3.0-alpha.1' ]]; then
+            assertions=tests/test_upgrade_v0_3_alpha_assertions.sql
           else
             assertions=tests/test_upgrade_modern_assertions.sql
           fi
@@ -311,6 +345,16 @@ jobs:
             -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
+
+      - name: Verify named-contract reinstall identity
+        if: matrix.from_version == '0.3.0-alpha.1'
+        run: |
+          set -Eeuo pipefail
+          export PGPASSWORD=pgque_test
+          psql_args=(--no-psqlrc -h localhost -U postgres -d pgque_test -v ON_ERROR_STOP=1)
+          psql "${psql_args[@]}" -f tests/test_named_arguments_v0_3_reinstall_fixture.sql
+          psql "${psql_args[@]}" --single-transaction -f devel/sql/pgque.sql
+          psql "${psql_args[@]}" -f tests/test_named_arguments_v0_3_reinstall_assertions.sql
 
       - name: Cleanup
         if: always()
