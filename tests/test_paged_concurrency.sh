@@ -84,7 +84,7 @@ SQL
 
 # Session 1 issues a page, records its token, then deliberately holds the
 # subscription/page locks. Session 2 must block and, after commit, see busy.
-psql_test -c "
+psql_test <<'SQL' >"${tmpdir}/receiver1.out" 2>"${tmpdir}/receiver1.err" &
   begin;
   select page_token
   from pgque.receive_page(
@@ -93,7 +93,7 @@ psql_test -c "
   set application_name = 'pgque_paged_receiver1';
   select pg_sleep(5);
   commit;
-" >"${tmpdir}/receiver1.out" 2>"${tmpdir}/receiver1.err" &
+SQL
 receiver1_pid=$!
 
 receiver1_ready=0
