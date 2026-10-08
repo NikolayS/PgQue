@@ -48,10 +48,14 @@ class TestConsumerResilience < Minitest::Test
 
     uri = URI.parse(dsn)
 
-    query = URI.decode_www_form(uri.query.to_s)
-    query.reject! { |key, _| key == "application_name" }
-    query << ["application_name", value]
-    uri.query = URI.encode_www_form(query)
+    # libpq treats '+' literally. Preserve existing URI query bytes.
+    query = uri.query.to_s.split("&")
+    query.reject! do |pair|
+      URI::DEFAULT_PARSER.unescape(pair.split("=", 2).first) == "application_name"
+    end
+    encoded_name = URI.encode_www_form_component(value).gsub("+", "%20")
+    query << "application_name=#{encoded_name}"
+    uri.query = query.join("&")
     uri.to_s
   end
 
@@ -271,6 +275,23 @@ class TestConsumerResilience < Minitest::Test
         thread.join(3)
         PG.define_singleton_method(:connect, original_connect)
       end
+    end
+  end
+end
+
+# URI query values use percent escapes, not HTML form encoding.
+class TestConsumerResilienceDSN < Minitest::Test
+  def test_dsn_application_name_preserves_libpq_uri_parameters
+    [
+      "postgresql://user:pass%20word@localhost/db?password=pass%20word&options=-c%20statement_timeout%3D5000&application_name=old",
+      "postgresql://user:pass+word@localhost/db?password=pass+word&options=-c%20statement_timeout%3D5000&application%5Fname=old"
+    ].each do |original|
+      harness = TestConsumerResilience.new("unused")
+      harness.define_singleton_method(:dsn) { original }
+      changed = harness.dsn_with_application_name("receiver name+tag")
+      before = PG::Connection.conninfo_parse(original).to_h { |item| [item[:keyword], item[:val]] }
+      after = PG::Connection.conninfo_parse(changed).to_h { |item| [item[:keyword], item[:val]] }
+      assert_equal before.merge("application_name" => "receiver name+tag"), after
     end
   end
 end
