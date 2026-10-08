@@ -7,6 +7,11 @@ do $$
 begin
   perform pgque.create_queue('paged_legacy_q');
   perform pgque.register_consumer('paged_legacy_q', 'c1');
+end $$;
+
+/* Publication must commit after the subscription's starting snapshot. */
+do $$
+begin
   perform pgque.insert_event('paged_legacy_q', 'legacy.guard', 'payload');
 end $$;
 
@@ -33,6 +38,9 @@ begin
   from pgque.subscription as s
   where s.sub_batch = v_batch_id;
 
+  if (select count(*) from pgque.get_batch_events(v_batch_id)) <> 1 then
+    raise exception 'legacy guard fixture must contain one event in its batch window';
+  end if;
   select ev_id into strict v_event_id
   from pgque.get_batch_events(v_batch_id);
 
