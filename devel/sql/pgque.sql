@@ -251,7 +251,7 @@ create index if not exists rq_retry_idx on pgque.retry_queue (ev_retry_after);
 --   2. txid_* → pg_* function renames (PG14+ snapshot API)
 --   3. pg_snapshot_xmin/xmax wrapped with ::text::bigint (xid8→bigint)
 --   4. pg_current_xact_id() cast to ::text::bigint (xid8→bigint)
---   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog
+--   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog, pg_temp
 --   6. pgq_node/Londiste hooks removed from maint_operations
 --   7. pg_notify() injected into ticker for LISTEN/NOTIFY wakeup
 --   8. create_queue() rejects queue names > 57 bytes (pg_notify limit)
@@ -572,7 +572,7 @@ begin
 
     return id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)
 
 create or replace function pgque.find_tick_helper(
     in i_queue_id int4,
@@ -688,7 +688,7 @@ begin
     perform pg_notify('pgque_' || i_queue_name, i_tick_id::text); -- PgQue transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
     return i_tick_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.ticker(i_queue_name text)
@@ -793,7 +793,7 @@ begin
     perform pg_notify('pgque_' || i_queue_name, currval(q.queue_tick_seq)::text); -- PgQue transformation: LISTEN/NOTIFY wakeup (not in original PgQ)
     return currval(q.queue_tick_seq);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.ticker() returns bigint as $$
 -- ----------------------------------------------------------------------
@@ -821,7 +821,7 @@ begin
     end loop;
     return res;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.maint_retry_events()
 returns integer as $$
@@ -1179,7 +1179,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque._grant_perms_from(src_schema text, src_table text, dst_schema text, dst_table text)
@@ -1316,7 +1316,7 @@ begin
 
     return t.tick_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.seq_getval(i_seq_name text)
@@ -1508,7 +1508,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.drop_queue(x_queue_name text, x_force bool)
 returns integer as $$
@@ -1576,7 +1576,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.drop_queue(x_queue_name text)
 returns integer as $$
@@ -1649,7 +1649,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.insert_event(queue_name text, ev_type text, ev_data text)
 returns bigint as $$
@@ -1704,7 +1704,7 @@ begin
     return pgque.insert_event_raw(queue_name, null, now(), null, null,
             ev_type, ev_data, ev_extra1, ev_extra2, ev_extra3, ev_extra4);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.current_event_table(x_queue_name text)
 returns text as $$
@@ -1776,7 +1776,7 @@ returns integer as $$
 begin
     return pgque.register_consumer_at(x_queue_name, x_consumer_id, NULL);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.register_consumer_at(
@@ -1886,7 +1886,7 @@ begin
         values (x_queue_id, x_consumer_id, last_tick);
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.unregister_consumer(
@@ -1964,7 +1964,7 @@ begin
     end if;
 
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.next_batch_info(
     in i_queue_name text,
@@ -2183,7 +2183,7 @@ begin
           and sub_consumer = cons_id;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.get_batch_events(
     in x_batch_id   bigint,
@@ -2398,7 +2398,7 @@ exception
     when unique_violation then
         return 0;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.event_retry(
@@ -2430,7 +2430,7 @@ begin
     new_retry := current_timestamp + ((x_retry_seconds::text || ' seconds')::interval);
     return pgque.event_retry(x_batch_id, x_event_id, new_retry);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.batch_retry(
     i_batch_id bigint,
@@ -2482,7 +2482,7 @@ begin
     GET DIAGNOSTICS _cnt = ROW_COUNT;
     return _cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.finish_batch(
@@ -2518,7 +2518,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 drop function if exists pgque.get_queue_info();
 drop function if exists pgque.get_queue_info(text);
@@ -2578,7 +2578,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.get_queue_info(
     in i_queue_name                 text,
@@ -2659,7 +2659,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.get_consumer_info(
@@ -2692,7 +2692,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 
@@ -2727,7 +2727,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 
@@ -2794,7 +2794,7 @@ begin
     end loop;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.get_batch_info(
@@ -2847,7 +2847,7 @@ begin
           and c.co_id = s.sub_consumer;
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ======================================================================
 -- Section 3: PL/pgSQL event insertion (derived from PgQ)
@@ -4137,7 +4137,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque-additions/lifecycle.sql
 -- pgque lifecycle functions
@@ -4239,7 +4239,7 @@ begin
     update pgque.config set tick_period_ms = p_period_ms;
     return p_period_ms;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.start()
 returns void as $$
@@ -4321,7 +4321,7 @@ begin
         v_ticker_id, (1000.0 / v_period_ms)::numeric(10, 2),
         v_retry_id, v_maint_id, v_step2_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.stop()
 returns void as $$
@@ -4382,7 +4382,7 @@ begin
         scheduler = null
     where scheduler is null or scheduler = 'pg_cron';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 
 create or replace function pgque.start_timetable(i_ticks_per_second integer default 10)
@@ -4505,7 +4505,7 @@ begin
     raise notice 'pgque started with pg_timetable: ticker=% (% ticks/sec), retry_events=%, maint=%, rotate_step2=%',
         v_ticker_id, i_ticks_per_second, v_retry_id, v_maint_id, v_step2_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.stop_timetable()
 returns void as $$
@@ -4558,7 +4558,7 @@ begin
         scheduler = null
     where scheduler = 'pg_timetable';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.uninstall()
 returns void as $$
@@ -4583,7 +4583,7 @@ begin
     -- Note: roles are not dropped here (they may be in use by other databases)
     raise notice 'pgque uninstalled. Run DROP ROLE IF EXISTS pgque_reader, pgque_writer, pgque_admin; manually if needed.';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.version()
 returns text as $$
@@ -4593,7 +4593,7 @@ begin
        transform.sh reads this literal, so keep it a valid semver string. */
     return '0.3.0-rc.2';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.status()
 returns table (
@@ -4661,7 +4661,7 @@ begin
     return query select 'consumers'::text, 'info'::text,
         (select count(*)::text from pgque.subscription) || ' active subscriptions';
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque-additions/tick_helpers.sql
 -- pgque tick helpers
@@ -4709,7 +4709,7 @@ returns bigint as $$
 begin
     return pgque.force_tick(i_queue_name);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- force_next_tick is admin-only (matches force_tick). The schema-wide
 -- "grant execute on all functions … to pgque_admin" earlier in the
@@ -4982,7 +4982,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_inspect() -- inspect DLQ entries for a queue
 create or replace function pgque.dlq_inspect(
@@ -4997,7 +4997,7 @@ begin
     order by dl.dl_time desc
     limit i_limit_count;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_replay() -- replay a single dead letter event back into the queue
 /* The initial `for update of dl` serializes concurrent replays of one dl_id:
@@ -5028,7 +5028,7 @@ begin
 
     return v_new_eid;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_replay_all() -- replay all DLQ events for a queue.
 /* Returns (replayed, failed, first_error); per-event failures are caught so
@@ -5073,7 +5073,7 @@ begin
         end;
     end loop;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.dlq_purge() -- purge old DLQ entries
 create or replace function pgque.dlq_purge(
@@ -5088,7 +5088,7 @@ begin
     get diagnostics v_cnt = row_count;
     return v_cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Grants
@@ -5207,7 +5207,7 @@ begin
     perform pg_notify('pgque_' || i_queue_name, i_tick_id::text);
     return i_tick_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Override force_tick: raise instead of silently returning NULL when the
 -- target queue is missing, paused, or configured for external ticker.
@@ -5253,7 +5253,7 @@ begin
      limit 1;
     return v_max_tick;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ======================================================================
 -- Section 7: pgque-api (NEW — not derived from PgQ)
@@ -5323,7 +5323,7 @@ begin
 
     return total;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 grant execute on function pgque.maint() to pgque_admin;
 
@@ -5603,7 +5603,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.ack() -- finishes the batch, advances consumer position
 create or replace function pgque.ack(i_batch_id bigint)
@@ -5628,7 +5628,7 @@ begin
 
     return pgque.finish_batch(i_batch_id);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /*
  * pgque._nack_batch_event() -- shared retry/DLQ core for a single event of an
@@ -5691,7 +5691,7 @@ begin
     end if;
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
 create or replace function pgque.nack(
@@ -5720,7 +5720,7 @@ begin
     perform pgque._assert_unpaged(i_batch_id);
     return pgque._nack_batch_event(i_batch_id, i_msg, i_retry_after, i_reason);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Grants
@@ -5925,7 +5925,7 @@ begin
     end if;
 
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._next_batch_custom(
     in i_queue_name text,
@@ -6157,7 +6157,7 @@ begin
         and pgque.subscription.sub_role = 'normal';
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.next_batch_custom(
     in i_queue_name text,
@@ -6182,7 +6182,7 @@ as $$
         i_min_interval,
         false
     );
-$$ language sql security definer set search_path = pgque, pg_catalog;
+$$ language sql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._next_batch_custom(
     text, text, interval, int4, interval, boolean)
@@ -6240,7 +6240,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque cooperative consumers (experimental in PgQue 0.2)
 create or replace function pgque._validate_coop_names(
@@ -6265,7 +6265,7 @@ begin
         raise exception 'cooperative subconsumer name must not contain dot: %', i_subconsumer;
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Reset a coop_member subscription's batch token + tick window. Member rows
 -- never advance sub_last_tick on their own — the main consumer owns the
@@ -6285,7 +6285,7 @@ begin
         sub_queue = p_queue_id
         and sub_consumer = p_consumer_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 drop function if exists pgque.subscribe_subconsumer(text, text, text);
 drop function if exists pgque.register_subconsumer(text, text, text);
@@ -6457,7 +6457,7 @@ begin
     );
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.subscribe_subconsumer(
     i_queue text,
@@ -6468,7 +6468,7 @@ returns integer as $$
 begin
     return pgque.register_subconsumer(i_queue, i_consumer, i_subconsumer, i_convert_normal);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.touch_subconsumer(
     i_queue text,
@@ -6496,7 +6496,7 @@ begin
     get diagnostics v_cnt = row_count;
     return v_cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque._next_batch_coop(
     in i_queue text,
@@ -6602,7 +6602,8 @@ begin
             and candidate.sub_role = 'coop_member'
             and candidate.sub_consumer <> v_member.sub_consumer
             and candidate.sub_batch is not null
-            and candidate.sub_active < now() - i_dead_interval
+            -- A receiver can wait past the dead threshold in this transaction.
+            and candidate.sub_active < clock_timestamp() - i_dead_interval
             and (
                 page.active_batch_id is null
                 or (
@@ -6756,7 +6757,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.next_batch_custom(
     in i_queue text,
@@ -6774,7 +6775,7 @@ as $$
     from pgque._next_batch_coop(
         i_queue, i_consumer, i_subconsumer,
         i_min_lag, i_min_count, i_min_interval, i_dead_interval, false);
-$$ language sql security definer set search_path = pgque, pg_catalog;
+$$ language sql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._next_batch_coop(
     text, text, text, interval, int4, interval, interval, boolean)
@@ -6802,7 +6803,7 @@ begin
         );
     return v_batch_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.unregister_subconsumer(
     i_queue text,
@@ -6968,7 +6969,7 @@ begin
 
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.unsubscribe_subconsumer(
     i_queue text,
@@ -6979,7 +6980,7 @@ returns integer as $$
 begin
     return pgque.unregister_subconsumer(i_queue, i_consumer, i_subconsumer, i_batch_handling);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.receive_coop(
     i_queue text,
@@ -7046,7 +7047,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Experimental API comments + grants
@@ -7187,7 +7188,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, 'default', payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, jsonb) from public;
 
 -- pgque.send(queue, payload text) -- fast path, opaque textual payload.
@@ -7196,7 +7197,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, 'default', payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text) from public;
 
 -- pgque.send(queue, type, payload jsonb) -- send with explicit type, JSON payload
@@ -7205,7 +7206,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, type_name, payload::text);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, jsonb) from public;
 
 -- pgque.send(queue, type, payload text) -- fast path with explicit type
@@ -7214,7 +7215,7 @@ returns bigint as $$
 begin
     return pgque.insert_event(queue_name, type_name, payload);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, text) from public;
 
 -- pgque.insert_event_bulk(queue, type, payloads text[]) -- internal set-based primitive
@@ -7287,7 +7288,7 @@ begin
 
     return v_ids;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.send_batch(queue, payloads jsonb[]) -- default-type batch send
 create or replace function pgque.send_batch(queue_name text, payloads jsonb[])
@@ -7295,7 +7296,7 @@ returns bigint[] as $$
 begin
     return pgque.send_batch(queue_name, 'default', payloads);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, jsonb[]) from public;
 
 -- pgque.send_batch(queue, type, payloads jsonb[]) -- set-based batch send
@@ -7312,7 +7313,7 @@ begin
 
     return pgque.insert_event_bulk(queue_name, type_name, payloads::text[]);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, text, jsonb[]) from public;
 
 -- pgque.send_batch(queue, payloads text[]) -- default-type fast-path batch send
@@ -7321,7 +7322,7 @@ returns bigint[] as $$
 begin
     return pgque.send_batch(queue_name, 'default', payloads);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, text[]) from public;
 
 -- pgque.send_batch(queue, type, payloads text[]) -- set-based fast-path batch send
@@ -7338,7 +7339,7 @@ begin
 
     return pgque.insert_event_bulk(queue_name, type_name, payloads);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send_batch(text, text, text[]) from public;
 
 -- pgque.subscribe(queue, consumer) -- wrapper for register_consumer
@@ -7358,7 +7359,7 @@ begin
 
     return pgque.register_consumer(queue, consumer);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.subscribe(text, text) from public;
 
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
@@ -7367,7 +7368,7 @@ returns integer as $$
 begin
     return pgque.unregister_consumer(queue, consumer);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.unsubscribe(text, text) from public;
 
 -- Restore owners for wrappers that had to be dropped during v0.1.0 upgrade.
@@ -7523,11 +7524,11 @@ begin
     order by q.queue_name, pc.co_name
     limit 1;
     if found then
-        raise exception 'cannot apply the 256-slot cap: partitioned consumer % on queue % has n=%; recreate it with a smaller slot count (drop every slot via pgque.unsubscribe_slot(), then pgque.subscribe_partitioned() with n <= 256), then re-run the install',
+        raise exception 'cannot apply the 256-slot cap: partitioned consumer % on queue % has n=%; first drain pending work or explicitly accept its loss; then remove every old slot with pgque.unsubscribe_slot(); re-run the install; only then recreate the consumer with pgque.subscribe_partitioned() and n <= 256',
             v_bad.co_name, v_bad.queue_name, v_bad.n;
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer;
 
@@ -7587,6 +7588,31 @@ drop function if exists pgque._touch_lease(int4, text, text, int, text);
 -- ---------------------------------------------------------------------------
 -- Internal helpers
 -- ---------------------------------------------------------------------------
+
+-- Calendar intervals can compare positive yet move a timestamp backward.
+-- Call after ownership locks, with one captured clock per computed deadline.
+create or replace function pgque._lease_deadline(
+    i_now timestamptz, i_lease interval)
+returns timestamptz as $$
+declare
+    v_until timestamptz;
+begin
+    if i_now is null or not isfinite(i_now)
+        or i_lease is null or i_lease <= interval '0' then
+        raise exception 'positive lease and finite reference time required' using errcode = '22023';
+    end if;
+    v_until := i_now + i_lease;
+    if not isfinite(v_until) or v_until <= i_now then
+        raise exception 'lease must produce a finite future deadline' using errcode = '22023';
+    end if;
+    return v_until;
+exception when datetime_field_overflow then
+    raise exception 'lease out of range' using errcode = '22023';
+end;
+$$ language plpgsql stable security definer set search_path = pgque, pg_catalog, pg_temp;
+
+revoke execute on function pgque._lease_deadline(timestamptz, interval)
+from public, pgque_reader, pgque_writer, pgque_admin;
 
 -- Engine consumer name for slot k of consumer C with slot count N: "C#k/N".
 create or replace function pgque._slot_name(
@@ -7661,14 +7687,14 @@ begin
 
     -- Owner (possibly with an expired-but-un-taken-over lease): renew.
     update pgque.partition_slot
-    set lease_until = clock_timestamp() + v_ttl
+    set lease_until = pgque._lease_deadline(clock_timestamp(), v_ttl)
     where queue_id = v_queue_id
       and co_name = i_consumer
       and slot = i_slot;
 
     return v_n;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- The slot's open engine batch (null when none); raises if unsubscribed.
 create or replace function pgque._slot_batch(
@@ -7689,7 +7715,7 @@ begin
     end if;
     return v_batch_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Producer: keyed send
@@ -7703,7 +7729,7 @@ begin
     return pgque.insert_event(i_queue, i_type, i_payload::text,
         i_partition_key, null, null, null);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, jsonb, text) from public;
 
 /*
@@ -7718,7 +7744,7 @@ begin
     return pgque.insert_event(i_queue, i_type, i_payload,
         i_partition_key, null, null, null);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, text, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -7831,7 +7857,7 @@ begin
         values (v_queue_id, i_consumer, v_slot);
     end loop;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.subscribe_partitioned(text, text, int) from public;
 
 /*
@@ -7893,7 +7919,7 @@ begin
     values (v_queue_id, i_consumer, i_slot)
     on conflict (queue_id, co_name, slot) do nothing;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.subscribe_slot(text, text, int, int) from public;
 
 /*
@@ -7982,7 +8008,7 @@ begin
           and co_name = i_consumer;
     end if;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
 
 /*
@@ -8042,7 +8068,7 @@ begin
     where queue_id = v_queue_id
       and co_name = i_consumer;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.unsubscribe_partitioned(text, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -8120,7 +8146,7 @@ begin
     if v_owner = i_worker then
         -- Renew: same epoch, no takeover.
         update pgque.partition_slot
-        set lease_until = clock_timestamp() + i_ttl,
+        set lease_until = pgque._lease_deadline(clock_timestamp(), i_ttl),
             lease_ttl = i_ttl
         where queue_id = v_queue_id
           and co_name = i_consumer
@@ -8131,7 +8157,7 @@ begin
         v_epoch := v_epoch + 1;
         update pgque.partition_slot
         set lease_owner = i_worker,
-            lease_until = clock_timestamp() + i_ttl,
+            lease_until = pgque._lease_deadline(clock_timestamp(), i_ttl),
             lease_ttl = i_ttl,
             epoch = v_epoch
         where queue_id = v_queue_id
@@ -8143,7 +8169,7 @@ begin
     -- Leased by another live worker.
     return null;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.claim_slot(text, text, int, text, interval) from public;
 
 /*
@@ -8200,7 +8226,7 @@ begin
       and slot = i_slot;
     return true;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.release_slot(text, text, int, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -8287,7 +8313,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.receive_partitioned(text, text, int, int, text, int) from public;
 
 /*
@@ -8312,7 +8338,7 @@ begin
     end if;
     return pgque.finish_batch(v_batch_id);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.ack_partitioned(text, text, int, int, text) from public;
 
 /*
@@ -8346,7 +8372,7 @@ begin
     perform pgque._assert_unpaged(v_batch_id);
     return pgque._nack_batch_event(v_batch_id, i_msg, i_retry_after, i_reason);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pgque.message, interval, text) from public;
 
 -- ---------------------------------------------------------------------------
@@ -8368,8 +8394,11 @@ revoke execute on function pgque.nack_partitioned(text, text, int, int, text, pg
  *   pending_events -- approximate lag: events in the queue between the
  *                     slot's cursor tick and the latest tick, BEFORE hash
  *                     filtering (tick_event_seq delta). It over-counts a
- *                     single slot's own share by ~n x, but 0 means "caught
- *                     up" exactly, and growth means the slot is stalling.
+ *                     single slot's own share by ~n x. Zero means no measured
+ *                     sequence lag, not no undelivered work. Unticked events
+ *                     and late producer commits can need later snapshot windows
+ *                     without a new event-sequence advance. Growth can mean a
+ *                     stalled slot or a live consumer slower than production.
  *
  * Canonical alert: pending_events > X or not subscribed. A threshold-only
  * alert (where pending_events > X) skips the NULL-lag rows of unsubscribed
@@ -8605,7 +8634,7 @@ begin
     end if;
     return next;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function
     pgque.send_idem(text, text, text, text, interval, text) from public;
 
@@ -8625,7 +8654,7 @@ begin
         i_queue, i_type, i_payload::text, i_idem_key, i_ttl,
         i_partition_key) s;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function
     pgque.send_idem(text, text, jsonb, text, interval, text) from public;
 
@@ -8662,7 +8691,7 @@ begin
 
     return case when v_deleted >= 10000 then 1 else 0 end;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.maint_idem(text) from public;
 
 /*
@@ -8687,7 +8716,7 @@ begin
 
     return case when v_deleted >= 10000 then 1 else 0 end;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.maint_idem() from public;
 
 -- Grants: send_idem -> pgque_writer (producer); maint_idem -> pgque_admin.
@@ -8746,7 +8775,7 @@ begin
     perform pgque._assert_unpaged(x_batch_id);
     return pgque._event_retry_core(x_batch_id, x_event_id, x_retry_time);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.event_retry(
     x_batch_id bigint,
@@ -8761,7 +8790,7 @@ begin
         + ((x_retry_seconds::text || ' seconds')::interval);
     return pgque._event_retry_core(x_batch_id, x_event_id, v_retry_time);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.batch_retry(
     i_batch_id bigint,
@@ -8801,7 +8830,7 @@ begin
     get diagnostics v_count = row_count;
     return v_count;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /*
  * Route one already-validated paged event without invoking a guarded public
@@ -8977,7 +9006,7 @@ begin
     values (x_queue_id, x_consumer_id, last_tick);
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque._event_retry_core(bigint, bigint, timestamptz)
     from public, pgque_reader, pgque_writer, pgque_admin;
@@ -8995,6 +9024,9 @@ declare
     v_queue pgque.queue%rowtype;
     v_consumers int4[];
     v_table text;
+    v_error_schema text;
+    v_error_table text;
+    v_error_constraint text;
 begin
     select * into v_queue
     from pgque.queue
@@ -9030,7 +9062,8 @@ begin
         delete from pgque.subscription where sub_queue = v_queue.queue_id;
         /* Concurrent registration owns its consumer row; leave that identity
            in place rather than waiting while holding the queue lock. */
-        with orphaned as (
+        select array_agg(orphaned.co_id) into v_consumers
+        from (
             select c.co_id
             from pgque.consumer as c
             where c.co_id = any(v_consumers)
@@ -9039,10 +9072,29 @@ begin
                     where s.sub_consumer = c.co_id
                 )
             for update of c skip locked
-        )
-        delete from pgque.consumer as c
-        using orphaned as o
-        where c.co_id = o.co_id;
+        ) as orphaned;
+        /* A registration can commit after the candidate snapshot but before
+           its row lock. Recheck in a new statement after owning that lock. */
+        begin
+            delete from pgque.consumer as c
+            where c.co_id = any(v_consumers)
+                and not exists (
+                    select 1 from pgque.subscription as s
+                    where s.sub_consumer = c.co_id
+                );
+        exception when foreign_key_violation then
+            get stacked diagnostics v_error_schema = schema_name,
+                v_error_table = table_name, v_error_constraint = constraint_name;
+            /* Higher isolation retains the old transaction snapshot. Surface
+               this exact concurrent reference as a whole-transaction retry. */
+            if current_setting('transaction_isolation') in ('repeatable read', 'serializable')
+                and v_error_schema = 'pgque' and v_error_table = 'subscription'
+                and v_error_constraint = 'sub_consumer_fkey' then
+                raise exception 'consumer registered concurrently; retry administrative force drop'
+                    using errcode = '40001';
+            end if;
+            raise;
+        end;
     elsif exists (
         select 1 from pgque.subscription where sub_queue = v_queue.queue_id
     ) then
@@ -9059,7 +9111,7 @@ begin
     delete from pgque.queue where queue_id = v_queue.queue_id;
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 revoke execute on function pgque.drop_queue(text, boolean)
     from public, pgque_reader, pgque_writer;
@@ -9210,7 +9262,8 @@ begin
         v_result.lease_until := v_slot.lease_until;
         v_result.fence_epoch := v_slot.epoch;
     else
-        v_state.pending_lease_until := clock_timestamp() + v_state.pending_lease_ttl;
+        v_state.pending_lease_until := pgque._lease_deadline(
+            clock_timestamp(), v_state.pending_lease_ttl);
         v_result.lease_until := v_state.pending_lease_until;
     end if;
     update pgque.page_state set
@@ -9250,12 +9303,8 @@ begin
         raise exception 'nonempty queue/consumer/worker, positive page size and lease required'
             using errcode = '22023';
     end if;
-    -- Timestamp arithmetic also rejects unsupported non-finite/overflow TTLs.
-    if not isfinite(clock_timestamp() + i_lease) then
-        raise exception 'lease must be finite' using errcode = '22023';
-    end if;
-exception when datetime_field_overflow then
-    raise exception 'lease out of range' using errcode = '22023';
+    -- Fail early for invalid input. Issuance checks again after its locks.
+    perform pgque._lease_deadline(clock_timestamp(), i_lease);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
@@ -9381,12 +9430,12 @@ begin
     v_state := pgque._lock_page(i_page_token);
     perform pgque._validate_pending_page(v_state, i_page_token, i_worker);
     if v_state.mode = 'partition' then
-        update pgque.partition_slot set lease_until = clock_timestamp() + lease_ttl
+        update pgque.partition_slot set lease_until = pgque._lease_deadline(clock_timestamp(), lease_ttl)
         where queue_id = v_state.queue_id and co_name = v_state.partition_co_name
             and slot = v_state.partition_slot
         returning lease_until into v_until;
     else
-        v_until := clock_timestamp() + v_state.pending_lease_ttl;
+        v_until := pgque._lease_deadline(clock_timestamp(), v_state.pending_lease_ttl);
         update pgque.page_state set pending_lease_until = v_until
         where queue_id = v_state.queue_id and consumer_id = v_state.consumer_id;
     end if;

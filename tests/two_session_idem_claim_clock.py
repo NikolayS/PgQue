@@ -8,6 +8,7 @@ installed disposable test database. Both waits use observed backend blockers.
 import json
 import os
 import re
+import selectors
 import signal
 import subprocess
 import sys
@@ -58,6 +59,27 @@ def main():
             raise RuntimeError(error.strip() or "psql backend failed")
         return output.strip()
 
+    def holder_ack(process, marker):
+        # Read the explicit result after the last conflicting statement.
+        # An idle-in-transaction state alone can also mean only BEGIN ran.
+        deadline = time.monotonic() + 10
+        pending = b""
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while time.monotonic() < deadline:
+                if not selector.select(timeout=0.1):
+                    continue
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    raise RuntimeError("holder exited before its conflict acknowledgment")
+                pending += chunk
+                while b"\n" in pending:
+                    line, pending = pending.split(b"\n", 1)
+                    match = re.fullmatch(re.escape(marker) + r":(\d+)", line.decode())
+                    if match:
+                        return int(match[1])
+        raise RuntimeError("holder conflict acknowledgment timed out")
+
     def barrier(statement, description, process):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -102,10 +124,16 @@ def main():
                         '{queue}', 'rollback', '{{}}'::text, 'claim', interval '1 hour');
                 """
                 release = "rollback;"
-            holder = start(holder_name, "begin;\n" + hold)
+            marker = "conflict_done_" + run_id
+            holder = start(holder_name, "begin;\n" + hold +
+                           f"\nselect '{marker}:' || pg_backend_pid();")
+            acknowledged_pid = holder_ack(holder, marker)
+            print(f"ack: {scenario} conflict statement completed (backend {acknowledged_pid})",
+                  flush=True)
             holder_pid = barrier(f"""
                 select pid from pg_stat_activity
-                where application_name = '{holder_name}' and state = 'idle in transaction';
+                where pid = {acknowledged_pid} and application_name = '{holder_name}'
+                    and state = 'idle in transaction';
             """, scenario + " conflict transaction is open", holder)
             claim_read = f"""
                 from pgque.idem as k join pgque.queue as q on q.queue_id = k.queue_id
@@ -130,7 +158,7 @@ def main():
                 select pid from pg_stat_activity
                 where application_name = '{sender_name}' and wait_event_type = 'Lock'
                     and {holder_pid} = any(pg_blocking_pids(pid));
-            """, scenario + " sender waits for this conflict transaction", sender)
+            """, scenario + f" sender waits for this conflict transaction, holder {holder_pid}", sender)
             # Age the evaluated INSERT value only after observing its lock wait.
             sql("select pg_sleep(2.25);")
             released_after = Decimal(sql("select extract(epoch from clock_timestamp());"))

@@ -169,3 +169,29 @@ def test_process_page_rejects_future_result_without_ack(state):
         assert future.exception() is failure
     elif state == "succeeded":
         assert future.result() == "completed"
+
+
+@pytest.mark.parametrize("separate_iterator", [False, True])
+def test_process_page_rejects_custom_async_iterable_without_ack(separate_iterator):
+    effects = []
+
+    class AsyncIterator:
+        closed = False
+        def __aiter__(self): return self
+        async def __anext__(self):
+            effects.append("deferred")
+            raise StopAsyncIteration
+        def close(self): self.closed = True
+
+    class AsyncIterable:
+        closed = False
+        def __aiter__(self): return AsyncIterator()
+        def close(self): self.closed = True
+
+    deferred = AsyncIterable() if separate_iterator else AsyncIterator()
+    conn = Conn([[page_row()], [["acked", True]]])
+    with pytest.raises(TypeError, match="lazy"):
+        PgqueClient(conn).process_page("q", "c", "w", lambda _: deferred)
+    assert effects == []
+    assert not deferred.closed
+    assert len(conn.calls) == 1
