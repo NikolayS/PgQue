@@ -221,8 +221,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Upgrade coverage uses oldest/newest supported PG endpoints; the main
-        # regression matrix above covers every supported version (14–19).
+        # Upgrade coverage uses oldest supported PG endpoint and the PG19 beta lane; the main
+        # regression matrix above covers supported PG14–18 plus the PG19 beta lane.
         pg_version: ['19beta1', '14']
         from_version: ['0.1.0', '0.2.1', '0.2.2']
 
