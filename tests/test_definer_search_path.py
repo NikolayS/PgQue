@@ -30,7 +30,7 @@ class DefinerSearchPathTest(unittest.TestCase):
                 print(phase, "exit", result.returncode, flush=True)
                 print(result.stdout + result.stderr, flush=True)
                 self.assertEqual(result.returncode, 0, phase + " configuration failed")
-                self.assertIn("checked all 101 PgQue SECURITY DEFINER routines", result.stderr)
+                self.assertIn("checked all 102 PgQue SECURITY DEFINER routines", result.stderr)
 
             # A catalog-wide scan must catch a definer even when it is absent
             # from the required-signature list. Use an existing function; do

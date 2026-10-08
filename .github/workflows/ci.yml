@@ -224,7 +224,7 @@ jobs:
         # Upgrade coverage uses oldest/newest supported PG endpoints; the main
         # regression matrix above covers every supported version (14–19).
         pg_version: ['19beta1', '14']
-        from_version: ['0.1.0', '0.2.1', '0.2.2']
+        from_version: ['0.1.0', '0.2.0', '0.2.1', '0.2.2']
 
     steps:
       - uses: actions/checkout@v4
@@ -270,6 +270,8 @@ jobs:
           set -Eeuo pipefail
           if [[ '${{ matrix.from_version }}' = '0.1.0' ]]; then
             fixture=tests/test_upgrade_v0_1_fixture.sql
+          elif [[ '${{ matrix.from_version }}' = '0.2.0' ]]; then
+            fixture=tests/test_upgrade_v0_2_fixture.sql
           else
             fixture=tests/test_upgrade_modern_fixture.sql
           fi
@@ -288,6 +290,8 @@ jobs:
           expected_version="$(awk '/^-- Version:/ {print $3; exit}' devel/sql/pgque.sql)"
           if [[ '${{ matrix.from_version }}' = '0.1.0' ]]; then
             assertions=tests/test_upgrade_v0_1_assertions.sql
+          elif [[ '${{ matrix.from_version }}' = '0.2.0' ]]; then
+            assertions=tests/test_upgrade_v0_2_assertions.sql
           else
             assertions=tests/test_upgrade_modern_assertions.sql
           fi

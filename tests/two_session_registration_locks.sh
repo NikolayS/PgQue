@@ -134,6 +134,9 @@ print_debug() {
   done
 }
 
+# Include redirected setup and assertion errors before EXIT removes the logs.
+trap print_debug ERR
+
 wait_for_advisory_waiters() {
   local app_prefix="$1"
   local expected="$2"
@@ -368,9 +371,8 @@ SQL
 # Case 3: an open registrar transaction may serialize other registrars, but it
 # must not block the FK trigger's FOR KEY SHARE during receive_partitioned's
 # empty-batch finish path.
+# Create real slots directly; ordinary subscriptions must not be adopted.
 "${psql_base[@]}" >"${workdir}/lock_setup.out" 2>"${workdir}/lock_setup.err" <<SQL
-select pgque.register_consumer('${lock_queue}', '${lock_consumer}#0/2');
-select pgque.register_consumer('${lock_queue}', '${lock_consumer}#1/2');
 select pgque.subscribe_slot('${lock_queue}', '${lock_consumer}', 0, 2);
 select pgque.subscribe_slot('${lock_queue}', '${lock_consumer}', 1, 2);
 select pgque.claim_slot('${lock_queue}', '${lock_consumer}', 0, 'w0', interval '60 seconds');
