@@ -16,6 +16,10 @@ docker() {
     echo 'database startup diagnostic'
     return 0
   fi
+  # The temporary socket server is available even when final TCP is not.
+  if [[ "$*" != *'--host=127.0.0.1'* ]]; then
+    return 0
+  fi
   [[ "${READY}" == yes && "$*" == *'--dbname=pgque_test'* ]]
 }
 # shellcheck disable=SC2329

@@ -108,10 +108,10 @@ Postgres 16, `pg_cron` with `use_background_workers = on`; 100 ev/s producer,
 
 | `tick_period_ms` | Configured check rate | p50 e2e | p95 e2e | max e2e |
 |------------------|----------------|---------|---------|---------|
-| 1000 | 1 tick/sec | ≈ 503 ms | — | — |
-| 100 (default) | 10 ticks/sec | ≈ 52 ms | ≈ 99 ms | ≈ 105 ms¹ |
-| 10 | 100 ticks/sec | ≈ 8 ms | — | — |
-| 1 | 1000 ticks/sec | ≈ 3 ms | — | — |
+| 1000 | 1 check/sec | ≈ 503 ms | — | — |
+| 100 (default) | 10 checks/sec | ≈ 52 ms | ≈ 99 ms | ≈ 105 ms¹ |
+| 10 | 100 checks/sec | ≈ 8 ms | — | — |
+| 1 | 1000 checks/sec | ≈ 3 ms | — | — |
 
 ¹ Max from the idle-sweep run ([`benchmark/tick-rate/README.md`](https://github.com/NikolayS/pgque/blob/main/benchmark/tick-rate/README.md)). A separate
 committed run at the same period ([`results-baseline.json`](https://github.com/NikolayS/pgque/blob/main/benchmark/tick-rate/results-baseline.json)) saw a max of about
