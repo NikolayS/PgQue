@@ -117,7 +117,7 @@ The consume API wraps `pgque.next_batch`, `pgque.get_batch_events`, `pgque.finis
 
 All consume-side functions (`receive`, `ack`, `nack`, `subscribe`, `unsubscribe`) are granted to `pgque_reader`, mirroring upstream PgQ's producer/consumer role split. Apps that both produce and consume must hold both `pgque_reader` and `pgque_writer` — `pgque_writer` does not inherit `pgque_reader`.
 
-<a id="snapshot-rule"></a>**Snapshot rule.** `pgque.send` → `pgque.ticker` → `pgque.receive` must each run in its own committed transaction (the ticker's snapshot must be taken after `send` commits; `receive` only sees what committed before it). Same for `pgque.maint_retry_events` → `pgque.ticker` → `pgque.receive`. Each call must be its own committed transaction; never wrap producer and consumer calls together in one transaction. See [concepts.md#snapshot-rule](concepts.md#snapshot-rule).
+<a id="snapshot-rule"></a>**Snapshot rule.** `pgque.send` → `pgque.ticker` → `pgque.receive` must each run in its own committed transaction (the ticker's snapshot must be taken after `send` commits; `receive` only sees what committed before it). Same for `pgque.maint_retry_events` → `pgque.ticker` → `pgque.receive`. Each call must be its own committed transaction; never wrap producer and consumer calls together in one transaction. See [concepts.md#the-snapshot-rule](concepts.md#the-snapshot-rule).
 
 #### `pgque.receive(queue text, consumer text, max_return int default 100) → setof pgque.message`
 
