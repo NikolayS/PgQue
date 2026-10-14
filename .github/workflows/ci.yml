@@ -570,6 +570,9 @@ jobs:
           python -m pip install -e 'clients/python[dev]'
           pytest -v clients/python/tests/
 
+      - name: Benchmark setup regression
+        run: /tmp/pgque-python-venv/bin/python benchmark/tick-rate/test_setup.py --dsn "$PGQUE_TEST_DSN"
+
       - name: Python package smoke
         run: |
           set -Eeuo pipefail
