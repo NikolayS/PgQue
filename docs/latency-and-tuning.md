@@ -15,7 +15,7 @@ the tick period.
 |---|------|------------|-------|------------|
 | 1 | Producer | `send` / `insert_event` → durable | sub-ms | WAL flush, triggers |
 | 2 | Subscriber | `next_batch` over an already-built batch | sub-ms | how "next work" is located |
-| 3 | End-to-end | `send` → consumer visibility | ≈ tick period | ticker cadence (tunable) |
+| 3 | End-to-end | `send` → consumer visibility | depends on materialized tick cadence and consumer polling | queue thresholds, scheduler, consumer |
 
 ### 1. Producer latency
 
@@ -36,7 +36,9 @@ sub-millisecond.
 
 End-to-end latency is the gap from `send()` to the moment a consumer can see
 the event. This is the number application behavior depends on — SLAs, retry
-timing, perceived staleness. In PgQue it is approximately one tick period.
+timing, perceived staleness. It depends on when a tick is actually created and
+when the consumer next polls. The configured check interval alone does not
+determine it.
 
 The trap: #3 is bounded below by #1 + #2, but the magnitude of #1 and #2 does
 not determine #3. Tick cadence does. You can drive producer and subscriber
@@ -44,7 +46,7 @@ latency to microseconds and still have end-to-end latency in the hundreds of
 milliseconds because the ticker has not fired yet. The reverse is impossible: a
 message cannot be visible to a consumer faster than it can be written and read.
 
-## Why end-to-end ≈ the tick period
+## When delivery tracks the tick period
 
 PgQue is tick-based. A consumer sees an event only after a tick creates a batch
 boundary that includes it. Each tick stores a `pg_snapshot`, and a batch is the
@@ -52,31 +54,36 @@ set of events visible in the current tick's snapshot but not in the previous
 one. An event sent between two ticks is simply waiting for the next tick's
 snapshot to capture it.
 
-So an event sent just after a tick waits almost a full period; one sent just
-before the next tick waits almost nothing. Averaged over arrivals, the mean
-wait is about half the period, and the worst case is about one full period.
+If the queue creates a tick on each scheduled check, an event sent just after
+a tick waits almost a full period; one sent just before the next tick waits
+almost nothing. With evenly distributed arrivals, the tick-wait component
+averages about half the period. Transaction duration, scheduler delays, and
+consumer polling add to delivery time. Queue thresholds can defer ticks too.
 
-The committed benchmark confirms this. At the default `tick_period_ms = 100`,
-median end-to-end delivery is about 52 ms — almost exactly period/2 — with a
-maximum of roughly one period (about 105–145 ms across the committed runs). See
+The historical benchmark used `tick_period_ms = 100`, lowered queue thresholds,
+and a fast-polling consumer. It recorded a median of about 52 ms and maxima of
+about 105–145 ms across the committed runs. These are not measurements of the
+default queue configuration or a new PgQue 0.2.2 run. See
 [`benchmark/tick-rate/`](https://github.com/NikolayS/pgque/tree/main/benchmark/tick-rate).
 
 ### Tick cadence and batch size
 
-Tick cadence is independent of batch size, provided the ticker keeps up. Under
-pressure, the batch size can grow beyond `queue_ticker_max_count`, which
+The configured check cadence is separate from batch size. Actual tick creation
+also depends on the per-queue count and lag thresholds. Under pressure, the
+batch size can grow beyond `queue_ticker_max_count`, which
 is a tick-trigger threshold, not a hard cap. A producer-side spike makes
 batches larger; overloaded tickers or consumers can also increase delivery
 latency. Size receive ceilings for bursts and monitor consumer lag.
 
 ## Tuning the tick cadence
 
-PgQue ticks 10 times per second by default (every 100 ms). Tune it at runtime:
+PgQue's scheduler checks for due ticks every 100 ms by default. Tune this check
+cadence at runtime:
 
 ```sql
-select pgque.set_tick_period_ms(50);   -- 20 ticks/sec
-select pgque.set_tick_period_ms(10);   -- 100 ticks/sec
-select pgque.set_tick_period_ms(1);    -- 1000 ticks/sec
+select pgque.set_tick_period_ms(50);   -- target: 20 checks/sec
+select pgque.set_tick_period_ms(10);   -- target: 100 checks/sec
+select pgque.set_tick_period_ms(1);    -- target: 1000 checks/sec
 ```
 
 Accepted values are exact divisors of 1000 in the 1..1000 ms range: 1, 2, 4, 5,
@@ -95,11 +102,11 @@ blocked.
 
 ### Latency by tick period
 
-From the committed [`benchmark/tick-rate/`](https://github.com/NikolayS/pgque/tree/main/benchmark/tick-rate) reproducer (single laptop,
+Historical results from [`benchmark/tick-rate/`](https://github.com/NikolayS/pgque/tree/main/benchmark/tick-rate) (single laptop,
 Postgres 16, `pg_cron` with `use_background_workers = on`; 100 ev/s producer,
-30 s per cell; methodology below):
+30 s per cell; lowered queue thresholds, not defaults; methodology below):
 
-| `tick_period_ms` | Effective rate | p50 e2e | p95 e2e | max e2e |
+| `tick_period_ms` | Configured check rate | p50 e2e | p95 e2e | max e2e |
 |------------------|----------------|---------|---------|---------|
 | 1000 | 1 tick/sec | ≈ 503 ms | — | — |
 | 100 (default) | 10 ticks/sec | ≈ 52 ms | ≈ 99 ms | ≈ 105 ms¹ |
@@ -108,9 +115,9 @@ Postgres 16, `pg_cron` with `use_background_workers = on`; 100 ev/s producer,
 
 ¹ Max from the idle-sweep run ([`benchmark/tick-rate/README.md`](https://github.com/NikolayS/pgque/blob/main/benchmark/tick-rate/README.md)). A separate
 committed run at the same period ([`results-baseline.json`](https://github.com/NikolayS/pgque/blob/main/benchmark/tick-rate/results-baseline.json)) saw a max of about
-145 ms; treat the default-tick worst case as ~105–145 ms.
+144 ms. These observed maxima are not latency bounds.
 
-At the default period the distribution is clean: p50 ≈ 52 ms, p95 ≈ 99 ms, max
+At the 100 ms check period in these runs: p50 ≈ 52 ms, p95 ≈ 99 ms, max
 ≈ 105–145 ms across the committed runs — tracking "wait for the next tick,
 mean ≈ period/2". At 10 ms and
 1 ms the median drops to single digits, but the benchmark shows the tail
@@ -135,13 +142,21 @@ both set per queue via `pgque.set_queue_config()`:
 | Short name | Default | Triggers a tick when |
 |------------|---------|----------------------|
 | `ticker_max_count` | 500 | this many new events have accumulated |
-| `ticker_max_lag` | 3 seconds | events have been waiting this long |
+| `ticker_max_lag` | 3 seconds | new sequence activity exists and this much time has passed since the last tick |
 | `ticker_idle_period` | 1 minute | upper bound on cadence while idle |
 
 ```sql
 select pgque.set_queue_config('orders', 'ticker_max_count', '1000');
 select pgque.set_queue_config('orders', 'ticker_max_lag', '1 second');
 ```
+
+With default thresholds, a lightly loaded queue can wait about 3 seconds
+between ticks even when the scheduler checks every 100 ms. For lower delivery
+latency, lower the per-queue thresholds as well. For example,
+`ticker_max_count = 1` requests a tick when new sequence activity is detected;
+benchmark the resulting batch sizes and overhead on your workload. All count
+and interval settings must be positive. `ticker_max_count` is not a batch-size
+cap, and lowering it does not by itself guarantee a particular latency.
 
 ## The cost of a higher tick rate
 
@@ -184,7 +199,8 @@ The trade-off is the opposite of PgQue's:
   with `hot_standby_feedback = on` — autovacuum cannot reclaim those tuples and
   the queue table bloats. The bloat mechanism and the committed evidence are in
   [concepts.md](concepts.md).
-- **PgQue** trades a tick-period delay (≈ 52 ms median at the default) for zero
+- **PgQue** trades a tick-driven delay (≈ 52 ms median in the lowered-threshold
+  historical benchmark, not a default-configuration guarantee) for zero
   bloat by construction: no per-row claim or delete, just snapshot diffs and
   TRUNCATE-based table rotation.
 
@@ -237,10 +253,17 @@ The [`benchmark/tick-rate/`](https://github.com/NikolayS/pgque/tree/main/benchma
 send timestamp into the JSON payload; the consumer reads it back at
 `pgque.receive()` time and subtracts. The consumer polls in a tight loop with a
 1 ms sleep between empty receives and no LISTEN/NOTIFY wakeup, so the numbers
-reflect the tick-driven path alone. For the idle sweep, the queue's tick
-triggers are lowered to their minimum so a tick fires on essentially every
-check regardless of event volume, isolating the effect of `tick_period_ms`. All
-cells reported sent == received (zero loss).
+reflect the tick-driven path alone. The historical setup used
+`ticker_max_count = 1`, `ticker_max_lag = 0 s`, and `ticker_idle_period = 0 s`,
+so queue thresholds did not delay ticks. All reported cells had sent == received.
+
+These results were committed with the sub-second ticker development work,
+before the current positive-interval validation. The saved logs do not identify
+the exact tested SQL commit. PgQue 0.2.2 rejects those zero intervals. The current
+reproducer uses `1 microsecond` for both intervals, below its shortest 1 ms check
+period. The old measurements remain historical; the compatibility smoke test
+does not reproduce or update their latency values. See the benchmark README
+for the original evidence and a setup-only test command.
 
 ## See also
 

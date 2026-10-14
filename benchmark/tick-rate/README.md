@@ -40,10 +40,34 @@ python3 benchmark/tick-rate/bench.py \
 bash benchmark/tick-rate/run_held_xmin.sh
 ```
 
-## Results — local sandbox
+For a short compatibility check, use a disposable database with the released
+`sql/pgque.sql` installed and `psycopg` available. This does not need `pg_cron`:
+
+```sh
+python3 benchmark/tick-rate/test_setup.py --dsn "dbname=pgque_bench"
+```
+
+The check runs the benchmark's actual setup, sends two events, ticks manually,
+receives the complete batch, acknowledges it, and removes its own test queue.
+It does not measure latency or verify scheduler performance.
+
+## Historical results — local sandbox
 
 Single-laptop, Postgres 16, default settings, `pg_cron` 1.6.2 with
 `use_background_workers = on`.
+
+These results were first committed in
+[`ab9183a`](https://github.com/NikolayS/pgque/commit/ab9183ae185f9dc9bb11b070e7c22e93d1fab542)
+(sub-second ticker development; the source tree reported `0.2.0-dev`). The
+saved logs do not record the exact tested SQL commit. They are not new PgQue
+0.2.2 measurements. The original setup used zero-valued lag and idle intervals;
+current releases reject those values. The corrected reproducer below uses
+positive intervals, but the historical result files have not been replaced.
+
+The idle figures are preserved in `results-idle.log`; that run printed its
+results but failed to write the requested JSON file. Baseline and held-xmin
+results also have committed JSON files. None of these old logs substitutes for
+a fresh run against the version and configuration you plan to deploy.
 
 ### Idle sweep (30 s per cell, 100 ev/s producer)
 
@@ -56,7 +80,7 @@ Single-laptop, Postgres 16, default settings, `pg_cron` 1.6.2 with
 
 Reads:
 
-- `tick_period_ms = 100` (the default) — clean: median ~52 ms, max ~105 ms,
+- `tick_period_ms = 100` (the default check period, with lowered queue thresholds) — median ~52 ms, max ~105 ms,
   exactly tracks "wait for next tick, mean ≈ period/2".
 - `tick_period_ms = 10` and `tick_period_ms = 1` — median improves to single
   digits, but the **tail blows up** to ~1 s. Suspected cause: at sub-10 ms
@@ -110,6 +134,12 @@ extends.
   point is to measure the tick-driven path.
 - The drain budget at run end is `max(2 s, 3 × tick_period_ms)` so slow ticks
   don't truncate trailing events.
-- For the idle sweep, queue config is `ticker_max_count = 1`,
-  `ticker_max_lag = 0 s`, `ticker_idle_period = 0 s` so every tick fires
-  regardless of event volume — isolating the effect of `tick_period_ms`.
+- The historical setup used `ticker_max_count = 1`, `ticker_max_lag = 0 s`,
+  and `ticker_idle_period = 0 s`. The current setup uses `1 microsecond` for
+  both intervals because released PgQue requires positive values. This is below
+  the shortest supported 1 ms check period and keeps the queue thresholds from
+  dominating the cadence sweep. Both benchmark scenarios use this setup.
+- The ~52 ms median describes this lowered-threshold, fast-polling experiment.
+  Default queues still use a 500-event threshold, a 3-second lag threshold,
+  and a 1-minute idle period. A 100 ms check cadence alone does not give the
+  same delivery latency.
