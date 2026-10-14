@@ -118,7 +118,7 @@ Zero rows. This surprises every first-time user, and it is not an error. Here is
 
 PgQue is tick-based, not row-claiming. Producers append events, but consumers do not see rows directly — they see batches. A batch is the set of events between two ticks. Until a tick happens, there is no batch boundary, so `pgque.receive` has nothing to return and reports zero rows.
 
-In normal operation a scheduler (`pg_cron` or an external loop) drives ticks continuously — PgQue ticks 10 times per second by default (every 100 ms). In this tutorial you have not started a scheduler, so no tick has run yet. That is the next step.
+In normal operation a scheduler (`pg_cron` or an external loop) checks whether a tick is due. PgQue's default scheduler checks every 100 ms; each queue's thresholds decide whether to create a tick. In this tutorial you have not started a scheduler, so no tick has run since queue creation. That is the next step.
 
 ## Step 5: Force the next tick, then receive
 
@@ -330,11 +330,17 @@ from pgque.get_consumer_info('orders', 'processor');
 ```
  queue_name | consumer_name | lag          | last_seen    | pending_events
 ------------+---------------+--------------+--------------+----------------
- orders     | processor     | 00:00:02.110 | 00:00:01.500 |              0
+ orders     | processor     | 00:00:03.510 | 00:00:01.500 |              0
 (1 row)
 ```
 
-`lag` is the age of the consumer's last finished batch — high means it is falling behind. `last_seen` is the elapsed time since the consumer last processed a batch — high means it has stopped calling `receive`. `pending_events` is the count waiting for the next tick. In a healthy system, `lag` and `last_seen` stay low and `ticker_lag` stays under a few seconds.
+`lag` is the age of the tick at the consumer's last finished position, not the time since its last `ack`. `last_seen` measures time since recorded consumer activity, such as opening or finishing a batch. Polling when no batch is available does not refresh it.
+
+`pending_events` estimates the ticked backlog after the consumer's finished position. It subtracts that position's saved event sequence from the latest tick's sequence. It does not count events waiting for the next tick, and it is not an exact unread-row count: forced ticks and sequence gaps can inflate it. A zero value does not prove that no message is waiting. The queue's `ev_new` is the sequence-based estimate for activity after the latest tick.
+
+These lag values are illustrative. With no intervening tick in this manual session, the consumer's position cannot be newer than the queue's latest tick; its lag is therefore at least the earlier queue-lag reading.
+
+Interpret health against traffic and scheduler settings. An active queue with default thresholds normally ticks within about 3 seconds, plus scheduler delay. A healthy idle queue can back off toward `ticker_idle_period` (1 minute by default), so its ticker and consumer lag can exceed a few seconds. In this manual tutorial, lag grows until you drive the ticker again. For production alerts, compare cursor progress and backlog over time; see [Monitoring](monitoring.md).
 
 ```sql
 select * from pgque.status();
@@ -355,11 +361,11 @@ select * from pgque.status();
 (9 rows)
 ```
 
-`status()` is the one-stop health check. Here it reflects manual ticking: with no scheduler, the `scheduler` row reads `manual` and the `ticker`/`maintenance` rows read `stopped`. With `pg_cron` installed and `pgque.start()` run, the `scheduler` row would show `pg_cron` with job ids and the ticker/maintenance rows would flip to `scheduled`.
+`status()` is the one-stop health check. Here it reflects manual ticking: with no scheduler, the `scheduler` row reads `manual` and the `ticker`/`maintenance` rows read `stopped`. The displayed rate is calculated from the configured period; it is not a measurement of created ticks. With `pg_cron` installed and `pgque.start()` run, the `scheduler` row would show `pg_cron` with job ids and the ticker/maintenance rows would flip to `scheduled`.
 
 ## Where to go from here
 
-You have driven the ticker by hand all the way through. In production you let a scheduler do it — one call, `select pgque.start();`, schedules `pg_cron` to run the ticker (and the maintenance jobs) for you, so messages flow without manual ticks and land with a median latency of roughly 50 ms at the default 100 ms tick.
+You have driven the ticker by hand all the way through. In production, `select pgque.start();` schedules `pg_cron` to run the ticker and maintenance jobs. The default 100 ms interval is a check cadence, not a delivery guarantee. Queue thresholds still default to 500 events or 3 seconds since the last tick. The historical roughly 52 ms median used lowered thresholds and a fast-polling consumer, not default queue settings. See [Latency and tick tuning](latency-and-tuning.md#per-queue-tick-triggers) before choosing settings for your workload.
 
 To tear down the queue you built here:
 

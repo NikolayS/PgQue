@@ -46,8 +46,8 @@ operationally important output columns:
 | column | meaning | watch for |
 |---|---|---|
 | `ticker_lag` | wall time since this queue's last tick | grows without bound when the ticker is not running |
-| `ev_per_sec` | recent event throughput (float8, from the last ~20 ticks) | sudden drop to zero, or unexpected spikes |
-| `ev_new` | events sent but not yet covered by a tick | climbs and stays high if ticking stalls |
+| `ev_per_sec` | sequence-based throughput estimate (float8, from the last ~20 ticks) | sudden drop to zero, or unexpected spikes |
+| `ev_new` | event-sequence increase since the latest tick; not an exact row count | climbs and stays high if ticking stalls |
 | `last_tick_id` | id of the most recent tick | should keep advancing |
 | `queue_ticker_paused` | whether ticking is paused on this queue | `true` means no delivery by design |
 | `queue_ticker_max_count` / `queue_ticker_max_lag` / `queue_ticker_idle_period` | the tick-trigger thresholds | context for interpreting `ticker_lag` |
@@ -58,9 +58,12 @@ select queue_name, ticker_lag, ev_per_sec, ev_new, last_tick_id
 from pgque.get_queue_info('orders');
 ```
 
-`ticker_lag` is the single most useful queue signal. With the default settings,
-the queue ticks at least every `ticker_idle_period` (1 minute) even when idle,
-so a `ticker_lag` that keeps climbing past that means the ticker has stopped.
+With a working scheduler and the default settings, an idle queue backs off
+toward `ticker_idle_period` (1 minute). Allow for scheduler delay. A healthy
+idle queue can therefore have more than a few seconds of `ticker_lag`.
+Sustained growth beyond the configured interval is a reason to check the
+scheduler, paused state, and database load. In manual mode, no tick is expected
+until you call the ticker.
 
 ### pgque.get_consumer_info([queue[, consumer]]) — is the consumer keeping up
 
@@ -69,9 +72,9 @@ scope to one queue, or with both to inspect a single consumer. Output columns:
 
 | column | meaning | watch for |
 |---|---|---|
-| `lag` | age of the events the consumer is currently positioned at | grows when the consumer falls behind |
-| `last_seen` | elapsed time since the consumer last processed a batch | grows when the consumer has stopped calling `receive` |
-| `pending_events` | events waiting past the consumer's position, not yet consumed | a growing backlog |
+| `lag` | age of the tick at the consumer's last finished position | compare with queue lag and cursor progress |
+| `last_seen` | time since recorded subscription activity, such as batch allocation or completion | grows during inactivity; empty polls without a new batch do not refresh it |
+| `pending_events` | sequence-based estimate of ticked backlog after the consumer's finished position | sustained growth, interpreted with cursor progress |
 | `last_tick` | tick id of the consumer's last processed tick | should advance; a frozen value is the stuck-consumer signal |
 | `current_batch` | active batch id, or NULL if none open | a long-lived non-NULL value means a batch is never being acked |
 | `next_tick` | final tick of the active batch, if one is open | — |
@@ -81,9 +84,17 @@ select queue_name, consumer_name, lag, last_seen, pending_events, last_tick
 from pgque.get_consumer_info('orders', 'processor');
 ```
 
-In a healthy system `lag` and `last_seen` both stay low and `pending_events`
-stays near zero. A consumer whose `last_tick` stops advancing while `last_seen`
-keeps climbing is stuck — see the next section.
+`pending_events` is the latest tick's `tick_event_seq` minus the sequence saved
+at `last_tick`. It excludes sequence activity after the latest tick. It is not
+an exact unread-row count: `force_next_tick()` advances the sequence without
+adding events, and rolled-back inserts can leave gaps. Do not use a zero value
+as proof that a batch or queue is empty. `ev_new` estimates the separate span
+after the latest tick and has the same sequence-count limitation.
+
+On an idle queue, `lag` and `last_seen` can rise without a consumer fault.
+Compare the consumer's `last_tick` with the queue's `last_tick_id`, and follow
+backlog trends across samples. A consumer that stops advancing while the queue
+continues to tick needs investigation — see the next section.
 
 ### pgque.get_batch_info(batch_id) — inspect one in-flight batch
 

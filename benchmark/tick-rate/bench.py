@@ -22,7 +22,7 @@ Two scenarios:
 Usage:
     python3 bench.py --dsn "host=localhost dbname=pgque_bench user=postgres" \
                      --scenario idle \
-                     --periods 10000,1000,100,10,1 \
+                     --periods 1000,100,10,1 \
                      --duration-s 30 \
                      --rate-eps 100
 
@@ -62,9 +62,10 @@ def setup(dsn, queue, consumer):
         cur.execute("select 1 from pgque.queue where queue_name = %s", (queue,))
         if not cur.fetchone():
             cur.execute("select pgque.create_queue(%s)", (queue,))
-        # Aggressive ticking even when idle: max_lag = 0 means any tick fires.
-        cur.execute("select pgque.set_queue_config(%s, 'ticker_max_lag', '0 seconds')", (queue,))
-        cur.execute("select pgque.set_queue_config(%s, 'ticker_idle_period', '0 seconds')", (queue,))
+        # Isolate scheduler cadence with the smallest positive interval.
+        # Released PgQue rejects zero; 1 us is below the 1 ms scheduler floor.
+        cur.execute("select pgque.set_queue_config(%s, 'ticker_max_lag', '1 microsecond')", (queue,))
+        cur.execute("select pgque.set_queue_config(%s, 'ticker_idle_period', '1 microsecond')", (queue,))
         cur.execute("select pgque.set_queue_config(%s, 'ticker_max_count', '1')", (queue,))
         # Subscribe (idempotent — re-subscribe after cleanup)
         cur.execute("select 1 from pgque.subscription s join pgque.queue q on q.queue_id=s.sub_queue "
