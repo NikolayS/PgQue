@@ -1000,11 +1000,14 @@ echo "" >> "${INSTALL_FILE}"
 
 DEFAULT_API_FILES=(
   maint.sql
+  paged_state.sql
   receive.sql
   cooperative_consumers.sql
   send.sql
   partition_keys.sql
   send_idem.sql
+  paged_legacy.sql
+  paged_batches.sql
 )
 
 for api_name in "${DEFAULT_API_FILES[@]}"; do

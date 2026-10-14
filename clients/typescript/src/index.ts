@@ -36,6 +36,7 @@
  */
 
 export { Client, connect, pgqueTypes } from './client.js';
+export type { Page, PageStatus, PageFailure, AckPageResult, ProcessPageResult, PageHandler } from './types.js';
 export { Consumer, DEFAULT_MAX_MESSAGES } from './consumer.js';
 export {
   PgqueBatchNotFoundError,

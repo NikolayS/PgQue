@@ -337,8 +337,8 @@ parent and child — neither inherits the other.
 
 | Role | For | Capabilities |
 | --- | --- | --- |
-| `pgque_reader` | consumers, dashboards | consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`), read-only info functions, `select` on tables. Cannot produce. |
-| `pgque_writer` | producers | produce API (`send`, `send_batch`, `insert_event`). Cannot consume. |
+| `pgque_reader` | consumers, dashboards | consume API (`subscribe`, `unsubscribe`, `receive`, `ack`, `nack`), development page API (`receive_page*`, `ack_page`, `renew_page`), read-only info functions, `select` on tables. Cannot produce. |
+| `pgque_writer` | producers | produce API (`send`, `send_batch`, `insert_event`). Cannot consume or call page functions without `pgque_reader`. |
 | `pgque_admin` | operators, migrations | member of both reader and writer, plus lifecycle and DDL (`create_queue`, `drop_queue`, `start`, `stop`, `maint`, `set_queue_config`). `uninstall()` is owner/superuser-only — revoked from `pgque_admin`. |
 
 Because the roles are siblings, an application that both produces and consumes

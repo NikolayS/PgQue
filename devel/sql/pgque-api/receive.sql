@@ -55,6 +55,8 @@ begin
         return;
     end if;
 
+    perform pgque._assert_unpaged(v_batch_id);
+
     -- Yield messages from the batch
     for ev in
         select ev_id, ev_type, ev_data, ev_retry, ev_time,
@@ -196,6 +198,7 @@ begin
         raise exception 'batch % belongs to partition slot consumer %; retry slot batches via pgque.nack_partitioned()', i_batch_id, v_cname;
     end if;
 
+    perform pgque._assert_unpaged(i_batch_id);
     return pgque._nack_batch_event(i_batch_id, i_msg, i_retry_after, i_reason);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog;

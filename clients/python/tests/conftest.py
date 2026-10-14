@@ -63,10 +63,6 @@ def setup_queue(conn, queue_name, consumer_name) -> Iterator[tuple[str, str]]:
     finally:
         try:
             conn.rollback()
-            conn.execute(
-                "select pgque.unregister_consumer(%s, %s)",
-                (queue_name, consumer_name),
-            )
             conn.execute("select pgque.drop_queue(%s, true)", (queue_name,))
             conn.commit()
         except Exception as e:

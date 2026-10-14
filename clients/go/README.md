@@ -113,6 +113,16 @@ _, err = client.Ticker(ctx, "orders")
 
 `Client.ForceTick(ctx, queue)` remains as a deprecated compatibility alias.
 
+## Paged batches
+
+Use `ReceivePage`, `ReceivePageCoop`, or `ReceivePagePartitioned` to receive a
+durable page, then `AckPage` or `RenewPage`. `ProcessPage` runs a handler for
+each message and acknowledges only after every handler returns `nil`; a
+non-nil error leaves the page outstanding.
+
+Failures are `PageFailure` values. `MsgID` maps to the JSON `msg_id` key and
+must contain a decimal string; `RetryAfterSeconds` and `Reason` are optional.
+
 ## Nack options
 
 `Client.Nack` takes a `NackOptions` struct. Pointer fields default to the

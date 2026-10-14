@@ -105,6 +105,17 @@ instance; the default targets `$stderr` at `FATAL`, so the consumer is
 effectively silent unless you set `PGQUE_LOG_LEVEL=warn` or pass your
 own).
 
+## Paged batches
+
+Use `receive_page`, `receive_page_coop`, or `receive_page_partitioned` to
+receive a durable page, then `ack_page` or `renew_page`. `process_page` runs a
+handler for each message and acknowledges only after every handler completes.
+Handlers must not return an `Enumerator`, `Proc`, or `Fiber`; deferred results
+raise without acknowledging the page.
+
+Failure hashes accept `msg_id` / `retry_after_seconds` or their symbol/string
+camel-case equivalents. The message ID must be a decimal string.
+
 ### Handling unknown event types
 
 By default the consumer **nacks** any message whose type has no

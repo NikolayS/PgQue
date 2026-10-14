@@ -91,6 +91,17 @@ try {
 `sendBatch()`, `ticker(queue)`, and `forceNextTick(queue)` are JS `bigint` to
 match Postgres `bigint` losslessly.
 
+## Paged batches
+
+Use `receivePage`, `receivePageCoop`, or `receivePagePartitioned` to receive a
+durable page, then `ackPage` or `renewPage`. `processPage` runs a handler for
+each message and acknowledges only after every handler completes. A handler
+must not return an iterator or another callable; those deferred results raise
+without acknowledging the page.
+
+Failure entries use `{msgId, retryAfterSeconds?, reason?}`. `msgId` must be a
+decimal string, including for IDs received as `bigint`.
+
 ## Experimental: cooperative consumers
 
 > **Experimental in PgQue 0.2.** Function names, edge-case behavior, and
