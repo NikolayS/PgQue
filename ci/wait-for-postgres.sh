@@ -15,8 +15,10 @@ fi
 
 ready=0
 for ((attempt = 1; attempt <= attempts; attempt++)); do
-  if docker exec \
+  if timeout 5s bash -c 'docker "$@"' _ exec \
     -e PGPASSWORD=pgque_test \
+    -e PGCONNECT_TIMEOUT=3 \
+    -e 'PGOPTIONS=-c statement_timeout=3000' \
     -e PAGER=cat \
     "${container}" \
     psql \
@@ -33,7 +35,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
 done
 
 if [[ "${ready}" -ne 1 ]]; then
-  echo "Postgres not ready after ${attempts} seconds" >&2
-  docker logs "${container}" >&2
+  echo "Postgres not ready after ${attempts} attempts" >&2
+  timeout 5s bash -c 'docker "$@"' _ logs "${container}" >&2 || true
   exit 1
 fi
