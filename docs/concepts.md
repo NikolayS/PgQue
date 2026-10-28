@@ -171,6 +171,7 @@ Historical background:
 
 PgQue coverage:
 
+- **2026** — Jobin Augustine (Percona), [PgQ and PgQue: Workflow Engines you might need in PostgreSQL](https://www.percona.com/blog/pgq-and-pgque-workflow-engines-you-might-need-in-postgresql/), covering snapshot batching, consumer cursors, and workflow APIs.
 - **2026** — Christophe Pettus, [PgQue: Two Snapshots and a Diff](https://thebuild.com/blog/2026/05/03/pgque-two-snapshots-and-a-diff/), an independent walk-through of PgQue's snapshot-diff mechanism and why it avoids row locks and dead-tuple bloat.
 - **2026** — [Postgres.fm: PgQue](https://postgres.fm/episodes/pgque) ([YouTube](https://www.youtube.com/watch?v=bBNcR14Ts4U)), with Nikolay Samokhvalov and Michael Christofides discussing PgQue's architecture, use cases, and trade-offs.
 - **2026** — [Scaling Postgres 416: Zero Bloat Postgres Queue](https://www.scalingpostgres.com/episodes/416-zero-bloat-postgres-queue/) ([YouTube](https://www.youtube.com/watch?v=ULpnamtBZFM)), with PgQue as the episode's lead story.
