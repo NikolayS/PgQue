@@ -10,6 +10,8 @@ for (const width of [390, 1440]) {
     // Deterministic embed boundary: do not depend on YouTube availability in CI.
     await page.route('https://www.youtube-nocookie.com/**', route => route.fulfill({ body: '<html><body>Player</body></html>', contentType: 'text/html' }));
     await page.goto('/');
+    await page.locator('#community').scrollIntoViewIfNeeded();
+    await page.waitForLoadState('networkidle');
     await page.getByRole('link', { name: 'Watch the explainer', exact: true }).click();
     const section = page.locator('#explainer');
     await expect(section).toBeVisible();
