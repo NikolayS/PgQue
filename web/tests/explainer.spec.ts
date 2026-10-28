@@ -38,3 +38,15 @@ test('no-JavaScript fallback remains a normal video link', async ({ browser, bas
   await expect(page.locator('iframe')).toHaveCount(0);
   await context.close();
 });
+
+for (const videoId of ['bBNcR14Ts4U', 'ULpnamtBZFM']) {
+  test(`community player retains keyboard focus: ${videoId}`, async ({ page }) => {
+    await page.route('https://www.youtube-nocookie.com/**', route => route.fulfill({ body: '<html><body>Player</body></html>', contentType: 'text/html' }));
+    await page.goto('/');
+    const shell = page.locator(`[data-video-id="${videoId}"]`);
+    await shell.locator('a').focus();
+    await page.keyboard.press('Enter');
+    await expect(shell.locator('iframe')).toHaveAttribute('src', `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1`);
+    await expect(shell.locator('iframe')).toBeFocused();
+  });
+}
