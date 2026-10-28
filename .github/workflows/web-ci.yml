@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: bun install --frozen-lockfile
-      - name: Build site
+      - name: Install browser for website checks
         working-directory: web
-        run: bun run build
+        run: bunx playwright install --with-deps chromium
+      - name: Build site and check explainer interaction
+        working-directory: web
+        run: bunx playwright test

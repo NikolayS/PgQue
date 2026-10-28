@@ -20,3 +20,6 @@ web/.astro/
 # web/bun.lock is committed on purpose (reproducible Bun installs).
 # Ignore any stale npm lockfile now that the site uses Bun.
 web/package-lock.json
+
+web/test-results/
+web/playwright-report/

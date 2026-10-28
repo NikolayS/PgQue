@@ -530,6 +530,21 @@ const platformGroups = [
         </div>
       </section>
 
+      <section class="explainer" id="explainer" aria-labelledby="explainer-title">
+        <h2 class="section-title" id="explainer-title">How PgQue works</h2>
+        <p class="section-sub">Why most Postgres queues fail — and how PgQue fixes it.</p>
+        <div class="media-shell explainer-player" data-video-id="1My8l2fQ2NA" data-video-title="Why most Postgres queues fail (and how PgQue fixes it)">
+          <a class="media-facade explainer-preview" href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener" aria-label="Play the PgQue explainer">
+            <img src="/images/pgque-explainer.jpg" width="1280" height="720" loading="lazy" decoding="async" alt="" />
+            <span class="explainer-play" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M8 5v14l11-7z" /></svg>
+              Watch the explainer
+            </span>
+          </a>
+        </div>
+        <p class="explainer-link"><a href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener">Watch on YouTube<span aria-hidden="true"> ↗</span></a></p>
+      </section>
+
       <section class="community reveal" id="community">
         <h2 class="section-title anchored"><a class="anchor-link" href="#community" aria-label="Link to this section">#</a>PgQue in the community</h2>
         <p class="section-sub">Independent analysis, conversations, and coverage of PgQue in 2026.</p>
@@ -745,6 +760,7 @@ const platformGroups = [
             frame.allowFullscreen = true;
             frame.referrerPolicy = 'strict-origin-when-cross-origin';
             shell.replaceChildren(frame);
+            frame.focus();
           }, { once: true });
         });
 
@@ -981,6 +997,18 @@ const platformGroups = [
         align-items: center; padding: 72px 0 88px;
       }
       .hero-copy { min-width: 0; }
+      .explainer { max-width: 900px; margin: 0 auto; padding-bottom: 48px; scroll-margin-top: 100px; }
+      .explainer-player { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); }
+      .explainer-preview.media-facade { padding: 0; }
+      .explainer-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+      .explainer-play {
+        position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        display: flex; align-items: center; gap: 8px; white-space: nowrap;
+        padding: 12px 20px; border-radius: 999px; background: #f5f1e8; color: #16191f;
+        box-shadow: 0 4px 28px #0008; font-weight: 600; z-index: 1;
+      }
+      .explainer-preview:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px; }
+      .explainer-link { text-align: right; margin: 12px 0 0; font-size: 0.9rem; }
       .eyebrow {
         display: inline-flex; align-items: center; gap: 8px;
         text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.74rem;
