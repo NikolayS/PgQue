@@ -331,7 +331,6 @@ const platformGroups = [
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="/docs/tutorial">Get started</a>
-            <a class="btn btn-ghost" href="#explainer">Watch the explainer</a>
             <a class="btn btn-ghost" href="https://github.com/NikolayS/pgque" target="_blank" rel="noopener">View on GitHub<span class="ext-arrow" aria-hidden="true">↗</span></a>
           </div>
           <div class="install">
@@ -340,25 +339,6 @@ const platformGroups = [
             <span class="install-note">then <code>select pgque.start();</code></span>
           </div>
         </div>
-
-      </section>
-
-      <section class="explainer" id="explainer" aria-labelledby="explainer-title">
-        <h2 class="section-title" id="explainer-title">How PgQue works</h2>
-        <p class="section-sub">Why most Postgres queues fail — and how PgQue fixes it.</p>
-        <div class="media-shell explainer-player" data-video-id="1My8l2fQ2NA" data-video-title="Why most Postgres queues fail (and how PgQue fixes it)">
-          <a class="media-facade explainer-preview" href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener" aria-label="Play the PgQue explainer">
-            <img src="/images/pgque-explainer.jpg" width="1280" height="720" decoding="async" alt="" />
-            <span class="explainer-play" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M8 5v14l11-7z" /></svg>
-              Watch the explainer
-            </span>
-          </a>
-        </div>
-        <p class="explainer-link"><a href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener">Watch on YouTube<span aria-hidden="true"> ↗</span></a></p>
-      </section>
-
-      <section class="benchmark-section" aria-label="Queue performance under sustained load">
         <figure class="hero-visual">
           <div class="console">
             <div class="console-bar">
@@ -548,6 +528,21 @@ const platformGroups = [
             </div>
           ))}
         </div>
+      </section>
+
+      <section class="explainer" id="explainer" aria-labelledby="explainer-title">
+        <h2 class="section-title" id="explainer-title">How PgQue works</h2>
+        <p class="section-sub">Why most Postgres queues fail — and how PgQue fixes it.</p>
+        <div class="media-shell explainer-player" data-video-id="1My8l2fQ2NA" data-video-title="Why most Postgres queues fail (and how PgQue fixes it)">
+          <a class="media-facade explainer-preview" href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener" aria-label="Play the PgQue explainer">
+            <img src="/images/pgque-explainer.jpg" width="1280" height="720" decoding="async" alt="" />
+            <span class="explainer-play" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M8 5v14l11-7z" /></svg>
+              Watch the explainer
+            </span>
+          </a>
+        </div>
+        <p class="explainer-link"><a href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener">Watch on YouTube<span aria-hidden="true"> ↗</span></a></p>
       </section>
 
       <section class="community reveal" id="community">
@@ -994,8 +989,14 @@ const platformGroups = [
       :root:not([data-theme-pref]) .theme-toggle .ic-auto { display: block; }
 
       /* hero */
-      .hero { padding: 72px 0 48px; }
-      .hero-copy { max-width: 820px; }
+      /* Two-column hero: copy on the left, benchmark console figure on the
+         right (vertically aligned with the copy). The visual column is the
+         wider track (~52%) so the chart is as large as fits beside the text. */
+      .hero {
+        display: grid; grid-template-columns: 0.95fr 1.05fr; gap: 48px;
+        align-items: center; padding: 72px 0 88px;
+      }
+      .hero-copy { min-width: 0; }
       .explainer { max-width: 900px; margin: 0 auto; padding-bottom: 48px; scroll-margin-top: 100px; }
       .explainer-player { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); }
       .explainer-preview.media-facade { padding: 0; }
@@ -1008,7 +1009,6 @@ const platformGroups = [
       }
       .explainer-preview:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px; }
       .explainer-link { text-align: right; margin: 12px 0 0; font-size: 0.9rem; }
-      .benchmark-section { max-width: 900px; margin: 0 auto; padding-bottom: var(--section-y); }
       .eyebrow {
         display: inline-flex; align-items: center; gap: 8px;
         text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.74rem;
@@ -1436,7 +1436,7 @@ const platformGroups = [
 
       @media (max-width: 880px) {
         :root { --section-y: 64px; }
-        .hero { padding: 40px 0 56px; }
+        .hero { grid-template-columns: 1fr; gap: 36px; padding: 40px 0 56px; }
         .split { grid-template-columns: 1fr; gap: 30px; }
         .feature-grid { grid-template-columns: 1fr; }
         .community-grid { grid-template-columns: 1fr; }

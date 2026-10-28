@@ -12,19 +12,21 @@ for (const width of [390, 1440]) {
     await page.goto('/');
     await page.locator('#community').scrollIntoViewIfNeeded();
     await page.waitForLoadState('networkidle');
-    await page.getByRole('link', { name: 'Watch the explainer', exact: true }).click();
     const section = page.locator('#explainer');
-    await expect(page).toHaveURL(/#explainer$/);
+    await section.scrollIntoViewIfNeeded();
     await expect(section.locator('#explainer-title')).toBeInViewport();
-    await expect.poll(async () => {
-      const heading = await section.locator('#explainer-title').boundingBox();
-      const header = await page.locator('header').boundingBox();
-      return !!heading && !!header && heading.y >= header.y + header.height;
-    }).toBe(true);
+    await expect(page.locator('.hero .hero-visual')).toHaveCount(1);
+    await expect(page.locator('.hero a[href="#explainer"]')).toHaveCount(0);
+    expect(await page.evaluate(() => {
+      const explainer = document.querySelector('#explainer')!;
+      const clients = document.querySelector('#clients')!;
+      const community = document.querySelector('#community')!;
+      return !!(clients.compareDocumentPosition(explainer) & Node.DOCUMENT_POSITION_FOLLOWING)
+        && !!(explainer.compareDocumentPosition(community) & Node.DOCUMENT_POSITION_FOLLOWING);
+    })).toBe(true);
     expect(await page.locator('iframe').count()).toBe(0);
     expect(youtubeRequests).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    expect(await page.evaluate(() => !!(document.querySelector('#explainer')!.compareDocumentPosition(document.querySelector('.hero-visual')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
     const play = section.getByRole('link', { name: 'Play the PgQue explainer' });
     await play.focus();
     await page.keyboard.press('Enter');
