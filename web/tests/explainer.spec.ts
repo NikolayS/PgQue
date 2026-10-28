@@ -28,10 +28,10 @@ for (const width of [390, 1440]) {
   });
 }
 
-test('no-JavaScript fallback remains a normal video link', async ({ browser }) => {
-  const context = await browser.newContext({ javaScriptEnabled: false });
+test('no-JavaScript fallback remains a normal video link', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false, baseURL });
   const page = await context.newPage();
-  await page.goto('http://127.0.0.1:4321/');
+  await page.goto('/');
   await expect(page.getByRole('link', { name: 'Play the PgQue explainer' })).toHaveAttribute('href', 'https://www.youtube.com/watch?v=1My8l2fQ2NA');
   await expect(page.locator('iframe')).toHaveCount(0);
   await context.close();
