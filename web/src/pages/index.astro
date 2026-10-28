@@ -348,7 +348,7 @@ const platformGroups = [
         <p class="section-sub">Why most Postgres queues fail — and how PgQue fixes it.</p>
         <div class="media-shell explainer-player" data-video-id="1My8l2fQ2NA" data-video-title="Why most Postgres queues fail (and how PgQue fixes it)">
           <a class="media-facade explainer-preview" href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener" aria-label="Play the PgQue explainer">
-            <img src="/images/pgque-explainer.jpg" width="1280" height="720" alt="" />
+            <img src="/images/pgque-explainer.jpg" width="1280" height="720" decoding="async" alt="" />
             <span class="explainer-play" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M8 5v14l11-7z" /></svg>
               Watch the explainer
@@ -1009,7 +1009,6 @@ const platformGroups = [
       .explainer-preview:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px; }
       .explainer-link { text-align: right; margin: 12px 0 0; font-size: 0.9rem; }
       .benchmark-section { max-width: 900px; margin: 0 auto; padding-bottom: var(--section-y); }
-      .hero-copy { min-width: 0; }
       .eyebrow {
         display: inline-flex; align-items: center; gap: 8px;
         text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.74rem;
@@ -1437,7 +1436,7 @@ const platformGroups = [
 
       @media (max-width: 880px) {
         :root { --section-y: 64px; }
-        .hero { grid-template-columns: 1fr; gap: 36px; padding: 40px 0 56px; }
+        .hero { padding: 40px 0 56px; }
         .split { grid-template-columns: 1fr; gap: 30px; }
         .feature-grid { grid-template-columns: 1fr; }
         .community-grid { grid-template-columns: 1fr; }

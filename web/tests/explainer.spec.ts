@@ -14,7 +14,13 @@ for (const width of [390, 1440]) {
     await page.waitForLoadState('networkidle');
     await page.getByRole('link', { name: 'Watch the explainer', exact: true }).click();
     const section = page.locator('#explainer');
-    await expect(section).toBeVisible();
+    await expect(page).toHaveURL(/#explainer$/);
+    await expect(section.locator('#explainer-title')).toBeInViewport();
+    await expect.poll(async () => {
+      const heading = await section.locator('#explainer-title').boundingBox();
+      const header = await page.locator('header').boundingBox();
+      return !!heading && !!header && heading.y >= header.y + header.height;
+    }).toBe(true);
     expect(await page.locator('iframe').count()).toBe(0);
     expect(youtubeRequests).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
