@@ -24,3 +24,9 @@ jobs:
       - name: Build site
         working-directory: web
         run: bun run build
+      - name: Install browser for website checks
+        working-directory: web
+        run: bunx playwright install --with-deps chromium
+      - name: Check explainer interaction and fallback
+        working-directory: web
+        run: bunx playwright test

@@ -331,6 +331,7 @@ const platformGroups = [
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="/docs/tutorial">Get started</a>
+            <a class="btn btn-ghost" href="#explainer">Watch the explainer</a>
             <a class="btn btn-ghost" href="https://github.com/NikolayS/pgque" target="_blank" rel="noopener">View on GitHub<span class="ext-arrow" aria-hidden="true">↗</span></a>
           </div>
           <div class="install">
@@ -339,6 +340,25 @@ const platformGroups = [
             <span class="install-note">then <code>select pgque.start();</code></span>
           </div>
         </div>
+
+      </section>
+
+      <section class="explainer" id="explainer" aria-labelledby="explainer-title">
+        <h2 class="section-title" id="explainer-title">How PgQue works</h2>
+        <p class="section-sub">Why most Postgres queues fail — and how PgQue fixes it.</p>
+        <div class="media-shell explainer-player" data-video-id="1My8l2fQ2NA" data-video-title="Why most Postgres queues fail (and how PgQue fixes it)">
+          <a class="media-facade explainer-preview" href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener" aria-label="Play the PgQue explainer">
+            <img src="/images/pgque-explainer.jpg" width="1280" height="720" alt="" />
+            <span class="explainer-play" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M8 5v14l11-7z" /></svg>
+              Watch the explainer
+            </span>
+          </a>
+        </div>
+        <p class="explainer-link"><a href="https://www.youtube.com/watch?v=1My8l2fQ2NA" target="_blank" rel="noopener">Watch on YouTube<span aria-hidden="true"> ↗</span></a></p>
+      </section>
+
+      <section class="benchmark-section" aria-label="Queue performance under sustained load">
         <figure class="hero-visual">
           <div class="console">
             <div class="console-bar">
@@ -745,6 +765,7 @@ const platformGroups = [
             frame.allowFullscreen = true;
             frame.referrerPolicy = 'strict-origin-when-cross-origin';
             shell.replaceChildren(frame);
+            frame.focus();
           }, { once: true });
         });
 
@@ -973,13 +994,21 @@ const platformGroups = [
       :root:not([data-theme-pref]) .theme-toggle .ic-auto { display: block; }
 
       /* hero */
-      /* Two-column hero: copy on the left, benchmark console figure on the
-         right (vertically aligned with the copy). The visual column is the
-         wider track (~52%) so the chart is as large as fits beside the text. */
-      .hero {
-        display: grid; grid-template-columns: 0.95fr 1.05fr; gap: 48px;
-        align-items: center; padding: 72px 0 88px;
+      .hero { padding: 72px 0 48px; }
+      .hero-copy { max-width: 820px; }
+      .explainer { max-width: 900px; margin: 0 auto; padding-bottom: 48px; scroll-margin-top: 100px; }
+      .explainer-player { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); }
+      .explainer-preview.media-facade { padding: 0; }
+      .explainer-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+      .explainer-play {
+        position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        display: flex; align-items: center; gap: 8px; white-space: nowrap;
+        padding: 12px 20px; border-radius: 999px; background: #f5f1e8; color: #16191f;
+        box-shadow: 0 4px 28px #0008; font-weight: 600; z-index: 1;
       }
+      .explainer-preview:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px; }
+      .explainer-link { text-align: right; margin: 12px 0 0; font-size: 0.9rem; }
+      .benchmark-section { max-width: 900px; margin: 0 auto; padding-bottom: var(--section-y); }
       .hero-copy { min-width: 0; }
       .eyebrow {
         display: inline-flex; align-items: center; gap: 8px;
