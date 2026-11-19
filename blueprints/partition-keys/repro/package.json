@@ -1,0 +1,16 @@
+{
+  "name": "pgque-partition-keys-repro",
+  "private": true,
+  "type": "module",
+  "description": "Two-tier partition-keys reproduction (bun + node-postgres)",
+  "scripts": {
+    "tier-a": "bun driver.ts --tier a",
+    "tier-b": "bun driver.ts --tier b"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.2"
+  }
+}
