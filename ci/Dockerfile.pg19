@@ -11,7 +11,7 @@ RUN apt-get update \
  && echo 'a89fd70efbad6a08c7dbed8d4872e3af30170d9e5ca9dc7906523be95b4e692d  /tmp/postgresql.tar.bz2' | sha256sum -c - \
  && tar -xjf /tmp/postgresql.tar.bz2 -C /tmp \
  && cd /tmp/postgresql-19.0 \
- && ./configure --prefix=/usr/lib/postgresql/19 --sharedir=/usr/share/postgresql/19 --without-icu --without-llvm \
+ && ./configure --prefix=/usr/lib/postgresql/19 --datadir=/usr/share/postgresql/19 --without-icu --without-llvm \
  && make -j2 && make install \
  && make -C contrib/pg_stat_statements install \
  && make -C contrib/dblink install \
