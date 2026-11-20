@@ -299,7 +299,7 @@ jobs:
           ready=0
           for _ in $(seq 1 30); do
             if docker exec -e PGPASSWORD=pgque_test pgque-tle-test \
-              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
+              psql -h 127.0.0.1 -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
               ready=1
               break
             fi
@@ -396,7 +396,7 @@ jobs:
           ready=0
           for _ in $(seq 1 30); do
             if docker exec -e PGPASSWORD=pgque_test pgque-pgcron-test \
-              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
+              psql -h 127.0.0.1 -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
               ready=1
               break
             fi
@@ -507,7 +507,7 @@ jobs:
 
           ready=0
           for _ in $(seq 1 60); do
-            if docker exec "${PG_CONTAINER}" pg_isready -U postgres -d pgque_test; then
+            if docker exec "${PG_CONTAINER}" pg_isready -h 127.0.0.1 -U postgres -d pgque_test; then
               ready=1
               break
             fi

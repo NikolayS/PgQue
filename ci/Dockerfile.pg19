@@ -13,6 +13,7 @@ RUN apt-get update \
  && cd /tmp/postgresql-19.0 \
  && ./configure --prefix=/usr/lib/postgresql/19 --datadir=/usr/share/postgresql/19 --without-icu --without-llvm \
  && make -j2 && make install \
+ && sed -ri "s/^#?(listen_addresses)\s*=.*/\1 = '*'/" /usr/share/postgresql/19/postgresql.conf.sample \
  && make -C contrib/pg_stat_statements install \
  && make -C contrib/dblink install \
  && curl -fsSL https://github.com/citusdata/pg_cron/archive/5cedfa472ccc83567aa23ec645925ed8489a7797.tar.gz -o /tmp/pg_cron.tar.gz \
