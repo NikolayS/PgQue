@@ -199,7 +199,7 @@ test first, then the implementation that turns it green.
    these args," it is too complex.
 4. **No subtransactions in hot paths.** Avoid `BEGIN ... EXCEPTION WHEN ... END`
    in ticker, event insertion, and trigger functions.
-5. **Test against PG 14, 15, 16, 17, 18.** CI must cover all supported versions.
+5. **Test against PG 14, 15, 16, 17, 18, 19.** CI must cover all supported versions.
 6. **Red/green TDD for all new code.** Write the failing test first, then
    the implementation. Applies to pgque-api, observability, client libraries,
    CLI. Does NOT apply to pgque-core repackaging (PgQ already has tests).

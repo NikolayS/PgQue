@@ -32,3 +32,12 @@ At minimum, include the test or manual verification command in the PR descriptio
 - Explain the motivation and the user-visible change.
 - Link related issues or design docs.
 - Keep PRs focused and easy to review.
+
+## PostgreSQL 19 CI
+
+The PostgreSQL 19 jobs build the released 19.0 source archive with a pinned
+SHA-256 checksum using `ci/Dockerfile.pg19`. PostgreSQL 18 supplies only the
+Debian base and official container entrypoint. The image selects the 19
+binaries, checks their version, and builds pg_cron 1.6.8, pg_stat_statements,
+and dblink. Other server versions retain their official image lanes.
+The optional pg_tle path remains on its validated PostgreSQL 18 combination.

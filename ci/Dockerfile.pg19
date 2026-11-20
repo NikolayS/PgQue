@@ -1,0 +1,24 @@
+# PostgreSQL 19.0 GA; the base supplies Debian and the official entrypoint only.
+FROM postgres:18
+
+ENV PG_MAJOR=19 PG_VERSION=19.0 PGDATA=/var/lib/postgresql/19/docker
+ENV PATH=/usr/lib/postgresql/19/bin:$PATH
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential bison flex \
+      ca-certificates curl bzip2 libreadline-dev zlib1g-dev \
+ && curl -fsSL https://ftp.postgresql.org/pub/source/v19.0/postgresql-19.0.tar.bz2 -o /tmp/postgresql.tar.bz2 \
+ && echo 'a89fd70efbad6a08c7dbed8d4872e3af30170d9e5ca9dc7906523be95b4e692d  /tmp/postgresql.tar.bz2' | sha256sum -c - \
+ && tar -xjf /tmp/postgresql.tar.bz2 -C /tmp \
+ && cd /tmp/postgresql-19.0 \
+ && ./configure --prefix=/usr/lib/postgresql/19 --sharedir=/usr/share/postgresql/19 --without-icu --without-llvm \
+ && make -j2 && make install \
+ && make -C contrib/pg_stat_statements install \
+ && make -C contrib/dblink install \
+ && curl -fsSL https://github.com/citusdata/pg_cron/archive/5cedfa472ccc83567aa23ec645925ed8489a7797.tar.gz -o /tmp/pg_cron.tar.gz \
+ && tar -xzf /tmp/pg_cron.tar.gz -C /tmp \
+ && cd /tmp/pg_cron-5cedfa472ccc83567aa23ec645925ed8489a7797 \
+ && make -j2 PG_CONFIG=/usr/lib/postgresql/19/bin/pg_config \
+ && make PG_CONFIG=/usr/lib/postgresql/19/bin/pg_config install \
+ && test "$(postgres --version)" = 'postgres (PostgreSQL) 19.0' \
+ && rm -rf /tmp/postgresql* /tmp/pg_cron* /var/lib/apt/lists/*

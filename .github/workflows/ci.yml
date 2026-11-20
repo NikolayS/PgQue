@@ -12,12 +12,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: ['19beta1', '18', '17', '16', '15', '14']
+        pg_version: ['19', '18', '17', '16', '15', '14']
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL ${{ matrix.pg_version }}
         run: |
@@ -98,14 +102,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 19 beta 1
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
+
+      - name: Start PostgreSQL 19
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-stable-smoke \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:19beta1
+            postgres:19
 
           bash ci/wait-for-postgres.sh pgque-stable-smoke
 
@@ -167,13 +175,17 @@ jobs:
       matrix:
         # Upgrade coverage uses oldest/newest supported PG endpoints; the main
         # regression matrix above covers every supported version (14–19).
-        pg_version: ['19beta1', '14']
+        pg_version: ['19', '14']
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL ${{ matrix.pg_version }}
         run: |
@@ -248,8 +260,8 @@ jobs:
     name: pg_tle install path
     runs-on: ubuntu-latest
     env:
-      # pg_tle v1.5.2 does not compile against PostgreSQL 19 beta 1 yet;
-      # keep this optional extension path on the newest compatible major.
+      # Keep this optional pg_tle v1.5.2 path on validated PostgreSQL 18.
+      # The default SQL install is tested on PostgreSQL 14 through 19.
       PG_VERSION: '18'
       PGTLE_TAG: v1.5.2
     steps:
@@ -269,6 +281,10 @@ jobs:
             --build-arg "PGTLE_TAG=${PGTLE_TAG}" \
             -t pgque-tle:test \
             -f ci/Dockerfile.tle .
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL with pg_tle preloaded
         run: |
@@ -343,7 +359,7 @@ jobs:
     name: pg_cron install path
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
       PG_MAJOR: '19'
     steps:
       - uses: actions/checkout@v4
@@ -352,6 +368,9 @@ jobs:
 
       - name: Build pgque
         run: bash build/transform.sh
+
+      - name: Build released PostgreSQL 19 image
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Build PG image with pg_cron
         run: |
@@ -426,6 +445,12 @@ jobs:
             exit 1
           fi
 
+      - name: Verify real pg_cron message delivery
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -X -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_pgcron_delivery.sql
+
       - name: Verify pg_timetable to pg_cron scheduler switch
         run: |
           set -Eeuo pipefail
@@ -453,7 +478,7 @@ jobs:
     name: pg_timetable real worker
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
       PGTT_IMAGE: cybertecpostgresql/pg_timetable@sha256:6bed16f944ab91392fac9cd04aba82cd6690769e179d411748fd0bb538f55acd
       PGTT_NET: pgque-pgtimetable-test
       PG_CONTAINER: pgque-pgtimetable-pg
@@ -466,6 +491,10 @@ jobs:
 
       - name: Build pgque
         run: bash build/transform.sh
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
@@ -535,11 +564,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
@@ -592,11 +625,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
@@ -633,11 +670,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
@@ -688,11 +729,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Build released PostgreSQL 19 image
+        if: matrix.pg_version == '19' || env.PG_VERSION == '19' || github.job == 'stable-smoke'
+        run: docker build -t postgres:19 -f ci/Dockerfile.pg19 .
 
       - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
