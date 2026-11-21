@@ -46,7 +46,7 @@
     "node": ">=20"
   },
   "overrides": {
-    "vite": "^6.4.3",
+    "vite": "^6.4.6",
     "postcss": "^8.5.23",
     "nanoid": "^3.3.18"
   },
@@ -59,12 +59,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "pg": "^8.16.0"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
-    "@types/node": "^22.15.3",
-    "@types/pg": "^8.15.2",
-    "typescript": "^5.8.3",
-    "vitest": "^4.1.11"
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
   }
 }
