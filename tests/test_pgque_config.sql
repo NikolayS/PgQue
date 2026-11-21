@@ -3,7 +3,7 @@
 
 \if :{?expected_pgque_version}
 \else
-\set expected_pgque_version 0.3.0-rc.2
+\set expected_pgque_version 0.3.0-devel
 \endif
 
 select pg_catalog.set_config(
