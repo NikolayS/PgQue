@@ -140,7 +140,7 @@ Oban Pro shipped table partitioning to mitigate it; PGMQ ships aggressive autova
 
 ## Installation
 
-**Requirements:** Supported Postgres 14–18, and something that calls `pgque.ticker()` periodically. Postgres 19 beta is also continuously tested as a forward-compatibility lane; beta coverage is not a production-support claim. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 ticks/sec)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
+**Requirements:** Supported Postgres 14–19, and something that calls `pgque.ticker()` periodically. With `pg_cron`, `pgque.start()` schedules a single 1-second `pg_cron` slot that internally re-ticks every **100 ms (10 ticks/sec)** by default — see [Tick rate](#tick-rate) for tuning. `pg_cron` is pre-installed or one-command available on all major managed Postgres providers (RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon); on self-managed Postgres, follow the [pg_cron setup guide](https://github.com/citusdata/pg_cron#setting-up-pg_cron). Any external scheduler (system `cron`, systemd, a worker loop in your app) works as an alternative — see below.
 
 These steps install the in-development build documented on `main`. For the
 stable build, use the tagged instructions linked in the development notice
@@ -544,7 +544,7 @@ PgQue keeps PgQ's proven core architecture — snapshot-based batch isolation, t
 | Feature | Done |
 |---|---|
 | PgQ core engine | ✅ |
-| Modern Postgres support (14–18; 19 beta tested) | Yes |
+| Modern Postgres support (14–19) | Yes |
 | Pure SQL / PL/pgSQL install | ✅ |
 | Managed Postgres support | ✅ |
 | No daemon / no C extension | ✅ |

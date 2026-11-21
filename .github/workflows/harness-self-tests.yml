@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, integrate/0.3-20261005, 'rc/**']
+    branches: [main, integrate/0.3-20261005, 'rc/**', 'release/**']
 
 jobs:
   owned-cluster:
@@ -17,7 +17,7 @@ jobs:
         include:
           - pg_version: '14'
             pg_major: '14'
-          - pg_version: '19beta1'
+          - pg_version: '19'
             pg_major: '19'
     container: postgres:${{ matrix.pg_version }}
     steps:

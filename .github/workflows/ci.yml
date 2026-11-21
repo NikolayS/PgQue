@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, integrate/0.3-20261005, 'rc/**']
+    branches: [main, integrate/0.3-20261005, 'rc/**', 'release/**']
 
 jobs:
   test:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: ['19beta1', '18', '17', '16', '15', '14']
+        pg_version: ['19', '18', '17', '16', '15', '14']
 
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +62,14 @@ jobs:
 
       - name: Run regression tests
         run: |
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+          PAGER=cat PGPASSWORD=pgque_test psql \
+            --no-psqlrc \
+            --host=localhost \
+            --username=postgres \
+            --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --set="expected_pgque_version=$(bash build/read-version.sh)" \
+            --file=tests/run_all.sql
 
       - name: Run registration concurrency regressions
         env:
@@ -182,14 +188,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 19 beta 1
+      - name: Start PostgreSQL 19
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-stable-smoke \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:19beta1
+            postgres:19
 
           bash ci/wait-for-postgres.sh pgque-stable-smoke
 
@@ -249,9 +255,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Upgrade coverage uses oldest supported PG endpoint and the PG19 beta lane; the main
-        # regression matrix above covers supported PG14–18 plus the PG19 beta lane.
-        pg_version: ['19beta1', '14']
+        # Upgrade coverage uses oldest/newest supported PG endpoints; the main
+        # regression matrix above covers every supported version (14–19).
+        pg_version: ['19', '14']
         from_version: ['0.1.0', '0.2.0', '0.2.1', '0.2.2', '0.3.0-alpha.1']
 
     steps:
@@ -392,8 +398,8 @@ jobs:
     name: pg_tle install path
     runs-on: ubuntu-latest
     env:
-      # pg_tle v1.5.2 does not compile against PostgreSQL 19 beta 1 yet;
-      # keep this optional extension path on the newest compatible major.
+      # Keep this optional pg_tle v1.5.2 path on validated PostgreSQL 18.
+      # The default SQL install is tested on PostgreSQL 14 through 19.
       PG_VERSION: '18'
       PGTLE_TAG: v1.5.2
     steps:
@@ -424,20 +430,7 @@ jobs:
             pgque-tle:test \
             -c shared_preload_libraries=pg_tle
 
-          ready=0
-          for _ in $(seq 1 30); do
-            if docker exec -e PGPASSWORD=pgque_test pgque-tle-test \
-              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${ready}" -ne 1 ]]; then
-            echo "PG not ready after 30 seconds"
-            docker logs pgque-tle-test
-            exit 1
-          fi
+          bash ci/wait-for-postgres.sh pgque-tle-test
 
       - name: Run pg_tle e2e test
         run: |
@@ -496,8 +489,14 @@ jobs:
             -c 'create extension pg_tle;' \
             -f devel/sql/pgque-tle.sql \
             -c 'create extension pgque;'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_regress \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+          PAGER=cat PGPASSWORD=pgque_test psql \
+            --no-psqlrc \
+            --host=localhost \
+            --username=postgres \
+            --dbname=pgque_tle_regress \
+            --set=ON_ERROR_STOP=1 \
+            --set="expected_pgque_version=$(bash build/read-version.sh)" \
+            --file=tests/run_all.sql
 
       - name: Cleanup
         if: always()
@@ -507,7 +506,7 @@ jobs:
     name: pg_cron install path
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
       PG_MAJOR: '19'
     steps:
       - uses: actions/checkout@v4
@@ -538,20 +537,7 @@ jobs:
             -c cron.database_name=pgque_test \
             -c cron.use_background_workers=on
 
-          ready=0
-          for _ in $(seq 1 30); do
-            if docker exec -e PGPASSWORD=pgque_test pgque-pgcron-test \
-              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${ready}" -ne 1 ]]; then
-            echo "PG not ready after 30 seconds"
-            docker logs pgque-pgcron-test
-            exit 1
-          fi
+          bash ci/wait-for-postgres.sh pgque-pgcron-test
 
       - name: Create pg_cron extension
         run: |
@@ -568,8 +554,14 @@ jobs:
       - name: Run full regression suite (pg_cron-skipped tests now run)
         run: |
           set -Eeuo pipefail
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+          PAGER=cat PGPASSWORD=pgque_test psql \
+            --no-psqlrc \
+            --host=localhost \
+            --username=postgres \
+            --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --set="expected_pgque_version=$(bash build/read-version.sh)" \
+            --file=tests/run_all.sql
 
       - name: Verify pgque.start() schedules ticker_loop
         run: |
@@ -589,6 +581,12 @@ jobs:
             echo "FAIL: ticker_loop schedule assertion did not run"
             exit 1
           fi
+
+      - name: Verify real pg_cron message delivery
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -X -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_pgcron_delivery.sql
 
       - name: Verify pg_timetable to pg_cron scheduler switch
         run: |
@@ -617,7 +615,7 @@ jobs:
     name: pg_timetable real worker
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
       PGTT_IMAGE: cybertecpostgresql/pg_timetable@sha256:6bed16f944ab91392fac9cd04aba82cd6690769e179d411748fd0bb538f55acd
       PGTT_NET: pgque-pgtimetable-test
       PG_CONTAINER: pgque-pgtimetable-pg
@@ -699,7 +697,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -761,7 +759,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -817,7 +815,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -874,7 +872,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -932,6 +930,9 @@ jobs:
 
       - name: Verify PostgreSQL readiness checks
         run: bash tests/test_ci_readiness.sh
+
+      - name: Test stable release promotion
+        run: bash tests/test_release_promotion.sh
 
       - name: Build
         run: bash build/transform.sh

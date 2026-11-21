@@ -179,10 +179,15 @@ jobs:
         if: inputs.create_release
         run: |
           set -Eeuo pipefail
-          gh release create "$VERSION" \
-            --repo "$MIRROR_REPO" \
-            --title "Go client $VERSION" \
+          release_args=(
+            --repo "$MIRROR_REPO"
+            --title "Go client $VERSION"
             --notes "Go client release for module github.com/NikolayS/pgque-go. Install with: go get github.com/NikolayS/pgque-go@$VERSION"
+          )
+          if [[ "$VERSION" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "$VERSION" "${release_args[@]}"
 
       - name: Warm Go module proxy cache
         run: |

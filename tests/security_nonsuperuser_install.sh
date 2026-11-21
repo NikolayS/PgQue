@@ -53,14 +53,14 @@ cleanup() {
   # drop must not abort the rest. Leave the cluster-wide pgque_* app roles
   # intact for other databases. A planned name is NOT proof of ownership:
   # bootstrap can stop at a collision after creating only some fixtures.
-  for name in "${created_databases[@]}"; do
+  for name in ${created_databases[@]+"${created_databases[@]}"}; do
     "${psql_super[@]}" -qAtc "drop database if exists ${name} with (force)" \
       >/dev/null 2>&1 || {
         echo "FAIL: cleanup could not drop owned database ${name}" >&2
         failed=1
       }
   done
-  for name in "${created_roles[@]}"; do
+  for name in ${created_roles[@]+"${created_roles[@]}"}; do
     "${psql_super[@]}" -qAtc "drop role if exists ${name}" \
       >/dev/null 2>&1 || {
         echo "FAIL: cleanup could not drop owned role ${name}" >&2
@@ -68,7 +68,7 @@ cleanup() {
       }
   done
   if (( failed )); then
-    echo "WARNING: test cleanup incomplete for owned fixtures: ${created_databases[*]} ${created_roles[*]}" >&2
+    echo "WARNING: test cleanup incomplete for owned fixtures: ${created_databases[*]-} ${created_roles[*]-}" >&2
   fi
   rm -rf "${workdir}" || {
     echo "FAIL: cleanup could not remove work directory ${workdir}" >&2
@@ -118,7 +118,7 @@ create_fixture() {
   if [[ "${kind}" == database ]]; then
     created_databases+=("${name}")
   else
-    created_roles=("${name}" "${created_roles[@]}")
+    created_roles=("${name}" ${created_roles[@]+"${created_roles[@]}"})
   fi
 }
 
