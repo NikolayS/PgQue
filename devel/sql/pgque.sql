@@ -5544,11 +5544,42 @@ begin
     end if;
 end $$;
 
+/* A `#` name is a slot only when subscribe_slot materialized matching
+   partition metadata. Ordinary consumers created before `#` was reserved
+   remain ordinary consumers after upgrade. */
+create or replace function pgque._is_partition_slot_consumer(
+    i_queue_id int4,
+    i_consumer text)
+returns boolean as $$
+begin
+    if i_queue_id is null
+        or i_consumer is null
+        or to_regclass('pgque.partition_consumer') is null
+        or to_regclass('pgque.partition_slot') is null
+    then
+        return false;
+    end if;
+
+    return exists (
+        select 1
+        from pgque.partition_consumer as pc
+        join pgque.partition_slot as ps
+            on ps.queue_id = pc.queue_id
+            and ps.co_name = pc.co_name
+        where pc.queue_id = i_queue_id
+          and pc.co_name || '#' || ps.slot::text || '/' || pc.n::text = i_consumer
+    );
+end;
+$$ language plpgsql stable security definer set search_path = pgque, pg_catalog, pg_temp;
+revoke execute on function pgque._is_partition_slot_consumer(int4, text)
+    from public, pgque_reader, pgque_writer;
+
 -- pgque.receive() -- wraps next_batch + get_batch_events
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
 returns setof pgque.message as $$
 declare
+    v_queue_id int4;
     v_batch_id bigint;
     ev record;
     cnt int := 0;
@@ -5558,14 +5589,19 @@ begin
     end if;
 
     /*
-     * Guard the raw slot consumer. subscribe_slot reserves '#' (it rejects '#'
-     * in base consumer names), so a '#' name can only be a partition slot
-     * consumer "<consumer>#<slot>/<n>". The plain receive path applies neither
-     * the lease fence nor the hash filter, so it would hand back the whole
-     * unfiltered stream -- force callers onto the partitioned API.
+     * The plain receive path applies neither the lease fence nor the hash
+     * filter. Refuse cataloged slots while preserving ordinary `#` consumers
+     * that predate the reserved namespace.
      */
     if position('#' in i_consumer) > 0 then
-        raise exception 'consumer % is a partition slot consumer; use pgque.receive_partitioned()', i_consumer;
+        select q.queue_id
+        into v_queue_id
+        from pgque.queue as q
+        where q.queue_name = i_queue;
+
+        if pgque._is_partition_slot_consumer(v_queue_id, i_consumer) then
+            raise exception 'consumer % is a partition slot consumer; use pgque.receive_partitioned()', i_consumer;
+        end if;
     end if;
 
     -- Get next batch (may return NULL if no tick window is ready)
@@ -5609,20 +5645,29 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_tem
 create or replace function pgque.ack(i_batch_id bigint)
 returns integer as $$
 declare
+    v_queue_id int4;
     v_cname text;
 begin
     /*
      * Guard the raw slot consumer (see pgque.receive). A partition slot batch
      * must be finished through the lease-fenced ack_partitioned(); plain ack()
      * lets a fenced zombie double-ack it. Resolve the batch's consumer and
-     * reject when its name carries the reserved '#'. An unknown batch id falls
-     * through to finish_batch(), preserving the pre-guard not-found behavior.
+     * reject when the partition catalogs identify it as a slot. An unknown
+     * batch id falls through to finish_batch(), preserving not-found behavior.
      */
-    select c.co_name into v_cname
+    select
+        s.sub_queue,
+        c.co_name
+    into
+        v_queue_id,
+        v_cname
     from pgque.subscription as s
     join pgque.consumer as c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
-    if found and position('#' in v_cname) > 0 then
+    if found
+        and position('#' in v_cname) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, v_cname)
+    then
         raise exception 'batch % belongs to partition slot consumer %; use pgque.ack_partitioned()', i_batch_id, v_cname;
     end if;
 
@@ -5701,6 +5746,7 @@ create or replace function pgque.nack(
     i_reason text default null)
 returns integer as $$
 declare
+    v_queue_id int4;
     v_cname text;
 begin
     /*
@@ -5709,11 +5755,19 @@ begin
      * nack_partitioned), not plain nack(). An unknown batch id falls through to
      * the shared core, which raises the same 'batch not found' as before.
      */
-    select c.co_name into v_cname
+    select
+        s.sub_queue,
+        c.co_name
+    into
+        v_queue_id,
+        v_cname
     from pgque.subscription as s
     join pgque.consumer as c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
-    if found and position('#' in v_cname) > 0 then
+    if found
+        and position('#' in v_cname) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, v_cname)
+    then
         raise exception 'batch % belongs to partition slot consumer %; retry slot batches via pgque.nack_partitioned()', i_batch_id, v_cname;
     end if;
 
@@ -7585,6 +7639,66 @@ drop function if exists pgque.ack_partitioned(text, text, int, int);
 drop function if exists pgque._partition_n(text, text, int, int);
 drop function if exists pgque._touch_lease(int4, text, text, int, text);
 
+/* PostgreSQL cannot rename function inputs in place. Recreate only exact
+ * alpha contracts; modern reinstalls keep OIDs, grants and dependencies. */
+do $$
+declare
+    v_actual_names text[];
+    v_dependents text;
+    v_function record;
+    v_oid oid;
+begin
+    for v_function in
+        select *
+        from (values
+            ('pgque.send(text,text,jsonb,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_partition_key']),
+            ('pgque.send(text,text,text,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_partition_key']),
+            ('pgque.subscribe_partitioned(text,text,integer)',
+                array['i_queue', 'i_consumer', 'i_n']),
+            ('pgque.subscribe_slot(text,text,integer,integer)',
+                array['i_queue', 'i_consumer', 'i_slot', 'i_n']),
+            ('pgque.unsubscribe_slot(text,text,integer)',
+                array['i_queue', 'i_consumer', 'i_slot']),
+            ('pgque.unsubscribe_partitioned(text,text)',
+                array['i_queue', 'i_consumer']),
+            ('pgque.claim_slot(text,text,integer,text,interval)',
+                array['i_queue', 'i_consumer', 'i_slot', 'i_worker', 'i_ttl']),
+            ('pgque.release_slot(text,text,integer,text)',
+                array['i_queue', 'i_consumer', 'i_slot', 'i_worker']),
+            ('pgque.receive_partitioned(text,text,integer,integer,text,integer)',
+                array['i_queue', 'i_consumer', 'i_slot', 'i_n', 'i_worker', 'i_max']),
+            ('pgque.ack_partitioned(text,text,integer,integer,text)',
+                array['i_queue', 'i_consumer', 'i_slot', 'i_n', 'i_worker']),
+            ('pgque.nack_partitioned(text,text,integer,integer,text,pgque.message,interval,text)',
+                array['i_queue', 'i_consumer', 'i_slot', 'i_n', 'i_worker', 'i_msg', 'i_retry_after', 'i_reason'])
+        ) as alpha(signature, old_names)
+    loop
+        v_oid := to_regprocedure(v_function.signature)::oid;
+        if v_oid is not null then
+            select p.proargnames[1:p.pronargs] into v_actual_names
+            from pg_proc as p
+            where p.oid = v_oid;
+            if v_actual_names = v_function.old_names then
+                select string_agg(
+                    distinct pg_catalog.pg_describe_object(
+                        d.classid, d.objid, d.objsubid), ', ')
+                into v_dependents
+                from pg_catalog.pg_depend as d
+                where d.refclassid = 'pg_catalog.pg_proc'::regclass
+                  and d.refobjid = v_oid
+                  and d.deptype in ('n', 'a');
+                if v_dependents is not null then
+                    raise exception 'cannot stabilize named arguments for % because dependent objects exist: %. Drop these dependents, run the transactional upgrade, then recreate them',
+                        v_function.signature, v_dependents;
+                end if;
+                execute 'drop function ' || v_function.signature;
+            end if;
+        end if;
+    end loop;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- Internal helpers
 -- ---------------------------------------------------------------------------
@@ -7723,11 +7837,11 @@ $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_tem
 
 -- pgque.send(queue, type, payload jsonb, partition_key) -- keyed JSON send
 create or replace function pgque.send(
-    i_queue text, i_type text, i_payload jsonb, i_partition_key text)
+    queue_name text, type_name text, payload jsonb, partition_key text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload::text,
-        i_partition_key, null, null, null);
+    return pgque.insert_event(queue_name, type_name, payload::text,
+        partition_key, null, null, null);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, jsonb, text) from public;
@@ -7738,11 +7852,11 @@ revoke execute on function pgque.send(text, text, jsonb, text) from public;
  * round-trip; see sql/pgque-api/send.sql.
  */
 create or replace function pgque.send(
-    i_queue text, i_type text, i_payload text, i_partition_key text)
+    queue_name text, type_name text, payload text, partition_key text)
 returns bigint as $$
 begin
-    return pgque.insert_event(i_queue, i_type, i_payload,
-        i_partition_key, null, null, null);
+    return pgque.insert_event(queue_name, type_name, payload,
+        partition_key, null, null, null);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.send(text, text, text, text) from public;
@@ -7757,9 +7871,13 @@ revoke execute on function pgque.send(text, text, text, text) from public;
  * existing partial setup requires an explicit repair decision.
  */
 create or replace function pgque.subscribe_partitioned(
-    i_queue text, i_consumer text, i_n int)
+    queue_name text, consumer text, n int)
 returns void as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_n alias for $3;
     v_queue_id int4;
     v_n int4;
     v_start_tick bigint;
@@ -7868,11 +7986,19 @@ revoke execute on function pgque.subscribe_partitioned(text, text, int) from pub
  * the consumer via unsubscribe_partitioned before producing to avoid that).
  */
 create or replace function pgque.subscribe_slot(
-    i_queue text, i_consumer text, i_slot int, i_n int)
+    queue_name text, consumer text, slot int, n int)
 returns void as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_slot alias for $3;
+    i_n alias for $4;
     v_queue_id int4;
     v_n int4;
+    v_slot_name text;
+    v_slot_materialized boolean;
+    v_registered int;
 begin
     if i_queue is null or i_queue = '' then
         raise exception 'queue name must not be empty';
@@ -7911,8 +8037,26 @@ begin
             i_consumer, i_queue, v_n, i_n;
     end if;
 
-    -- register_consumer is idempotent for an existing subscription.
-    perform pgque.register_consumer(i_queue, pgque._slot_name(i_consumer, i_slot, i_n));
+    v_slot_name := pgque._slot_name(i_consumer, i_slot, i_n);
+    select exists (
+        select 1
+        from pgque.partition_slot as ps
+        where ps.queue_id = v_queue_id
+          and ps.co_name = i_consumer
+          and ps.slot = i_slot
+    ) into v_slot_materialized;
+
+    /*
+     * register_consumer returns zero for an existing subscription. That is
+     * idempotent only when this slot was already materialized; otherwise the
+     * generated name belongs to an ordinary consumer. Raising also rolls back
+     * a partition_consumer row inserted above.
+     */
+    v_registered := pgque.register_consumer(i_queue, v_slot_name);
+    if v_registered = 0 and not v_slot_materialized then
+        raise exception 'consumer name % is already registered as an ordinary consumer on queue %; cannot reuse it for partition slot %/%',
+            v_slot_name, i_queue, i_slot, i_n;
+    end if;
 
     -- Materialize the slot's lease row (unleased). Idempotent re-subscribe.
     insert into pgque.partition_slot (queue_id, co_name, slot)
@@ -7930,9 +8074,13 @@ revoke execute on function pgque.subscribe_slot(text, text, int, int) from publi
  * subscribe_slot may choose a new N.
  */
 create or replace function pgque.unsubscribe_slot(
-    i_queue text, i_consumer text, i_slot int)
+    queue_name text, consumer text, slot int)
 returns void as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_slot alias for $3;
     v_queue_id int4;
     v_n int4;
     v_subscribed int4;
@@ -8023,9 +8171,12 @@ revoke execute on function pgque.unsubscribe_slot(text, text, int) from public;
  * (SPEC section 8, teardown).
  */
 create or replace function pgque.unsubscribe_partitioned(
-    i_queue text, i_consumer text)
+    queue_name text, consumer text)
 returns void as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
     v_queue_id int4;
     v_n int4;
     v_slot int4;
@@ -8090,10 +8241,16 @@ revoke execute on function pgque.unsubscribe_partitioned(text, text) from public
  *   live, other own -- return null.
  */
 create or replace function pgque.claim_slot(
-    i_queue text, i_consumer text, i_slot int, i_worker text,
-    i_ttl interval default '30 seconds')
+    queue_name text, consumer text, slot int, worker text,
+    ttl interval default '30 seconds')
 returns bigint as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_slot alias for $3;
+    i_worker alias for $4;
+    i_ttl alias for $5;
     v_queue_id int4;
     v_n int4;
     v_owner text;
@@ -8180,9 +8337,14 @@ revoke execute on function pgque.claim_slot(text, text, int, text, interval) fro
  * raises while the slot has an open batch.
  */
 create or replace function pgque.release_slot(
-    i_queue text, i_consumer text, i_slot int, i_worker text)
+    queue_name text, consumer text, slot int, worker text)
 returns boolean as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_slot alias for $3;
+    i_worker alias for $4;
     v_queue_id int4;
     v_n int4;
     v_owner text;
@@ -8250,10 +8412,17 @@ revoke execute on function pgque.release_slot(text, text, int, text) from public
  * empty filtered slice is finished immediately so the slot cursor advances.
  */
 create or replace function pgque.receive_partitioned(
-    i_queue text, i_consumer text, i_slot int, i_n int, i_worker text,
-    i_max int default 100)
+    queue_name text, consumer text, slot int, n int, worker text,
+    max_return int default 100)
 returns setof pgque.message as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_slot alias for $3;
+    i_n alias for $4;
+    i_worker alias for $5;
+    i_max alias for $6;
     v_n int4;
     v_batch_id bigint;
     v_cname text;
@@ -8323,9 +8492,15 @@ revoke execute on function pgque.receive_partitioned(text, text, int, int, text,
  * slot had no active batch.
  */
 create or replace function pgque.ack_partitioned(
-    i_queue text, i_consumer text, i_slot int, i_n int, i_worker text)
+    queue_name text, consumer text, slot int, n int, worker text)
 returns int as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_slot alias for $3;
+    i_n alias for $4;
+    i_worker alias for $5;
     v_n int4;
     v_batch_id bigint;
 begin
@@ -8351,12 +8526,21 @@ revoke execute on function pgque.ack_partitioned(text, text, int, int, text) fro
  * on the same slot (SPEC section 9).
  */
 create or replace function pgque.nack_partitioned(
-    i_queue text, i_consumer text, i_slot int, i_n int, i_worker text,
-    i_msg pgque.message,
-    i_retry_after interval default '60 seconds',
-    i_reason text default null)
+    queue_name text, consumer text, slot int, n int, worker text,
+    msg pgque.message,
+    retry_after interval default '60 seconds',
+    reason text default null)
 returns integer as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_consumer alias for $2;
+    i_slot alias for $3;
+    i_n alias for $4;
+    i_worker alias for $5;
+    i_msg alias for $6;
+    i_retry_after alias for $7;
+    i_reason alias for $8;
     v_n int4;
     v_batch_id bigint;
 begin
@@ -8536,6 +8720,50 @@ create index if not exists idem_expires_at_idx on pgque.idem (expires_at);
 revoke all on table pgque.idem from public;
 revoke all on table pgque.idem from pgque_reader, pgque_writer, pgque_admin;
 
+/* PostgreSQL cannot rename function inputs in place. Recreate only exact
+ * alpha contracts; modern reinstalls keep OIDs, grants and dependencies. */
+do $$
+declare
+    v_actual_names text[];
+    v_dependents text;
+    v_function record;
+    v_oid oid;
+begin
+    for v_function in
+        select *
+        from (values
+            ('pgque.send_idem(text,text,text,text,interval,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_idem_key', 'i_ttl', 'i_partition_key']),
+            ('pgque.send_idem(text,text,jsonb,text,interval,text)',
+                array['i_queue', 'i_type', 'i_payload', 'i_idem_key', 'i_ttl', 'i_partition_key']),
+            ('pgque.maint_idem(text)',
+                array['i_queue_name'])
+        ) as alpha(signature, old_names)
+    loop
+        v_oid := to_regprocedure(v_function.signature)::oid;
+        if v_oid is not null then
+            select p.proargnames[1:p.pronargs] into v_actual_names
+            from pg_proc as p
+            where p.oid = v_oid;
+            if v_actual_names = v_function.old_names then
+                select string_agg(
+                    distinct pg_catalog.pg_describe_object(
+                        d.classid, d.objid, d.objsubid), ', ')
+                into v_dependents
+                from pg_catalog.pg_depend as d
+                where d.refclassid = 'pg_catalog.pg_proc'::regclass
+                  and d.refobjid = v_oid
+                  and d.deptype in ('n', 'a');
+                if v_dependents is not null then
+                    raise exception 'cannot stabilize named arguments for % because dependent objects exist: %. Drop these dependents, run the transactional upgrade, then recreate them',
+                        v_function.signature, v_dependents;
+                end if;
+                execute 'drop function ' || v_function.signature;
+            end if;
+        end if;
+    end loop;
+end $$;
+
 /*
  * pgque.send_idem(queue, type, payload text, idem_key, ttl, partition_key)
  * Fast path, opaque textual payload (same conventions as pgque.send(text)).
@@ -8549,10 +8777,17 @@ revoke all on table pgque.idem from pgque_reader, pgque_writer, pgque_admin;
  * usable (a crash can never leave a claimed key with no event).
  */
 create or replace function pgque.send_idem(
-    i_queue text, i_type text, i_payload text, i_idem_key text,
-    i_ttl interval default '1 hour', i_partition_key text default null)
+    queue_name text, type_name text, payload text, idem_key text,
+    ttl interval default '1 hour', partition_key text default null)
 returns table (event_id int8, deduped boolean) as $$
+#variable_conflict use_column
 declare
+    i_queue alias for $1;
+    i_type alias for $2;
+    i_payload alias for $3;
+    i_idem_key alias for $4;
+    i_ttl alias for $5;
+    i_partition_key alias for $6;
     v_queue_id int4;
     v_extra_maint text[];
     v_claimed boolean;
@@ -8644,9 +8879,17 @@ revoke execute on function
  * literals resolve to the text overload -- see send.sql).
  */
 create or replace function pgque.send_idem(
-    i_queue text, i_type text, i_payload jsonb, i_idem_key text,
-    i_ttl interval default '1 hour', i_partition_key text default null)
+    queue_name text, type_name text, payload jsonb, idem_key text,
+    ttl interval default '1 hour', partition_key text default null)
 returns table (event_id int8, deduped boolean) as $$
+#variable_conflict use_column
+declare
+    i_queue alias for $1;
+    i_type alias for $2;
+    i_payload alias for $3;
+    i_idem_key alias for $4;
+    i_ttl alias for $5;
+    i_partition_key alias for $6;
 begin
     return query
     select s.event_id, s.deduped
@@ -8665,9 +8908,11 @@ revoke execute on function
  * else 0. send_idem() registers it in queue_extra_maint automatically; it
  * shares the install owner with maint(), so maint()'s ownership check passes.
  */
-create or replace function pgque.maint_idem(i_queue_name text)
+create or replace function pgque.maint_idem(queue_name text)
 returns integer as $$
+#variable_conflict use_column
 declare
+    i_queue_name alias for $1;
     v_queue_id int4;
     v_deleted integer;
 begin
@@ -9316,7 +9561,10 @@ declare
     v_batch bigint;
 begin
     perform pgque._validate_page_args(i_queue, i_consumer, i_worker, i_page_size, i_lease);
-    if position('#' in i_consumer) > 0 then
+    if position('#' in i_consumer) > 0 and pgque._is_partition_slot_consumer(
+        (select q.queue_id from pgque.queue as q where q.queue_name = i_queue),
+        i_consumer)
+    then
         raise exception 'use receive_page_partitioned for slot consumers' using errcode = '22023';
     end if;
     select batch_id into v_batch

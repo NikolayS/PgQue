@@ -20,6 +20,7 @@ begin
         'pgque._clear_member_cursor(integer,integer)',
         'pgque._clear_paged_active(integer,integer)',
         'pgque._event_retry_core(bigint,bigint,timestamp with time zone)',
+        'pgque._is_partition_slot_consumer(integer,text)',
         'pgque._lease_deadline(timestamp with time zone,interval)',
         'pgque._lock_page(uuid)',
         'pgque._nack_batch_event(bigint,pgque.message,interval,text)',

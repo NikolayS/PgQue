@@ -594,9 +594,8 @@ begin
 end $$;
 
 -- (a2) pgque.subscribe() must reject the reserved '#' at registration time.
--- The plain receive/ack/nack guards treat any '#' name as a partition slot
--- consumer, so a plain consumer registered with a '#' in its name would be
--- permanently locked out of receive/ack/nack. Reject '#' up front instead.
+-- Legacy ordinary '#' consumers remain valid, but new registrations must
+-- not collide with the slot namespace.
 do $$
 declare
   v_raised boolean := false;

@@ -142,6 +142,9 @@
 \echo 'Running: test_uninstall_guard'
 \i tests/test_uninstall_guard.sql
 
+\echo 'Running: test_legacy_hash_consumers'
+\i tests/test_legacy_hash_consumers.sql
+
 \echo 'Running: test_partition_keys'
 \i tests/test_partition_keys.sql
 
@@ -159,6 +162,9 @@
 
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
+
+\echo 'Running: test_named_arguments_v0_3'
+\i tests/test_named_arguments_v0_3.sql
 
 \echo 'Running: test_idem_maintenance_clock'
 \i tests/test_idem_maintenance_clock.sql

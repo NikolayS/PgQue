@@ -8,6 +8,8 @@ on:
   push:
     branches: [main]
     paths:
+      - 'README.md'
+      - 'build/check-docs-contract.sh'
       - 'web/**'
       - 'docs/**'
       - '.github/workflows/deploy-pages.yml'
@@ -28,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check documentation release contract
+        run: bash build/check-docs-contract.sh
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.5
