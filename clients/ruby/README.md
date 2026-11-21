@@ -83,6 +83,13 @@ ticking from your application or an external scheduler — see the
 project [Installation](https://github.com/NikolayS/pgque#installation)
 section for both paths.
 
+### Event inputs
+
+`Pgque::Event.new(payload: { "order_id" => 42 }, type: "order.created")`
+accepts only `payload:` and `type:`. Unknown keywords such as `extra:`
+raise `ArgumentError`. The producer wrapper does not support the
+receive-side `extra1` through `extra4` fields.
+
 ### Consumer options
 
 `Consumer.new(..., max_messages: ...)` sets the complete-batch safety ceiling for each `receive`.
@@ -104,6 +111,12 @@ nacked messages are retried, default 60), and `logger:` (a `Logger`
 instance; the default targets `$stderr` at `FATAL`, so the consumer is
 effectively silent unless you set `PGQUE_LOG_LEVEL=warn` or pass your
 own).
+
+The consumer polls again immediately after it acknowledges a non-empty batch.
+An empty or unfinished batch keeps the normal poll wait. Database errors close
+the failed connection and retry after `poll_interval` in stop-aware slices.
+Each new connection restores `LISTEN`. `ReceiveOverflow` still stops the
+consumer immediately. Enable error logging to see reconnect failures.
 
 ### Handling unknown event types
 
@@ -291,3 +304,8 @@ See [RELEASE.md](RELEASE.md) for publishing steps.
 ## License
 
 Apache-2.0. Copyright 2026 Nikolay Samokhvalov.
+
+## Nullable messages
+
+Direct SQL and trigger producers can store SQL NULL for `ev_type` or `ev_data`.
+`receive` and `receive_coop` preserve SQL NULL type and payload as `nil`. A nil type never matches a named handler. The `"*"` catch-all handles it when registered; otherwise the unknown-handler policy applies.
