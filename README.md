@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/NikolayS/pgque/actions/workflows/ci.yml"><img src="https://github.com/NikolayS/pgque/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-14--18-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 14-18"></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-14--19-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 14-19"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
   <a href="https://github.com/citusdata/pg_cron"><img src="https://img.shields.io/badge/pg__cron-optional-336791" alt="pg_cron"></a>
   <a href="https://github.com/NikolayS/pgque"><img src="https://img.shields.io/badge/anti--extension-%5Ci_and_go-orange" alt="Anti-Extension"></a>
@@ -15,7 +15,7 @@
 
 Discussion on [Hacker News](https://news.ycombinator.com/item?id=47817349).
 
-*For teams who want a durable event stream inside Postgres. The model is closer to Kafka (log) than to ActiveMQ or RabbitMQ (task message queue). Shared event log, independent per-consumer cursors, zero bloat under sustained load. Pure SQL and PL/pgSQL, any Postgres 14+ — managed or self-hosted, no sidecar daemon. The rest of this README walks through the history, comparison, and install paths that back up the claim.*
+*For teams who want a durable event stream inside Postgres. The model is closer to Kafka (log) than to ActiveMQ or RabbitMQ (task message queue). Shared event log, independent per-consumer cursors, zero bloat under sustained load. Pure SQL and PL/pgSQL, Postgres 14–19 — managed or self-hosted, no sidecar daemon. The rest of this README walks through the history, comparison, and install paths that back up the claim.*
 
 ## Contents
 
@@ -50,7 +50,7 @@ PgQue rebuilds that battle-tested engine in pure PL/pgSQL, so the zero-bloat que
 
 It is the same engine – PgQ – repackaged for managed Postgres, and provided with client libraries for TypeScript, Python, and Go.
 
-**The anti-extension.** Pure SQL + PL/pgSQL on any Postgres 14+ — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and most other managed providers. No C extension, no `shared_preload_libraries`, no provider approval, no restart.
+**The anti-extension.** Pure SQL + PL/pgSQL on Postgres 14–19 — including RDS, Aurora, Cloud SQL, AlloyDB, Supabase, Neon, and most other managed providers. No C extension, no `shared_preload_libraries`, no provider approval, no restart.
 
 Historical context, two decks:
 

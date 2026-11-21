@@ -12,7 +12,7 @@ universal Postgres queue. A thin wrapper over the `pgque-api` SQL functions:
 pip install pgque-py
 ```
 
-Requires Python 3.10+ and PostgreSQL 14+ with the PgQue schema installed
+Requires Python 3.10+ and PostgreSQL 14–19 with the PgQue schema installed
 (`\i pgque.sql` — no extension required).
 
 ## Database permissions

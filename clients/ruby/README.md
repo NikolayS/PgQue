@@ -19,7 +19,7 @@ published version is `0.3.0.rc.1`. Pin the exact version if you prefer:
 gem "pgque", "0.3.0.rc.1"
 ```
 
-Requires Ruby 3.1+ and PostgreSQL 14+ with the PgQue schema installed
+Requires Ruby 3.1+ and PostgreSQL 14–19 with the PgQue schema installed
 (`\i pgque.sql` — no extension required).
 
 ## Database permissions

@@ -398,10 +398,8 @@ jobs:
     name: pg_tle install path
     runs-on: ubuntu-latest
     env:
-      # Keep this optional pg_tle v1.5.2 path on validated PostgreSQL 18.
-      # The default SQL install is tested on PostgreSQL 14 through 19.
-      PG_VERSION: '18'
-      PGTLE_TAG: v1.5.2
+      PG_VERSION: '19'
+      PGTLE_TAG: v1.5.3
     steps:
       - uses: actions/checkout@v4
         with:

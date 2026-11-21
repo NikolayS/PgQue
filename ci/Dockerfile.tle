@@ -8,14 +8,14 @@
 #   PG_VERSION  -- Postgres Docker tag (e.g. 18 or 19).
 #   PG_MAJOR    -- Postgres package major (e.g. 18 or 19). Must match an
 #                  available postgresql-server-dev-XX package in apt.
-#   PGTLE_TAG   -- pg_tle git tag, e.g. v1.5.2.
+#   PGTLE_TAG   -- pg_tle git tag, e.g. v1.5.3.
 
-ARG PG_VERSION=18
+ARG PG_VERSION=19
 FROM postgres:${PG_VERSION}
 
 ARG PG_VERSION
 ARG PG_MAJOR=${PG_VERSION}
-ARG PGTLE_TAG=v1.5.2
+ARG PGTLE_TAG=v1.5.3
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
