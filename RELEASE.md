@@ -17,8 +17,8 @@ the same final version and that the pg_tle wrapper embeds the exact plain SQL.
 ## Prepare the release PR
 
 Start from a clean branch containing the complete release candidate, including
-the tested pg_tle update path from the immutable `v0.2.0` fixture. Fetch tags
-and initialise the PgQ submodule before promoting:
+the tested pg_tle update paths from the immutable `v0.2.1` and `v0.2.2`
+fixtures. Fetch tags and initialise the PgQ submodule before promoting:
 
 ```bash
 git fetch origin --tags
@@ -125,11 +125,12 @@ paths:
 1. Fresh install: load `sql/pgque-tle.sql`, create extension `pgque`, run
    `tests/run_all.sql`, and run `sql/pgque-tle-uninstall.sql` twice. Confirm
    both the `pgque` extension/schema and the pg_tle registration are absent.
-2. Update: register and install the immutable
-   `v0.2.0:sql/pgque-tle.sql` fixture, then run
-   `tests/test_tle_upgrade.sql`. This exercises the data-preserving
-   `0.2.0 -> 0.3.0` update and verifies queue, subscription, pending, retry,
-   and dead-letter state.
+2. Update: register and install the immutable `v0.2.1:sql/pgque-tle.sql` and
+   `v0.2.2:sql/pgque-tle.sql` fixtures, then run
+   `tests/test_tle_upgrade_candidate.sql` (as wired in the `pg_tle-test` job in
+   `.github/workflows/ci.yml`). This exercises the data-preserving
+   `0.2.1 -> 0.3.0` and `0.2.2 -> 0.3.0` updates and verifies queue,
+   subscription, pending, retry, and dead-letter state.
 
 The pg_tle CI job contains the exact container setup and tagged-fixture
 commands. Do not replace the tagged fixture with the mutable stable directory.
@@ -231,10 +232,10 @@ places together so the tree stays self-consistent:
 In the same cycle, move the tested pg_tle update baseline forward so the next
 package advertises a data-safe update path from the version you just released:
 
-- bump `PGTLE_UPGRADE_FROM_VERSION` in `build/transform.sh` (currently line
-  1212, set to `0.2.0`) to the just-released version (after releasing `0.3.0`,
-  set it to `0.3.0`); the update guard rejects any other source version, so
-  leaving it stale would ship an update path from the retired version only and
-  refuse legitimate upgraders;
-- extend or adjust `tests/test_tle_upgrade.sql` to exercise the data-preserving
-  update from that new baseline instead of the retired one.
+- update the supported source-version list in `build/transform.sh`'s pg_tle
+  wrapper (currently `'0.2.1'`, `'0.2.2'`) to include the just-released version
+  (after releasing `0.3.0`, update it for `0.3.0`); the update guard rejects
+  unlisted source versions, so leaving it stale would refuse legitimate
+  upgraders;
+- extend or adjust `tests/test_tle_upgrade_candidate.sql` and the `pg_tle-test`
+  CI job to exercise the data-preserving update from that new baseline.

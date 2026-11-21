@@ -24,19 +24,47 @@ begin
       where q.queue_name = 'cron_delivery'
         and t.tick_id > (select tick_id from cron_delivery_before)
     );
-    assert clock_timestamp() < v_deadline, 'pg_cron did not advance the queue';
+    if clock_timestamp() >= v_deadline then
+      raise exception 'pg_cron did not advance the queue within 30 seconds';
+    end if;
     perform pg_sleep(0.1);
   end loop;
   for v_message in select * from pgque.receive('cron_delivery', 'cron_delivery_consumer', 10) loop
     v_count := v_count + 1;
-    assert v_message.payload::jsonb = '{"source":"pg_cron"}'::jsonb, 'payload changed';
+    if v_message.payload::jsonb <> '{"source":"pg_cron"}'::jsonb then
+      raise exception 'payload changed: %', v_message.payload;
+    end if;
   end loop;
-  assert v_count = 1, 'expected exactly one scheduled delivery';
+  if v_count <> 1 then
+    raise exception 'expected exactly one scheduled delivery, got %', v_count;
+  end if;
   perform pgque.ack(v_message.batch_id);
-  assert not exists (select from pgque.receive('cron_delivery', 'cron_delivery_consumer', 10)),
-    'acknowledged message redelivered';
+  if exists (select from pgque.receive('cron_delivery', 'cron_delivery_consumer', 10)) then
+    raise exception 'acknowledged message redelivered';
+  end if;
 end $$;
 select pgque.stop();
+-- Wait for any in-flight ticker_loop() worker started before stop() to finish
+-- so drop_queue() cannot deadlock with it or leave background work for later steps.
+do $$
+declare
+  v_deadline timestamptz := clock_timestamp() + interval '15 seconds';
+begin
+  loop
+    exit when not exists (
+      select 1
+      from pg_catalog.pg_stat_activity
+      where datname = current_database()
+        and pid <> pg_backend_pid()
+        and state <> 'idle'
+        and query ilike '%ticker_loop%'
+    );
+    if clock_timestamp() >= v_deadline then
+      raise exception 'in-flight pg_cron ticker_loop() did not exit after pgque.stop()';
+    end if;
+    perform pg_sleep(0.1);
+  end loop;
+end $$;
 select pgque.unregister_consumer('cron_delivery', 'cron_delivery_consumer');
 select pgque.drop_queue('cron_delivery');
 drop table cron_delivery_before;

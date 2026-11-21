@@ -33,15 +33,32 @@ shell_scripts=(
 )
 workdir=
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${1}"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${1}"
+  else
+    echo "FAIL: sha256sum or shasum is required" >&2
+    return 1
+  fi
+}
+
 fingerprint() {
   local file
   for file in "${release_files[@]}"; do
     if [[ -f "${file}" ]]; then
-      shasum -a 256 "${file}"
+      sha256_file "${file}"
     else
       echo "missing  ${file}"
     fi
   done
+  if [[ -d sql/pgque-tle-updates ]]; then
+    while IFS= read -r file; do
+      [[ -n "${file}" ]] || continue
+      sha256_file "${file}"
+    done < <(find sql/pgque-tle-updates -maxdepth 1 -type f -name '*.sql' | LC_ALL=C sort)
+  fi
 }
 
 cleanup() {

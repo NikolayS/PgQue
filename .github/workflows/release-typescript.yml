@@ -91,7 +91,7 @@ jobs:
         run: npm publish --dry-run --provenance --tag "$NPM_TAG"
 
   publish:
-    if: ${{ !inputs.dry_run }}
+    if: ${{ !inputs.dry_run && github.ref == 'refs/heads/main' }}
     needs: validate
     runs-on: ubuntu-latest
     environment: npm

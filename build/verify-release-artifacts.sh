@@ -13,6 +13,22 @@ artifacts=(
   pgque-tle-uninstall.sql
 )
 manifest_name=release-manifest.txt
+tmp_files=()
+
+cleanup_tmp() {
+  local f
+  for f in ${tmp_files[@]+"${tmp_files[@]}"}; do
+    rm -f -- "${f}"
+  done
+}
+trap cleanup_tmp EXIT
+
+make_temp_file() {
+  local f
+  f=$(mktemp)
+  tmp_files+=("${f}")
+  printf '%s\n' "${f}"
+}
 
 usage() {
   echo "usage: verify-release-artifacts.sh [DIR]" >&2
@@ -45,13 +61,24 @@ list_relative_files() {
 
 assert_directory_contents() {
   local include_manifest=$1
-  local actual expected
-  local extra_dirs
+  local actual expected extra_dirs non_regular
+
+  # Reject symlinks, FIFOs, sockets, or other special entries.
+  non_regular=$(
+    cd "${artifact_dir}"
+    find . -mindepth 1 ! -type f ! -type d | sed 's|^\./||'
+  )
+  if [[ -n "${non_regular}" ]]; then
+    echo "FAIL: non-regular files in ${artifact_dir}: ${non_regular}" >&2
+    return 1
+  fi
 
   # Allow only regular files plus an optional pgque-tle-updates/ directory
   # (used by frozen 0.2.x snapshots). Reject any other unexpected directory.
-  extra_dirs=$(find "${artifact_dir}" -mindepth 1 -type d \
-    | sed "s|^${artifact_dir}/||" | grep -vx 'pgque-tle-updates' || true)
+  extra_dirs=$(
+    cd "${artifact_dir}"
+    find . -mindepth 1 -type d | sed 's|^\./||' | grep -vx 'pgque-tle-updates' || true
+  )
   if [[ -n "${extra_dirs}" ]]; then
     echo "FAIL: unexpected subdirectories in ${artifact_dir}: ${extra_dirs}" >&2
     return 1
@@ -61,7 +88,6 @@ assert_directory_contents() {
   expected=$(printf '%s\n' "${artifacts[@]}")
   if [[ "${include_manifest}" == 1 ]]; then
     expected=$(printf '%s\n%s\n' "${expected}" "${manifest_name}")
-    # Include any pgque-tle-updates/*.sql files explicitly recorded in manifest.
     if [[ -f "${artifact_dir}/${manifest_name}" ]]; then
       local extra_manifest
       extra_manifest=$(awk '$1 == "sha256" && $3 ~ /^pgque-tle-updates\/[^\/]+\.sql$/ { print $3 }' \
@@ -72,8 +98,10 @@ assert_directory_contents() {
     fi
   elif [[ -d "${artifact_dir}/pgque-tle-updates" ]]; then
     local extra_files
-    extra_files=$(find "${artifact_dir}/pgque-tle-updates" -maxdepth 1 -type f -name '*.sql' \
-      | sed "s|^${artifact_dir}/||")
+    extra_files=$(
+      cd "${artifact_dir}"
+      find pgque-tle-updates -maxdepth 1 -type f -name '*.sql'
+    )
     if [[ -n "${extra_files}" ]]; then
       expected=$(printf '%s\n%s\n' "${expected}" "${extra_files}")
     fi
@@ -117,12 +145,12 @@ call_target_versions() {
   local call=$1
   local file=$2
   awk -v needle="perform pgtle.${call}(" -v call="${call}" '
+    $0 ~ /^[[:space:]]*--/ { next }
     index($0, needle) { in_call=1; buf="" }
     in_call {
       buf = buf " " $0
       if ($0 ~ /\);/) {
         in_call = 0
-        # Split comma-separated arguments inside perform pgtle.CALL(...);
         sub(/^.*perform pgtle\.[a-z_]+\(/, "", buf)
         sub(/\);.*$/, "", buf)
         n = split(buf, args, /,/)
@@ -132,6 +160,8 @@ call_target_versions() {
           gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
           if (val ~ /^\047[^\047]+\047$/) {
             print substr(val, 2, length(val) - 2)
+          } else {
+            print "<non-literal:" val ">"
           }
         }
       }
@@ -139,11 +169,21 @@ call_target_versions() {
   ' "${file}"
 }
 
+count_wrapper_calls() {
+  local call=$1
+  local file=$2
+  awk -v needle="perform pgtle.${call}(" '
+    $0 ~ /^[[:space:]]*--/ { next }
+    index($0, needle) { n++ }
+    END { print n + 0 }
+  ' "${file}"
+}
+
 verify_manifest() {
   local manifest=${artifact_dir}/${manifest_name}
   local artifact expected_hash actual_hash count
   local version header_versions tle_header_versions tle_echo_versions
-  local embedded_body update_targets
+  local embedded_body wrapper_body update_targets update_call_count parsed_count target
 
   assert_directory_contents 1
 
@@ -157,7 +197,7 @@ verify_manifest() {
     /^#/ || NF == 0 { next }
     $1 == "version" && NF == 2 { versions++; next }
     $1 == "sha256" && NF == 3 && length($2) == 64 && $2 !~ /[^0-9a-f]/ {
-      if (required[$3] || $3 ~ /^pgque-tle-updates\/[^\/]+\.sql$/) {
+      if (($3 in required) || $3 ~ /^pgque-tle-updates\/[^\/]+\.sql$/) {
         seen[$3]++
       } else {
         bad=1
@@ -210,18 +250,19 @@ verify_manifest() {
   check_single_value "pgque.sql runtime version" "${version}" \
     "$(runtime_versions "${artifact_dir}/pgque.sql")"
 
-  embedded_body=$(mktemp)
-  if ! awk '
-    /^[[:space:]]*extension_sql[[:space:]]+text[[:space:]]*:=[[:space:]]*\$pgque_extension_body\$[[:space:]]*$/ || /^[[:space:]]*\$pgque_extension_body\$[[:space:]]*$/ {
-      if (markers == 0) { markers=1; inside=1; next }
+  embedded_body=$(make_temp_file)
+  wrapper_body=$(make_temp_file)
+  if ! awk -v body_out="${embedded_body}" -v wrap_out="${wrapper_body}" '
+    /^[[:space:]]*extension_sql[[:space:]]+text[[:space:]]*:=[[:space:]]*\$pgque_extension_body\$[[:space:]]*$/ || /^[[:space:]]*\$pgque_extension_body\$;?[[:space:]]*$/ {
+      markers++
+      if (markers == 1) { inside=1; print > wrap_out; next }
+      if (markers == 2) { inside=0; print > wrap_out; next }
+      next
     }
-    /^[[:space:]]*\$pgque_extension_body\$;?[[:space:]]*$/ {
-      if (markers == 1) { markers=2; inside=0; next }
-    }
-    inside { print }
+    inside { print > body_out; next }
+    { print > wrap_out }
     END { if (markers != 2) exit 1 }
-  ' "${artifact_dir}/pgque-tle.sql" > "${embedded_body}"; then
-    rm -f "${embedded_body}"
+  ' "${artifact_dir}/pgque-tle.sql"; then
     echo "FAIL: pgque-tle.sql extension body markers are malformed" >&2
     return 1
   fi
@@ -233,34 +274,56 @@ verify_manifest() {
   check_single_value "pgque-tle.sql runtime version" "${version}" \
     "$(runtime_versions "${embedded_body}")"
   if ! cmp -s "${artifact_dir}/pgque.sql" "${embedded_body}"; then
-    rm -f "${embedded_body}"
     echo "FAIL: pgque-tle.sql does not embed the exact pgque.sql artifact" >&2
     return 1
   fi
-  rm -f "${embedded_body}"
 
   tle_echo_versions=$(sed -n \
     "s/^\\\\echo 'PgQue \([^']*\) registered.*$/\1/p" \
-    "${artifact_dir}/pgque-tle.sql")
+    "${wrapper_body}")
   check_single_value "pgque-tle.sql registration message version" "${version}" \
     "${tle_echo_versions}"
 
   check_single_value "pgque-tle.sql install target" "${version}" \
-    "$(call_target_versions install_extension "${artifact_dir}/pgque-tle.sql")"
+    "$(call_target_versions install_extension "${wrapper_body}")"
   local -a single_calls=(
     install_extension_version_sql
     set_default_version
   )
   for call in "${single_calls[@]}"; do
-    if grep -Fq "perform pgtle.${call}(" "${artifact_dir}/pgque-tle.sql"; then
+    if [[ "$(count_wrapper_calls "${call}" "${wrapper_body}")" -gt 0 ]]; then
       check_single_value "pgque-tle.sql ${call} target" "${version}" \
-        "$(call_target_versions "${call}" "${artifact_dir}/pgque-tle.sql")"
+        "$(call_target_versions "${call}" "${wrapper_body}")"
     fi
   done
 
-  if grep -Fq "perform pgtle.install_update_path(" "${artifact_dir}/pgque-tle.sql"; then
-    update_targets=$(call_target_versions install_update_path "${artifact_dir}/pgque-tle.sql")
-    if ! printf '%s\n' "${update_targets}" | grep -Fxq "${version}"; then
+  update_call_count=$(count_wrapper_calls install_update_path "${wrapper_body}")
+  if [[ "${update_call_count}" -gt 0 ]]; then
+    update_targets=$(call_target_versions install_update_path "${wrapper_body}")
+    parsed_count=$(printf '%s\n' "${update_targets}" | awk 'NF { n++ } END { print n + 0 }')
+    if [[ "${parsed_count}" -ne "${update_call_count}" ]]; then
+      echo "FAIL: pgque-tle.sql install_update_path count mismatch" \
+        "(calls=${update_call_count}, parsed=${parsed_count})" >&2
+      return 1
+    fi
+    local has_current_target=0
+    while IFS= read -r target; do
+      [[ -n "${target}" ]] || continue
+      if ! is_final_semver "${target}"; then
+        echo "FAIL: pgque-tle.sql install_update_path target must be final SemVer," \
+          "got ${target}" >&2
+        return 1
+      fi
+      if [[ ! -d "${artifact_dir}/pgque-tle-updates" && "${target}" != "${version}" ]]; then
+        echo "FAIL: pgque-tle.sql install_update_path target must be ${version}," \
+          "got ${target}" >&2
+        return 1
+      fi
+      if [[ "${target}" == "${version}" ]]; then
+        has_current_target=1
+      fi
+    done <<< "${update_targets}"
+    if [[ "${has_current_target}" -ne 1 ]]; then
       echo "FAIL: pgque-tle.sql install_update_path targets must include ${version};" \
         "found ${update_targets:-<missing>}" >&2
       return 1
@@ -282,27 +345,24 @@ record_manifest() {
   assert_directory_contents 0
 
   tmp=$(mktemp "${artifact_dir}/.release-manifest.XXXXXX")
+  tmp_files+=("${tmp}")
   {
     echo "# Generated by build/promote-release.sh. Do not edit by hand."
     echo "version ${version}"
   } > "${tmp}"
   for artifact in "${artifacts[@]}"; do
-    if ! hash=$(sha256_file "${artifact_dir}/${artifact}"); then
-      rm -f "${tmp}"
-      return 1
-    fi
+    hash=$(sha256_file "${artifact_dir}/${artifact}")
     echo "sha256 ${hash} ${artifact}" >> "${tmp}"
   done
   if [[ -d "${artifact_dir}/pgque-tle-updates" ]]; then
     while IFS= read -r artifact; do
       [[ -n "${artifact}" ]] || continue
-      if ! hash=$(sha256_file "${artifact_dir}/${artifact}"); then
-        rm -f "${tmp}"
-        return 1
-      fi
+      hash=$(sha256_file "${artifact_dir}/${artifact}")
       echo "sha256 ${hash} ${artifact}" >> "${tmp}"
-    done < <(find "${artifact_dir}/pgque-tle-updates" -maxdepth 1 -type f -name '*.sql' \
-      | sed "s|^${artifact_dir}/||" | LC_ALL=C sort)
+    done < <(
+      cd "${artifact_dir}"
+      find pgque-tle-updates -maxdepth 1 -type f -name '*.sql' | LC_ALL=C sort
+    )
   fi
   mv "${tmp}" "${manifest}"
   verify_manifest

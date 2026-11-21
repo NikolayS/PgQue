@@ -53,10 +53,11 @@ jobs:
       - name: Validate version and tests
         run: |
           set -Eeuo pipefail
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "version must look like v0.2.0"
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "version must look like v0.2.0 or v0.3.0-rc.2"
             exit 1
           fi
+          git check-ref-format "refs/tags/$VERSION"
           cd clients/go
           go test ./...
 
@@ -101,7 +102,7 @@ jobs:
           echo "dry run: would push subtree $split_sha to ${MIRROR_REPO}:main and tag $VERSION"
 
   publish:
-    if: ${{ !inputs.dry_run }}
+    if: ${{ !inputs.dry_run && github.ref == 'refs/heads/main' }}
     needs: validate
     runs-on: ubuntu-latest
     environment: go-release
@@ -150,8 +151,9 @@ jobs:
       - name: Push mirror main and tag
         run: |
           set -Eeuo pipefail
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${MIRROR_REPO}.git"
-          if git ls-remote --exit-code --tags "$remote" "refs/tags/$VERSION" >/dev/null; then
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')"
+          remote="https://github.com/${MIRROR_REPO}.git"
+          if git -c "http.https://github.com/.extraheader=${auth_header}" ls-remote --exit-code --tags "$remote" "refs/tags/$VERSION" >/dev/null; then
             echo "mirror tag $VERSION already exists"
             exit 1
           else
@@ -162,18 +164,18 @@ jobs:
             fi
           fi
 
-          candidate="refs/heads/release-candidate/$VERSION"
-          git push "$remote" "$split_sha:$candidate"
+          # Push main first so a failed non-fast-forward push never leaves an
+          # immutable tag dangling on the mirror.
+          git -c "http.https://github.com/.extraheader=${auth_header}" push "$remote" "$split_sha:refs/heads/main"
 
           tmp=$(mktemp -d)
-          git clone --no-checkout --filter=blob:none "$remote" "$tmp"
+          trap 'rm -rf "$tmp"' EXIT
+          git -c "http.https://github.com/.extraheader=${auth_header}" clone --no-checkout --filter=blob:none "$remote" "$tmp"
           git -C "$tmp" config user.name "github-actions[bot]"
           git -C "$tmp" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tmp" fetch origin "$candidate"
-          git -C "$tmp" tag -a "$VERSION" FETCH_HEAD -m "Go client $VERSION"
-          git -C "$tmp" push origin "refs/tags/$VERSION"
-          git push "$remote" "$split_sha:refs/heads/main"
-          git push "$remote" ":$candidate"
+          git -C "$tmp" -c "http.https://github.com/.extraheader=${auth_header}" fetch origin main
+          git -C "$tmp" tag -a "$VERSION" "$split_sha" -m "Go client $VERSION"
+          git -C "$tmp" -c "http.https://github.com/.extraheader=${auth_header}" push origin "refs/tags/$VERSION"
 
       - name: Create GitHub Release in mirror
         if: inputs.create_release
