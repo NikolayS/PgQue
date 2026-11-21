@@ -12,6 +12,11 @@ begin
   perform pgque.create_queue('paged_coop_takeover');
   perform pgque.register_subconsumer('paged_coop_takeover', 'main_c', 'w1');
   perform pgque.register_subconsumer('paged_coop_takeover', 'main_c', 'w2');
+end $$;
+
+/* Publication must commit after the subscriptions' starting snapshots. */
+do $$
+begin
   perform pgque.send('paged_coop_takeover', 'coop', '{"n":1}'::text);
   perform pgque.send('paged_coop_takeover', 'coop', '{"n":2}'::text);
   perform pgque.send('paged_coop_takeover', 'coop', '{"n":3}'::text);
@@ -199,6 +204,10 @@ do $$
 begin
   perform pgque.create_queue('paged_partition_epoch');
   perform pgque.subscribe_slot('paged_partition_epoch', 'part_c', 0, 1);
+end $$;
+
+do $$
+begin
   perform pgque.send(
     'paged_partition_epoch', 'part', '{"n":1}'::text, 'tenant-a'
   );
@@ -322,11 +331,15 @@ do $$
 begin
   perform pgque.create_queue('paged_fail_retry');
   perform pgque.subscribe('paged_fail_retry', 'c1');
-  perform pgque.send('paged_fail_retry', 'retry-me', '{"route":"retry"}'::text);
 
   perform pgque.create_queue('paged_fail_dlq');
   perform pgque.set_queue_config('paged_fail_dlq', 'max_retries', '0');
   perform pgque.subscribe('paged_fail_dlq', 'c1');
+end $$;
+
+do $$
+begin
+  perform pgque.send('paged_fail_retry', 'retry-me', '{"route":"retry"}'::text);
   perform pgque.send('paged_fail_dlq', 'dead-me', '{"route":"dlq"}'::text);
 end $$;
 

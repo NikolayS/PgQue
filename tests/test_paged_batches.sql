@@ -8,15 +8,22 @@ do $$
 begin
   perform pgque.create_queue('paged_n_minus_1');
   perform pgque.subscribe('paged_n_minus_1', 'c1');
-  perform pgque.send('paged_n_minus_1', 'identity', '{"n":1}'::text);
 
   perform pgque.create_queue('paged_n');
   perform pgque.subscribe('paged_n', 'c1');
-  perform pgque.send('paged_n', 'identity', '{"n":1}'::text);
-  perform pgque.send('paged_n', 'identity', '{"n":2}'::text);
 
   perform pgque.create_queue('paged_n_plus_1');
   perform pgque.subscribe('paged_n_plus_1', 'c1');
+end $$;
+
+/* Publication must commit after the subscriptions' starting snapshots. */
+do $$
+begin
+  perform pgque.send('paged_n_minus_1', 'identity', '{"n":1}'::text);
+
+  perform pgque.send('paged_n', 'identity', '{"n":1}'::text);
+  perform pgque.send('paged_n', 'identity', '{"n":2}'::text);
+
   perform pgque.send('paged_n_plus_1', 'identity', '{"n":1}'::text);
   perform pgque.send('paged_n_plus_1', 'identity', '{"n":2}'::text);
   perform pgque.send('paged_n_plus_1', 'identity', '{"n":3}'::text);
@@ -117,6 +124,10 @@ do $$
 begin
   perform pgque.create_queue('paged_identity');
   perform pgque.subscribe('paged_identity', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.send('paged_identity', 'type-1', '{"n":1}'::text);
   perform pgque.send('paged_identity', 'type-2', '{"n":2}'::text);
   perform pgque.send('paged_identity', 'type-3', '{"n":3}'::text);
@@ -293,6 +304,10 @@ do $$
 begin
   perform pgque.create_queue('paged_takeover');
   perform pgque.subscribe('paged_takeover', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.send('paged_takeover', 'takeover', '{"n":1}'::text);
   perform pgque.send('paged_takeover', 'takeover', '{"n":2}'::text);
 end $$;
@@ -345,6 +360,13 @@ do $$
 begin
   perform pgque.create_queue('paged_negative_ids');
   perform pgque.subscribe('paged_negative_ids', 'c1');
+
+  perform pgque.create_queue('paged_duplicate_ids');
+  perform pgque.subscribe('paged_duplicate_ids', 'c1');
+end $$;
+
+do $$
+begin
   perform pgque.insert_event_raw(
     'paged_negative_ids', -2, clock_timestamp(), null, null,
     'negative', '{"id":-2}', 'e1-a', 'e2-a', 'e3-a', 'e4-a'
@@ -354,8 +376,6 @@ begin
     'negative', '{"id":-1}', 'e1-b', 'e2-b', 'e3-b', 'e4-b'
   );
 
-  perform pgque.create_queue('paged_duplicate_ids');
-  perform pgque.subscribe('paged_duplicate_ids', 'c1');
   perform pgque.insert_event_raw(
     'paged_duplicate_ids', 7, clock_timestamp(), null, null,
     'duplicate-a', '{"copy":1}', null, null, null, null

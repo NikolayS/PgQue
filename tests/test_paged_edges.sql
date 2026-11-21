@@ -28,25 +28,30 @@ do $$
 begin
   perform pgque.create_queue('paged_edge_max');
   perform pgque.subscribe('paged_edge_max', 'c1');
-  perform pgque.send('paged_edge_max', 'max', 'one');
 
   perform pgque.create_queue('paged_edge_empty');
   perform pgque.subscribe('paged_edge_empty', 'c1');
 
   perform pgque.create_queue('paged_edge_ttl');
   perform pgque.subscribe('paged_edge_ttl', 'c1');
-  perform pgque.send('paged_edge_ttl', 'ttl', 'one');
 
   perform pgque.create_queue('paged_edge_receipt');
   perform pgque.subscribe('paged_edge_receipt', 'c1');
-  perform pgque.send('paged_edge_receipt', 'receipt', 'first');
 
   perform pgque.create_queue('paged_edge_rollback');
   perform pgque.subscribe('paged_edge_rollback', 'c1');
-  perform pgque.send('paged_edge_rollback', 'rollback', 'one');
 
   perform pgque.create_queue('paged_edge_reinstall');
   perform pgque.subscribe('paged_edge_reinstall', 'c1');
+end $$;
+
+/* Publication must commit after the subscriptions' starting snapshots. */
+do $$
+begin
+  perform pgque.send('paged_edge_max', 'max', 'one');
+  perform pgque.send('paged_edge_ttl', 'ttl', 'one');
+  perform pgque.send('paged_edge_receipt', 'receipt', 'first');
+  perform pgque.send('paged_edge_rollback', 'rollback', 'one');
   perform pgque.send('paged_edge_reinstall', 'reinstall', 'one');
 end $$;
 

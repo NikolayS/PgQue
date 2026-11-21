@@ -53,11 +53,15 @@ begin
 end $$;
 
 do $$
+begin
+  perform pgque.subscribe('paged_history_rotation', 'c1');
+end $$;
+
+/* Publication must commit after the subscription's starting snapshot. */
+do $$
 declare
   v_id bigint;
 begin
-  perform pgque.subscribe('paged_history_rotation', 'c1');
-
   v_id := pgque.send(
     'paged_history_rotation', 'rotation.one', 'payload-one', 'tenant-a');
   insert into _paged_history_expected
@@ -169,12 +173,15 @@ end $$;
  * A normal retry must not trigger the duplicate-ID ambiguity guard.
  */
 do $$
-declare
-  v_id bigint;
 begin
   perform pgque.create_queue('paged_history_retry');
   perform pgque.subscribe('paged_history_retry', 'c1');
+end $$;
 
+do $$
+declare
+  v_id bigint;
+begin
   v_id := pgque.send(
     'paged_history_retry', 'retry.ok-one', 'payload-ok-one', 'tenant-ok-1');
   insert into _paged_history_expected
