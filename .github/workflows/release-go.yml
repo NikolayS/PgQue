@@ -164,9 +164,31 @@ jobs:
             fi
           fi
 
-          # Push main first so a failed non-fast-forward push never leaves an
-          # immutable tag dangling on the mirror.
-          git -c "http.https://github.com/.extraheader=${auth_header}" push "$remote" "$split_sha:refs/heads/main"
+          # Reconcile mirror main when a prior release was pushed from a backport
+          # branch (so mirror main is not an ancestor of split_sha). Build a
+          # fast-forward merge commit whose tree is exact split_sha^{tree} and
+          # whose parents are mirror main + split_sha, preserving history without
+          # force-pushing.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          mirror_main=$(git -c "http.https://github.com/.extraheader=${auth_header}" ls-remote --heads "$remote" main | awk '{print $1}')
+          release_sha="$split_sha"
+          if [ -n "$mirror_main" ]; then
+            git -c "http.https://github.com/.extraheader=${auth_header}" fetch --no-tags "$remote" refs/heads/main:refs/remotes/mirror/main
+            mirror_main=$(git rev-parse refs/remotes/mirror/main)
+            if ! git merge-base --is-ancestor "$mirror_main" "$split_sha"; then
+              release_sha=$(git commit-tree "$split_sha^{tree}" \
+                -p "$mirror_main" \
+                -p "$split_sha" \
+                -m "Go client $VERSION (sync from NikolayS/PgQue)")
+              echo "reconciled diverged mirror main ($mirror_main) + subtree ($split_sha) -> $release_sha"
+            fi
+          fi
+
+          # Push main first so a failed push never leaves an immutable tag
+          # dangling on the mirror.
+          git -c "http.https://github.com/.extraheader=${auth_header}" push "$remote" "${release_sha}:refs/heads/main"
 
           tmp=$(mktemp -d)
           trap 'rm -rf "$tmp"' EXIT
@@ -174,7 +196,7 @@ jobs:
           git -C "$tmp" config user.name "github-actions[bot]"
           git -C "$tmp" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$tmp" -c "http.https://github.com/.extraheader=${auth_header}" fetch origin main
-          git -C "$tmp" tag -a "$VERSION" "$split_sha" -m "Go client $VERSION"
+          git -C "$tmp" tag -a "$VERSION" "$release_sha" -m "Go client $VERSION"
           git -C "$tmp" -c "http.https://github.com/.extraheader=${auth_header}" push origin "refs/tags/$VERSION"
 
       - name: Create GitHub Release in mirror
