@@ -51,6 +51,7 @@ declare
   v_deadline timestamptz := clock_timestamp() + interval '15 seconds';
 begin
   loop
+    perform pg_catalog.pg_stat_clear_snapshot();
     exit when not exists (
       select 1
       from pg_catalog.pg_stat_activity
