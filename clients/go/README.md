@@ -14,7 +14,7 @@ go get github.com/NikolayS/pgque-go@v0.2.2
 
 The module is mirrored from `clients/go/` of the parent repo to the public [`NikolayS/pgque-go`](https://github.com/NikolayS/pgque-go) module repo.
 
-Requires Go 1.25+ and PostgreSQL 14+ with the PgQue schema installed
+Requires Go 1.25+ and PostgreSQL 14–19 with the PgQue schema installed
 (`\i pgque.sql` — no extension required). Build with the latest patch of a
 [supported Go release](https://go.dev/doc/devel/release#policy).
 

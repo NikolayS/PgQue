@@ -84,7 +84,7 @@ The release workflow is `.github/workflows/release-ruby.yml`.
    is configured (bootstrap section above).
 5. Run **Release Ruby client** with `dry_run=true` first. Dry runs validate the
    clean tree, version and namespaced tag, confirm the version is not already on
-   RubyGems, install the current development SQL into a pinned PostgreSQL 18
+   RubyGems, install the current development SQL into a pinned PostgreSQL 19
    service, and run the full database-backed Ruby suite. Any skipped test fails
    the release check. They then build and inspect the `.gem`, install it in an isolated directory, run live
    queue operations from that installed gem,

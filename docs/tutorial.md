@@ -3,7 +3,7 @@ title: Tutorial
 description: A hands-on PgQue walkthrough — install, send, receive, retry, dead-letter, idempotency, partition keys, and health checks.
 ---
 
-A guided, hands-on walkthrough. With `psql` access to a Postgres 14+ database
+A guided, hands-on walkthrough. With `psql` access to a Postgres 14–19 database
 and about fifteen minutes, you can follow every step end to end. You will type
 SQL, see what comes back, and build an intuition for how PgQue moves messages
 through an order-processing queue.
@@ -13,7 +13,7 @@ a happy-path delivery, a retry that reappears after a delay, a message driven
 all the way to the dead-letter queue, a health check, and a retry-safe keyed
 event consumed through a leased partition slot.
 
-Prerequisites: Postgres 14 or newer, a database to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker by hand, so it works on any managed or self-managed Postgres.
+Prerequisites: Postgres 14–19, a database to install into, and `psql` (the tutorial uses `\i` and `\gset`, which are psql meta-commands). `pg_cron` is recommended for production but not required here — this tutorial drives the ticker by hand, so it works on any managed or self-managed Postgres.
 
 Each step shows the exact SQL and the expected output. Your `msg_id` / `batch_id` / `ev_new` numbers will differ from the examples — each `pgque.force_next_tick` call advances the event sequence by a large amount, so exact numeric output depends on when you call it. Treat the numbers as illustrative. Where transaction boundaries matter — and they matter, because PgQue is snapshot-based — the text calls that out.
 

@@ -15,7 +15,7 @@ npm install pgque
 # or: yarn add pgque
 ```
 
-Runtime requirements: Node.js 20+ and PostgreSQL 14+ with the PgQue schema
+Runtime requirements: Node.js 20+ and PostgreSQL 14–19 with the PgQue schema
 installed (`\i pgque.sql` — no extension required).
 
 ## Database permissions

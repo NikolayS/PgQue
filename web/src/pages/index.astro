@@ -8,7 +8,7 @@ import '@fontsource/ibm-plex-sans/400.css';
 import '@fontsource/ibm-plex-sans/500.css';
 import '@fontsource/ibm-plex-sans/600.css';
 
-const installSql = `-- one file, any Postgres 14+, managed or self-hosted
+const installSql = `-- one file, Postgres 14–19, managed or self-hosted
 \\i devel/sql/pgque.sql
 select pgque.start();              -- pg_cron ticks 10x/sec
 
@@ -326,7 +326,7 @@ const platformGroups = [
           <p class="lede">
             A durable event stream that lives inside Postgres — a shared log
             with independent per-consumer cursors, closer to Kafka than to a
-            task-message broker. Pure SQL and PL/pgSQL on any modern Postgres,
+            task-message broker. Pure SQL and PL/pgSQL on Postgres 14–19,
             managed or self-hosted. No sidecar daemon, no C extension.
           </p>
           <div class="cta-row">
@@ -451,7 +451,7 @@ const platformGroups = [
       <section class="runson reveal" id="runs-on">
         <h2 class="section-title anchored"><a class="anchor-link" href="#runs-on" aria-label="Link to this section">#</a>Runs on</h2>
         <p class="section-sub">
-          PgQue runs on any Postgres 14+. These platforms ship pg_cron, so the
+          PgQue runs on Postgres 14–19. These platforms ship pg_cron, so the
           automated ticker works out of the box.
         </p>
         <div class="runson-groups">

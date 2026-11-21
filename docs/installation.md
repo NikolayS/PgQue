@@ -19,8 +19,9 @@ and its tagged installation page, whose commands point to `sql/`. The
 
 ## Requirements
 
-- Postgres 14 or newer. PgQue uses `xid8`, `pg_snapshot`, and
-  `pg_current_xact_id()`, which arrived in Postgres 14.
+- Postgres 14–19 (tested on PostgreSQL 14, 15, 16, 17, 18, and 19). PgQue uses
+  `xid8`, `pg_snapshot`, and `pg_current_xact_id()`, which arrived in Postgres
+  14.
 - Something that calls `pgque.ticker()` periodically. Without a ticker,
   producers can enqueue events but consumers see nothing — see
   [ticking](#ticking) below. This is the single most common cause of "it isn't
