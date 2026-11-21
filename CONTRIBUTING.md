@@ -22,7 +22,18 @@ Use [CLAUDE.md](CLAUDE.md) for the detailed rules. In short:
 
 ## Tests
 
-Run the relevant SQL regression tests before opening a PR. For changes touching supported-version behavior, test against the supported Postgres matrix when possible.
+Run the relevant SQL regression tests before opening a PR. For changes touching supported-version behavior, test against the supported Postgres matrix (PostgreSQL 14–19) when possible.
+
+```bash
+psql -X -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql -f tests/run_all.sql
+psql -X -v ON_ERROR_STOP=1 -f tests/acceptance/run_acceptance.sql
+```
+
+In a `pg_cron`-enabled database, also verify real scheduled delivery without manual `ticker()` calls:
+
+```bash
+psql -X -v ON_ERROR_STOP=1 -f tests/test_pgcron_delivery.sql
+```
 
 At minimum, include the test or manual verification command in the PR description.
 

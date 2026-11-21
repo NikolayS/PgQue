@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, integrate/0.3-20261005, 'rc/**', 'release/**']
 
 jobs:
   test:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: ['19beta1', '18', '17', '16', '15', '14']
+        pg_version: ['19', '18', '17', '16', '15', '14']
 
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,28 @@ jobs:
       - name: Build pgque
         run: bash build/transform.sh
 
+      - name: Check NSU cleanup control flow without a database
+        run: python3 tests/test_nonsuperuser_harness_unit.py
+
+      - name: Check NSU isolation and mandatory oracles (private cluster)
+        run: |
+          docker exec --user root pgque-test bash -ec '
+            apt-get update -qq
+            apt-get install -y --no-install-recommends python3
+            mkdir -p /tmp/pgque-private-regression
+          '
+          docker cp tests pgque-test:/tmp/pgque-private-regression/tests
+          docker cp devel pgque-test:/tmp/pgque-private-regression/devel
+          docker exec --user postgres --workdir /tmp/pgque-private-regression \
+            pgque-test bash -c '
+              PG_BINDIR="$(pg_config --bindir)" python3 tests/test_nonsuperuser_cleanup.py
+            '
+
+      - name: Verify non-superuser install ownership (fresh cluster)
+        env:
+          PGQUE_TEST_SUPERUSER_DSN: postgresql://postgres:pgque_test@localhost/postgres
+        run: bash tests/security_nonsuperuser_install.sh
+
       - name: Install pgque
         run: |
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
@@ -40,8 +62,71 @@ jobs:
 
       - name: Run regression tests
         run: |
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+          PAGER=cat PGPASSWORD=pgque_test psql \
+            --no-psqlrc \
+            --host=localhost \
+            --username=postgres \
+            --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --set="expected_pgque_version=$(bash build/read-version.sh)" \
+            --file=tests/run_all.sql
+
+      - name: Run registration concurrency regressions
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: bash tests/two_session_registration_locks.sh
+
+      - name: Verify non-superuser install ownership (existing roles)
+        env:
+          PGQUE_TEST_SUPERUSER_DSN: postgresql://postgres:pgque_test@localhost/postgres
+        run: bash tests/security_nonsuperuser_install.sh
+
+      - name: Run idempotency lock-wait TTL regression
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: bash tests/two_session_idem_ttl.sh
+
+      - name: Run idempotency cleanup lock-wait regression
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: python3 tests/two_session_idem_maintenance.py
+
+      - name: Run new idempotency claim clock regressions
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: python3 tests/two_session_idem_claim_clock.py
+
+      - name: Run cooperative dead-clock regression
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: python3 tests/two_session_coop_dead_clock.py
+
+      - name: Run partition release fencing regression
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: bash tests/two_session_partition_release.sh
+
+      - name: Run nonblocking partition slot claim regression
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: bash tests/two_session_slot_claim.sh
+
+      - name: Run atomic partition setup and snapshot-window regressions
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: bash tests/two_session_partition_atomic.sh
+
+      - name: Run partition lifecycle concurrency regressions
+        env:
+          PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
+        run: python3 tests/two_session_partition_lifecycle.py
+
+      - name: Run paged concurrency acceptance
+        env:
+          PGQUE_TEST_IMAGE: postgres:${{ matrix.pg_version }}
+        run: |
+          bash tests/test_paged_concurrency.sh
+          bash tests/test_paged_drop_timeout.sh
 
       - name: Run experimental tests
         run: |
@@ -66,9 +151,14 @@ jobs:
 
       - name: Test install idempotency
         run: |
+          # A dependent monitoring view must survive a development reinstall.
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -c 'create view public.partition_status_dependency as select * from pgque.partition_slot_status; grant select on public.partition_status_dependency to pgque_reader'
           # Re-run install -- should produce no errors
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
+          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -c 'set role pgque_reader; select count(*) from public.partition_status_dependency; reset role; drop view public.partition_status_dependency'
           # Verify everything still works
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
@@ -98,14 +188,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Start PostgreSQL 19 beta 1
+      - name: Start PostgreSQL 19
         run: |
           set -Eeuo pipefail
           docker run -d --name pgque-stable-smoke \
             -e POSTGRES_PASSWORD=pgque_test \
             -e POSTGRES_DB=pgque_test \
             -p 5432:5432 \
-            postgres:19beta1
+            postgres:19
 
           bash ci/wait-for-postgres.sh pgque-stable-smoke
 
@@ -159,15 +249,16 @@ jobs:
         if: always()
         run: docker rm -f pgque-stable-smoke
 
-  upgrade-v0-1-to-head:
-    name: upgrade v0.1.0 to HEAD (PG ${{ matrix.pg_version }})
+  upgrade-released-to-head:
+    name: upgrade v${{ matrix.from_version }} to HEAD (PG ${{ matrix.pg_version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # Upgrade coverage uses oldest/newest supported PG endpoints; the main
         # regression matrix above covers every supported version (14–19).
-        pg_version: ['19beta1', '14']
+        pg_version: ['19', '14']
+        from_version: ['0.1.0', '0.2.0', '0.2.1', '0.2.2', '0.3.0-alpha.1']
 
     steps:
       - uses: actions/checkout@v4
@@ -201,18 +292,57 @@ jobs:
       - name: Build HEAD pgque
         run: bash build/transform.sh
 
-      - name: Install v0.1.0
+      - name: Install released v${{ matrix.from_version }}
         run: |
           set -Eeuo pipefail
-          git show v0.1.0:sql/pgque.sql > /tmp/pgque-v0.1.0.sql
+          install_sql=sql/pgque.sql
+          if [[ '${{ matrix.from_version }}' = '0.3.0-alpha.1' ]]; then
+            install_sql=devel/sql/pgque.sql
+          fi
+          git show "v${{ matrix.from_version }}:${install_sql}" > /tmp/pgque-released.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f /tmp/pgque-v0.1.0.sql
+            -v ON_ERROR_STOP=1 -f /tmp/pgque-released.sql
 
-      - name: Prepare v0.1.0 fixture
+      - name: Prepare populated released-version fixture
         run: |
           set -Eeuo pipefail
+          if [[ '${{ matrix.from_version }}' = '0.1.0' ]]; then
+            fixture=tests/test_upgrade_v0_1_fixture.sql
+          elif [[ '${{ matrix.from_version }}' = '0.2.0' ]]; then
+            fixture=tests/test_upgrade_v0_2_fixture.sql
+          elif [[ '${{ matrix.from_version }}' = '0.3.0-alpha.1' ]]; then
+            fixture=tests/test_upgrade_v0_3_alpha_fixture.sql
+          else
+            fixture=tests/test_upgrade_modern_fixture.sql
+          fi
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_fixture.sql
+            -v ON_ERROR_STOP=1 -f "$fixture"
+
+      - name: Check rejected alpha upgrades preserve state
+        if: matrix.from_version == '0.3.0-alpha.1'
+        run: |
+          set -Eeuo pipefail
+          export PGPASSWORD=pgque_test
+          psql_args=(--no-psqlrc -h localhost -U postgres -d pgque_test -v ON_ERROR_STOP=1)
+          if psql "${psql_args[@]}" --single-transaction -f devel/sql/pgque.sql > /tmp/alpha-blocked.log 2>&1; then
+            echo 'FAIL: dependent alpha function was replaced'
+            exit 1
+          fi
+          grep -F 'cannot stabilize named arguments for pgque.send(text,text,jsonb,text) because dependent objects exist:' /tmp/alpha-blocked.log || {
+            cat /tmp/alpha-blocked.log
+            exit 1
+          }
+          psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_blocked_assertions.sql
+          psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_oversized_fixture.sql
+          if psql "${psql_args[@]}" --single-transaction -f devel/sql/pgque.sql > /tmp/alpha-cap.log 2>&1; then
+            echo 'FAIL: oversized alpha topology was accepted'
+            exit 1
+          fi
+          grep -F 'cannot apply the 256-slot cap: partitioned consumer oversized-workers on queue upgrade_v03_oversized_q has n=257;' /tmp/alpha-cap.log || {
+            cat /tmp/alpha-cap.log
+            exit 1
+          }
+          psql "${psql_args[@]}" -f tests/test_upgrade_v0_3_alpha_oversized_assertions.sql
 
       - name: Upgrade to HEAD
         run: |
@@ -223,8 +353,18 @@ jobs:
       - name: Verify upgraded state
         run: |
           set -Eeuo pipefail
+          expected_version="$(awk '/^-- Version:/ {print $3; exit}' devel/sql/pgque.sql)"
+          if [[ '${{ matrix.from_version }}' = '0.1.0' ]]; then
+            assertions=tests/test_upgrade_v0_1_assertions.sql
+          elif [[ '${{ matrix.from_version }}' = '0.2.0' ]]; then
+            assertions=tests/test_upgrade_v0_2_assertions.sql
+          elif [[ '${{ matrix.from_version }}' = '0.3.0-alpha.1' ]]; then
+            assertions=tests/test_upgrade_v0_3_alpha_assertions.sql
+          else
+            assertions=tests/test_upgrade_modern_assertions.sql
+          fi
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/test_upgrade_v0_1_assertions.sql
+            -v ON_ERROR_STOP=1 -v expected_version="$expected_version" -f "$assertions"
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_security_public_execute.sql
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
@@ -240,6 +380,16 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f tests/test_install_idempotency.sql
 
+      - name: Verify named-contract reinstall identity
+        if: matrix.from_version == '0.3.0-alpha.1'
+        run: |
+          set -Eeuo pipefail
+          export PGPASSWORD=pgque_test
+          psql_args=(--no-psqlrc -h localhost -U postgres -d pgque_test -v ON_ERROR_STOP=1)
+          psql "${psql_args[@]}" -f tests/test_named_arguments_v0_3_reinstall_fixture.sql
+          psql "${psql_args[@]}" --single-transaction -f devel/sql/pgque.sql
+          psql "${psql_args[@]}" -f tests/test_named_arguments_v0_3_reinstall_assertions.sql
+
       - name: Cleanup
         if: always()
         run: docker rm -f pgque-upgrade-test
@@ -248,8 +398,8 @@ jobs:
     name: pg_tle install path
     runs-on: ubuntu-latest
     env:
-      # pg_tle v1.5.2 does not compile against PostgreSQL 19 beta 1 yet;
-      # keep this optional extension path on the newest compatible major.
+      # Keep this optional pg_tle v1.5.2 path on validated PostgreSQL 18.
+      # The default SQL install is tested on PostgreSQL 14 through 19.
       PG_VERSION: '18'
       PGTLE_TAG: v1.5.2
     steps:
@@ -280,20 +430,7 @@ jobs:
             pgque-tle:test \
             -c shared_preload_libraries=pg_tle
 
-          ready=0
-          for _ in $(seq 1 30); do
-            if docker exec -e PGPASSWORD=pgque_test pgque-tle-test \
-              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${ready}" -ne 1 ]]; then
-            echo "PG not ready after 30 seconds"
-            docker logs pgque-tle-test
-            exit 1
-          fi
+          bash ci/wait-for-postgres.sh pgque-tle-test
 
       - name: Run pg_tle e2e test
         run: |
@@ -321,6 +458,26 @@ jobs:
             -v origin_installer=/tmp/pgque-tle-v0.2.1.sql \
             -f tests/test_tle_upgrade_v0_2.sql
 
+      - name: Run populated pg_tle release-to-candidate upgrade tests
+        run: |
+          set -Eeuo pipefail
+          expected_version="$(awk '/^-- Version:/ {print $3; exit}' devel/sql/pgque.sql)"
+          test -n "$expected_version"
+          for origin_version in 0.2.1 0.2.2; do
+            origin_installer="/tmp/pgque-tle-candidate-origin-${origin_version}.sql"
+            git show "v${origin_version}:sql/pgque-tle.sql" > "$origin_installer"
+            database="pgque_tle_candidate_${origin_version//./}"
+            PGPASSWORD=pgque_test psql -h localhost -U postgres -d postgres \
+              -v ON_ERROR_STOP=1 -c "create database ${database}"
+            PGPASSWORD=pgque_test psql -h localhost -U postgres -d "$database" \
+              -v ON_ERROR_STOP=1 \
+              -v origin_version="$origin_version" \
+              -v origin_installer="$origin_installer" \
+              -v candidate_installer=devel/sql/pgque-tle.sql \
+              -v expected_version="$expected_version" \
+              -f tests/test_tle_upgrade_candidate.sql
+          done
+
       - name: Run full regression suite via pg_tle install
         run: |
           set -Eeuo pipefail
@@ -332,8 +489,14 @@ jobs:
             -c 'create extension pg_tle;' \
             -f devel/sql/pgque-tle.sql \
             -c 'create extension pgque;'
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_tle_regress \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+          PAGER=cat PGPASSWORD=pgque_test psql \
+            --no-psqlrc \
+            --host=localhost \
+            --username=postgres \
+            --dbname=pgque_tle_regress \
+            --set=ON_ERROR_STOP=1 \
+            --set="expected_pgque_version=$(bash build/read-version.sh)" \
+            --file=tests/run_all.sql
 
       - name: Cleanup
         if: always()
@@ -343,7 +506,7 @@ jobs:
     name: pg_cron install path
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
       PG_MAJOR: '19'
     steps:
       - uses: actions/checkout@v4
@@ -374,20 +537,7 @@ jobs:
             -c cron.database_name=pgque_test \
             -c cron.use_background_workers=on
 
-          ready=0
-          for _ in $(seq 1 30); do
-            if docker exec -e PGPASSWORD=pgque_test pgque-pgcron-test \
-              psql -U postgres -d pgque_test -c 'select 1' >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${ready}" -ne 1 ]]; then
-            echo "PG not ready after 30 seconds"
-            docker logs pgque-pgcron-test
-            exit 1
-          fi
+          bash ci/wait-for-postgres.sh pgque-pgcron-test
 
       - name: Create pg_cron extension
         run: |
@@ -404,8 +554,14 @@ jobs:
       - name: Run full regression suite (pg_cron-skipped tests now run)
         run: |
           set -Eeuo pipefail
-          PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
-            -v ON_ERROR_STOP=1 -f tests/run_all.sql
+          PAGER=cat PGPASSWORD=pgque_test psql \
+            --no-psqlrc \
+            --host=localhost \
+            --username=postgres \
+            --dbname=pgque_test \
+            --set=ON_ERROR_STOP=1 \
+            --set="expected_pgque_version=$(bash build/read-version.sh)" \
+            --file=tests/run_all.sql
 
       - name: Verify pgque.start() schedules ticker_loop
         run: |
@@ -425,6 +581,12 @@ jobs:
             echo "FAIL: ticker_loop schedule assertion did not run"
             exit 1
           fi
+
+      - name: Verify real pg_cron message delivery
+        run: |
+          set -Eeuo pipefail
+          PGPASSWORD=pgque_test psql -X -h localhost -U postgres -d pgque_test \
+            -v ON_ERROR_STOP=1 -f tests/test_pgcron_delivery.sql
 
       - name: Verify pg_timetable to pg_cron scheduler switch
         run: |
@@ -453,7 +615,7 @@ jobs:
     name: pg_timetable real worker
     runs-on: ubuntu-latest
     env:
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
       PGTT_IMAGE: cybertecpostgresql/pg_timetable@sha256:6bed16f944ab91392fac9cd04aba82cd6690769e179d411748fd0bb538f55acd
       PGTT_NET: pgque-pgtimetable-test
       PG_CONTAINER: pgque-pgtimetable-pg
@@ -535,7 +697,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -567,7 +729,10 @@ jobs:
           python3 -m venv /tmp/pgque-python-venv
           . /tmp/pgque-python-venv/bin/activate
           python -m pip install -U pip
-          python -m pip install -e 'clients/python[dev]'
+          python -m pip install -e 'clients/python[dev]' pip-audit
+          # Exclude only the local client; audit every installed dependency/tool.
+          python -m pip freeze --all --exclude-editable > "$RUNNER_TEMP/python-audit-requirements.txt"
+          python -m pip_audit --strict --no-deps --disable-pip -r "$RUNNER_TEMP/python-audit-requirements.txt"
           pytest -v clients/python/tests/
 
       - name: Benchmark setup regression
@@ -578,9 +743,11 @@ jobs:
           set -Eeuo pipefail
           python3 -m venv /tmp/pgque-python-package-venv
           . /tmp/pgque-python-package-venv/bin/activate
-          python -m pip install -U pip build twine
+          python -m pip install -U pip build twine pip-audit
           cd clients/python
-          python -m build
+          python -c 'import subprocess, sys, tomllib; subprocess.check_call([sys.executable, "-m", "pip", "install", *tomllib.load(open("pyproject.toml", "rb"))["build-system"]["requires"]])'
+          python -m pip_audit --strict
+          python -m build --no-isolation
           python -m twine check dist/*
 
       - name: Cleanup Python test DB
@@ -592,11 +759,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          check-latest: true
+          cache-dependency-path: clients/go/go.sum
 
       - name: Start PostgreSQL ${{ env.PG_VERSION }}
         run: |
@@ -618,6 +791,15 @@ jobs:
           PGPASSWORD=pgque_test psql -h localhost -U postgres -d pgque_test \
             -v ON_ERROR_STOP=1 -f devel/sql/pgque.sql
 
+      - name: Audit Go dependency graph
+        working-directory: clients/go
+        run: |
+          set -Eeuo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          # Text mode fails on findings. Module scan includes unused/test modules.
+          govulncheck -scan=module
+          go mod verify
+
       - name: Go client test suite
         run: |
           set -Eeuo pipefail
@@ -633,7 +815,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -669,6 +851,8 @@ jobs:
           set -Eeuo pipefail
           cd clients/typescript
           bun install --frozen-lockfile
+          bun audit
+          bun audit --prod
           bun run check
           bun run test
 
@@ -688,7 +872,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PGQUE_TEST_DSN: postgresql://postgres:pgque_test@localhost/pgque_test
-      PG_VERSION: '19beta1'
+      PG_VERSION: '19'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -746,6 +930,9 @@ jobs:
 
       - name: Verify PostgreSQL readiness checks
         run: bash tests/test_ci_readiness.sh
+
+      - name: Test stable release promotion
+        run: bash tests/test_release_promotion.sh
 
       - name: Build
         run: bash build/transform.sh

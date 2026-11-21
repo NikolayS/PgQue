@@ -25,11 +25,42 @@ begin
     end if;
 end $$;
 
+/* A `#` name is a slot only when subscribe_slot materialized matching
+   partition metadata. Ordinary consumers created before `#` was reserved
+   remain ordinary consumers after upgrade. */
+create or replace function pgque._is_partition_slot_consumer(
+    i_queue_id int4,
+    i_consumer text)
+returns boolean as $$
+begin
+    if i_queue_id is null
+        or i_consumer is null
+        or to_regclass('pgque.partition_consumer') is null
+        or to_regclass('pgque.partition_slot') is null
+    then
+        return false;
+    end if;
+
+    return exists (
+        select 1
+        from pgque.partition_consumer as pc
+        join pgque.partition_slot as ps
+            on ps.queue_id = pc.queue_id
+            and ps.co_name = pc.co_name
+        where pc.queue_id = i_queue_id
+          and pc.co_name || '#' || ps.slot::text || '/' || pc.n::text = i_consumer
+    );
+end;
+$$ language plpgsql stable security definer set search_path = pgque, pg_catalog, pg_temp;
+revoke execute on function pgque._is_partition_slot_consumer(int4, text)
+    from public, pgque_reader, pgque_writer;
+
 -- pgque.receive() -- wraps next_batch + get_batch_events
 create or replace function pgque.receive(
     i_queue text, i_consumer text, i_max_return int default 100)
 returns setof pgque.message as $$
 declare
+    v_queue_id int4;
     v_batch_id bigint;
     ev record;
     cnt int := 0;
@@ -39,14 +70,19 @@ begin
     end if;
 
     /*
-     * Guard the raw slot consumer. subscribe_slot reserves '#' (it rejects '#'
-     * in base consumer names), so a '#' name can only be a partition slot
-     * consumer "<consumer>#<slot>/<n>". The plain receive path applies neither
-     * the lease fence nor the hash filter, so it would hand back the whole
-     * unfiltered stream -- force callers onto the partitioned API.
+     * The plain receive path applies neither the lease fence nor the hash
+     * filter. Refuse cataloged slots while preserving ordinary `#` consumers
+     * that predate the reserved namespace.
      */
     if position('#' in i_consumer) > 0 then
-        raise exception 'consumer % is a partition slot consumer; use pgque.receive_partitioned()', i_consumer;
+        select q.queue_id
+        into v_queue_id
+        from pgque.queue as q
+        where q.queue_name = i_queue;
+
+        if pgque._is_partition_slot_consumer(v_queue_id, i_consumer) then
+            raise exception 'consumer % is a partition slot consumer; use pgque.receive_partitioned()', i_consumer;
+        end if;
     end if;
 
     -- Get next batch (may return NULL if no tick window is ready)
@@ -54,6 +90,8 @@ begin
     if v_batch_id is null then
         return;
     end if;
+
+    perform pgque._assert_unpaged(v_batch_id);
 
     -- Yield messages from the batch
     for ev in
@@ -82,32 +120,41 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.ack() -- finishes the batch, advances consumer position
 create or replace function pgque.ack(i_batch_id bigint)
 returns integer as $$
 declare
+    v_queue_id int4;
     v_cname text;
 begin
     /*
      * Guard the raw slot consumer (see pgque.receive). A partition slot batch
      * must be finished through the lease-fenced ack_partitioned(); plain ack()
      * lets a fenced zombie double-ack it. Resolve the batch's consumer and
-     * reject when its name carries the reserved '#'. An unknown batch id falls
-     * through to finish_batch(), preserving the pre-guard not-found behavior.
+     * reject when the partition catalogs identify it as a slot. An unknown
+     * batch id falls through to finish_batch(), preserving not-found behavior.
      */
-    select c.co_name into v_cname
+    select
+        s.sub_queue,
+        c.co_name
+    into
+        v_queue_id,
+        v_cname
     from pgque.subscription as s
     join pgque.consumer as c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
-    if found and position('#' in v_cname) > 0 then
+    if found
+        and position('#' in v_cname) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, v_cname)
+    then
         raise exception 'batch % belongs to partition slot consumer %; use pgque.ack_partitioned()', i_batch_id, v_cname;
     end if;
 
     return pgque.finish_batch(i_batch_id);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /*
  * pgque._nack_batch_event() -- shared retry/DLQ core for a single event of an
@@ -170,7 +217,7 @@ begin
     end if;
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
 create or replace function pgque.nack(
@@ -180,6 +227,7 @@ create or replace function pgque.nack(
     i_reason text default null)
 returns integer as $$
 declare
+    v_queue_id int4;
     v_cname text;
 begin
     /*
@@ -188,17 +236,26 @@ begin
      * nack_partitioned), not plain nack(). An unknown batch id falls through to
      * the shared core, which raises the same 'batch not found' as before.
      */
-    select c.co_name into v_cname
+    select
+        s.sub_queue,
+        c.co_name
+    into
+        v_queue_id,
+        v_cname
     from pgque.subscription as s
     join pgque.consumer as c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
-    if found and position('#' in v_cname) > 0 then
+    if found
+        and position('#' in v_cname) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, v_cname)
+    then
         raise exception 'batch % belongs to partition slot consumer %; retry slot batches via pgque.nack_partitioned()', i_batch_id, v_cname;
     end if;
 
+    perform pgque._assert_unpaged(i_batch_id);
     return pgque._nack_batch_event(i_batch_id, i_msg, i_retry_after, i_reason);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Grants

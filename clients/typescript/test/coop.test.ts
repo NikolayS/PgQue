@@ -103,7 +103,7 @@ describe('Cooperative consumers (env-gated)', () => {
       const recovered = await env.client.receiveCoop(env.queue, env.consumer, sub, {
         maxMessages: 5,
       });
-      expect(recovered.map((msg) => JSON.parse(msg.payload))).toEqual(
+      expect(recovered.map((msg) => JSON.parse(msg.payload!))).toEqual(
         Array.from({ length: 5 }, (_, i) => ({ i })),
       );
       await env.client.ack(recovered[0]!.batchId);
@@ -252,7 +252,7 @@ describe('Consumer with subconsumer (env-gated)', () => {
     });
     const seen: number[] = [];
     consumer.handle('job', async (msg) => {
-      const p = JSON.parse(msg.payload) as { v: number };
+      const p = JSON.parse(msg.payload!) as { v: number };
       seen.push(p.v);
     });
 

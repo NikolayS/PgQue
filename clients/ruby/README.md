@@ -83,6 +83,13 @@ ticking from your application or an external scheduler — see the
 project [Installation](https://github.com/NikolayS/pgque#installation)
 section for both paths.
 
+### Event inputs
+
+`Pgque::Event.new(payload: { "order_id" => 42 }, type: "order.created")`
+accepts only `payload:` and `type:`. Unknown keywords such as `extra:`
+raise `ArgumentError`. The producer wrapper does not support the
+receive-side `extra1` through `extra4` fields.
+
 ### Consumer options
 
 `Consumer.new(..., max_messages: ...)` sets the complete-batch safety ceiling for each `receive`.
@@ -105,6 +112,12 @@ instance; the default targets `$stderr` at `FATAL`, so the consumer is
 effectively silent unless you set `PGQUE_LOG_LEVEL=warn` or pass your
 own).
 
+The consumer polls again immediately after it acknowledges a non-empty batch.
+An empty or unfinished batch keeps the normal poll wait. Database errors close
+the failed connection and retry after `poll_interval` in stop-aware slices.
+Each new connection restores `LISTEN`. `ReceiveOverflow` still stops the
+consumer immediately. Enable error logging to see reconnect failures.
+
 ### Handling unknown event types
 
 By default the consumer **nacks** any message whose type has no
@@ -122,6 +135,24 @@ consumer = Pgque::Consumer.new(
   unknown_handler_policy: "ack",  # log WARNING and ack; do not nack
 )
 ```
+
+## Paged batches
+
+Paging requires this candidate's SDK source and the generated development SQL
+installer, `devel/sql/pgque.sql`. The frozen `sql/pgque.sql` installer does not
+contain these APIs. Build and test the SDK from `clients/ruby` and use a matching
+SQL release when the candidate is published.
+
+Use `receive_page`, `receive_page_coop`, or `receive_page_partitioned` to
+receive a durable page, then `ack_page` or `renew_page`. `process_page` runs a
+handler for each message and acknowledges only after every handler completes.
+Handlers must not return an `Enumerator`, `Proc`, `Fiber`, or `Thread`, even a
+completed thread. These results raise without acknowledging the page. The
+handler must finish the work and check its result before returning. The helper
+does not join or stop threads.
+
+Failure hashes accept `msg_id` / `retry_after_seconds` or their symbol/string
+camel-case equivalents. The message ID must be a decimal string.
 
 ## Experimental: cooperative consumers
 
@@ -215,7 +246,7 @@ end  # commits here; raises rollback the whole block
 
 Don't wrap `send` and `receive` in one explicit transaction; same for
 `maint_retry_events` + `ticker`. See the
-[snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+[snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/concepts.md#the-snapshot-rule).
 The built-in `Pgque::Consumer` already wraps `receive` + dispatch +
 `ack` in a single `conn.transaction` per poll, so handler code does
 not need to manage that.
@@ -273,3 +304,8 @@ See [RELEASE.md](RELEASE.md) for publishing steps.
 ## License
 
 Apache-2.0. Copyright 2026 Nikolay Samokhvalov.
+
+## Nullable messages
+
+Direct SQL and trigger producers can store SQL NULL for `ev_type` or `ev_data`.
+`receive` and `receive_coop` preserve SQL NULL type and payload as `nil`. A nil type never matches a named handler. The `"*"` catch-all handles it when registered; otherwise the unknown-handler policy applies.

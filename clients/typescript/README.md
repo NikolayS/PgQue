@@ -91,6 +91,22 @@ try {
 `sendBatch()`, `ticker(queue)`, and `forceNextTick(queue)` are JS `bigint` to
 match Postgres `bigint` losslessly.
 
+## Paged batches
+
+Paging requires this candidate's SDK source and the generated development SQL
+installer, `devel/sql/pgque.sql`. The released 0.2.2 package and the frozen
+`sql/pgque.sql` installer do not contain these APIs. Build and test the SDK from
+`clients/typescript` until a matching release is published.
+
+Use `receivePage`, `receivePageCoop`, or `receivePagePartitioned` to receive a
+durable page, then `ackPage` or `renewPage`. `processPage` runs a handler for
+each message and acknowledges only after every handler completes. A handler
+must not return an iterator or another callable; those deferred results raise
+without acknowledging the page.
+
+Failure entries use `{msgId, retryAfterSeconds?, reason?}`. `msgId` must be a
+decimal string, including for IDs received as `bigint`.
+
 ## Experimental: cooperative consumers
 
 > **Experimental in PgQue 0.2.** Function names, edge-case behavior, and
@@ -184,7 +200,7 @@ or `pg.Client` instances in the same process are unaffected.
 
 `send` → ticker → `receive` must each run in its own committed transaction (PgQue is snapshot-based). `pg.Pool#query` satisfies this transparently — every `send`/`receive`/`ack` is its own implicit tx, and the `Consumer` is pool-level.
 
-The one pitfall is `client.rawPool`: for transactional enqueue, call `BEGIN` / `pgque.send` / `COMMIT` on a checked-out client. Don't mix `pgque.send` and `pgque.receive` in one shared tx; same for `pgque.maint_retry_events` + `pgque.ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+The one pitfall is `client.rawPool`: for transactional enqueue, call `BEGIN` / `pgque.send` / `COMMIT` on a checked-out client. Don't mix `pgque.send` and `pgque.receive` in one shared tx; same for `pgque.maint_retry_events` + `pgque.ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/concepts.md#the-snapshot-rule).
 
 ## Tests
 
@@ -210,3 +226,8 @@ See [RELEASE.md](RELEASE.md) for publishing steps.
 ## License
 
 Apache-2.0. Copyright 2026 Nikolay Samokhvalov.
+
+## Nullable messages
+
+Direct SQL and trigger producers can store SQL NULL for `ev_type` or `ev_data`.
+`Message.type` and `Message.payload` are `string | null`. `receive` and `receiveCoop` preserve SQL NULL values. A null type never matches a per-type handler; the unknown-handler policy applies.

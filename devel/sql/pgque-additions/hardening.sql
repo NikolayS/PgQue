@@ -81,7 +81,7 @@ begin
     perform pg_notify('pgque_' || i_queue_name, i_tick_id::text);
     return i_tick_id;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- Override force_tick: raise instead of silently returning NULL when the
 -- target queue is missing, paused, or configured for external ticker.
@@ -127,4 +127,4 @@ begin
      limit 1;
     return v_max_tick;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;

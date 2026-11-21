@@ -11,9 +11,10 @@
 export interface Message {
   msgId: bigint;
   batchId: bigint;
-  type: string;
-  /** Raw `ev_data` text. Caller may `JSON.parse()` if the producer used `Event.payload`. */
-  payload: string;
+  /** Raw `ev_type`. SQL `NULL` is preserved as JavaScript `null`. */
+  type: string | null;
+  /** Raw `ev_data` text. SQL `NULL` is preserved as JavaScript `null`. */
+  payload: string | null;
   /** Number of prior retry attempts. `null` on the first delivery. */
   retryCount: number | null;
   createdAt: Date;
@@ -22,6 +23,26 @@ export interface Message {
   extra3: string | null;
   extra4: string | null;
 }
+
+export type PageStatus = 'page' | 'idle' | 'advanced' | 'busy';
+export interface Page {
+  status: PageStatus;
+  batchId: bigint | null;
+  pageToken: string | null;
+  pageNumber: bigint | null;
+  isLast: boolean | null;
+  messages: Message[];
+  leaseUntil: Date | null;
+  fenceEpoch: bigint | null;
+}
+export interface PageFailure {
+  msgId: string;
+  retryAfterSeconds?: number;
+  reason?: string;
+}
+export interface AckPageResult { status: 'acked' | 'already_acked'; batchFinished: boolean; }
+export interface ProcessPageResult { status: PageStatus; processedCount: number; batchFinished: boolean | null; }
+export type PageHandler = (message: Message) => Promise<void> | void;
 
 /**
  * Event input to {@link Client.send}. `payload` is JSON-marshalled before
@@ -72,6 +93,9 @@ export interface ConsumerOptions {
   retryAfter?: number;
   /**
    * What to do with messages whose `type` has no registered handler:
+   * A SQL `NULL` type is always treated as unknown and cannot match a
+   * per-type handler.
+   *
    * - `'nack'` (default) — nack each unknown message with a reason; PgQ
    *   routes to the retry queue or DLQ per the queue's `queue_max_retries`.
    * - `'ack'` — log a warning and let the batch ack absorb them (silent

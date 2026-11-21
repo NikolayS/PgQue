@@ -7,9 +7,11 @@ churn and validate against a throwaway database, not production.
 The released, stable install lives in [`../../sql/`](../../sql/) — use that for
 anything real.
 
-Testing partition keys (ordered per-key processing via slot consumers)? Until
-`docs/` coverage lands, follow
-[`blueprints/partition-keys/SPEC.md`](../../blueprints/partition-keys/SPEC.md).
+For the public APIs in this build, start with the
+[`docs/` index](../../docs/README.md). The guides cover
+[producer idempotency](../../docs/producer-idempotency.md) and
+[partition keys](../../docs/partition-keys.md), including worker leases,
+monitoring, operational limits, and recovery.
 
 Layout:
 
@@ -18,6 +20,9 @@ Layout:
 - `pgque_uninstall.sql`, `pgque-tle-uninstall.sql` — uninstall scripts.
 - `pgque-additions/`, `pgque-api/`, `experimental/` — the SQL sources the build
   reads. Edit these, then re-run `bash build/transform.sh` from the repo root.
+
+For the final-version stamp, stable artifact promotion, validation, tagging,
+and post-tag devel restore, follow [`../../RELEASE.md`](../../RELEASE.md).
 
 ## Install
 
@@ -86,6 +91,35 @@ grant pgque_writer to app_webhook;
 create user metrics with password '...';
 grant pgque_reader to metrics;
 ```
+
+## Partitioned consumer setup
+
+Create the whole partitioned consumer before publishing events. One call pins
+the slot count and creates every slot subscription and lease row atomically at
+the same starting tick:
+
+```sql
+select pgque.create_queue('orders');
+select pgque.subscribe_partitioned('orders', 'workers', 4);
+```
+
+Calling `subscribe_partitioned` again with the same slot count is idempotent and
+does not move existing cursors. `subscribe_slot` remains available for explicit
+repair of an incomplete setup, but repair closes the gap going forward only: the
+repaired slot starts at the current tick, and events ticked while it was missing
+are permanently lost. To start over instead, tear the whole consumer down with
+`pgque.unsubscribe_partitioned(queue, consumer)` (atomic, safe on partial
+setups, a no-op when the consumer is absent) and recreate it before producing.
+
+Monitor `pgque.partition_slot_status`: missing subscriptions report
+`subscribed = false` with `pending_events = NULL` because their lag is unknown.
+Alert on `pending_events > X or not subscribed` — a threshold-only alert skips
+the `NULL` rows and never notices incomplete setup.
+
+The safety ceiling is 256 slots per partitioned consumer. It is not a target:
+use the smallest slot count that provides the required parallelism. Every slot
+scans the queue stream and must be polled, so read amplification and the cost of
+a full polling cycle increase with the slot count.
 
 ## pg_tle install
 

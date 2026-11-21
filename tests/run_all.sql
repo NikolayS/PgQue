@@ -3,6 +3,8 @@
 --
 -- Usage: psql -d pgque_test -f tests/run_all.sql
 -- Requires: pgque.sql already loaded
+-- Release validation must also pass:
+--   -v expected_pgque_version=0.3.0
 
 -- Abort on first error
 \set ON_ERROR_STOP on
@@ -142,11 +144,51 @@
 \echo 'Running: test_uninstall_guard'
 \i tests/test_uninstall_guard.sql
 
+\echo 'Running: test_legacy_hash_consumers'
+\i tests/test_legacy_hash_consumers.sql
+
 \echo 'Running: test_partition_keys'
 \i tests/test_partition_keys.sql
+
+\echo 'Running: test_partition_null_owner'
+\i tests/test_partition_null_owner.sql
+
+\echo 'Running: test_partition_setup'
+\i tests/test_partition_setup.sql
+
+\echo 'Running: test_partition_slot_limit'
+\i tests/test_partition_slot_limit.sql
+
+\echo 'Running: test_partition_status_roles'
+\i tests/test_partition_status_roles.sql
 
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
 
+\echo 'Running: test_named_arguments_v0_3'
+\i tests/test_named_arguments_v0_3.sql
+
+\echo 'Running: test_idem_maintenance_clock'
+\i tests/test_idem_maintenance_clock.sql
+
 \echo ''
+\echo 'Running: durable paged batches'
+\i tests/test_paged_state.sql
+\i tests/test_paged_search_path.sql
+\i tests/test_paged_batches.sql
+\i tests/test_paged_modes.sql
+\i tests/test_paged_legacy.sql
+\i tests/test_paged_retry_clock.sql
+\i tests/test_paged_edges.sql
+\i tests/test_paged_doc.sql
+\i tests/test_paged_history.sql
+
+\i tests/test_paged_destroy.sql
+\i tests/test_force_drop_registration.sql
+\i tests/test_paged_validation.sql
+\i tests/test_paged_deadline.sql
+\i tests/test_paged_deadline_wiring.sql
+\i tests/test_partition_deadline.sql
+\i tests/test_paged_review.sql
+
 \echo '=== ALL TESTS PASSED ==='

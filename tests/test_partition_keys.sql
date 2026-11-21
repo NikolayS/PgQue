@@ -430,6 +430,26 @@ begin
   assert cardinality(v_first) = 2,
     format('fencing: zombie must open a 2-event batch, got %s', coalesce(cardinality(v_first), 0));
 
+  /* A cooperative handoff is legal only after ack finishes the batch.
+     Releasing here would let the successor process this same open batch
+     concurrently with the current worker. */
+  assert not pgque.release_slot('pk_q', 'w', 0, 'wk-early'),
+    'fencing: non-owner release must return false even with an open batch';
+  v_raised := false;
+  begin
+    perform pgque.release_slot('pk_q', 'w', 0, 'wk-zombie');
+  exception
+    when others then
+      v_raised := true;
+      assert sqlstate = 'P0001'
+        and sqlerrm like 'cannot release slot 0 of consumer w on queue pk_q while batch % is open; ack the batch first',
+        format('fencing: unexpected release error [%s] %s', sqlstate, sqlerrm);
+  end;
+  assert v_raised,
+    'fencing: owner release with an open batch must raise';
+  assert pgque.claim_slot('pk_q', 'w', 0, 'wk-early') is null,
+    'fencing: failed mid-batch release must leave the owner lease intact';
+
   perform pg_sleep(1.2);
 
   -- Heir takes over the expired lease (epoch bump) and is re-issued the
@@ -574,9 +594,8 @@ begin
 end $$;
 
 -- (a2) pgque.subscribe() must reject the reserved '#' at registration time.
--- The plain receive/ack/nack guards treat any '#' name as a partition slot
--- consumer, so a plain consumer registered with a '#' in its name would be
--- permanently locked out of receive/ack/nack. Reject '#' up front instead.
+-- Legacy ordinary '#' consumers remain valid, but new registrations must
+-- not collide with the slot namespace.
 do $$
 declare
   v_raised boolean := false;
@@ -669,6 +688,23 @@ begin
     when others then v_raised := true;
   end;
   assert v_raised, 'guard: claim_slot with ttl < 1 second must raise';
+
+  -- Infinite leases cannot recover after a crashed worker (PG17+ syntax).
+  if current_setting('server_version_num')::int >= 170000 then
+    v_raised := false;
+    begin
+      execute $sql$
+        select pgque.claim_slot(
+          'pk_q', 'w', 0, 'wk-infinite', 'infinity'::interval)
+      $sql$;
+    exception
+      when others then
+        v_raised := true;
+        assert sqlerrm like '%finite interval%',
+          'guard: unexpected infinite lease error: ' || sqlerrm;
+    end;
+    assert v_raised, 'guard: claim_slot with infinite ttl must raise';
+  end if;
 
   -- Empty worker id is rejected.
   v_raised := false;

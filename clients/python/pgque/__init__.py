@@ -16,6 +16,7 @@ See https://github.com/NikolayS/pgque for the SQL schema install and
 full documentation.
 """
 
+from ._version import resolve_version as _resolve_version
 from .client import PgqueClient, connect
 from .consumer import Consumer
 from .errors import (
@@ -26,15 +27,18 @@ from .errors import (
     PgqueQueueNotFound,
     PgqueReceiveOverflowError,
 )
-from .types import Event, Message
+from .types import Event, Message, Page, PageResult
 
-__version__ = "0.2.0"
+__version__ = _resolve_version()
+del _resolve_version
 
 __all__ = [
     "PgqueClient",
     "Consumer",
     "Message",
     "Event",
+    "Page",
+    "PageResult",
     "PgqueError",
     "PgqueConnectionError",
     "PgqueQueueNotFound",

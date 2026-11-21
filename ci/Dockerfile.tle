@@ -5,7 +5,7 @@
 # time stripping them.
 #
 # Build args:
-#   PG_VERSION  -- Postgres Docker tag (e.g. 18 or 19beta1).
+#   PG_VERSION  -- Postgres Docker tag (e.g. 18 or 19).
 #   PG_MAJOR    -- Postgres package major (e.g. 18 or 19). Must match an
 #                  available postgresql-server-dev-XX package in apt.
 #   PGTLE_TAG   -- pg_tle git tag, e.g. v1.5.2.

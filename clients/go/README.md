@@ -14,8 +14,9 @@ go get github.com/NikolayS/pgque-go@v0.2.2
 
 The module is mirrored from `clients/go/` of the parent repo to the public [`NikolayS/pgque-go`](https://github.com/NikolayS/pgque-go) module repo.
 
-Requires Go 1.21+ and PostgreSQL 14+ with the PgQue schema installed
-(`\i pgque.sql` — no extension required).
+Requires Go 1.25+ and PostgreSQL 14+ with the PgQue schema installed
+(`\i pgque.sql` — no extension required). Build with the latest patch of a
+[supported Go release](https://go.dev/doc/devel/release#policy).
 
 ## Database permissions
 
@@ -112,6 +113,21 @@ _, err = client.Ticker(ctx, "orders")
 ```
 
 `Client.ForceTick(ctx, queue)` remains as a deprecated compatibility alias.
+
+## Paged batches
+
+Paging requires this candidate's SDK source and the generated development SQL
+installer, `devel/sql/pgque.sql`. The released v0.2.2 module and the frozen
+`sql/pgque.sql` installer do not contain these APIs. Build and test the SDK from
+`clients/go` until a matching release is published.
+
+Use `ReceivePage`, `ReceivePageCoop`, or `ReceivePagePartitioned` to receive a
+durable page, then `AckPage` or `RenewPage`. `ProcessPage` runs a handler for
+each message and acknowledges only after every handler returns `nil`; a
+non-nil error leaves the page outstanding.
+
+Failures are `PageFailure` values. `MsgID` maps to the JSON `msg_id` key and
+must contain a decimal string; `RetryAfterSeconds` and `Reason` are optional.
 
 ## Nack options
 
@@ -263,7 +279,7 @@ and a final disjoint-delivery summary.
 
 `Send` → ticker → `Receive` must each run in its own committed transaction (PgQue is snapshot-based). `pgxpool` satisfies this transparently — every `Send`/`Receive`/`Ack` is its own implicit tx, and the `Consumer` is pool-level.
 
-The one pitfall is `Client.Pool()`: calling `pgque.send` inside your own `pgx.Tx` is fine for transactional enqueue, but the consumer must run after `tx.Commit()`. Don't wrap `pgque.send` and `pgque.receive` in one shared `pgx.Tx`; same for `pgque.maint_retry_events` + `pgque.ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/pgq-concepts.md#snapshot-rule).
+The one pitfall is `Client.Pool()`: calling `pgque.send` inside your own `pgx.Tx` is fine for transactional enqueue, but the consumer must run after `tx.Commit()`. Don't wrap `pgque.send` and `pgque.receive` in one shared `pgx.Tx`; same for `pgque.maint_retry_events` + `pgque.ticker`. See [snapshot rule](https://github.com/NikolayS/pgque/blob/main/docs/concepts.md#the-snapshot-rule).
 
 ## Tests
 
@@ -297,3 +313,8 @@ See [RELEASE.md](RELEASE.md) for publishing steps.
 ## License
 
 Apache-2.0. Copyright 2026 Nikolay Samokhvalov.
+
+## Nullable messages
+
+Direct SQL and trigger producers can store SQL NULL for `ev_type` or `ev_data`.
+`Receive` and `ReceiveCoop` normalize SQL NULL type and payload to empty strings. An empty type never matches a named handler, including `Handle("", ...)`; the unknown-handler policy applies.
