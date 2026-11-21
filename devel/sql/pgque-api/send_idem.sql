@@ -63,8 +63,8 @@ begin
     if i_idem_key is null then
         raise exception 'idem_key must not be null';
     end if;
-    if i_ttl is null or i_ttl <= interval '0' then
-        raise exception 'ttl must be a positive interval';
+    if i_ttl is null or not isfinite(i_ttl) or i_ttl <= interval '0' then
+        raise exception 'ttl must be a positive finite interval';
     end if;
 
     select q.queue_id, q.queue_extra_maint
@@ -95,11 +95,13 @@ begin
      * conditional do-update lets only an EXPIRED key be reclaimed.
      */
     insert into pgque.idem as k (queue_id, idem_key, event_id, expires_at)
-    values (v_queue_id, i_idem_key, null, now() + i_ttl)
+    values (v_queue_id, i_idem_key, null, clock_timestamp() + i_ttl)
     on conflict (queue_id, idem_key) do update
         set event_id = excluded.event_id,
-            expires_at = excluded.expires_at
-        where k.expires_at <= now()
+            /* Evaluated after any conflicting row-lock wait, so a takeover
+               always receives a fresh TTL window. */
+            expires_at = clock_timestamp() + i_ttl
+        where k.expires_at <= clock_timestamp()
     returning true into v_claimed;
 
     if v_claimed then
@@ -109,11 +111,12 @@ begin
             i_queue, i_type, i_payload, i_partition_key, i_idem_key,
             null, null);
 
-        -- Record the id for later dedup responses (contention-free: this
-        -- transaction already holds the row lock, invisible to others until
-        -- the claim+append pair commits).
+        /* Finalize the TTL after the claim and append. INSERT values can
+           precede a uniqueness wait whose conflicting row disappears;
+           that successful INSERT never evaluates the ON CONFLICT update. */
         update pgque.idem k
-        set event_id = v_event_id
+        set event_id = v_event_id,
+            expires_at = clock_timestamp() + i_ttl
         where k.queue_id = v_queue_id
           and k.idem_key = i_idem_key;
 
@@ -133,7 +136,7 @@ begin
     end if;
     return next;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function
     pgque.send_idem(text, text, text, text, interval, text) from public;
 
@@ -153,7 +156,7 @@ begin
         i_queue, i_type, i_payload::text, i_idem_key, i_ttl,
         i_partition_key) s;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function
     pgque.send_idem(text, text, jsonb, text, interval, text) from public;
 
@@ -178,17 +181,19 @@ begin
     end if;
 
     delete from pgque.idem k
-    where (k.queue_id, k.idem_key) in (
+    -- Recheck the current tuple after a concurrent takeover's row-lock wait.
+    where k.expires_at < clock_timestamp()
+      and (k.queue_id, k.idem_key) in (
         select d.queue_id, d.idem_key
         from pgque.idem d
         where d.queue_id = v_queue_id
-          and d.expires_at < now()
+          and d.expires_at < clock_timestamp()
         limit 10000);
     get diagnostics v_deleted = row_count;
 
     return case when v_deleted >= 10000 then 1 else 0 end;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.maint_idem(text) from public;
 
 /*
@@ -202,16 +207,18 @@ declare
     v_deleted integer;
 begin
     delete from pgque.idem k
-    where (k.queue_id, k.idem_key) in (
+    -- Recheck the current tuple after a concurrent takeover's row-lock wait.
+    where k.expires_at < clock_timestamp()
+      and (k.queue_id, k.idem_key) in (
         select d.queue_id, d.idem_key
         from pgque.idem d
-        where d.expires_at < now()
+        where d.expires_at < clock_timestamp()
         limit 10000);
     get diagnostics v_deleted = row_count;
 
     return case when v_deleted >= 10000 then 1 else 0 end;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque.maint_idem() from public;
 
 -- Grants: send_idem -> pgque_writer (producer); maint_idem -> pgque_admin.

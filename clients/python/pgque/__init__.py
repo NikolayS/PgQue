@@ -26,15 +26,17 @@ from .errors import (
     PgqueQueueNotFound,
     PgqueReceiveOverflowError,
 )
-from .types import Event, Message
+from .types import Event, Message, Page, PageResult
 
-__version__ = "0.2.0"
+__version__ = "0.3.0rc2"
 
 __all__ = [
     "PgqueClient",
     "Consumer",
     "Message",
     "Event",
+    "Page",
+    "PageResult",
     "PgqueError",
     "PgqueConnectionError",
     "PgqueQueueNotFound",

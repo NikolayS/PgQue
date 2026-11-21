@@ -180,7 +180,7 @@ apply_bigint_to_xid8() {
 }
 
 apply_search_path_to_security_definer() {
-  # Add SET search_path = pgque, pg_catalog to SECURITY DEFINER functions
+  # Add SET search_path = pgque, pg_catalog, pg_temp to SECURITY DEFINER functions
   # that don't already have it. Handles the pattern:
   #   $$ language plpgsql security definer;
   # and variations with trailing comments.
@@ -192,7 +192,7 @@ apply_search_path_to_security_definer() {
   #   $$ language plpgsql security definer;
   #   $$ language plpgsql security definer; -- comment
   content=$(echo "$content" | sed -E \
-    's/^(\$\$ language plpgsql) security definer;(.*)$/\1 security definer set search_path = pgque, pg_catalog;\2/')
+    's/^(\$\$ language plpgsql) security definer;(.*)$/\1 security definer set search_path = pgque, pg_catalog, pg_temp;\2/')
 
   echo "$content"
 }
@@ -506,6 +506,59 @@ mv "${TICKER_FILE}.tmp" "${TICKER_FILE}"
 
 echo "PASS: pg_notify injected into ticker function (2 injection points verified)"
 
+# PgQ's register_consumer_at uses SELECT ... FOR UPDATE followed by a plain
+# INSERT when no consumer row exists. The stronger lock conflicts with FK
+# triggers' FOR KEY SHARE locks, and a missing row gives concurrent first
+# registrars nothing to serialize on. Keep this as a transform patch rather
+# than modifying the pinned upstream PgQ submodule.
+REGISTER_CONSUMER_FILE="${OUTPUT_DIR}/functions/pgque.register_consumer.sql"
+if ! awk '
+/^    -- get consumer and create if new$/ {
+  print "    /*"
+  print "     * NO KEY UPDATE serializes registrations without conflicting with"
+  print "     * subscription FK checks. The upsert/re-read path serializes"
+  print "     * concurrent creation when there is no row to lock."
+  print "     */"
+  print "    select co_id into x_consumer_id from pgque.consumer"
+  print "        where co_name = x_consumer_name"
+  print "        for no key update;"
+  print "    if not found then"
+  print "        insert into pgque.consumer (co_name) values (x_consumer_name)"
+  print "            on conflict (co_name) do nothing;"
+  print "        select co_id into x_consumer_id from pgque.consumer"
+  print "            where co_name = x_consumer_name"
+  print "            for no key update;"
+  print "        if not found then"
+  print "            raise exception '\''pgque.register_consumer_at: failed to create consumer %'\'', x_consumer_name;"
+  print "        end if;"
+  print "    end if;"
+  replacing = 1
+  replacements++
+  next
+}
+replacing {
+  if (/^    end if;$/) {
+    replacing = 0
+  }
+  next
+}
+{ print }
+END {
+  if (replacements != 1 || replacing) {
+    printf "ERROR: register_consumer_at acquisition patch matched %d times (expected 1)\n", \
+      replacements > "/dev/stderr"
+    exit 1
+  }
+}
+' "${REGISTER_CONSUMER_FILE}" > "${REGISTER_CONSUMER_FILE}.tmp"; then
+  rm -f "${REGISTER_CONSUMER_FILE}.tmp"
+  echo "FAIL: register_consumer_at acquisition patch did not apply" >&2
+  exit 1
+fi
+mv "${REGISTER_CONSUMER_FILE}.tmp" "${REGISTER_CONSUMER_FILE}"
+
+echo "PASS: register_consumer_at uses race-safe, FK-compatible consumer acquisition"
+
 CREATE_QUEUE_FILE="${OUTPUT_DIR}/functions/pgque.create_queue.sql"
 if ! awk '
 /^    if i_queue_name is null then$/ {
@@ -710,14 +763,14 @@ echo "PASS: get_batch_cursor SECURITY header injected (extra_where is trusted SQ
 # at runtime. The sibling get_consumer_info / get_batch_info are already
 # SECURITY DEFINER for exactly this reason; mirror that pattern here.
 # SECURITY DEFINER MUST pin search_path (CLAUDE.md), so attach
-# "set search_path = pgque, pg_catalog" in the same step. This grants no
+# "set search_path = pgque, pg_catalog, pg_temp" in the same step. This grants no
 # privilege beyond reading queue metadata + the queue event sequence.
 GET_QUEUE_INFO_FILE="${OUTPUT_DIR}/functions/pgque.get_queue_info.sql"
 sedi -E \
-  's/^(\$\$ language plpgsql);$/\1 security definer set search_path = pgque, pg_catalog;/' \
+  's/^(\$\$ language plpgsql);$/\1 security definer set search_path = pgque, pg_catalog, pg_temp;/' \
   "${GET_QUEUE_INFO_FILE}"
 
-defcount=$(grep -c 'language plpgsql security definer set search_path = pgque, pg_catalog;' \
+defcount=$(grep -c 'language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;' \
   "${GET_QUEUE_INFO_FILE}")
 if [[ "${defcount}" -ne 2 ]]; then
   echo "ERROR: expected 2 SECURITY DEFINER get_queue_info overloads, got ${defcount}" >&2
@@ -844,7 +897,7 @@ echo "--   1. Schema rename: pgq → pgque" >> "${INSTALL_FILE}"
 echo "--   2. txid_* → pg_* function renames (PG14+ snapshot API)" >> "${INSTALL_FILE}"
 echo "--   3. pg_snapshot_xmin/xmax wrapped with ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
 echo "--   4. pg_current_xact_id() cast to ::text::bigint (xid8→bigint)" >> "${INSTALL_FILE}"
-echo "--   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog" >> "${INSTALL_FILE}"
+echo "--   5. SECURITY DEFINER functions get SET search_path = pgque, pg_catalog, pg_temp" >> "${INSTALL_FILE}"
 echo "--   6. pgq_node/Londiste hooks removed from maint_operations" >> "${INSTALL_FILE}"
 echo "--   7. pg_notify() injected into ticker for LISTEN/NOTIFY wakeup" >> "${INSTALL_FILE}"
 echo "--   8. create_queue() rejects queue names > 57 bytes (pg_notify limit)" >> "${INSTALL_FILE}"
@@ -955,7 +1008,7 @@ sedi_must "ticker pg_notify annotation did not apply" \
   "${INSTALL_FILE}"
 
 # search_path pinning — annotate first occurrence only via awk
-if ! awk '/set search_path = pgque, pg_catalog;/ && !sp_done {
+if ! awk '/set search_path = pgque, pg_catalog, pg_temp;/ && !sp_done {
   sp_done=1; sub(/;/, "; -- PgQue transformation: pin search_path (SECURITY DEFINER hardening)")
 } {print}
 END {
@@ -1000,11 +1053,14 @@ echo "" >> "${INSTALL_FILE}"
 
 DEFAULT_API_FILES=(
   maint.sql
+  paged_state.sql
   receive.sql
   cooperative_consumers.sql
   send.sql
   partition_keys.sql
   send_idem.sql
+  paged_legacy.sql
+  paged_batches.sql
 )
 
 for api_name in "${DEFAULT_API_FILES[@]}"; do
@@ -1028,6 +1084,12 @@ echo ""
 echo "=== Assembly verification ==="
 
 asm_errors=0
+
+# Check after canonical additions and API overrides, not only transformed PgQ.
+# Every definer declaration must keep trusted schemas before the temp namespace.
+if ! awk -f "${SCRIPT_DIR}/check-definer-search-path.awk" "${INSTALL_FILE}"; then
+  asm_errors=$((asm_errors + 1))
+fi
 
 # Verify header is present
 if head -1 "${INSTALL_FILE}" | grep -q 'pgque.sql'; then
@@ -1198,8 +1260,7 @@ fi
 # Wrap devel/sql/pgque.sql as a pg_tle (Trusted Language Extension) so users on
 # managed Postgres can install via create extension pgque and get extension
 # membership / drop extension cascade for free. The output devel/sql/pgque-tle.sql
-# is a single self-contained file that works in any SQL client (psql, GUI
-# tools like DBeaver, JDBC, libpq-direct callers).
+# is a single self-contained psql script.
 
 echo ""
 echo "=== Packaging pg_tle install script ==="
@@ -1282,49 +1343,70 @@ begin
     end if;
 end \$\$;
 
--- Step 3: register the extension body with pg_tle.
--- Same version already registered -> no-op (so deployment scripts can rerun).
--- Different version already registered -> raise so the user goes through the
--- explicit uninstall + reinstall path; pg_tle has no managed upgrade path
--- between unrelated registrations of an extension.
+/* Register bodies and paths only. Installed extensions change only when the
+   caller explicitly runs ALTER EXTENSION UPDATE. Keep one canonical body for
+   both fresh installs and non-destructive updates from supported releases. */
 do \$wrapper\$
 declare
     existing_version text;
-begin
-    select default_version into existing_version
-    from pgtle.available_extensions()
-    where name = 'pgque';
-
-    if existing_version = '${PGQUE_VERSION}' then
-        raise notice 'pgque ${PGQUE_VERSION} already registered with pg_tle; skipping install_extension().';
-        return;
-    end if;
-
-    if existing_version is not null then
-        raise exception 'pgque is already registered with pg_tle at version % '
-            'but this script registers version %. Run '
-            '${SQL_REL}/pgque-tle-uninstall.sql first to remove the existing '
-            'registration, then re-run this script.',
-            existing_version, '${PGQUE_VERSION}';
-    end if;
-
-    perform pgtle.install_extension(
-        'pgque',
-        '${PGQUE_VERSION}',
-        'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)',
-\$${PGTLE_DOLLAR_TAG}\$
+    installed_version text;
+    source_version text;
+    extension_sql text := \$${PGTLE_DOLLAR_TAG}\$
 HEADER
 
 cat "${INSTALL_FILE}" >> "${PGTLE_FILE}"
 
 cat >> "${PGTLE_FILE}" << FOOTER
-\$${PGTLE_DOLLAR_TAG}\$
-    );
+\$${PGTLE_DOLLAR_TAG}\$;
+begin
+    select default_version into existing_version
+    from pgtle.available_extensions()
+    where name = 'pgque';
+
+    select extversion into installed_version
+    from pg_catalog.pg_extension
+    where extname = 'pgque';
+
+    if (existing_version is not null
+        and existing_version not in ('0.2.1', '0.2.2', '${PGQUE_VERSION}'))
+        or (installed_version is not null
+        and installed_version not in ('0.2.1', '0.2.2', '${PGQUE_VERSION}')) then
+        raise exception 'unsupported pgque version (registered %, installed %); '
+            'this script supports fresh ${PGQUE_VERSION} installs and updates '
+            'from 0.2.1 or 0.2.2 only', existing_version, installed_version
+            using errcode = '22023';
+    end if;
+
+    if existing_version is null then
+        perform pgtle.install_extension(
+            'pgque', '${PGQUE_VERSION}',
+            'PgQue — PgQ Universal Edition (zero-bloat Postgres queue)', extension_sql
+        );
+    elsif to_regprocedure(format('pgtle.%I()', 'pgque--${PGQUE_VERSION}.sql')) is null then
+        /* available_extension_versions() also lists indirect installs. Check
+           the direct body so fresh creation never needs an old migration. */
+        perform pgtle.install_extension_version_sql('pgque', '${PGQUE_VERSION}', extension_sql);
+    end if;
+
+    foreach source_version in array array['0.2.1', '0.2.2'] loop
+        if source_version <> '${PGQUE_VERSION}' and not exists (
+            select 1
+            from pgtle.extension_update_paths('pgque')
+            where source = source_version and target = '${PGQUE_VERSION}'
+            and path = source_version || '--${PGQUE_VERSION}'
+        ) then
+            perform pgtle.install_update_path(
+                'pgque', source_version, '${PGQUE_VERSION}', extension_sql
+            );
+        end if;
+    end loop;
+    perform pgtle.set_default_version('pgque', '${PGQUE_VERSION}');
 end \$wrapper\$;
 
 \\echo ''
 \\echo 'PgQue ${PGQUE_VERSION} registered with pg_tle.'
-\\echo 'Run create extension pgque; to materialise the schema in this database.'
+\\echo 'For a fresh install, run: create extension pgque;'
+\\echo 'For an installed 0.2.1 or 0.2.2 extension, run: alter extension pgque update to ''${PGQUE_VERSION}'';'
 FOOTER
 
 pgtle_lines=$(wc -l < "${PGTLE_FILE}")

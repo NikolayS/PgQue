@@ -18,6 +18,8 @@ Documentation for PgQue, the zero-bloat Postgres queue: a hands-on tutorial, ope
   batch send, recurring jobs, DLQ inspection, and
   [cooperative consumers / subconsumers](examples.md#cooperative-consumers--subconsumers-experimental)
   (experimental).
+- **[Bounded batch processing](paged-batches.md)** — durable page checkpoints,
+  leases, cooperative takeover, and partition fencing. Development installer only.
 - **[Monitoring and health](monitoring.md)** — queue, consumer, and batch
   introspection; lag and pending-event signals; what to alert on.
 

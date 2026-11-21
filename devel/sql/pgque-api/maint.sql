@@ -61,6 +61,6 @@ begin
 
     return total;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 grant execute on function pgque.maint() to pgque_admin;

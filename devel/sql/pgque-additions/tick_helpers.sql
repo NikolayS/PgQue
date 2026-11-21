@@ -43,7 +43,7 @@ returns bigint as $$
 begin
     return pgque.force_tick(i_queue_name);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- force_next_tick is admin-only (matches force_tick). The schema-wide
 -- "grant execute on all functions … to pgque_admin" earlier in the

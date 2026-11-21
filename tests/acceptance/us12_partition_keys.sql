@@ -88,8 +88,7 @@ create temporary table _us12_order_recv (
 -- Setup: two slots on one consumer
 do $$ begin
   perform pgque.create_queue('us12_order');
-  perform pgque.subscribe_slot('us12_order', 'cw', 0, 2);
-  perform pgque.subscribe_slot('us12_order', 'cw', 1, 2);
+  perform pgque.subscribe_partitioned('us12_order', 'cw', 2);
 end $$;
 
 -- Action: interleave two keys A,B,A,B,A -> 3x tenant-A, 2x tenant-B
@@ -191,9 +190,7 @@ create temporary table _us12_par_recv (
 
 do $$ begin
   perform pgque.create_queue('us12_parallel');
-  perform pgque.subscribe_slot('us12_parallel', 'cw', 0, 3);
-  perform pgque.subscribe_slot('us12_parallel', 'cw', 1, 3);
-  perform pgque.subscribe_slot('us12_parallel', 'cw', 2, 3);
+  perform pgque.subscribe_partitioned('us12_parallel', 'cw', 3);
 end $$;
 
 -- Action: 6 keys x 2 events = 12 events spread across the key space
@@ -284,7 +281,7 @@ drop table if exists _us12_par_recv;
 
 do $$ begin
   perform pgque.create_queue('us12_batch');
-  perform pgque.subscribe_slot('us12_batch', 'cw', 0, 1);
+  perform pgque.subscribe_partitioned('us12_batch', 'cw', 1);
 end $$;
 
 do $$ begin
@@ -340,8 +337,7 @@ end $$;
 
 do $$ begin
   perform pgque.create_queue('us12_claim');
-  perform pgque.subscribe_slot('us12_claim', 'cw', 0, 2);
-  perform pgque.subscribe_slot('us12_claim', 'cw', 1, 2);
+  perform pgque.subscribe_partitioned('us12_claim', 'cw', 2);
 end $$;
 
 do $$
@@ -419,6 +415,7 @@ begin
   where queue_name = 'us12_claim'
     and consumer = 'cw'
     and n = 2
+    and subscribed
     and slot in (0, 1);
   assert v_rows = 2,
     format('US-12.6: expected 2 slot rows for (us12_claim, cw), got %s', v_rows);
@@ -440,6 +437,38 @@ begin
       and pending_events < 0
   ), 'US-12.6: pending_events (lag) must be non-negative';
   raise notice 'PASS: US-12.6 partition_slot_status unleased view';
+end $$;
+
+-- Alpha-compatible single-slot setup remains visible as incomplete.
+do $$
+declare
+  v_raised boolean := false;
+begin
+  perform pgque.subscribe_slot('us12_claim', 'partial', 0, 2);
+  assert (
+    select subscribed and pending_events is not null
+    from pgque.partition_slot_status
+    where queue_name = 'us12_claim'
+      and consumer = 'partial'
+      and slot = 0
+  ), 'materialized alpha slot must report subscribed';
+  assert (
+    select not subscribed and last_tick is null and pending_events is null
+    from pgque.partition_slot_status
+    where queue_name = 'us12_claim'
+      and consumer = 'partial'
+      and slot = 1
+  ), 'missing alpha slot must report unknown lag';
+
+  begin
+    perform pgque.subscribe_partitioned('us12_claim', 'partial', 2);
+  exception when others then
+    v_raised := true;
+    assert sqlerrm like '%incomplete%',
+      format('unexpected partial setup error: %s', sqlerrm);
+  end;
+  assert v_raised, 'atomic setup must reject partial existing state';
+  raise notice 'PASS: partition_slot_status flags incomplete setup';
 end $$;
 
 -- Leased by worker acc-a: lease_owner == 'acc-a' for slot 0 only
@@ -482,6 +511,7 @@ end $$;
 
 -- Cleanup us12_claim (shared by US-12.5 and US-12.6)
 do $$ begin
+  perform pgque.unsubscribe_slot('us12_claim', 'partial', 0);
   perform pgque.unsubscribe_slot('us12_claim', 'cw', 0);
   perform pgque.unsubscribe_slot('us12_claim', 'cw', 1);
   perform pgque.drop_queue('us12_claim');

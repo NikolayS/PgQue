@@ -55,6 +55,8 @@ begin
         return;
     end if;
 
+    perform pgque._assert_unpaged(v_batch_id);
+
     -- Yield messages from the batch
     for ev in
         select ev_id, ev_type, ev_data, ev_retry, ev_time,
@@ -82,7 +84,7 @@ begin
 
     return;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.ack() -- finishes the batch, advances consumer position
 create or replace function pgque.ack(i_batch_id bigint)
@@ -107,7 +109,7 @@ begin
 
     return pgque.finish_batch(i_batch_id);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 /*
  * pgque._nack_batch_event() -- shared retry/DLQ core for a single event of an
@@ -170,7 +172,7 @@ begin
     end if;
     return 1;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.nack() -- retry or route to DLQ based on retry_count vs max_retries
 create or replace function pgque.nack(
@@ -196,9 +198,10 @@ begin
         raise exception 'batch % belongs to partition slot consumer %; retry slot batches via pgque.nack_partitioned()', i_batch_id, v_cname;
     end if;
 
+    perform pgque._assert_unpaged(i_batch_id);
     return pgque._nack_batch_event(i_batch_id, i_msg, i_retry_after, i_reason);
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- ---------------------------------------------------------------------------
 -- Grants

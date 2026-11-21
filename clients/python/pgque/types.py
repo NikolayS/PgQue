@@ -46,3 +46,22 @@ class Event:
 
     payload: Any
     type: str = "default"
+
+
+@dataclass
+class Page:
+    status: str
+    batch_id: Optional[int]
+    page_token: Optional[str]
+    page_number: Optional[int]
+    is_last: Optional[bool]
+    messages: list[Message]
+    lease_until: Optional[datetime]
+    fence_epoch: Optional[int]
+
+
+@dataclass
+class PageResult:
+    status: str
+    processed_count: int
+    batch_finished: Optional[bool]
