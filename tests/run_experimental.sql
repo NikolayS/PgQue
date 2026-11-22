@@ -15,5 +15,11 @@
 \echo 'Running: test_experimental_config_api'
 \i tests/test_experimental_config_api.sql
 
+\echo 'Running: test_security_extra_maint (post-experimental)'
+\i tests/test_security_extra_maint.sql
+
+\echo 'Running: test_paged_search_path (post-experimental)'
+\i tests/test_paged_search_path.sql
+
 \echo ''
 \echo '=== ALL EXPERIMENTAL TESTS PASSED ==='

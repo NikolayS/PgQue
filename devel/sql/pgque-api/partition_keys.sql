@@ -92,7 +92,7 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
-revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer;
+revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer, pgque_admin;
 
 /* Keep the constraint definition synchronized on idempotent installs. */
 do $$
@@ -1155,10 +1155,10 @@ left join lateral (
  * through co-ownership, not a grant.
  */
 
-revoke all on pgque.partition_consumer from public, pgque_reader, pgque_writer;
+revoke all on pgque.partition_consumer from public, pgque_reader, pgque_writer, pgque_admin;
 grant select on pgque.partition_consumer to pgque_admin;
 
-revoke all on pgque.partition_slot from public, pgque_reader, pgque_writer;
+revoke all on pgque.partition_slot from public, pgque_reader, pgque_writer, pgque_admin;
 grant select on pgque.partition_slot to pgque_admin;
 
 grant execute on function pgque.send(text, text, jsonb, text)  to pgque_writer;
@@ -1178,10 +1178,11 @@ grant select on pgque.partition_slot_status to pgque_reader;
 grant select on pgque.partition_slot_status to pgque_admin;
 
 -- Internal helpers: SECURITY DEFINER callees only.
-revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer;
-revoke execute on function pgque._slot_name(text, int, int) from public, pgque_reader, pgque_writer;
-revoke execute on function pgque._slot_guard(text, text, int, int, text) from public, pgque_reader, pgque_writer;
-revoke execute on function pgque._slot_batch(text, text, int, int) from public, pgque_reader, pgque_writer;
+revoke execute on function pgque._partition_n_cap_guard() from public, pgque_reader, pgque_writer, pgque_admin;
+revoke execute on function pgque._lease_deadline(timestamptz, interval) from public, pgque_reader, pgque_writer, pgque_admin;
+revoke execute on function pgque._slot_name(text, int, int) from public, pgque_reader, pgque_writer, pgque_admin;
+revoke execute on function pgque._slot_guard(text, text, int, int, text) from public, pgque_reader, pgque_writer, pgque_admin;
+revoke execute on function pgque._slot_batch(text, text, int, int) from public, pgque_reader, pgque_writer, pgque_admin;
 
 /* Re-apply deny-by-default: functions created in this file would otherwise
    keep PostgreSQL's default PUBLIC EXECUTE (see sql/pgque-api/send.sql). */
