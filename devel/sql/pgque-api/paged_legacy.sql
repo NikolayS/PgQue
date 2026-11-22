@@ -10,29 +10,35 @@ create or replace function pgque._event_retry_core(
 returns integer as $$
 declare
     v_sql text;
-    v_count integer;
+    v_found integer;
+    v_inserted integer;
 begin
     v_sql := pgque.batch_event_sql(i_batch_id);
     v_sql :=
-        'insert into pgque.retry_queue (ev_retry_after, ev_queue, '
-        || 'ev_id, ev_time, ev_txid, ev_owner, ev_retry, ev_type, ev_data, '
-        || 'ev_extra1, ev_extra2, ev_extra3, ev_extra4) '
-        || 'select $1, s.sub_queue, e.ev_id, e.ev_time, null, s.sub_id, '
-        || 'coalesce(e.ev_retry, 0) + 1, e.ev_type, e.ev_data, '
-        || 'e.ev_extra1, e.ev_extra2, e.ev_extra3, e.ev_extra4 '
+        'with src as ('
+        || 'select $1 as ev_retry_after, s.sub_queue, e.ev_id, e.ev_time, '
+        || 's.sub_id, coalesce(e.ev_retry, 0) + 1 as ev_retry, '
+        || 'e.ev_type, e.ev_data, e.ev_extra1, e.ev_extra2, '
+        || 'e.ev_extra3, e.ev_extra4 '
         || 'from (' || v_sql || ') as e '
         || 'cross join pgque.subscription as s '
-        || 'where s.sub_batch = $2 and e.ev_id = $3';
+        || 'where s.sub_batch = $2 and e.ev_id = $3), '
+        || 'ins as ('
+        || 'insert into pgque.retry_queue (ev_retry_after, ev_queue, '
+        || 'ev_id, ev_time, ev_txid, ev_owner, ev_retry, ev_type, ev_data, '
+        || 'ev_extra1, ev_extra2, ev_extra3, ev_extra4) '
+        || 'select ev_retry_after, sub_queue, ev_id, ev_time, null, sub_id, '
+        || 'ev_retry, ev_type, ev_data, ev_extra1, ev_extra2, '
+        || 'ev_extra3, ev_extra4 from src '
+        || 'on conflict (ev_owner, ev_id) do nothing '
+        || 'returning 1) '
+        || 'select (select count(*) from src), (select count(*) from ins)';
 
-    execute v_sql using i_retry_time, i_batch_id, i_event_id;
-    get diagnostics v_count = row_count;
-    if v_count = 0 then
+    execute v_sql into v_found, v_inserted using i_retry_time, i_batch_id, i_event_id;
+    if v_found = 0 then
         raise exception 'event not found';
     end if;
-    return 1;
-exception
-    when unique_violation then
-        return 0;
+    return case when v_inserted > 0 then 1 else 0 end;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
@@ -132,8 +138,11 @@ begin
         || 'e.ev_type, e.ev_data, e.ev_extra1, e.ev_extra2, '
         || 'e.ev_extra3, e.ev_extra4 '
         || 'from (' || v_sql || ') as e where e.ev_id = $1'
-    into strict v_event
+    into v_event
     using i_msg.msg_id;
+    if not found then
+        raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
+    end if;
 
     if coalesce(v_event.ev_retry, 0) >= v_max_retries then
         perform pgque.event_dead(
@@ -158,9 +167,6 @@ begin
         );
     end if;
     return 1;
-exception
-    when no_data_found then
-        raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 

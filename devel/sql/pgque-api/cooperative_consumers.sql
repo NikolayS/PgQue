@@ -48,29 +48,54 @@ returns integer as $$
 --      delete - pgque.consumer (when no subscriptions remain for the consumer)
 -- ----------------------------------------------------------------------
 declare
+    x_queue_id integer;
     x_sub_id integer;
     _sub_id_cnt integer;
     _consumer_id integer;
     _sub_role text;
 begin
-    select
-        s.sub_id,
-        c.co_id,
-        s.sub_role
-    into
-        x_sub_id,
-        _consumer_id,
-        _sub_role
-    from
-        pgque.subscription as s
-        inner join pgque.queue as q
-            on q.queue_id = s.sub_queue
-        inner join pgque.consumer as c
-            on c.co_id = s.sub_consumer
-    where
-        q.queue_name = x_queue_name
-        and c.co_name = x_consumer_name
-    for update of s, c;
+    /* Lock consumer before subscription (matching register_consumer_at), and
+       lock coop_main before coop_member (matching _next_batch_coop /
+       unregister_subconsumer) to prevent AB-BA deadlocks. */
+    select queue_id into x_queue_id
+    from pgque.queue
+    where queue_name = x_queue_name;
+    if not found then
+        return 0;
+    end if;
+
+    select co_id into _consumer_id
+    from pgque.consumer
+    where co_name = x_consumer_name
+    for update;
+    if not found then
+        return 0;
+    end if;
+
+    select s.sub_id, s.sub_role
+    into x_sub_id, _sub_role
+    from pgque.subscription as s
+    where s.sub_queue = x_queue_id
+      and s.sub_consumer = _consumer_id;
+    if not found then
+        return 0;
+    end if;
+
+    if _sub_role = 'coop_member' then
+        perform 1
+        from pgque.subscription as m
+        where m.sub_queue = x_queue_id
+          and m.sub_id = x_sub_id
+          and m.sub_role = 'coop_main'
+        for update;
+    end if;
+
+    select s.sub_id, s.sub_role
+    into x_sub_id, _sub_role
+    from pgque.subscription as s
+    where s.sub_queue = x_queue_id
+      and s.sub_consumer = _consumer_id
+    for update;
     if not found then
         return 0;
     end if;
