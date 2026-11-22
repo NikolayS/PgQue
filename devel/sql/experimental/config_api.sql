@@ -22,18 +22,18 @@ begin
 
     return v_ret;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.pause_queue(i_queue text)
 returns void as $$
 begin
     perform pgque.set_queue_config(i_queue, 'ticker_paused', 'true');
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 create or replace function pgque.resume_queue(i_queue text)
 returns void as $$
 begin
     perform pgque.set_queue_config(i_queue, 'ticker_paused', 'false');
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;

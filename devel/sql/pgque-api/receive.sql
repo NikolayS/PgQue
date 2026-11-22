@@ -53,7 +53,7 @@ begin
 end;
 $$ language plpgsql stable security definer set search_path = pgque, pg_catalog, pg_temp;
 revoke execute on function pgque._is_partition_slot_consumer(int4, text)
-    from public, pgque_reader, pgque_writer;
+    from public, pgque_reader, pgque_writer, pgque_admin;
 
 -- pgque.receive() -- wraps next_batch + get_batch_events
 create or replace function pgque.receive(
@@ -278,4 +278,4 @@ grant execute on function pgque.ack(bigint)                                   to
 grant execute on function pgque.nack(bigint, pgque.message, interval, text)   to pgque_reader;
 
 -- Shared retry/DLQ core: SECURITY DEFINER callee only (nack / nack_partitioned).
-revoke execute on function pgque._nack_batch_event(bigint, pgque.message, interval, text) from public, pgque_reader, pgque_writer;
+revoke execute on function pgque._nack_batch_event(bigint, pgque.message, interval, text) from public, pgque_reader, pgque_writer, pgque_admin;

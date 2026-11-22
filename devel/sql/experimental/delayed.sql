@@ -42,7 +42,7 @@ begin
     -- Returns scheduled-entry ID (NOT a queue event ID)
     return currval('pgque.delayed_events_de_id_seq');
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- maint_deliver_delayed() -- move due delayed events into queues
 --
@@ -66,7 +66,7 @@ begin
     end loop;
     return cnt;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- maint() -- top-level maintenance wrapper
 --
@@ -84,20 +84,44 @@ create or replace function pgque.maint()
 returns integer as $$
 declare
     f record;
-    sql text;
     r integer;
     total integer := 0;
+    v_maint_owner name;
+    v_func_owner  name;
+    v_func_oid    oid;
 begin
-    -- Run PgQ maintenance operations (rotation step1, retry)
-    -- Skip step2 (needs separate TX) and vacuum (autovacuum handles it)
+    /* Resolve install-owner name once per call (pg_get_userbyid avoids pg_authid). */
+    select pg_catalog.pg_get_userbyid(p.proowner) into v_maint_owner
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'pgque'
+      and p.proname = 'maint'
+      and pg_catalog.pg_get_function_arguments(p.oid) = '';
+
     for f in select func_name, func_arg from pgque.maint_operations()
     loop
         if f.func_name = 'pgque.maint_rotate_tables_step2' then
-            -- Step2 runs in a separate pg_cron job (pgque_rotate_step2)
             continue;
         elsif f.func_name = 'vacuum' then
             continue;
         elsif f.func_arg is not null then
+            begin
+                execute format('select %L::regprocedure', f.func_name || '(text)')
+                into v_func_oid;
+            exception when others then
+                raise warning 'pgque.maint: skipping % — invalid regprocedure: %', f.func_name, sqlerrm;
+                continue;
+            end;
+
+            select pg_catalog.pg_get_userbyid(p.proowner) into v_func_owner
+            from pg_proc p
+            where p.oid = v_func_oid;
+
+            if v_func_owner is distinct from v_maint_owner then
+                raise warning 'pgque.maint: skipping % — owner % is not maint() owner %', f.func_name, v_func_owner, v_maint_owner;
+                continue;
+            end if;
+
             execute 'select ' || f.func_name || '(' || quote_literal(f.func_arg) || ')' into r;
             total := total + r;
         else
@@ -106,10 +130,11 @@ begin
         end if;
     end loop;
 
-    -- Run delayed event delivery
     select pgque.maint_deliver_delayed() into r;
     total := total + r;
 
     return total;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
+
+grant execute on function pgque.maint() to pgque_admin;

@@ -77,5 +77,8 @@ begin
     raise notice 'PASS: config singleton verified';
 end $$;
 
+-- Test 6: Reinstall must not escalate privileges on internal tables or helpers
+\i tests/test_reinstall_privs.sql
+
 -- Cleanup
 select pgque.drop_queue('test_install_q', true);

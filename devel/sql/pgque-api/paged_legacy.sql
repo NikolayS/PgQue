@@ -383,6 +383,10 @@ begin
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
+revoke execute on function pgque._event_retry_core(bigint, bigint, timestamptz)
+    from public, pgque_reader, pgque_writer, pgque_admin;
+revoke execute on function pgque._nack_paged_event(bigint, pgque.message, interval, text)
+    from public, pgque_reader, pgque_writer, pgque_admin;
 revoke execute on function pgque.drop_queue(text, boolean)
     from public, pgque_reader, pgque_writer;
 grant execute on function pgque.drop_queue(text, boolean) to pgque_admin;

@@ -77,7 +77,7 @@ begin
     from pgque.queue q
     order by q.queue_name;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.consumer_stats() -- per-consumer metrics
 create or replace function pgque.consumer_stats()
@@ -110,7 +110,7 @@ begin
         and t.tick_id = s.sub_last_tick
     order by q.queue_name, c.co_name;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.queue_health() -- operational diagnostics
 create or replace function pgque.queue_health()
@@ -196,7 +196,7 @@ begin
              else 'job_id=' || cfg.maint_job_id::text end
     from pgque.config cfg;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.otel_metrics() -- OTel-compatible metric export
 create or replace function pgque.otel_metrics()
@@ -251,7 +251,7 @@ begin
            jsonb_build_object('queue', qs.queue_name)
     from pgque.queue_stats() qs;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.stuck_consumers() -- consumers that haven't processed in a long time
 create or replace function pgque.stuck_consumers(
@@ -277,7 +277,7 @@ begin
     where now() - coalesce(t.tick_time, s.sub_active) > i_threshold
     order by lag desc nulls first;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.in_flight() -- messages currently being processed
 create or replace function pgque.in_flight(i_queue_name text)
@@ -308,7 +308,7 @@ begin
       and s.sub_batch is not null
     order by c.co_name;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.throughput() -- throughput over time (bucketed from tick history)
 create or replace function pgque.throughput(
@@ -363,7 +363,7 @@ begin
     from bucketed b
     order by b.bucket;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
 -- pgque.error_rate() -- error rate over time (retries + DLQ per time period)
 create or replace function pgque.error_rate(
@@ -413,4 +413,4 @@ begin
     from buckets b
     order by b.bucket;
 end;
-$$ language plpgsql security definer set search_path = pgque, pg_catalog;
+$$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;

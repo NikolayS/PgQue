@@ -1333,6 +1333,13 @@ grant execute on function pgque.next_batch_custom(text, text, text, interval, in
 grant execute on function pgque.receive_coop(text, text, text, int, interval) to pgque_reader;
 grant execute on function pgque.touch_subconsumer(text, text, text) to pgque_reader;
 
+revoke execute on function pgque._next_batch_custom(
+    text, text, interval, int4, interval, boolean)
+from public, pgque_reader, pgque_writer, pgque_admin;
+revoke execute on function pgque._validate_coop_names(text, text, text)
+from public, pgque_reader, pgque_writer, pgque_admin;
+revoke execute on function pgque._clear_member_cursor(int4, int4)
+from public, pgque_reader, pgque_writer, pgque_admin;
 revoke execute on function pgque._next_batch_coop(
     text, text, text, interval, int4, interval, interval, boolean)
 from public, pgque_reader, pgque_writer, pgque_admin;
