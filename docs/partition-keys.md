@@ -119,7 +119,8 @@ select pgque.ack_partitioned(
   consumer := 'workers',
   slot := 2,
   n := 4,
-  worker := 'orders-worker-7f3c'
+  worker := 'orders-worker-7f3c',
+  batch_id := :batch_id
 );
 
 select pgque.release_slot(

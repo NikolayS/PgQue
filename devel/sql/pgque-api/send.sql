@@ -277,7 +277,19 @@ revoke execute on function pgque.subscribe(text, text) from public;
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
 create or replace function pgque.unsubscribe(queue text, consumer text)
 returns integer as $$
+declare
+    v_queue_id int4;
 begin
+    if position('#' in consumer) > 0 then
+        select q.queue_id into v_queue_id
+        from pgque.queue as q
+        where q.queue_name = queue;
+        if found and pgque._is_partition_slot_consumer(v_queue_id, consumer) then
+            raise exception 'consumer % on queue % is a partition slot consumer; use pgque.unsubscribe_slot() or pgque.unsubscribe_partitioned()',
+                consumer, queue;
+        end if;
+    end if;
+
     return pgque.unregister_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;

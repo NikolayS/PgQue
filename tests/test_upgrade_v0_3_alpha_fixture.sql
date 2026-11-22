@@ -41,7 +41,6 @@ from (
     'pgque.claim_slot(text,text,integer,text,interval)',
     'pgque.release_slot(text,text,integer,text)',
     'pgque.receive_partitioned(text,text,integer,integer,text,integer)',
-    'pgque.ack_partitioned(text,text,integer,integer,text)',
     'pgque.nack_partitioned(text,text,integer,integer,text,pgque.message,interval,text)',
     'pgque.send_idem(text,text,text,text,interval,text)',
     'pgque.send_idem(text,text,jsonb,text,interval,text)',
@@ -53,7 +52,7 @@ join pg_proc as p on p.oid = f.function_oid;
 do $$
 begin
   assert (
-    select count(*) in (12, 13, 14)
+    select count(*) in (11, 12, 13)
     from public.upgrade_v03_named_functions
   ), 'all available pre-final public signatures must exist before upgrade';
   assert not exists (

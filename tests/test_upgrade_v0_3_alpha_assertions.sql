@@ -68,12 +68,15 @@ begin
   end loop;
   assert v_seen_partition and v_seen_idem,
     'alpha partition and idempotency events must survive function recreation';
+  assert to_regprocedure('pgque.ack_partitioned(text,text,integer,integer,text)') is null,
+    'alpha unfenced 5-arg ack_partitioned must be dropped on upgrade';
   assert pgque.ack_partitioned(
     queue_name => 'upgrade_v03_named_q',
     consumer => 'workers',
     slot => 0,
     n => 2,
-    worker => 'upgrade-worker') = 1,
+    worker => 'upgrade-worker',
+    batch_id => v_msg.batch_id) = 1,
     'upgraded named ack_partitioned must resolve';
   perform pgque.release_slot(
     queue_name => 'upgrade_v03_named_q',

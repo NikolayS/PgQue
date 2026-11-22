@@ -311,10 +311,9 @@ work.
 Grant: `pgque_reader`. Source:
 [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
 
-#### `pgque.ack_partitioned(queue_name text, consumer text, slot int, n int, worker text) → integer`
+#### `pgque.ack_partitioned(queue_name text, consumer text, slot int, n int, worker text, batch_id bigint) → integer`
 
-Fences and renews the owner, then finishes the slot's open batch. Returns `1`
-when a batch was finished and `0` when none was open. Grant: `pgque_reader`.
+Fences the lease owner and active `batch_id`, renews the lease when due, and finishes `batch_id`. Returns `1` when finished and `0` when no batch was open; raises SQLSTATE `55000` if a different batch is active (preventing ABA stale-worker acks). Grant: `pgque_reader`.
 Source: [`devel/sql/pgque-api/partition_keys.sql`](https://github.com/NikolayS/pgque/blob/main/devel/sql/pgque-api/partition_keys.sql).
 
 #### `pgque.nack_partitioned(queue_name text, consumer text, slot int, n int, worker text, msg pgque.message, retry_after interval default '60 seconds', reason text default null) → integer`

@@ -256,7 +256,7 @@ end $$;"""
         # Inject after this script's connection, before its ownership check.
         marker = 'cat >"${workdir}/20_ownership.sql" <<SQL\n\\\\connect ${db_main}\n'
         harness = self.mutated_harness("wrong-owner", marker, marker +
-            "alter function pgque.ack_partitioned(text, text, int, int, text) "
+            "alter function pgque.ack_partitioned(text, text, int, int, text, bigint) "
             "owner to ${other_owner};\n")
         for setting in ("off", "on"):
             with self.subTest(check_asserts=setting):

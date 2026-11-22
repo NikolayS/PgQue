@@ -125,7 +125,8 @@ select pgque.ack_partitioned(
   consumer := 'account_projector',
   slot := 3,
   n := 8,
-  worker := 'projector-pod-7f3c'
+  worker := 'projector-pod-7f3c',
+  batch_id := :batch_id
 );
 ```
 

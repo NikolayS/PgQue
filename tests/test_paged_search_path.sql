@@ -39,7 +39,7 @@ begin
         'pgque._validate_pending_page(pgque.page_state,uuid,text)',
         'pgque.ack(bigint)',
         'pgque.ack_page(uuid,text,jsonb)',
-        'pgque.ack_partitioned(text,text,integer,integer,text)',
+        'pgque.ack_partitioned(text,text,integer,integer,text,bigint)',
         'pgque.batch_retry(bigint,integer)',
         'pgque.claim_slot(text,text,integer,text,interval)',
         'pgque.create_queue(text)',

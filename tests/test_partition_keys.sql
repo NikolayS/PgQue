@@ -155,7 +155,7 @@ begin
       v_cnt := v_cnt + 1;
     end loop;
     assert v_cnt > 0, format('slot %s should receive at least one event', v_slot);
-    perform pgque.ack_partitioned('pk_q', 'w', v_slot, 2, 'wk-main');
+    perform pgque.ack_partitioned('pk_q', 'w', v_slot, 2, 'wk-main', v_msg.batch_id);
 
     -- Same tick window is consumed: a second receive must return nothing.
     v_cnt := 0;
@@ -275,7 +275,7 @@ begin
   -- ack with wrong n
   v_raised := false;
   begin
-    perform pgque.ack_partitioned('pk_q', 'w', 0, 3, 'wk-main');
+    perform pgque.ack_partitioned('pk_q', 'w', 0, 3, 'wk-main', 1);
   exception
     when others then v_raised := true;
   end;
@@ -387,7 +387,7 @@ begin
   perform pgque.claim_slot('pk_q', 'w', 0, 'wk-a');
   v_raised := false;
   begin
-    perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-b');
+    perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-b', 1);
   exception
     when others then v_raised := true;
   end;
@@ -419,13 +419,14 @@ declare
   v_heir bigint;
   v_first bigint[];
   v_second bigint[];
+  v_batch bigint;
   v_raised boolean;
 begin
   -- Zombie opens a batch under a short lease, then stalls past the TTL.
   v_zombie := pgque.claim_slot('pk_q', 'w', 0, 'wk-zombie', '1 second');
   assert v_zombie is not null, 'fencing: zombie claim must succeed';
 
-  select array_agg(m.msg_id order by m.msg_id) into v_first
+  select array_agg(m.msg_id order by m.msg_id), max(m.batch_id) into v_first, v_batch
   from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-zombie', 100) as m;
   assert cardinality(v_first) = 2,
     format('fencing: zombie must open a 2-event batch, got %s', coalesce(cardinality(v_first), 0));
@@ -466,14 +467,14 @@ begin
   -- The zombie is fenced: its ack raises instead of silently double-acking.
   v_raised := false;
   begin
-    perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-zombie');
+    perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-zombie', v_batch);
   exception
     when others then v_raised := true;
   end;
   assert v_raised, 'fencing: zombie ack after takeover must raise';
 
   -- The heir acks normally.
-  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-heir');
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-heir', v_batch);
   perform pgque.release_slot('pk_q', 'w', 0, 'wk-heir');
 
   raise notice 'PASS fencing: zombie ack raises after takeover; heir re-issued same batch';
@@ -513,7 +514,7 @@ begin
     perform pgque.nack_partitioned('pk_q', 'w', 0, 2, 'wk-main', v_msg, '0 seconds', 'retry-affinity test');
   end loop;
   assert v_cnt = 1, format('retry-affinity: expected 1 event on slot 0, got %s', v_cnt);
-  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main');
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main', v_msg.batch_id);
   perform pgque.release_slot('pk_q', 'w', 0, 'wk-main');
 end $$;
 
@@ -545,7 +546,7 @@ begin
     assert v_msg.msg_id <> v_retried,
       'retry-affinity: retried event must not leak to another slot';
   end loop;
-  perform pgque.ack_partitioned('pk_q', 'w', 1, 2, 'wk-main');
+  perform pgque.ack_partitioned('pk_q', 'w', 1, 2, 'wk-main', v_msg.batch_id);
   perform pgque.release_slot('pk_q', 'w', 1, 'wk-main');
 
   -- Slot 0 must see it again, same key, retry counter incremented.
@@ -562,7 +563,7 @@ begin
     end if;
   end loop;
   assert v_seen, 'retry-affinity: retried event must be redelivered to its own slot';
-  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main');
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main', v_msg.batch_id);
   perform pgque.release_slot('pk_q', 'w', 0, 'wk-main');
 
   raise notice 'PASS T-retry-affinity: nacked keyed event redelivered to the same slot only';
@@ -670,7 +671,7 @@ begin
   assert v_raised, 'guard: plain nack() on a slot batch must raise';
 
   -- Finish the batch properly through the partitioned API and release.
-  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-guard');
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-guard', v_batch);
   perform pgque.release_slot('pk_q', 'w', 0, 'wk-guard');
   raise notice 'PASS guard: plain ack()/nack() refuse a slot batch';
 end $$;
@@ -772,12 +773,12 @@ declare
   v_until_before timestamptz;
   v_until_after timestamptz;
 begin
-  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-renew', '2 seconds');
+  perform pgque.claim_slot('pk_q', 'w', 0, 'wk-renew', '1 second');
   select lease_until into v_until_before
   from pgque.partition_slot_status
   where queue_name = 'pk_q' and consumer = 'w' and slot = 0;
 
-  perform pg_sleep(0.05);
+  perform pg_sleep(0.3);
   perform * from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-renew', 10);
 
   select lease_until into v_until_after

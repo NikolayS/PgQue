@@ -175,13 +175,19 @@ create or replace function pgque._nack_batch_event(
     i_reason text)
 returns integer as $$
 declare
-    v_max_retries int4;
-    v_ev          record;
+    v_max_retries   int4;
+    v_queue_id      int4;
+    v_cname         text;
+    v_expected_slot int4;
+    v_partition_n   int4;
+    v_ev            record;
 begin
-    -- Lookup: subscription -> queue config
-    select coalesce(q.queue_max_retries, 5) into v_max_retries
+    -- Lookup: subscription -> queue config + consumer name
+    select coalesce(q.queue_max_retries, 5), s.sub_queue, c.co_name
+    into v_max_retries, v_queue_id, v_cname
     from pgque.subscription s
     join pgque.queue q on q.queue_id = s.sub_queue
+    join pgque.consumer c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
 
     if not found then
@@ -198,6 +204,32 @@ begin
 
     if not found then
         raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
+    end if;
+
+    /* For cataloged partition slot batches, verify canonical ev_extra1 hashes
+       to this slot so a cross-slot nack cannot orphan a retry row forever. */
+    if position('#' in v_cname) > 0
+        and to_regclass('pgque.partition_consumer') is not null
+        and to_regclass('pgque.partition_slot') is not null
+    then
+        select ps.slot, pc.n
+        into v_expected_slot, v_partition_n
+        from pgque.partition_consumer as pc
+        join pgque.partition_slot as ps
+            on ps.queue_id = pc.queue_id
+            and ps.co_name = pc.co_name
+        where pc.queue_id = v_queue_id
+          and pc.co_name || '#' || ps.slot::text || '/' || pc.n::text = v_cname;
+        if found then
+            if (case when v_ev.ev_extra1 is null then 0
+                else (pg_catalog.hashtextextended(v_ev.ev_extra1, 0) % v_partition_n + v_partition_n) % v_partition_n
+                end) <> v_expected_slot
+            then
+                raise exception 'msg_id % does not belong to slot %/% of batch %',
+                    i_msg.msg_id, v_expected_slot, v_partition_n, i_batch_id
+                    using errcode = '22023';
+            end if;
+        end if;
     end if;
 
     if coalesce(v_ev.ev_retry, 0) >= v_max_retries then

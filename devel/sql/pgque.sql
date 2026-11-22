@@ -5694,13 +5694,19 @@ create or replace function pgque._nack_batch_event(
     i_reason text)
 returns integer as $$
 declare
-    v_max_retries int4;
-    v_ev          record;
+    v_max_retries   int4;
+    v_queue_id      int4;
+    v_cname         text;
+    v_expected_slot int4;
+    v_partition_n   int4;
+    v_ev            record;
 begin
-    -- Lookup: subscription -> queue config
-    select coalesce(q.queue_max_retries, 5) into v_max_retries
+    -- Lookup: subscription -> queue config + consumer name
+    select coalesce(q.queue_max_retries, 5), s.sub_queue, c.co_name
+    into v_max_retries, v_queue_id, v_cname
     from pgque.subscription s
     join pgque.queue q on q.queue_id = s.sub_queue
+    join pgque.consumer c on c.co_id = s.sub_consumer
     where s.sub_batch = i_batch_id;
 
     if not found then
@@ -5717,6 +5723,32 @@ begin
 
     if not found then
         raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
+    end if;
+
+    /* For cataloged partition slot batches, verify canonical ev_extra1 hashes
+       to this slot so a cross-slot nack cannot orphan a retry row forever. */
+    if position('#' in v_cname) > 0
+        and to_regclass('pgque.partition_consumer') is not null
+        and to_regclass('pgque.partition_slot') is not null
+    then
+        select ps.slot, pc.n
+        into v_expected_slot, v_partition_n
+        from pgque.partition_consumer as pc
+        join pgque.partition_slot as ps
+            on ps.queue_id = pc.queue_id
+            and ps.co_name = pc.co_name
+        where pc.queue_id = v_queue_id
+          and pc.co_name || '#' || ps.slot::text || '/' || pc.n::text = v_cname;
+        if found then
+            if (case when v_ev.ev_extra1 is null then 0
+                else (pg_catalog.hashtextextended(v_ev.ev_extra1, 0) % v_partition_n + v_partition_n) % v_partition_n
+                end) <> v_expected_slot
+            then
+                raise exception 'msg_id % does not belong to slot %/% of batch %',
+                    i_msg.msg_id, v_expected_slot, v_partition_n, i_batch_id
+                    using errcode = '22023';
+            end if;
+        end if;
     end if;
 
     if coalesce(v_ev.ev_retry, 0) >= v_max_retries then
@@ -6369,6 +6401,13 @@ begin
     where queue_name = i_queue;
     if not found then
         raise exception 'Event queue not created yet';
+    end if;
+
+    if position('#' in i_consumer) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, i_consumer)
+    then
+        raise exception 'consumer % on queue % is a partition slot consumer; cooperative subconsumers cannot attach to a partition slot',
+            i_consumer, i_queue;
     end if;
 
     /*
@@ -7426,7 +7465,19 @@ revoke execute on function pgque.subscribe(text, text) from public;
 -- pgque.unsubscribe(queue, consumer) -- wrapper for unregister_consumer
 create or replace function pgque.unsubscribe(queue text, consumer text)
 returns integer as $$
+declare
+    v_queue_id int4;
 begin
+    if position('#' in consumer) > 0 then
+        select q.queue_id into v_queue_id
+        from pgque.queue as q
+        where q.queue_name = queue;
+        if found and pgque._is_partition_slot_consumer(v_queue_id, consumer) then
+            raise exception 'consumer % on queue % is a partition slot consumer; use pgque.unsubscribe_slot() or pgque.unsubscribe_partitioned()',
+                consumer, queue;
+        end if;
+    end if;
+
     return pgque.unregister_consumer(queue, consumer);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
@@ -7510,7 +7561,7 @@ revoke execute on all functions in schema pgque from public;
 --   pgque.claim_slot(queue, consumer, slot, worker, ttl)
 --   pgque.release_slot(queue, consumer, slot, worker)
 --   pgque.receive_partitioned(queue, consumer, slot, n, worker, max)
---   pgque.ack_partitioned(queue, consumer, slot, n, worker)
+--   pgque.ack_partitioned(queue, consumer, slot, n, worker, batch_id)
 --   view pgque.partition_slot_status
 --
 -- Producer idempotency (Phase 1B) is the separate, orthogonal
@@ -7621,7 +7672,9 @@ create table if not exists pgque.partition_slot (
     epoch       bigint not null default 0,
     primary key (queue_id, co_name, slot),
     foreign key (queue_id, co_name) references pgque.partition_consumer (queue_id, co_name) on delete cascade
-);
+) with (fillfactor = 80);
+
+alter table pgque.partition_slot set (fillfactor = 80);
 
 /*
  * Only the old advisory-lock view needs replacement. Keep the lease view
@@ -7643,6 +7696,7 @@ drop function if exists pgque.claim_slot(text, text, int);
 drop function if exists pgque.release_slot(text, text, int);
 drop function if exists pgque.receive_partitioned(text, text, int, int, int);
 drop function if exists pgque.ack_partitioned(text, text, int, int);
+drop function if exists pgque.ack_partitioned(text, text, int, int, text);
 drop function if exists pgque._partition_n(text, text, int, int);
 drop function if exists pgque._touch_lease(int4, text, text, int, text);
 
@@ -7676,8 +7730,6 @@ begin
                 array['i_queue', 'i_consumer', 'i_slot', 'i_worker']),
             ('pgque.receive_partitioned(text,text,integer,integer,text,integer)',
                 array['i_queue', 'i_consumer', 'i_slot', 'i_n', 'i_worker', 'i_max']),
-            ('pgque.ack_partitioned(text,text,integer,integer,text)',
-                array['i_queue', 'i_consumer', 'i_slot', 'i_n', 'i_worker']),
             ('pgque.nack_partitioned(text,text,integer,integer,text,pgque.message,interval,text)',
                 array['i_queue', 'i_consumer', 'i_slot', 'i_n', 'i_worker', 'i_msg', 'i_retry_after', 'i_reason'])
         ) as alpha(signature, old_names)
@@ -7762,6 +7814,9 @@ declare
     v_queue_id int4;
     v_owner text;
     v_ttl interval;
+    v_until timestamptz;
+    v_now timestamptz;
+    v_new_until timestamptz;
 begin
     if i_queue is null or i_consumer is null or i_slot is null or i_n is null then
         raise exception 'queue, consumer, slot, and n must not be null';
@@ -7786,7 +7841,8 @@ begin
             i_slot, i_consumer, i_queue, v_n - 1;
     end if;
 
-    select lease_owner, lease_ttl into v_owner, v_ttl
+    select lease_owner, lease_ttl, lease_until
+    into v_owner, v_ttl, v_until
     from pgque.partition_slot
     where queue_id = v_queue_id
       and co_name = i_consumer
@@ -7806,12 +7862,23 @@ begin
             i_slot, i_consumer, i_queue, v_owner, i_worker;
     end if;
 
-    -- Owner (possibly with an expired-but-un-taken-over lease): renew.
-    update pgque.partition_slot
-    set lease_until = pgque._lease_deadline(clock_timestamp(), v_ttl)
-    where queue_id = v_queue_id
-      and co_name = i_consumer
-      and slot = i_slot;
+    /*
+     * Renew the lease once at least min(1s, ttl/4) has elapsed, or whenever
+     * expired/unset. Avoids heap/WAL churn during tight idle poll loops while
+     * still guaranteeing multiple renewals before expiry.
+     */
+    v_now := clock_timestamp();
+    v_new_until := pgque._lease_deadline(v_now, v_ttl);
+    if v_until is null
+        or v_until <= v_now
+        or (v_new_until - v_until) >= least(interval '1 second', v_ttl / 4)
+    then
+        update pgque.partition_slot
+        set lease_until = v_new_until
+        where queue_id = v_queue_id
+          and co_name = i_consumer
+          and slot = i_slot;
+    end if;
 
     return v_n;
 end;
@@ -8494,12 +8561,14 @@ revoke execute on function pgque.receive_partitioned(text, text, int, int, text,
 
 /*
  * pgque.ack_partitioned() -- finish the slot's active batch (same ack path
- * as pgque.ack(): finish_batch advances the slot cursor). Fences a worker
- * that does not hold the lease. Returns 1 if a batch was finished, 0 if the
- * slot had no active batch.
+ * as pgque.ack(): finish_batch advances the slot cursor). Fences both the
+ * lease owner and the exact batch_id so a re-claimed ABA worker cannot
+ * blindly acknowledge a newer batch. Returns 1 if batch_id was finished, 0
+ * if the slot had no active batch.
  */
 create or replace function pgque.ack_partitioned(
-    queue_name text, consumer text, slot int, n int, worker text)
+    queue_name text, consumer text, slot int, n int, worker text,
+    batch_id bigint)
 returns int as $$
 #variable_conflict use_column
 declare
@@ -8508,20 +8577,30 @@ declare
     i_slot alias for $3;
     i_n alias for $4;
     i_worker alias for $5;
+    i_batch_id alias for $6;
     v_n int4;
-    v_batch_id bigint;
+    v_active_batch bigint;
 begin
+    if i_batch_id is null then
+        raise exception 'batch_id must not be null' using errcode = '22023';
+    end if;
+
     -- Reject wrong-N, fence the lease, renew it.
     v_n := pgque._slot_guard(i_queue, i_consumer, i_slot, i_n, i_worker);
 
-    v_batch_id := pgque._slot_batch(i_queue, i_consumer, i_slot, v_n);
-    if v_batch_id is null then
+    v_active_batch := pgque._slot_batch(i_queue, i_consumer, i_slot, v_n);
+    if v_active_batch is null then
         return 0;
     end if;
-    return pgque.finish_batch(v_batch_id);
+    if v_active_batch <> i_batch_id then
+        raise exception 'batch % does not match active batch % on slot % of consumer % on queue %; fenced',
+            i_batch_id, v_active_batch, i_slot, i_consumer, i_queue
+            using errcode = '55000';
+    end if;
+    return pgque.finish_batch(v_active_batch);
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
-revoke execute on function pgque.ack_partitioned(text, text, int, int, text) from public;
+revoke execute on function pgque.ack_partitioned(text, text, int, int, text, bigint) from public;
 
 /*
  * pgque.nack_partitioned() -- lease-fenced per-message retry/DLQ for a slot.
@@ -8670,7 +8749,7 @@ grant execute on function pgque.unsubscribe_partitioned(text, text)    to pgque_
 grant execute on function pgque.claim_slot(text, text, int, text, interval)    to pgque_reader;
 grant execute on function pgque.release_slot(text, text, int, text)            to pgque_reader;
 grant execute on function pgque.receive_partitioned(text, text, int, int, text, int) to pgque_reader;
-grant execute on function pgque.ack_partitioned(text, text, int, int, text)    to pgque_reader;
+grant execute on function pgque.ack_partitioned(text, text, int, int, text, bigint) to pgque_reader;
 grant execute on function pgque.nack_partitioned(text, text, int, int, text, pgque.message, interval, text) to pgque_reader;
 
 grant select on pgque.partition_slot_status to pgque_reader;
@@ -9165,6 +9244,14 @@ begin
     where queue_name = x_queue_name;
     if not found then
         raise exception 'Event queue not created yet';
+    end if;
+
+    if x_tick_pos is not null
+        and position('#' in x_consumer_name) > 0
+        and pgque._is_partition_slot_consumer(x_queue_id, x_consumer_name)
+    then
+        raise exception 'consumer % on queue % is a partition slot consumer; cursor repositioning is not allowed on partition slots',
+            x_consumer_name, x_queue_name;
     end if;
 
     /*

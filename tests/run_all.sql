@@ -165,6 +165,9 @@
 \echo 'Running: test_partition_status_roles'
 \i tests/test_partition_status_roles.sql
 
+\echo 'Running: test_partition_safety'
+\i tests/test_partition_safety.sql
+
 \echo 'Running: test_send_idem'
 \i tests/test_send_idem.sql
 

@@ -28,8 +28,8 @@ values
     array['queue_name', 'consumer', 'slot', 'worker']),
   ('pgque.receive_partitioned(text,text,integer,integer,text,integer)'::regprocedure,
     array['queue_name', 'consumer', 'slot', 'n', 'worker', 'max_return']),
-  ('pgque.ack_partitioned(text,text,integer,integer,text)'::regprocedure,
-    array['queue_name', 'consumer', 'slot', 'n', 'worker']),
+  ('pgque.ack_partitioned(text,text,integer,integer,text,bigint)'::regprocedure,
+    array['queue_name', 'consumer', 'slot', 'n', 'worker', 'batch_id']),
   ('pgque.nack_partitioned(text,text,integer,integer,text,pgque.message,interval,text)'::regprocedure,
     array['queue_name', 'consumer', 'slot', 'n', 'worker', 'msg', 'retry_after', 'reason']),
   ('pgque.send_idem(text,text,text,text,interval,text)'::regprocedure,
@@ -175,7 +175,8 @@ begin
     consumer => 'workers',
     slot => 0,
     n => 2,
-    worker => 'named-worker') = 1,
+    worker => 'named-worker',
+    batch_id => v_msg.batch_id) = 1,
     'named ack_partitioned call must resolve';
   assert pgque.release_slot(
     queue_name => 'named_v03_q',
@@ -206,7 +207,8 @@ begin
     consumer => 'workers',
     slot => 1,
     n => 2,
-    worker => 'named-worker') = 1,
+    worker => 'named-worker',
+    batch_id => v_msg.batch_id) = 1,
     'named ack_partitioned call must finish slot 1';
   perform pgque.release_slot(
     queue_name => 'named_v03_q',
