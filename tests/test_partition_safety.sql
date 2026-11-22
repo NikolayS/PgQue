@@ -300,8 +300,10 @@ end $$;
 do $$
 declare
     v_opts text[];
-    v_u0 bigint;
-    v_u1 bigint;
+    v_ctid0 tid;
+    v_ctid1 tid;
+    v_until0 timestamptz;
+    v_until1 timestamptz;
     v_i int;
 begin
     select reloptions into v_opts
@@ -311,29 +313,25 @@ begin
         'pgque.partition_slot must have fillfactor=80, got ' || coalesce(v_opts::text, 'null');
 
     perform pgque.claim_slot('part_safety_q', 'pc', 0, 'w-idle', '30 seconds');
-    perform pg_stat_force_next_flush();
-    perform pg_sleep(0.05);
-    perform pg_stat_clear_snapshot();
-    select n_tup_upd into v_u0
-    from pg_stat_user_tables
-    where schemaname = 'pgque' and relname = 'partition_slot';
+    select ps.ctid, ps.lease_until into v_ctid0, v_until0
+    from pgque.partition_slot as ps
+    join pgque.queue as q on q.queue_id = ps.queue_id
+    where q.queue_name = 'part_safety_q' and ps.co_name = 'pc' and ps.slot = 0;
 
     for v_i in 1..20 loop
         perform * from pgque.receive_partitioned('part_safety_q', 'pc', 0, 4, 'w-idle', 100);
     end loop;
 
-    perform pg_stat_force_next_flush();
-    perform pg_sleep(0.05);
-    perform pg_stat_clear_snapshot();
-    select n_tup_upd into v_u1
-    from pg_stat_user_tables
-    where schemaname = 'pgque' and relname = 'partition_slot';
+    select ps.ctid, ps.lease_until into v_ctid1, v_until1
+    from pgque.partition_slot as ps
+    join pgque.queue as q on q.queue_id = ps.queue_id
+    where q.queue_name = 'part_safety_q' and ps.co_name = 'pc' and ps.slot = 0;
 
-    assert (v_u1 - v_u0) <= 1,
-        format('20 rapid idle receive_partitioned polls must not write 20 updates, got %s', v_u1 - v_u0);
+    assert v_ctid1 = v_ctid0 and v_until1 = v_until0,
+        format('20 rapid idle receive_partitioned polls must not rewrite partition_slot tuple (ctid %s->%s)', v_ctid0, v_ctid1);
 
     perform pgque.release_slot('part_safety_q', 'pc', 0, 'w-idle');
-    raise notice 'PASS: partition_slot fillfactor=80 and idle-poll throttle verified (updates=%)', v_u1 - v_u0;
+    raise notice 'PASS: partition_slot fillfactor=80 and idle-poll throttle verified (ctid unchanged)';
 end $$;
 
 /* Cleanup */
