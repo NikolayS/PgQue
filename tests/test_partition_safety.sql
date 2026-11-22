@@ -234,6 +234,12 @@ end $$;
 
 /* 4. NULL, empty-string, negative-hash, and multi-byte UTF-8 keys route deterministically. */
 do $$
+begin
+    perform pgque.create_queue('part_safety_edge_q');
+    perform pgque.subscribe_partitioned('part_safety_edge_q', 'pc', 4);
+end $$;
+
+do $$
 declare
     v_neg_key text;
 begin
@@ -243,15 +249,15 @@ begin
     limit 1;
     assert v_neg_key is not null, 'must find a key with negative hashtextextended';
 
-    perform pgque.send('part_safety_q', 'edge', '{"k":"null"}'::jsonb, null);
-    perform pgque.send('part_safety_q', 'edge', '{"k":"empty"}'::jsonb, '');
-    perform pgque.send('part_safety_q', 'edge', '{"k":"neg"}'::jsonb, v_neg_key);
-    perform pgque.send('part_safety_q', 'edge', '{"k":"utf8"}'::jsonb, 'tenant-日本語-🚀');
+    perform pgque.send('part_safety_edge_q', 'edge', '{"k":"null"}'::jsonb, null);
+    perform pgque.send('part_safety_edge_q', 'edge', '{"k":"empty"}'::jsonb, '');
+    perform pgque.send('part_safety_edge_q', 'edge', '{"k":"neg"}'::jsonb, v_neg_key);
+    perform pgque.send('part_safety_edge_q', 'edge', '{"k":"utf8"}'::jsonb, 'tenant-日本語-🚀');
 end $$;
 
 do $$
 begin
-    perform pgque.force_next_tick('part_safety_q');
+    perform pgque.force_next_tick('part_safety_edge_q');
     perform pgque.ticker();
 end $$;
 
@@ -265,22 +271,15 @@ declare
     v_null_cnt int;
 begin
     for v_s in 0..3 loop
-        perform pgque.claim_slot('part_safety_q', 'pc', v_s, 'w-edge', '1 minute');
-        select count(*), count(*) filter (where extra1 is null and type = 'edge'), max(batch_id)
+        perform pgque.claim_slot('part_safety_edge_q', 'pc', v_s, 'w-edge', '1 minute');
+        select count(*), count(*) filter (where extra1 is null), max(batch_id)
         into v_cnt, v_null_cnt, v_b
-        from pgque.receive_partitioned('part_safety_q', 'pc', v_s, 4, 'w-edge', 100)
-        where type = 'edge';
+        from pgque.receive_partitioned('part_safety_edge_q', 'pc', v_s, 4, 'w-edge', 100);
 
-        /* Drain any leftover batch from earlier tests on slots 2/3 cleanly. */
-        if v_b is null then
-            select batch_id into v_b
-            from pgque.receive_partitioned('part_safety_q', 'pc', v_s, 4, 'w-edge', 100)
-            limit 1;
-        end if;
         if v_b is not null then
-            perform pgque.ack_partitioned('part_safety_q', 'pc', v_s, 4, 'w-edge', v_b);
+            perform pgque.ack_partitioned('part_safety_edge_q', 'pc', v_s, 4, 'w-edge', v_b);
         end if;
-        perform pgque.release_slot('part_safety_q', 'pc', v_s, 'w-edge');
+        perform pgque.release_slot('part_safety_edge_q', 'pc', v_s, 'w-edge');
 
         v_total := v_total + v_cnt;
         if v_s = 0 then
@@ -292,6 +291,8 @@ begin
 
     assert v_total = 4 and v_null_on_zero = 1,
         format('expected 4 edge events total with 1 NULL on slot 0, got total=%s null_on_zero=%s', v_total, v_null_on_zero);
+    perform pgque.unsubscribe_partitioned('part_safety_edge_q', 'pc');
+    perform pgque.drop_queue('part_safety_edge_q', true);
     raise notice 'PASS: NULL, empty, negative-hash, and UTF-8 partition keys routed cleanly';
 end $$;
 

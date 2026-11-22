@@ -533,6 +533,7 @@ end $$;
 do $$
 declare
   v_msg pgque.message;
+  v_batch bigint;
   v_retried bigint;
   v_seen boolean := false;
 begin
@@ -540,20 +541,26 @@ begin
 
   -- Slot 1 must NOT see the retried event (only its own pending tenant-b).
   perform pgque.claim_slot('pk_q', 'w', 1, 'wk-main');
+  v_batch := null;
   for v_msg in
     select * from pgque.receive_partitioned('pk_q', 'w', 1, 2, 'wk-main', 100)
   loop
+    v_batch := v_msg.batch_id;
     assert v_msg.msg_id <> v_retried,
       'retry-affinity: retried event must not leak to another slot';
   end loop;
-  perform pgque.ack_partitioned('pk_q', 'w', 1, 2, 'wk-main', v_msg.batch_id);
+  if v_batch is not null then
+    perform pgque.ack_partitioned('pk_q', 'w', 1, 2, 'wk-main', v_batch);
+  end if;
   perform pgque.release_slot('pk_q', 'w', 1, 'wk-main');
 
   -- Slot 0 must see it again, same key, retry counter incremented.
   perform pgque.claim_slot('pk_q', 'w', 0, 'wk-main');
+  v_batch := null;
   for v_msg in
     select * from pgque.receive_partitioned('pk_q', 'w', 0, 2, 'wk-main', 100)
   loop
+    v_batch := v_msg.batch_id;
     if v_msg.msg_id = v_retried then
       v_seen := true;
       assert v_msg.extra1 = 'tenant-a',
@@ -563,7 +570,7 @@ begin
     end if;
   end loop;
   assert v_seen, 'retry-affinity: retried event must be redelivered to its own slot';
-  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main', v_msg.batch_id);
+  perform pgque.ack_partitioned('pk_q', 'w', 0, 2, 'wk-main', v_batch);
   perform pgque.release_slot('pk_q', 'w', 0, 'wk-main');
 
   raise notice 'PASS T-retry-affinity: nacked keyed event redelivered to the same slot only';
