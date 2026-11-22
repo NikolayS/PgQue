@@ -272,9 +272,11 @@ do \$\$
 declare
   v_slot int;
   v_msg pgque.message;
+  v_batch_id bigint;
   v_epoch bigint;
 begin
   for v_slot in 0..1 loop
+    v_batch_id := null;
     v_epoch := pgque.claim_slot('nsu_q', 'c', v_slot, 'w0');
     if (v_epoch is not null) is distinct from true then
       raise exception '%', format('reader: claim of free slot %s must return an epoch', v_slot);
@@ -282,10 +284,13 @@ begin
     for v_msg in
       select * from pgque.receive_partitioned('nsu_q', 'c', v_slot, 2, 'w0', 100)
     loop
+      v_batch_id := v_msg.batch_id;
       insert into nsu_got (slot, msg_id, key)
       values (v_slot, v_msg.msg_id, v_msg.extra1);
     end loop;
-    perform pgque.ack_partitioned('nsu_q', 'c', v_slot, 2, 'w0');
+    if v_batch_id is not null then
+      perform pgque.ack_partitioned('nsu_q', 'c', v_slot, 2, 'w0', v_batch_id);
+    end if;
   end loop;
 end \$\$;
 do \$\$
@@ -433,7 +438,7 @@ begin
   if (v_cnt = 1) is distinct from true then
     raise exception '%', format('negctl pre-flip: expected 1 event, got %s', v_cnt);
   end if;
-  perform pgque.ack_partitioned('negq', 'c', 0, 1, 'w0');
+  perform pgque.ack_partitioned('negq', 'c', 0, 1, 'w0', v_msg.batch_id);
   raise notice 'PASS: negctl pre-flip reader flow works';
 end \$\$;
 reset role;

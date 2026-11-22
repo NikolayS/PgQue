@@ -507,7 +507,7 @@ begin
   end loop;
   assert v_count = 3,
     format('receive_partitioned retry must return all 3 events, got %s', v_count);
-  perform pgque.ack_partitioned('recv_part_overflow', 'c1', 0, 1, 'worker');
+  perform pgque.ack_partitioned('recv_part_overflow', 'c1', 0, 1, 'worker', v_msg.batch_id);
 
   perform * from pgque.receive_partitioned(
     'recv_part_overflow', 'c1', 0, 1, 'worker', 2147483647
@@ -551,7 +551,7 @@ begin
   end loop;
   assert v_count = 2,
     format('exactly 2 matching rows must succeed despite other-slot rows, got %s', v_count);
-  perform pgque.ack_partitioned('recv_part_filtered', 'c1', 0, 2, 'worker');
+  perform pgque.ack_partitioned('recv_part_filtered', 'c1', 0, 2, 'worker', v_msg.batch_id);
 end $$;
 
 do $$
@@ -596,7 +596,7 @@ begin
   end loop;
   assert v_count = 3,
     format('partition retry must return all 3 matching rows, got %s', v_count);
-  perform pgque.ack_partitioned('recv_part_filtered', 'c1', 0, 2, 'worker');
+  perform pgque.ack_partitioned('recv_part_filtered', 'c1', 0, 2, 'worker', v_msg.batch_id);
   perform pgque.release_slot('recv_part_filtered', 'c1', 0, 'worker');
 end $$;
 

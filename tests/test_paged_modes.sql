@@ -274,7 +274,7 @@ begin
 
   begin
     perform pgque.ack_partitioned(
-      'paged_partition_epoch', 'part_c', 0, 1, 'worker-b'
+      'paged_partition_epoch', 'part_c', 0, 1, 'worker-b', v_second.batch_id
     );
     assert false, 'legacy partition ack must reject an active page';
   exception when others then

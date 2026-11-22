@@ -569,6 +569,13 @@ begin
         raise exception 'Event queue not created yet';
     end if;
 
+    if position('#' in i_consumer) > 0
+        and pgque._is_partition_slot_consumer(v_queue_id, i_consumer)
+    then
+        raise exception 'consumer % on queue % is a partition slot consumer; cooperative subconsumers cannot attach to a partition slot',
+            i_consumer, i_queue;
+    end if;
+
     /*
      * NO KEY UPDATE serializes registrations without conflicting with the
      * KEY SHARE lock used by subscription's consumer FK. The upsert/re-read

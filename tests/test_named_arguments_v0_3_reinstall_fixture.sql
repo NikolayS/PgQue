@@ -48,7 +48,7 @@ from (
     'pgque.claim_slot(text,text,integer,text,interval)',
     'pgque.release_slot(text,text,integer,text)',
     'pgque.receive_partitioned(text,text,integer,integer,text,integer)',
-    'pgque.ack_partitioned(text,text,integer,integer,text)',
+    'pgque.ack_partitioned(text,text,integer,integer,text,bigint)',
     'pgque.nack_partitioned(text,text,integer,integer,text,pgque.message,interval,text)',
     'pgque.send_idem(text,text,text,text,interval,text)',
     'pgque.send_idem(text,text,jsonb,text,interval,text)',

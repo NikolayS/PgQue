@@ -118,7 +118,7 @@ begin
     v_ord := v_ord + 1;
     insert into _us12_order_recv values (0, v_ord, v_msg.msg_id, v_msg.extra1);
   end loop;
-  perform pgque.ack_partitioned('us12_order', 'cw', 0, 2, 'acc-w');
+  perform pgque.ack_partitioned('us12_order', 'cw', 0, 2, 'acc-w', v_msg.batch_id);
   perform pgque.release_slot('us12_order', 'cw', 0, 'acc-w');
 
   perform pgque.claim_slot('us12_order', 'cw', 1, 'acc-w');
@@ -127,7 +127,7 @@ begin
     v_ord := v_ord + 1;
     insert into _us12_order_recv values (1, v_ord, v_msg.msg_id, v_msg.extra1);
   end loop;
-  perform pgque.ack_partitioned('us12_order', 'cw', 1, 2, 'acc-w');
+  perform pgque.ack_partitioned('us12_order', 'cw', 1, 2, 'acc-w', v_msg.batch_id);
   perform pgque.release_slot('us12_order', 'cw', 1, 'acc-w');
 end $$;
 
@@ -216,15 +216,20 @@ end $$;
 do $$
 declare
   v_msg  pgque.message;
+  v_batch_id bigint;
   v_slot int;
 begin
   for v_slot in 0..2 loop
+    v_batch_id := null;
     perform pgque.claim_slot('us12_parallel', 'cw', v_slot, 'acc-w');
     for v_msg in select * from pgque.receive_partitioned('us12_parallel', 'cw', v_slot, 3, 'acc-w', 100)
     loop
+      v_batch_id := v_msg.batch_id;
       insert into _us12_par_recv values (v_slot, v_msg.msg_id, v_msg.extra1);
     end loop;
-    perform pgque.ack_partitioned('us12_parallel', 'cw', v_slot, 3, 'acc-w');
+    if v_batch_id is not null then
+      perform pgque.ack_partitioned('us12_parallel', 'cw', v_slot, 3, 'acc-w', v_batch_id);
+    end if;
     perform pgque.release_slot('us12_parallel', 'cw', v_slot, 'acc-w');
   end loop;
 end $$;
@@ -298,10 +303,11 @@ do $$
 declare
   v_first  bigint[];
   v_second bigint[];
+  v_batch  bigint;
 begin
   perform pgque.claim_slot('us12_batch', 'cw', 0, 'acc-w');
 
-  select array_agg(m.msg_id order by m.msg_id) into v_first
+  select array_agg(m.msg_id order by m.msg_id), max(m.batch_id) into v_first, v_batch
   from pgque.receive_partitioned('us12_batch', 'cw', 0, 1, 'acc-w', 100) m;
 
   select array_agg(m.msg_id order by m.msg_id) into v_second
@@ -311,7 +317,7 @@ begin
     format('US-12.4: first receive should open a 2-event batch, got %s', coalesce(cardinality(v_first), 0));
   assert v_first = v_second,
     'US-12.4: second receive on the same slot must return the SAME batch idempotently, not a divergent one';
-  perform pgque.ack_partitioned('us12_batch', 'cw', 0, 1, 'acc-w');
+  perform pgque.ack_partitioned('us12_batch', 'cw', 0, 1, 'acc-w', v_batch);
   perform pgque.release_slot('us12_batch', 'cw', 0, 'acc-w');
   raise notice 'PASS: US-12.4 (single-session facet) same batch returned idempotently';
 end $$;
@@ -555,7 +561,7 @@ begin
   -- ack with the wrong n must likewise raise.
   v_raised := false;
   begin
-    perform pgque.ack_partitioned('us12_nvalidate', 'cw', 0, 3, 'acc-w');
+    perform pgque.ack_partitioned('us12_nvalidate', 'cw', 0, 3, 'acc-w', 1);
   exception when others then
     v_raised := true;
   end;

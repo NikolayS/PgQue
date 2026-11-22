@@ -471,7 +471,8 @@ select pgque.ack_partitioned(
   consumer := 'workers',
   slot := :customer_slot,
   n := 4,
-  worker := 'tutorial-worker'
+  worker := 'tutorial-worker',
+  batch_id := :batch_id
 );
 
 select pgque.release_slot(

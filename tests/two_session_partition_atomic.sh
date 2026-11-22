@@ -241,21 +241,26 @@ do \$\$
 declare
   v_slot int;
   v_msg pgque.message;
+  v_batch_id bigint;
   v_ids bigint[];
 begin
   for v_slot in 0..2 loop
+    v_batch_id := null;
     assert pgque.claim_slot('${order_queue}', '${consumer}', v_slot, 'owner') is not null,
       'inverse-commit fixture must acquire each slot';
     for v_msg in select * from pgque.receive_partitioned(
       '${order_queue}', '${consumer}', v_slot, 3, 'owner', 10)
     loop
+      v_batch_id := v_msg.batch_id;
       assert v_msg.extra1 = 'same-key', 'unexpected partition key';
       assert (pg_catalog.hashtextextended(v_msg.extra1, 0) % 3 + 3) % 3 = v_slot,
         'same-key message reached the wrong slot';
       insert into ${fixture}.seen (phase, slot, msg_id, batch_id, partition_key)
       values (${phase}, v_slot, v_msg.msg_id, v_msg.batch_id, v_msg.extra1);
     end loop;
-    perform pgque.ack_partitioned('${order_queue}', '${consumer}', v_slot, 3, 'owner');
+    if v_batch_id is not null then
+      perform pgque.ack_partitioned('${order_queue}', '${consumer}', v_slot, 3, 'owner', v_batch_id);
+    end if;
     assert pgque.release_slot('${order_queue}', '${consumer}', v_slot, 'owner'),
       'finished snapshot window must allow release';
   end loop;
@@ -319,15 +324,16 @@ for mode in slot whole; do
 begin;
 set local deadlock_timeout = '100ms';
 do \$\$
+declare
+  v_batch_id bigint;
 begin
   perform pgque._slot_guard('${teardown_queue}', '${consumer}', 0, 1, 'owner');
   while not (select is_open from ${fixture}.gate where name = '${mode}') loop
     perform pg_sleep(0.05);
   end loop;
-  assert (select count(*) = 1 from pgque.receive_partitioned(
-    '${teardown_queue}', '${consumer}', 0, 1, 'owner', 10)),
-    'receive must finish while teardown waits for its slot';
-  assert pgque.ack_partitioned('${teardown_queue}', '${consumer}', 0, 1, 'owner') = 1,
+  select batch_id into strict v_batch_id from pgque.receive_partitioned(
+    '${teardown_queue}', '${consumer}', 0, 1, 'owner', 10);
+  assert pgque.ack_partitioned('${teardown_queue}', '${consumer}', 0, 1, 'owner', v_batch_id) = 1,
     'receive must ack before teardown';
 end \$\$;
 commit;

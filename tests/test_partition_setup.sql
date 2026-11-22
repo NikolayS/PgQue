@@ -162,7 +162,7 @@ begin
       values (v_slot, v_msg.msg_id, v_msg.extra1);
     end loop;
     assert pgque.ack_partitioned(
-      'partition_setup_atomic', 'workers', v_slot, 3, 'setup-worker') = 1,
+      'partition_setup_atomic', 'workers', v_slot, 3, 'setup-worker', v_msg.batch_id) = 1,
       format('atomic setup slot %s batch must be finishable', v_slot);
     perform pgque.release_slot(
       'partition_setup_atomic', 'workers', v_slot, 'setup-worker');

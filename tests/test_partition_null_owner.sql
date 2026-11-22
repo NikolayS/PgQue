@@ -16,7 +16,7 @@ begin
         perform * from pgque.receive_partitioned(
           'pk_null_owner', 'workers', 0, 1, i_worker, 10);
       when 'ack' then
-        perform pgque.ack_partitioned('pk_null_owner', 'workers', 0, 1, i_worker);
+        perform pgque.ack_partitioned('pk_null_owner', 'workers', 0, 1, i_worker, i_msg.batch_id);
       when 'nack' then
         perform pgque.nack_partitioned(
           'pk_null_owner', 'workers', 0, 1, i_worker, i_msg, interval '0 seconds');
@@ -102,7 +102,7 @@ begin
     perform pg_temp.expect_partition_fenced('ack', v_worker, v_msg);
   end loop;
 
-  assert pgque.ack_partitioned('pk_null_owner', 'workers', 0, 1, 'owner') = 1,
+  assert pgque.ack_partitioned('pk_null_owner', 'workers', 0, 1, 'owner', v_msg.batch_id) = 1,
     'invalid worker must leave the batch open for its owner';
   assert pgque.release_slot('pk_null_owner', 'workers', 0, 'owner') is true,
     'owner must still release after ack';

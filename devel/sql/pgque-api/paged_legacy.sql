@@ -184,6 +184,14 @@ begin
         raise exception 'Event queue not created yet';
     end if;
 
+    if x_tick_pos is not null
+        and position('#' in x_consumer_name) > 0
+        and pgque._is_partition_slot_consumer(x_queue_id, x_consumer_name)
+    then
+        raise exception 'consumer % on queue % is a partition slot consumer; cursor repositioning is not allowed on partition slots',
+            x_consumer_name, x_queue_name;
+    end if;
+
     /*
      * NO KEY UPDATE serializes registrations without conflicting with
      * subscription FK checks. The upsert/re-read path serializes
