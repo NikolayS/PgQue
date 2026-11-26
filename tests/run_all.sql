@@ -197,5 +197,6 @@
 \i tests/test_partition_deadline.sql
 \i tests/test_paged_review.sql
 \i tests/test_paged_scale_and_subxid.sql
+\i tests/test_idem_scale_and_gc.sql
 
 \echo '=== ALL TESTS PASSED ==='

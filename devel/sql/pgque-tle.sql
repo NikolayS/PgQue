@@ -5346,6 +5346,7 @@ declare
     v_maint_owner name;
     v_func_owner  name;
     v_func_oid    oid;
+    v_pass        integer;
 begin
     -- Resolve install-owner name once per call (pg_get_userbyid avoids pg_authid).
     select pg_catalog.pg_get_userbyid(p.proowner) into v_maint_owner
@@ -5381,8 +5382,17 @@ begin
                 continue;
             end if;
 
-            execute 'select ' || f.func_name || '(' || quote_literal(f.func_arg) || ')' into r;
-            total := total + r;
+            /* Honor maint_operations() contract: extra-maint hooks return 1 when
+               another immediate pass is needed (bounded to 50 passes per run). */
+            v_pass := 0;
+            loop
+                execute 'select ' || f.func_name || '(' || quote_literal(f.func_arg) || ')' into r;
+                total := total + coalesce(r, 0);
+                v_pass := v_pass + 1;
+                exit when f.func_name = 'pgque.maint_rotate_tables_step1'
+                    or r is distinct from 1
+                    or v_pass >= 50;
+            end loop;
         else
             execute 'select ' || f.func_name || '()' into r;
             total := total + r;
@@ -8889,10 +8899,13 @@ create table if not exists pgque.idem (
     event_id   int8,
     expires_at timestamptz not null,
     primary key (queue_id, idem_key)
-);
+) with (fillfactor = 80);
 
--- GC scans by expiry; serves both the whole-table and per-queue sweeps.
+alter table pgque.idem set (fillfactor = 80);
+
+-- GC scans by expiry; global index serves maint_idem(), composite serves maint_idem(queue_name).
 create index if not exists idem_expires_at_idx on pgque.idem (expires_at);
+create index if not exists idem_queue_expires_at_idx on pgque.idem (queue_id, expires_at);
 
 /* pgque_reader holds a blanket select on pre-existing tables (roles.sql), so
    revoke explicitly regardless of install order. Revokes are idempotent. */
@@ -8969,18 +8982,28 @@ declare
     i_partition_key alias for $6;
     v_queue_id int4;
     v_extra_maint text[];
+    v_event_seq text;
     v_claimed boolean;
+    v_inserted boolean;
     v_event_id int8;
+    v_claim_ts timestamptz;
+    v_post_claim_ts timestamptz;
+    v_expires_at timestamptz;
 begin
     if i_idem_key is null then
-        raise exception 'idem_key must not be null';
+        raise exception 'idem_key must not be null' using errcode = '22023';
+    end if;
+    if i_idem_key = '' then
+        raise exception 'idem_key must not be empty' using errcode = '22023';
     end if;
     if i_ttl is null or not isfinite(i_ttl) or i_ttl <= interval '0' then
-        raise exception 'ttl must be a positive finite interval';
+        raise exception 'ttl must be a positive finite interval' using errcode = '22023';
     end if;
+    v_claim_ts := clock_timestamp();
+    v_expires_at := pgque._lease_deadline(v_claim_ts, i_ttl);
 
-    select q.queue_id, q.queue_extra_maint
-    into v_queue_id, v_extra_maint
+    select q.queue_id, q.queue_extra_maint, q.queue_event_seq
+    into v_queue_id, v_extra_maint, v_event_seq
     from pgque.queue q
     where q.queue_name = i_queue;
     if not found then
@@ -9003,34 +9026,61 @@ begin
     end if;
 
     /*
-     * Atomic claim: the unique key serializes concurrent producers; the
-     * conditional do-update lets only an EXPIRED key be reclaimed.
+     * Read-first fast path for live duplicates: FOR SHARE is compatible with
+     * concurrent duplicate readers (avoiding exclusive-lock serialization and
+     * AB-BA deadlocks across multi-key transactions) while still waiting on
+     * an uncommitted DELETE of the same key.
      */
+    select k.event_id into v_event_id
+    from pgque.idem k
+    where k.queue_id = v_queue_id
+      and k.idem_key = i_idem_key
+      and k.expires_at > clock_timestamp()
+    for share;
+    if found then
+        event_id := v_event_id;
+        deduped := true;
+        return next;
+        return;
+    end if;
+
+    /*
+     * Atomic single-write claim: pre-allocate event_id so uncontended fresh
+     * sends write the final claim row in one INSERT (zero dead-on-birth UPDATE).
+     * The conditional DO UPDATE lets only an EXPIRED key be reclaimed.
+     */
+    v_claim_ts := clock_timestamp();
+    v_expires_at := pgque._lease_deadline(v_claim_ts, i_ttl);
+    v_event_id := nextval(v_event_seq);
+
     insert into pgque.idem as k (queue_id, idem_key, event_id, expires_at)
-    values (v_queue_id, i_idem_key, null, clock_timestamp() + i_ttl)
+    values (v_queue_id, i_idem_key, v_event_id, v_expires_at)
     on conflict (queue_id, idem_key) do update
         set event_id = excluded.event_id,
             /* Evaluated after any conflicting row-lock wait, so a takeover
                always receives a fresh TTL window. */
-            expires_at = clock_timestamp() + i_ttl
+            expires_at = pgque._lease_deadline(clock_timestamp(), i_ttl)
         where k.expires_at <= clock_timestamp()
-    returning true into v_claimed;
+    returning true, (xmax = 0) into v_claimed, v_inserted;
+    v_post_claim_ts := clock_timestamp();
 
     if v_claimed then
         /* Append in the same transaction as the claim: if this fails, the
            claim rolls back with it and the key stays usable. */
-        v_event_id := pgque.insert_event(
-            i_queue, i_type, i_payload, i_partition_key, i_idem_key,
-            null, null);
+        perform pgque.insert_event_raw(
+            i_queue, v_event_id, now(), null, null, i_type, i_payload,
+            i_partition_key, i_idem_key, null, null);
 
-        /* Finalize the TTL after the claim and append. INSERT values can
-           precede a uniqueness wait whose conflicting row disappears;
-           that successful INSERT never evaluates the ON CONFLICT update. */
-        update pgque.idem k
-        set event_id = v_event_id,
-            expires_at = clock_timestamp() + i_ttl
-        where k.queue_id = v_queue_id
-          and k.idem_key = i_idem_key;
+        /* Refresh expires_at only if a fresh INSERT waited on a conflicting
+           uncommitted row that disappeared (ON CONFLICT DO UPDATE already
+           computes expires_at after any lock wait). Uncontended fresh sends
+           stay single-write with zero dead-on-birth tuples. */
+        if v_inserted and (v_post_claim_ts - v_claim_ts > interval '50 milliseconds') then
+            update pgque.idem k
+            set expires_at = pgque._lease_deadline(clock_timestamp(), i_ttl)
+            where k.queue_id = v_queue_id
+              and k.idem_key = i_idem_key;
+        end if;
 
         event_id := v_event_id;
         deduped := false;
@@ -9102,15 +9152,18 @@ begin
         return 0;
     end if;
 
-    delete from pgque.idem k
-    -- Recheck the current tuple after a concurrent takeover's row-lock wait.
-    where k.expires_at < clock_timestamp()
-      and (k.queue_id, k.idem_key) in (
-        select d.queue_id, d.idem_key
+    with doomed as (
+        select d.ctid
         from pgque.idem d
         where d.queue_id = v_queue_id
           and d.expires_at < clock_timestamp()
-        limit 10000);
+        limit 10000
+        for update skip locked
+    )
+    delete from pgque.idem k
+    using doomed
+    where k.ctid = doomed.ctid
+      and k.expires_at < clock_timestamp();
     get diagnostics v_deleted = row_count;
 
     return case when v_deleted >= 10000 then 1 else 0 end;
@@ -9128,14 +9181,17 @@ returns integer as $$
 declare
     v_deleted integer;
 begin
-    delete from pgque.idem k
-    -- Recheck the current tuple after a concurrent takeover's row-lock wait.
-    where k.expires_at < clock_timestamp()
-      and (k.queue_id, k.idem_key) in (
-        select d.queue_id, d.idem_key
+    with doomed as (
+        select d.ctid
         from pgque.idem d
         where d.expires_at < clock_timestamp()
-        limit 10000);
+        limit 10000
+        for update skip locked
+    )
+    delete from pgque.idem k
+    using doomed
+    where k.ctid = doomed.ctid
+      and k.expires_at < clock_timestamp();
     get diagnostics v_deleted = row_count;
 
     return case when v_deleted >= 10000 then 1 else 0 end;
@@ -9466,10 +9522,22 @@ declare
     v_error_table text;
     v_error_constraint text;
 begin
-    select * into v_queue
-    from pgque.queue
-    where queue_name = x_queue_name
-    for update;
+    if x_force then
+        begin
+            select * into v_queue
+            from pgque.queue
+            where queue_name = x_queue_name
+            for update nowait;
+        exception when lock_not_available then
+            raise exception 'queue is in use; retry administrative force drop'
+                using errcode = '40001';
+        end;
+    else
+        select * into v_queue
+        from pgque.queue
+        where queue_name = x_queue_name
+        for update;
+    end if;
     if not found then
         raise exception 'No such event queue';
     end if;
@@ -9488,6 +9556,14 @@ begin
             perform 1 from pgque.subscription
             where sub_queue = v_queue.queue_id
             order by sub_consumer
+            for update nowait;
+            perform 1 from pgque.idem
+            where queue_id = v_queue.queue_id
+            order by idem_key
+            for update nowait;
+            perform 1 from pgque.dead_letter
+            where dl_queue_id = v_queue.queue_id
+            order by dl_id
             for update nowait;
         exception when lock_not_available then
             raise exception 'queue is in use; retry administrative force drop'

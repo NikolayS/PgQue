@@ -312,10 +312,22 @@ declare
     v_error_table text;
     v_error_constraint text;
 begin
-    select * into v_queue
-    from pgque.queue
-    where queue_name = x_queue_name
-    for update;
+    if x_force then
+        begin
+            select * into v_queue
+            from pgque.queue
+            where queue_name = x_queue_name
+            for update nowait;
+        exception when lock_not_available then
+            raise exception 'queue is in use; retry administrative force drop'
+                using errcode = '40001';
+        end;
+    else
+        select * into v_queue
+        from pgque.queue
+        where queue_name = x_queue_name
+        for update;
+    end if;
     if not found then
         raise exception 'No such event queue';
     end if;
@@ -334,6 +346,14 @@ begin
             perform 1 from pgque.subscription
             where sub_queue = v_queue.queue_id
             order by sub_consumer
+            for update nowait;
+            perform 1 from pgque.idem
+            where queue_id = v_queue.queue_id
+            order by idem_key
+            for update nowait;
+            perform 1 from pgque.dead_letter
+            where dl_queue_id = v_queue.queue_id
+            order by dl_id
             for update nowait;
         exception when lock_not_available then
             raise exception 'queue is in use; retry administrative force drop'

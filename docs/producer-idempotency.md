@@ -65,8 +65,10 @@ Deduplication is an exact match on `(queue_name, idem_key)`:
 - Choose a key for the intended effect, not only the entity. Include the tenant,
   operation, entity id, and an operation version where appropriate, for example
   `tenant-7:order-42:capture:v2`.
-- `idem_key` must be non-null. `ttl` must be a positive finite interval and
-  defaults to one hour.
+- `idem_key` must be non-null and non-empty (empty strings raise SQLSTATE
+  `22023`). `ttl` must be a positive finite interval that produces a finite
+  future timestamp (defaults to one hour; calendar-past or overflowing intervals
+  raise SQLSTATE `22023`).
 - The window starts with the accepted send. Duplicate attempts do not extend
   it. After expiry, the same key can append a new event and start a new window.
 
@@ -94,12 +96,14 @@ from pgque.send_idem(
 See [Partition keys](partition-keys.md) for the required consumer setup and
 worker loop.
 
-## Maintenance and capacity
+## Maintenance, storage model, and capacity
 
 The first idempotent send on a queue registers `pgque.maint_idem` as an
-extra-maintenance hook for that queue. A normal `pgque.maint()` schedule removes
-expired rows in bounded batches. Expired keys are also reclaimable by a new
-send immediately; maintenance controls table size, not correctness.
+extra-maintenance hook for that queue. `pgque.maint()` loops `maint_idem` in
+bounded 10,000-row `FOR UPDATE SKIP LOCKED` passes (up to 50 passes / 500,000
+expired rows per run) without blocking behind concurrent key takeovers. Expired
+keys are also reclaimable by a new send immediately; maintenance controls table
+size, not correctness.
 
 Operators can run cleanup directly:
 
@@ -112,10 +116,23 @@ Both forms return `1` when they deleted a full 10,000-row batch and should be
 called again, otherwise `0`. They require `pgque_admin`; `send_idem` requires
 `pgque_writer`.
 
-Live claim-table size is approximately the idempotent send rate multiplied by
-the TTL. Keep the TTL only as long as producers can legitimately retry, run
-`pgque.maint()` regularly, and monitor unexpectedly long windows or rapid key
-growth.
+**Storage model (`v0.3.0`) and `v0.4.0` roadmap:** Unlike PgQue's event tables
+(which are append-only and reclaimed by `TRUNCATE` rotation), `pgque.idem` in
+`v0.3.0` is a **single mutable TTL ledger** (`fillfactor = 80`) maintained by
+batched `DELETE`s and PostgreSQL autovacuum. Uncontended fresh sends write a
+single tuple (no follow-up `UPDATE`), and live duplicate retries take a
+read-first `FOR SHARE` lock instead of an exclusive lock. Even so, steady-state
+size and autovacuum work scale with `produce_rate × max(ttl, longest_xmin)`:
+
+- Keep `ttl` only as long as producers can legitimately retry.
+- Avoid long-running transactions that pin the database `xmin` horizon and
+  prevent autovacuum from reclaiming deleted claim rows.
+- Run `pgque.maint()` regularly and monitor table/index bloat under sustained
+  high-throughput idempotent workloads.
+- **Planned for `v0.4.0`:** Replace the single mutable `pgque.idem` table with
+  **time-bucketed rotating tables** reclaimed via `TRUNCATE`/`DROP` (zero-vacuum
+  garbage collection matching PgQue's event-log architecture). See
+  `blueprints/idempotency/DESIGN.md` (§4.1 / §8) for the design notes.
 
 The claim table is internal and is revoked from application roles, including
 `pgque_admin`. The schema/install owner can inspect aggregate size without

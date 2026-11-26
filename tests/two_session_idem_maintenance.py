@@ -116,19 +116,25 @@ def main():
                     and query like '%send_idem%';
             """, scope + " takeover completed with its transaction still open", sender)
 
+            # The live replacement is uncommitted. Cleanup uses FOR UPDATE SKIP
+            # LOCKED so it must complete immediately without blocking behind the
+            # takeover writer, delete expired-control right away, and leave the
+            # locked takeover row intact.
             operation = f"pgque.maint_idem('{queue}')" if scope == "scoped" else "pgque.maint_idem()"
             maintenance = start(maint_app, f"set role pgque_admin;\nselect {operation};")
-            barrier(f"""
-                select pid from pg_stat_activity
-                where application_name = '{maint_app}'
-                    and wait_event_type = 'Lock'
-                    and {sender_pid} = any(pg_blocking_pids(pid));
-            """, scope + " cleanup blocked by the takeover writer", maintenance)
+            finish(maintenance)
+
+            expired_while_open = int(sql(f"""
+                select count(*) from pgque.idem as k
+                join pgque.queue as q on q.queue_id = k.queue_id
+                where q.queue_name = '{queue}' and k.idem_key = 'expired-control';
+            """))
+            if expired_while_open != 0:
+                raise RuntimeError(scope + " cleanup did not remove expired-control while takeover stayed open")
 
             takeover_id, deduped = json.loads(finish(sender, "commit;\n\\q\n"))
             if deduped:
                 raise RuntimeError(scope + " fixture did not replace the expired claim")
-            finish(maintenance)
 
             claim = sql(f"""
                 select json_build_array(k.event_id, k.expires_at > clock_timestamp() + interval '30 minutes')
