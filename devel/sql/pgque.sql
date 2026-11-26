@@ -5366,7 +5366,10 @@ create table if not exists pgque.page_state (
     foreign key (queue_id, consumer_id)
         references pgque.subscription (sub_queue, sub_consumer)
         on delete cascade
-);
+) with (fillfactor = 80);
+
+alter table pgque.page_state set (fillfactor = 80);
+alter table pgque.subscription set (fillfactor = 80);
 
 revoke all on table pgque.page_state from public;
 revoke all on table pgque.page_state
@@ -5882,29 +5885,50 @@ returns integer as $$
 --      delete - pgque.consumer (when no subscriptions remain for the consumer)
 -- ----------------------------------------------------------------------
 declare
+    x_queue_id integer;
     x_sub_id integer;
     _sub_id_cnt integer;
     _consumer_id integer;
     _sub_role text;
 begin
-    select
-        s.sub_id,
-        c.co_id,
-        s.sub_role
-    into
-        x_sub_id,
-        _consumer_id,
-        _sub_role
-    from
-        pgque.subscription as s
-        inner join pgque.queue as q
-            on q.queue_id = s.sub_queue
-        inner join pgque.consumer as c
-            on c.co_id = s.sub_consumer
-    where
-        q.queue_name = x_queue_name
-        and c.co_name = x_consumer_name
-    for update of s, c;
+    /* Peek without locking so coop_member follows the global lock order used by
+       register_consumer_at, register_subconsumer, _next_batch_coop, and
+       unregister_subconsumer:
+         consumer(main) -> subscription(coop_main) -> consumer(target) -> subscription(target). */
+    select q.queue_id, c.co_id, s.sub_id, s.sub_role
+    into x_queue_id, _consumer_id, x_sub_id, _sub_role
+    from pgque.subscription as s
+    inner join pgque.queue as q on q.queue_id = s.sub_queue
+    inner join pgque.consumer as c on c.co_id = s.sub_consumer
+    where q.queue_name = x_queue_name
+      and c.co_name = x_consumer_name;
+    if not found then
+        return 0;
+    end if;
+
+    if _sub_role = 'coop_member' then
+        perform 1
+        from pgque.subscription as m
+        where m.sub_queue = x_queue_id
+          and m.sub_id = x_sub_id
+          and m.sub_role = 'coop_main'
+        for update;
+    end if;
+
+    perform 1
+    from pgque.consumer
+    where co_id = _consumer_id
+    for update;
+    if not found then
+        return 0;
+    end if;
+
+    select s.sub_id, s.sub_role
+    into x_sub_id, _sub_role
+    from pgque.subscription as s
+    where s.sub_queue = x_queue_id
+      and s.sub_consumer = _consumer_id
+    for update;
     if not found then
         return 0;
     end if;
@@ -9072,29 +9096,35 @@ create or replace function pgque._event_retry_core(
 returns integer as $$
 declare
     v_sql text;
-    v_count integer;
+    v_found integer;
+    v_inserted integer;
 begin
     v_sql := pgque.batch_event_sql(i_batch_id);
     v_sql :=
-        'insert into pgque.retry_queue (ev_retry_after, ev_queue, '
-        || 'ev_id, ev_time, ev_txid, ev_owner, ev_retry, ev_type, ev_data, '
-        || 'ev_extra1, ev_extra2, ev_extra3, ev_extra4) '
-        || 'select $1, s.sub_queue, e.ev_id, e.ev_time, null, s.sub_id, '
-        || 'coalesce(e.ev_retry, 0) + 1, e.ev_type, e.ev_data, '
-        || 'e.ev_extra1, e.ev_extra2, e.ev_extra3, e.ev_extra4 '
+        'with src as ('
+        || 'select $1 as ev_retry_after, s.sub_queue, e.ev_id, e.ev_time, '
+        || 's.sub_id, coalesce(e.ev_retry, 0) + 1 as ev_retry, '
+        || 'e.ev_type, e.ev_data, e.ev_extra1, e.ev_extra2, '
+        || 'e.ev_extra3, e.ev_extra4 '
         || 'from (' || v_sql || ') as e '
         || 'cross join pgque.subscription as s '
-        || 'where s.sub_batch = $2 and e.ev_id = $3';
+        || 'where s.sub_batch = $2 and e.ev_id = $3), '
+        || 'ins as ('
+        || 'insert into pgque.retry_queue (ev_retry_after, ev_queue, '
+        || 'ev_id, ev_time, ev_txid, ev_owner, ev_retry, ev_type, ev_data, '
+        || 'ev_extra1, ev_extra2, ev_extra3, ev_extra4) '
+        || 'select ev_retry_after, sub_queue, ev_id, ev_time, null, sub_id, '
+        || 'ev_retry, ev_type, ev_data, ev_extra1, ev_extra2, '
+        || 'ev_extra3, ev_extra4 from src '
+        || 'on conflict (ev_owner, ev_id) do nothing '
+        || 'returning 1) '
+        || 'select (select count(*) from src), (select count(*) from ins)';
 
-    execute v_sql using i_retry_time, i_batch_id, i_event_id;
-    get diagnostics v_count = row_count;
-    if v_count = 0 then
+    execute v_sql into v_found, v_inserted using i_retry_time, i_batch_id, i_event_id;
+    if v_found = 0 then
         raise exception 'event not found';
     end if;
-    return 1;
-exception
-    when unique_violation then
-        return 0;
+    return case when v_inserted > 0 then 1 else 0 end;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
@@ -9194,8 +9224,11 @@ begin
         || 'e.ev_type, e.ev_data, e.ev_extra1, e.ev_extra2, '
         || 'e.ev_extra3, e.ev_extra4 '
         || 'from (' || v_sql || ') as e where e.ev_id = $1'
-    into strict v_event
+    into v_event
     using i_msg.msg_id;
+    if not found then
+        raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
+    end if;
 
     if coalesce(v_event.ev_retry, 0) >= v_max_retries then
         perform pgque.event_dead(
@@ -9220,9 +9253,6 @@ begin
         );
     end if;
     return 1;
-exception
-    when no_data_found then
-        raise exception 'msg_id % not found in batch %', i_msg.msg_id, i_batch_id;
 end;
 $$ language plpgsql security definer set search_path = pgque, pg_catalog, pg_temp;
 
@@ -9735,8 +9765,9 @@ begin
         and v_state.last_ack_token is distinct from i_token) then
         raise exception 'stale page token' using errcode = 'PQP01';
     end if;
-    -- If routing changed while acquiring locks, do not acquire a slot late.
-    if (v_state.mode = 'partition') and (
+    -- If routing changed while acquiring locks for a pending page, do not
+    -- acquire a slot late. Read-only last_ack_token replays never touch slots.
+    if (v_state.pending_token = i_token) and (v_state.mode = 'partition') and (
         v_route.mode is distinct from v_state.mode
         or v_route.partition_co_name is distinct from v_state.partition_co_name
         or v_route.partition_slot is distinct from v_state.partition_slot) then
@@ -9846,9 +9877,11 @@ returns table(status text, batch_finished boolean) as $$
 declare
     v_state pgque.page_state%rowtype;
     v_request jsonb;
-    v_failure jsonb;
-    v_messages pgque.message[];
-    v_message pgque.message;
+    v_filter text := '';
+    v_sql text;
+    v_sub_id int4;
+    v_max_retries int4;
+    v_row record;
 begin
     v_state := pgque._lock_page(i_page_token);
     if v_state.last_ack_token = i_page_token then
@@ -9877,32 +9910,138 @@ begin
     end if;
     v_request := pgque._page_failures(i_failures);
     if jsonb_array_length(v_request) > 0 then
-        select array_agg(m) into v_messages
-        from pgque._page_messages(v_state, v_state.pending_page_size) as m;
-        for v_failure in select value from jsonb_array_elements(v_request) loop
-            select m.* into v_message from unnest(v_messages) as m
-            where m.msg_id = (v_failure->>'msg_id')::bigint;
-            if not found then
-                raise exception 'failure ID is outside the issued page' using errcode = '22023';
+        select s.sub_id, coalesce(q.queue_max_retries, 5)
+        into v_sub_id, v_max_retries
+        from pgque.subscription as s
+        inner join pgque.queue as q on q.queue_id = s.sub_queue
+        where s.sub_batch = v_state.active_batch_id;
+        if not found then
+            raise exception 'batch not found: %', v_state.active_batch_id;
+        end if;
+
+        if v_state.mode = 'partition' then
+            v_filter := format(
+                ' and (case when e.ev_extra1 is null then 0 else '
+                || '(pg_catalog.hashtextextended(e.ev_extra1, 0) %% %s + %s) %% %s end) = %s',
+                v_state.partition_n, v_state.partition_n,
+                v_state.partition_n, v_state.partition_slot);
+        end if;
+
+        /* Single materialized scan of the issued page (avoids 1+2F batch scans
+           and zero DML subtransactions so F >= 33 never overflows subxids). */
+        v_sql :=
+            'with page_raw as materialized ('
+            || 'select e.ev_id, e.ev_time, e.ev_txid, e.ev_retry, e.ev_type, e.ev_data, '
+            || 'e.ev_extra1, e.ev_extra2, e.ev_extra3, e.ev_extra4 '
+            || 'from (' || pgque.batch_event_sql(v_state.active_batch_id) || ') as e '
+            || 'where ($1 is null or e.ev_id > $1) '
+            || 'and ($2 is null or e.ev_id <= $2)' || v_filter
+            || ' order by e.ev_id limit $3) '
+            || 'select p.ev_id, p.ev_time, p.ev_txid, p.ev_retry, p.ev_type, p.ev_data, '
+            || 'p.ev_extra1, p.ev_extra2, p.ev_extra3, p.ev_extra4, '
+            || '(f.val->>''retry_after_seconds'')::int4 as retry_after_seconds, '
+            || 'f.val->>''reason'' as reason, '
+            || '(select count(*) <> count(distinct ev_id) from page_raw) as has_dup '
+            || 'from jsonb_array_elements($4) as f(val) '
+            || 'left join page_raw as p on p.ev_id = (f.val->>''msg_id'')::bigint '
+            || 'order by (p.ev_id is null) desc, (f.val->>''msg_id'')::bigint';
+
+        for v_row in execute v_sql using v_state.acked_event_id,
+            v_state.pending_last_event_id, v_state.pending_page_size::bigint + 1,
+            v_request
+        loop
+            if v_row.has_dup then
+                raise exception 'ambiguous duplicate event ID in paged batch'
+                    using errcode = '21000';
             end if;
-            perform pgque._nack_paged_event(v_state.active_batch_id, v_message,
-                make_interval(secs => (v_failure->>'retry_after_seconds')::int4),
-                v_failure->>'reason');
+            if v_row.ev_id is null then
+                raise exception 'failure ID is outside the issued page'
+                    using errcode = '22023';
+            end if;
+            if coalesce(v_row.ev_retry, 0) >= v_max_retries then
+                perform pgque.event_dead(
+                    v_state.active_batch_id,
+                    v_row.ev_id,
+                    coalesce(v_row.reason, 'max retries exceeded'),
+                    v_row.ev_time,
+                    v_row.ev_txid::text::xid8,
+                    v_row.ev_retry,
+                    v_row.ev_type,
+                    v_row.ev_data,
+                    v_row.ev_extra1,
+                    v_row.ev_extra2,
+                    v_row.ev_extra3,
+                    v_row.ev_extra4
+                );
+            else
+                insert into pgque.retry_queue (
+                    ev_retry_after, ev_queue, ev_id, ev_time, ev_txid,
+                    ev_owner, ev_retry, ev_type, ev_data,
+                    ev_extra1, ev_extra2, ev_extra3, ev_extra4
+                ) values (
+                    clock_timestamp() + make_interval(secs => v_row.retry_after_seconds),
+                    v_state.queue_id, v_row.ev_id, v_row.ev_time, null,
+                    v_sub_id, coalesce(v_row.ev_retry, 0) + 1,
+                    v_row.ev_type, v_row.ev_data,
+                    v_row.ev_extra1, v_row.ev_extra2, v_row.ev_extra3, v_row.ev_extra4
+                )
+                on conflict (ev_owner, ev_id) do nothing;
+            end if;
         end loop;
     end if;
-    perform pgque.renew_page(i_page_token, i_worker);
-    update pgque.page_state set
-        acked_event_id = v_state.pending_last_event_id,
-        acked_page_number = acked_page_number + 1,
-        last_ack_token = i_page_token, last_ack_worker = i_worker,
-        last_ack_request = v_request, last_ack_finished = v_state.pending_final,
-        pending_token = null, pending_last_event_id = null,
-        pending_page_size = null, pending_final = null, pending_worker = null,
-        pending_lease_ttl = null, pending_lease_until = null
-    where queue_id = v_state.queue_id and consumer_id = v_state.consumer_id;
+
+    if v_state.mode = 'partition' then
+        update pgque.partition_slot
+        set lease_until = pgque._lease_deadline(clock_timestamp(), lease_ttl)
+        where queue_id = v_state.queue_id
+          and co_name = v_state.partition_co_name
+          and slot = v_state.partition_slot;
+    end if;
+
     if v_state.pending_final then
-        perform pgque._clear_paged_active(v_state.queue_id, v_state.consumer_id);
+        /* Single UPDATE records the terminal receipt and clears active state. */
+        update pgque.page_state set
+            active_batch_id = null,
+            prev_tick_id = null,
+            next_tick_id = null,
+            mode = null,
+            acked_event_id = null,
+            acked_page_number = 0,
+            last_ack_token = i_page_token,
+            last_ack_worker = i_worker,
+            last_ack_request = v_request,
+            last_ack_finished = true,
+            pending_token = null,
+            pending_last_event_id = null,
+            pending_page_size = null,
+            pending_final = null,
+            pending_worker = null,
+            pending_lease_ttl = null,
+            pending_lease_until = null,
+            partition_co_name = null,
+            partition_slot = null,
+            partition_n = null,
+            partition_epoch = null
+        where queue_id = v_state.queue_id and consumer_id = v_state.consumer_id;
         perform pgque.finish_batch(v_state.active_batch_id);
+    else
+        update pgque.page_state set
+            acked_event_id = v_state.pending_last_event_id,
+            acked_page_number = acked_page_number + 1,
+            last_ack_token = i_page_token,
+            last_ack_worker = i_worker,
+            last_ack_request = v_request,
+            last_ack_finished = false,
+            pending_token = null,
+            pending_last_event_id = null,
+            pending_page_size = null,
+            pending_final = null,
+            pending_worker = null,
+            pending_lease_ttl = null,
+            pending_lease_until = null
+        where queue_id = v_state.queue_id and consumer_id = v_state.consumer_id;
+        update pgque.subscription set sub_active = clock_timestamp()
+        where sub_queue = v_state.queue_id and sub_consumer = v_state.consumer_id;
     end if;
     return query select 'acked'::text, v_state.pending_final;
 end;

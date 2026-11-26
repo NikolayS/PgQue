@@ -36,7 +36,10 @@ create table if not exists pgque.page_state (
     foreign key (queue_id, consumer_id)
         references pgque.subscription (sub_queue, sub_consumer)
         on delete cascade
-);
+) with (fillfactor = 80);
+
+alter table pgque.page_state set (fillfactor = 80);
+alter table pgque.subscription set (fillfactor = 80);
 
 revoke all on table pgque.page_state from public;
 revoke all on table pgque.page_state
