@@ -229,18 +229,37 @@ planned features are genuine differentiators, not catch-up.
 
 ---
 
-## 6. Open decisions (before writing PRs)
+## 6. Decisions & v0.4.0 roadmap
 
-1. **Producer GC fork: (X) vacuum-reaper vs (Y) rotation-partitioned probe** (§4.1).
-2. **Default TTL** for the producer window, and its relation to rotation period.
-   Hard floor only matters for the consumer-lease variant; for pure window dedup
-   the TTL is just "how long do duplicate sends collapse."
-3. **Return contract** confirmation: existing id + `deduplicated` flag (recommended
-   over pg-boss's `null`).
-4. **Consumer lease**: drop-vs-defer policy surface; lease TTL reaper; whether the
-   lease key reuses `ev_extra1` or gets a dedicated column.
-5. **Two PRs, in order**: producer window-dedup first (self-contained, closes the
-   spirit of #293), consumer lease second (the partition feature).
+1. **Producer GC fork — v0.3.0 ships Option (X); v0.4.0 targets Option (Y):**
+   - **v0.3.0 (`pgque.idem` single-table TTL ledger):** Keeps the simple, exact
+     single-table unique constraint `(queue_id, idem_key)` with `fillfactor = 80`,
+     read-first `FOR KEY SHARE` live-duplicate fast path, single-write `nextval` +
+     direct event append on uncontended fresh sends (eliminating dead-on-birth
+     `UPDATE` tuples), composite `(queue_id, expires_at)` index, and looped
+     `FOR UPDATE SKIP LOCKED` GC inside `pgque.maint()` (up to 50 passes ×
+     10,000 rows per run).
+   - **v0.4.0 roadmap (Option Y — rotating time-bucketed tables):** Replace the
+     mutable single-table DELETE reaper with rotating time-bucketed claim tables
+     (e.g., 2–3 active buckets rotated on a bucket period and reclaimed via
+     `TRUNCATE` / `DROP` once every row in the oldest bucket is expired). This
+     restores PgQue's zero-vacuum, `TRUNCATE`-based GC property even under
+     sustained high-throughput idempotent publishing and long-running `xmin`
+     horizons, while keeping the public `pgque.send_idem(...)` SQL contract
+     unchanged. Key design constraints to carry into v0.4.0:
+     - Probe current + previous live bucket(s) before inserting into the current
+       bucket (accepting a sawtooth upper bound of `ttl .. ttl + bucket_period`
+       or enforcing exact `expires_at > clock_timestamp()` checks across the
+       active buckets).
+     - Serialize cross-bucket boundary races on the same `(queue_id, idem_key)`
+       cleanly without advisory-lock contention or subtransactions.
+     - Keep `pgque.maint()` rotating/truncating expired buckets automatically
+       and preserve `drop_queue(q, true)` `NOWAIT` safety.
+2. **Default TTL:** 1 hour (`interval '1 hour'`); empty keys, non-positive,
+   non-finite, calendar-past, and overflowing TTLs raise SQLSTATE `22023`.
+3. **Return contract:** `(event_id bigint, deduped boolean)`.
+4. **Consumer lease:** Shipped separately as partition keys (`ev_extra1` +
+   `pgque.partition_slot`).
 
 ---
 

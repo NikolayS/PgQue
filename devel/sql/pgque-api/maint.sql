@@ -16,6 +16,7 @@ declare
     v_maint_owner name;
     v_func_owner  name;
     v_func_oid    oid;
+    v_pass        integer;
 begin
     -- Resolve install-owner name once per call (pg_get_userbyid avoids pg_authid).
     select pg_catalog.pg_get_userbyid(p.proowner) into v_maint_owner
@@ -51,8 +52,17 @@ begin
                 continue;
             end if;
 
-            execute 'select ' || f.func_name || '(' || quote_literal(f.func_arg) || ')' into r;
-            total := total + r;
+            /* Honor maint_operations() contract: extra-maint hooks return 1 when
+               another immediate pass is needed (bounded to 50 passes per run). */
+            v_pass := 0;
+            loop
+                execute 'select ' || f.func_name || '(' || quote_literal(f.func_arg) || ')' into r;
+                total := total + coalesce(r, 0);
+                v_pass := v_pass + 1;
+                exit when f.func_name = 'pgque.maint_rotate_tables_step1'
+                    or r is distinct from 1
+                    or v_pass >= 50;
+            end loop;
         else
             execute 'select ' || f.func_name || '()' into r;
             total := total + r;

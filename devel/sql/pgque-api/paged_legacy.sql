@@ -335,6 +335,14 @@ begin
             where sub_queue = v_queue.queue_id
             order by sub_consumer
             for update nowait;
+            perform 1 from pgque.idem
+            where queue_id = v_queue.queue_id
+            order by idem_key
+            for update nowait;
+            perform 1 from pgque.dead_letter
+            where dl_queue_id = v_queue.queue_id
+            order by dl_id
+            for update nowait;
         exception when lock_not_available then
             raise exception 'queue is in use; retry administrative force drop'
                 using errcode = '40001';
