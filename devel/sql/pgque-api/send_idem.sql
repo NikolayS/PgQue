@@ -112,12 +112,16 @@ declare
     v_queue_id int4;
     v_extra_maint text[];
     v_event_seq text;
+    v_data_pfx text;
+    v_cur_table int4;
+    v_disable_insert boolean;
     v_claimed boolean;
     v_inserted boolean;
     v_event_id int8;
     v_claim_ts timestamptz;
     v_post_claim_ts timestamptz;
     v_expires_at timestamptz;
+    v_existing_expires_at timestamptz;
 begin
     if i_idem_key is null then
         raise exception 'idem_key must not be null' using errcode = '22023';
@@ -155,18 +159,22 @@ begin
     end if;
 
     /*
-     * Read-first fast path for live duplicates: FOR SHARE is compatible with
-     * concurrent duplicate readers (avoiding exclusive-lock serialization and
-     * AB-BA deadlocks across multi-key transactions) while still waiting on
-     * an uncommitted DELETE of the same key.
+     * Read-first fast path for live duplicates: FOR KEY SHARE is compatible
+     * with concurrent duplicate readers (zero AB-BA live-duplicate deadlocks)
+     * AND with FOR NO KEY UPDATE on expired-key takeovers (zero shared-to-
+     * exclusive upgrade deadlocks if open transactions retry after expiry),
+     * while still waiting on an uncommitted DELETE (FOR UPDATE). Recheck
+     * expires_at after acquiring the lock so a waited-on row that expired
+     * during the wait falls through to takeover.
      */
-    select k.event_id into v_event_id
+    select k.event_id, k.expires_at
+    into v_event_id, v_existing_expires_at
     from pgque.idem k
     where k.queue_id = v_queue_id
       and k.idem_key = i_idem_key
       and k.expires_at > clock_timestamp()
-    for share;
-    if found then
+    for key share;
+    if found and v_existing_expires_at > clock_timestamp() then
         event_id := v_event_id;
         deduped := true;
         return next;
@@ -176,7 +184,8 @@ begin
     /*
      * Atomic single-write claim: pre-allocate event_id so uncontended fresh
      * sends write the final claim row in one INSERT (zero dead-on-birth UPDATE).
-     * The conditional DO UPDATE lets only an EXPIRED key be reclaimed.
+     * The conditional DO UPDATE only modifies non-key columns (FOR NO KEY UPDATE),
+     * letting only an EXPIRED key be reclaimed.
      */
     v_claim_ts := clock_timestamp();
     v_expires_at := pgque._lease_deadline(v_claim_ts, i_ttl);
@@ -194,17 +203,36 @@ begin
     v_post_claim_ts := clock_timestamp();
 
     if v_claimed then
-        /* Append in the same transaction as the claim: if this fails, the
-           claim rolls back with it and the key stays usable. */
-        perform pgque.insert_event_raw(
-            i_queue, v_event_id, now(), null, null, i_type, i_payload,
-            i_partition_key, i_idem_key, null, null);
+        /* Re-read current table + disable flag after any lock wait, and append
+           directly with the pre-allocated v_event_id (avoiding insert_event_raw's
+           unconditional second nextval() that would skew ticker/stats counts). */
+        select q.queue_data_pfx, q.queue_cur_table, q.queue_disable_insert
+        into v_data_pfx, v_cur_table, v_disable_insert
+        from pgque.queue q
+        where q.queue_id = v_queue_id;
+        if not found then
+            raise exception 'queue not found: %', i_queue;
+        end if;
+        if v_disable_insert then
+            if current_setting('session_replication_role') <> 'replica' then
+                raise exception 'Insert into queue disallowed';
+            end if;
+        end if;
+
+        execute 'insert into '
+            || pgque.quote_fqname(v_data_pfx || '_' || v_cur_table::text)
+            || ' (ev_id, ev_time, ev_owner, ev_retry, ev_type, ev_data, '
+            || 'ev_extra1, ev_extra2, ev_extra3, ev_extra4) '
+            || 'values ($1, $2, null, null, $3, $4, $5, $6, null, null)'
+            using v_event_id, now(), i_type, i_payload, i_partition_key, i_idem_key;
 
         /* Refresh expires_at only if a fresh INSERT waited on a conflicting
            uncommitted row that disappeared (ON CONFLICT DO UPDATE already
-           computes expires_at after any lock wait). Uncontended fresh sends
-           stay single-write with zero dead-on-birth tuples. */
-        if v_inserted and (v_post_claim_ts - v_claim_ts > interval '50 milliseconds') then
+           computes expires_at after any lock wait). Threshold scales with
+           i_ttl so sub-10ms TTLs never lose their window after a short wait. */
+        if v_inserted and (
+            v_post_claim_ts - v_claim_ts > least(interval '10 milliseconds', i_ttl / 2)
+        ) then
             update pgque.idem k
             set expires_at = pgque._lease_deadline(clock_timestamp(), i_ttl)
             where k.queue_id = v_queue_id

@@ -234,8 +234,8 @@ planned features are genuine differentiators, not catch-up.
 1. **Producer GC fork — v0.3.0 ships Option (X); v0.4.0 targets Option (Y):**
    - **v0.3.0 (`pgque.idem` single-table TTL ledger):** Keeps the simple, exact
      single-table unique constraint `(queue_id, idem_key)` with `fillfactor = 80`,
-     read-first `FOR SHARE` live-duplicate fast path, single-write `nextval` +
-     `insert_event_raw` on uncontended fresh sends (eliminating dead-on-birth
+     read-first `FOR KEY SHARE` live-duplicate fast path, single-write `nextval` +
+     direct event append on uncontended fresh sends (eliminating dead-on-birth
      `UPDATE` tuples), composite `(queue_id, expires_at)` index, and looped
      `FOR UPDATE SKIP LOCKED` GC inside `pgque.maint()` (up to 50 passes ×
      10,000 rows per run).

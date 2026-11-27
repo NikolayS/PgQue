@@ -121,7 +121,7 @@ called again, otherwise `0`. They require `pgque_admin`; `send_idem` requires
 `v0.3.0` is a **single mutable TTL ledger** (`fillfactor = 80`) maintained by
 batched `DELETE`s and PostgreSQL autovacuum. Uncontended fresh sends write a
 single tuple (no follow-up `UPDATE`), and live duplicate retries take a
-read-first `FOR SHARE` lock instead of an exclusive lock. Even so, steady-state
+read-first `FOR KEY SHARE` lock instead of an exclusive lock. Even so, steady-state
 size and autovacuum work scale with `produce_rate × max(ttl, longest_xmin)`:
 
 - Keep `ttl` only as long as producers can legitimately retry.

@@ -312,22 +312,10 @@ declare
     v_error_table text;
     v_error_constraint text;
 begin
-    if x_force then
-        begin
-            select * into v_queue
-            from pgque.queue
-            where queue_name = x_queue_name
-            for update nowait;
-        exception when lock_not_available then
-            raise exception 'queue is in use; retry administrative force drop'
-                using errcode = '40001';
-        end;
-    else
-        select * into v_queue
-        from pgque.queue
-        where queue_name = x_queue_name
-        for update;
-    end if;
+    select * into v_queue
+    from pgque.queue
+    where queue_name = x_queue_name
+    for update;
     if not found then
         raise exception 'No such event queue';
     end if;

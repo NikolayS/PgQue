@@ -55,12 +55,31 @@ begin
     using v_eid;
 
     /* Single-write INSERT puts the final event_id in pgque.idem BEFORE
-       insert_event_raw, so idem.cmin < event.cmin (zero dead-on-birth UPDATE). */
+       appending the event, so idem.cmin < event.cmin (zero dead-on-birth UPDATE). */
     assert v_idem_cmin < v_ev_cmin,
         format('fresh uncontended send_idem must not UPDATE pgque.idem after insert (idem.cmin=%s, ev.cmin=%s)',
             v_idem_cmin, v_ev_cmin);
 
-    raise notice 'PASS: pgque.idem fillfactor=80, (queue_id, expires_at) index, and single-write fresh send verified';
+    /* Sequence must advance by exactly 1 per fresh send and 0 per live duplicate
+       so ticker max_count and get_queue_info ev_per_sec stay accurate. */
+    declare
+        v_eid2 bigint;
+        v_dedup2 boolean;
+        v_eid_dup bigint;
+        v_dedup_dup boolean;
+    begin
+        select s.event_id, s.deduped into v_eid_dup, v_dedup_dup
+        from pgque.send_idem('idem_scale_q', 'ev', '{"single":1}', 'single:k1', interval '1 hour') as s;
+        assert v_dedup_dup and v_eid_dup = v_eid, 'live duplicate must return original event_id';
+
+        select s.event_id, s.deduped into v_eid2, v_dedup2
+        from pgque.send_idem('idem_scale_q', 'ev', '{"single":2}', 'single:k2', interval '1 hour') as s;
+        assert not v_dedup2 and v_eid2 = v_eid + 1,
+            format('fresh send_idem must advance queue_event_seq by exactly 1 (first=%s, second=%s)',
+                v_eid, v_eid2);
+    end;
+
+    raise notice 'PASS: pgque.idem fillfactor=80, (queue_id, expires_at) index, single-write fresh send, and exact 1-step sequence verified';
 end $$;
 
 /* 2. Input validation: empty idem_key, overflowing TTL, and calendar-past TTL -> 22023. */

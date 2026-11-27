@@ -156,21 +156,108 @@ def main():
             else:
                 print("PASS: concurrent AB-BA multi-key live duplicates succeeded without deadlock", flush=True)
 
-        # Scenario 2: drop_queue(q, true) racing an uncommitted expired-key takeover
-        # must fail fast with SQLSTATE 40001 instead of blocking or deadlocking.
+        # Scenario 2: Two open transactions both deduplicate a live key (holding
+        # FOR KEY SHARE), wait for its TTL to expire, then both retry send_idem
+        # before committing. Because ON CONFLICT DO UPDATE acquires FOR NO KEY
+        # UPDATE (compatible with FOR KEY SHARE), there must be zero 40P01
+        # upgrade deadlocks: one takes over and the second deduplicates to it.
+        q_exp = "idem_exp_upgrade_" + run_id
+        queues.append(q_exp)
+        sql(f"select pgque.create_queue('{q_exp}');")
+        seed_exp = json.loads(sql(f"""
+            select json_build_array(event_id, deduped)
+            from pgque.send_idem('{q_exp}', 'ev', '{{}}'::text, 'k-exp', interval '1 hour');
+        """))
+        orig_exp_id = seed_exp[0]
+
+        app_u1 = "idem_upg_a_" + run_id
+        app_u2 = "idem_upg_b_" + run_id
+        u1 = start(app_u1, f"""
+            begin;
+            set local role pgque_writer;
+            select json_build_array(event_id, deduped)
+            from pgque.send_idem('{q_exp}', 'ev', '{{}}'::text, 'k-exp', interval '1 hour');
+        """)
+        u2 = start(app_u2, f"""
+            begin;
+            set local role pgque_writer;
+            select json_build_array(event_id, deduped)
+            from pgque.send_idem('{q_exp}', 'ev', '{{}}'::text, 'k-exp', interval '1 hour');
+        """)
+        barrier(f"""
+            select pid from pg_stat_activity
+            where application_name = '{app_u1}'
+              and state = 'idle in transaction'
+              and query like '%send_idem%';
+        """, "session U1 holds FOR KEY SHARE on live k-exp", u1)
+        barrier(f"""
+            select pid from pg_stat_activity
+            where application_name = '{app_u2}'
+              and state = 'idle in transaction'
+              and query like '%send_idem%';
+        """, "session U2 holds FOR KEY SHARE on live k-exp", u2)
+
+        # Expire the claim while both transactions remain open and hold FOR KEY SHARE.
+        sql(f"""
+            update pgque.idem as k
+            set expires_at = clock_timestamp() - interval '1 second'
+            from pgque.queue as q
+            where q.queue_id = k.queue_id and q.queue_name = '{q_exp}'
+              and k.idem_key = 'k-exp';
+        """)
+
+        # Now U1 retries (takes over with FOR NO KEY UPDATE without blocking on U2's
+        # FOR KEY SHARE), while U2 also retries and commits after U1 commits.
+        u1.stdin.write(f"""
+            select json_build_array(event_id, deduped)
+            from pgque.send_idem('{q_exp}', 'ev', '{{}}'::text, 'k-exp', interval '1 hour');
+            commit;
+            \\q
+        """)
+        u1.stdin.flush()
+        u2.stdin.write(f"""
+            select json_build_array(event_id, deduped)
+            from pgque.send_idem('{q_exp}', 'ev', '{{}}'::text, 'k-exp', interval '1 hour');
+            commit;
+            \\q
+        """)
+        u2.stdin.flush()
+
+        rc_u1, out_u1, err_u1 = finish(u1, "", expect_ok=False)
+        rc_u2, out_u2, err_u2 = finish(u2, "", expect_ok=False)
+        if rc_u1 != 0 or rc_u2 != 0:
+            failures += 1
+            print(f"FAIL: expired-retry upgrade deadlocked/failed: U1(rc={rc_u1}, err={err_u1}) U2(rc={rc_u2}, err={err_u2})",
+                  flush=True)
+        else:
+            r1 = [json.loads(line) for line in out_u1.splitlines() if line.strip()]
+            r2 = [json.loads(line) for line in out_u2.splitlines() if line.strip()]
+            second_calls = [r1[1], r2[1]]
+            new_inserts = [c for c in second_calls if c[1] is False]
+            dedups = [c for c in second_calls if c[1] is True]
+            if (r1[0] != [orig_exp_id, True] or r2[0] != [orig_exp_id, True]
+                    or len(new_inserts) != 1 or len(dedups) != 1
+                    or new_inserts[0][0] == orig_exp_id
+                    or dedups[0][0] != new_inserts[0][0]):
+                failures += 1
+                print(f"FAIL: expired-retry unexpected outcomes: orig={orig_exp_id} U1={r1} U2={r2}", flush=True)
+            else:
+                print(f"PASS: expired retry by two open FOR KEY SHARE sessions succeeded without deadlock (new_id={new_inserts[0][0]})",
+                      flush=True)
+
+        # Scenario 3: drop_queue(q, true) racing an active idem row lock
+        # (FOR KEY SHARE held by an open live-duplicate send_idem, which does
+        # not lock pgque.queue) must fail fast with SQLSTATE 40001 on the
+        # pgque.idem NOWAIT check instead of blocking or deadlocking.
         q_drop = "idem_drop_race_" + run_id
         queues.append(q_drop)
         sql(f"""
             select pgque.create_queue('{q_drop}');
             select * from pgque.send_idem('{q_drop}', 'ev', '{{}}'::text, 'k-drop', interval '1 hour');
-            update pgque.idem as k
-            set expires_at = clock_timestamp() - interval '1 minute'
-            from pgque.queue as q
-            where q.queue_id = k.queue_id and q.queue_name = '{q_drop}';
         """)
 
-        app_takeover = "idem_drop_takeover_" + run_id
-        takeover = start(app_takeover, f"""
+        app_holder = "idem_drop_holder_" + run_id
+        holder = start(app_holder, f"""
             begin;
             set local role pgque_writer;
             select event_id, deduped
@@ -178,10 +265,10 @@ def main():
         """)
         barrier(f"""
             select pid from pg_stat_activity
-            where application_name = '{app_takeover}'
+            where application_name = '{app_holder}'
               and state = 'idle in transaction'
               and query like '%send_idem%';
-        """, "expired takeover holds idem row lock", takeover)
+        """, "open duplicate holds idem FOR KEY SHARE lock", holder)
 
         drop_state = sql(f"""
             create temp table _drop_res (state text);
@@ -202,14 +289,14 @@ def main():
             select state from _drop_res;
         """)
 
-        finish(takeover, "commit;\n\\q\n")
+        finish(holder, "commit;\n\\q\n")
 
         if drop_state != "40001":
             failures += 1
             print(f"FAIL: drop_queue(q, true) against active idem lock returned SQLSTATE {drop_state!r}, expected '40001'",
                   flush=True)
         else:
-            print("PASS: drop_queue(q, true) failed fast with 40001 against active idem takeover lock",
+            print("PASS: drop_queue(q, true) failed fast with 40001 against active idem lock",
                   flush=True)
 
     except (RuntimeError, subprocess.SubprocessError, InterruptedError) as error:
